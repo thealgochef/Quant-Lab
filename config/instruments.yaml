@@ -1,0 +1,33 @@
+# Instrument specifications for NQ and ES futures
+NQ:
+  full_name: "E-mini Nasdaq-100 Futures"
+  exchange: "CME"
+  tick_size: 0.25
+  tick_value: 5.00         # $5.00 per tick
+  point_value: 20.00       # $20.00 per point (4 ticks)
+  # Cost model per architecture spec Section 6.1
+  exchange_nfa_per_side: 2.14
+  broker_commission_per_side: 0.50
+  avg_slippage_ticks: 0.5
+  avg_slippage_per_side: 2.50   # 0.5 tick * $5.00
+  total_round_turn: 7.78        # (2.14 + 0.50 + 2.50) * 2 sides ≈ adjusted
+  session_open: "18:00"    # ET, Sunday-Thursday
+  session_close: "17:00"   # ET, next day
+  rth_open: "09:30"
+  rth_close: "16:15"
+
+ES:
+  full_name: "E-mini S&P 500 Futures"
+  exchange: "CME"
+  tick_size: 0.25
+  tick_value: 12.50        # $12.50 per tick
+  point_value: 50.00       # $50.00 per point
+  exchange_nfa_per_side: 2.14
+  broker_commission_per_side: 0.50
+  avg_slippage_ticks: 0.25
+  avg_slippage_per_side: 3.13   # 0.25 tick * $12.50
+  total_round_turn: 8.41
+  session_open: "18:00"
+  session_close: "17:00"
+  rth_open: "09:30"
+  rth_close: "16:15"

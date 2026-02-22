@@ -1,0 +1,1 @@
+"""Pluggable data provider adapters."""

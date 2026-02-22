@@ -1,0 +1,52 @@
+# Validation thresholds per architecture spec Section 5.1
+# These are the minimum requirements for a signal to pass VAL-001's test battery
+
+signal_thresholds:
+  # Information Coefficient
+  ic_tstat_min: 2.0           # IC t-statistic must exceed this
+  ic_rolling_window: 252       # Bars for rolling IC stability
+
+  # Hit Rate
+  hit_rate_min: 0.51           # Overall directional accuracy
+  hit_rate_horizons:           # Forward return horizons (in bars)
+    - 1
+    - 5
+    - 10
+    - 15
+    - 30
+    - 60
+    - 120
+    - 240
+
+  # Risk-Adjusted Returns
+  sharpe_min: 1.0              # Annualized Sharpe ratio
+  max_drawdown_max: 0.15       # 15% maximum drawdown
+  profit_factor_min: 1.2       # Gross profit / gross loss
+
+  # Decay Analysis
+  decay_classes:
+    ultra_fast: 5              # Half-life < 5 bars
+    fast: 15                   # Half-life < 15 bars
+    medium: 60                 # Half-life < 60 bars
+    slow: 240                  # Half-life < 240 bars
+    persistent: 999999         # Half-life >= 240 bars
+
+  # Factor Orthogonality
+  max_factor_correlation: 0.30 # Max correlation with any known factor
+  min_incremental_r2: 0.005    # Must add this much R² above factor model
+
+  # Robustness
+  subsample_quarters: 4        # Number of non-overlapping quarters to test
+  parameter_sensitivity_pct: 20  # ±20% parameter variation
+
+# Execution thresholds (EXEC-001)
+execution_thresholds:
+  net_sharpe_min: 0.8          # Must remain > 0.8 after costs
+  mc_ruin_probability_max: 0.05  # Monte Carlo ruin < 5%
+  turnover_reduction_for_revival: 0.50  # 50% turnover reduction to un-veto
+
+# Composite / portfolio thresholds
+portfolio_thresholds:
+  min_deploy_signals: 8        # Need 8+ signals to pass Phase 3-4
+  composite_ic_min: 0.10       # Phase 5-6 go/no-go
+  net_of_cost_sharpe_min: 1.0  # Phase 7 go/no-go

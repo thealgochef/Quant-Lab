@@ -1,0 +1,53 @@
+# Alpha Signal Research Lab — Main Configuration
+system:
+  name: "Alpha Signal Research Lab"
+  version: "0.1.0"
+  log_level: "INFO"
+
+data:
+  provider: "stub"  # Switch to vendor name when ready (e.g., "databento", "polygon")
+  symbols: ["NQ", "ES"]
+  default_timeframes:
+    - "987t"
+    - "2000t"
+    - "1m"
+    - "3m"
+    - "5m"
+    - "10m"
+    - "15m"
+    - "30m"
+    - "1H"
+    - "4H"
+    - "1D"
+  history_days: 252  # ~1 year of trading days
+
+pipeline:
+  run_mode: "research"  # research | backtest | paper | live
+  max_refine_iterations: 3
+  parallel_signals: false
+
+# Killzone boundaries in Eastern Time (EST/EDT)
+killzones:
+  london:
+    start: "02:00"
+    end: "05:00"
+    label: "London Open"
+  new_york:
+    start: "08:00"
+    end: "11:00"
+    label: "New York AM"
+  asia:
+    start: "19:00"
+    end: "22:00"
+    label: "Asia Session"
+  overlap:
+    start: "08:00"
+    end: "09:30"
+    label: "London/NY Overlap"
+
+# Session boundaries in Eastern Time
+sessions:
+  rth_open: "09:30"
+  rth_close: "16:15"
+  globex_open: "18:00"
+  globex_close: "17:00"  # Next day

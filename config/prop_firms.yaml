@@ -1,0 +1,49 @@
+# Prop firm constraint profiles per architecture spec Section 6.1
+profiles:
+  apex_50k:
+    name: "Apex Trader Funding 50K"
+    account_size: 50000
+    daily_loss_limit: null      # Apex has no separate daily limit
+    trailing_max_drawdown: 2500
+    drawdown_type: "real_time"  # Trails in real-time (not EOD)
+    max_contracts: 4
+    consistency_rule_pct: 30    # No single day > 30% of total profit
+    profit_target: 3000
+    allowed_hours: "all"        # No hour restriction
+    news_restriction: false
+
+  apex_100k:
+    name: "Apex Trader Funding 100K"
+    account_size: 100000
+    daily_loss_limit: null
+    trailing_max_drawdown: 3000
+    drawdown_type: "real_time"
+    max_contracts: 12
+    consistency_rule_pct: 30
+    profit_target: 6000
+    allowed_hours: "all"
+    news_restriction: false
+
+  topstep_50k:
+    name: "Topstep 50K"
+    account_size: 50000
+    daily_loss_limit: 1000
+    trailing_max_drawdown: 2000
+    drawdown_type: "end_of_day"
+    max_contracts: 5
+    consistency_rule_pct: 50    # No single day > 50% of profit target
+    profit_target: 3000
+    allowed_hours: "all"
+    news_restriction: false
+
+  topstep_150k:
+    name: "Topstep 150K"
+    account_size: 150000
+    daily_loss_limit: 3000
+    trailing_max_drawdown: 4500
+    drawdown_type: "end_of_day"
+    max_contracts: 15
+    consistency_rule_pct: 50
+    profit_target: 9000
+    allowed_hours: "all"
+    news_restriction: false
