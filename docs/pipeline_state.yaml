@@ -1,0 +1,141 @@
+# Alpha Signal Research Lab — Pipeline Development State
+# This file tracks implementation progress across sessions.
+# Updated manually after each significant development milestone.
+# Read by Claude Code at session start (referenced in CLAUDE.md).
+
+current_phase: "PHASE_0_SCAFFOLD"
+last_updated: "2026-02-22"
+last_commit: "32c539e"
+
+# ─── Phase Tracker ──────────────────────────────────────────────
+
+phases:
+  PHASE_0_SCAFFOLD:
+    status: "COMPLETE"
+    description: "Project structure, interfaces, stubs, tests"
+    deliverables:
+      - "92 files scaffolded"
+      - "13 Pydantic interface contracts"
+      - "MessageBus with dedup/audit"
+      - "BaseAgent ABC with state machine"
+      - "20 signal detector stubs (auto-registering)"
+      - "6 agent stubs"
+      - "77 passing tests"
+      - "Config: instruments, prop firms, thresholds, killzones"
+
+  PHASE_1_DATA_PIPELINE:
+    status: "NOT_STARTED"
+    description: "DATA-001 implementation — clean market data at all timeframes"
+    blocked_by: "Need to choose data vendor"
+    files_to_implement:
+      - "agents/data_infra/providers/<vendor>.py"
+      - "agents/data_infra/aggregation.py"
+      - "agents/data_infra/sessions.py"
+      - "agents/data_infra/quality.py"
+      - "agents/data_infra/agent.py (build_data_bundle)"
+
+  PHASE_2_TIER1_SIGNALS:
+    status: "NOT_STARTED"
+    description: "SIG-001 Tier 1 — Core indicator detectors"
+    depends_on: "PHASE_1_DATA_PIPELINE"
+    files_to_implement:
+      - "detectors/tier1/ema_confluence.py"
+      - "detectors/tier1/kama_regime.py"
+      - "detectors/tier1/vwap_deviation.py"
+      - "agents/signal_eng/bundle_builder.py"
+
+  PHASE_2_TIER2_SIGNALS:
+    status: "NOT_STARTED"
+    description: "SIG-001 Tier 2 — ICT structural detectors"
+    depends_on: "PHASE_2_TIER1_SIGNALS"
+    files_to_implement:
+      - "detectors/tier2/liquidity_sweeps.py"
+      - "detectors/tier2/fair_value_gaps.py"
+      - "detectors/tier2/ifvg.py"
+      - "detectors/tier2/market_structure.py"
+      - "detectors/tier2/killzone_timing.py"
+      - "detectors/tier2/pd_levels_poi.py"
+      - "detectors/tier2/tick_microstructure.py"
+
+  PHASE_2_TIER3_SIGNALS:
+    status: "NOT_STARTED"
+    description: "SIG-001 Tier 3 — Composite signals"
+    depends_on: "PHASE_2_TIER2_SIGNALS"
+    files_to_implement:
+      - "detectors/tier3/ (all 10 files)"
+
+  PHASE_3_VALIDATION:
+    status: "NOT_STARTED"
+    description: "VAL-001 implementation — statistical test battery"
+    depends_on: "PHASE_2_TIER1_SIGNALS"
+    files_to_implement:
+      - "validation/tests/ic_testing.py"
+      - "validation/tests/hit_rate.py"
+      - "validation/tests/risk_adjusted.py"
+      - "validation/tests/decay_analysis.py"
+      - "validation/tests/orthogonality.py"
+      - "validation/tests/robustness.py"
+      - "validation/firewall.py"
+
+  PHASE_4_EXECUTION:
+    status: "NOT_STARTED"
+    description: "EXEC-001 implementation — cost modeling + prop firm checks"
+    depends_on: "PHASE_3_VALIDATION"
+    files_to_implement:
+      - "execution/cost_model.py"
+      - "execution/prop_constraints.py"
+      - "execution/position_sizing.py"
+      - "execution/monte_carlo.py"
+
+  PHASE_5_MONITORING:
+    status: "NOT_STARTED"
+    description: "MON-001 implementation — live tracking + alerts + regime"
+    depends_on: "PHASE_4_EXECUTION"
+    files_to_implement:
+      - "monitoring/metrics.py"
+      - "monitoring/alerts.py"
+      - "monitoring/regime.py"
+      - "monitoring/dashboard.py"
+
+  PHASE_6_ORCHESTRATOR:
+    status: "NOT_STARTED"
+    description: "ORCH-001 full wiring — pipeline sequencing + handoff routing"
+    depends_on: "PHASE_5_MONITORING"
+    files_to_implement:
+      - "orchestrator/agent.py (handle_message routing)"
+      - "orchestrator/pipeline.py (evaluate_go_no_go)"
+
+# ─── Signal Implementation Status ──────────────────────────────
+
+signals:
+  # Tier 1 — Core
+  ema_confluence: { status: "STUB", version: 0 }
+  kama_regime: { status: "STUB", version: 0 }
+  vwap_deviation: { status: "STUB", version: 0 }
+  # Tier 2 — ICT Structural
+  liquidity_sweeps: { status: "STUB", version: 0 }
+  fair_value_gaps: { status: "STUB", version: 0 }
+  ifvg: { status: "STUB", version: 0 }
+  market_structure: { status: "STUB", version: 0 }
+  killzone_timing: { status: "STUB", version: 0 }
+  pd_levels_poi: { status: "STUB", version: 0 }
+  tick_microstructure: { status: "STUB", version: 0 }
+  # Tier 3 — Composite
+  multi_tf_confluence: { status: "STUB", version: 0 }
+  ema_vwap_interaction: { status: "STUB", version: 0 }
+  displacement: { status: "STUB", version: 0 }
+  order_blocks: { status: "STUB", version: 0 }
+  volume_profile: { status: "STUB", version: 0 }
+  scalp_entry: { status: "STUB", version: 0 }
+  sweep_fvg_combo: { status: "STUB", version: 0 }
+  ema_reclaim: { status: "STUB", version: 0 }
+  session_gap: { status: "STUB", version: 0 }
+  adaptive_regime: { status: "STUB", version: 0 }
+
+# Signal status values: STUB | IMPLEMENTED | TESTED | VALIDATED | DEPLOYED | VETOED | REJECTED
+
+# ─── Open Questions ─────────────────────────────────────────────
+
+open_questions:
+  - "Which data vendor API? (Databento, Polygon, or other)"
+  - "Should we start with historical CSV/Parquet files while vendor is decided?"

@@ -112,6 +112,28 @@ Two Python versions exist on this machine:
 
 `pip` installs to **3.13**. All dependencies (pydantic, pandas, numpy, scipy, pytest, ruff) are on 3.13. Always use the 3.13 path for running tests.
 
+## Context Persistence (Survives Conversation Compression)
+
+Three mechanisms keep critical context available even when earlier messages are compressed:
+
+### 1. Agent System Prompts — `docs/agent_prompts/`
+Full behavioral specs for each agent, stored as `.md` files. These are the authoritative reference for what each agent does, its rules, and its interfaces.
+
+| File | Agent |
+|---|---|
+| `docs/agent_prompts/ORCH-001.md` | Orchestrator — phase sequencing, conflict resolution |
+| `docs/agent_prompts/DATA-001.md` | Data Infrastructure — quality checks, aggregation rules |
+| `docs/agent_prompts/SIG-001.md` | Signal Engineering — 20 detectors, normalization, firewall rules |
+| `docs/agent_prompts/VAL-001.md` | Validation — 6-test battery, verdict criteria, firewall enforcement |
+| `docs/agent_prompts/EXEC-001.md` | Execution — cost modeling, prop firm checks, position sizing |
+| `docs/agent_prompts/MON-001.md` | Monitoring — 10 metrics, alert levels, regime tracking |
+
+### 2. Pipeline State Tracker — `docs/pipeline_state.yaml`
+Tracks which development phases are complete, in progress, or blocked. Lists every signal's implementation status. Updated after each significant milestone. **Read this file at session start** to know where development stands.
+
+### 3. Decision Log — `docs/DECISIONS.md`
+Records every significant architectural decision with date, context, rationale, and trade-offs. Prevents re-litigating settled questions. **Check this before proposing changes** to patterns already decided.
+
 ## Architecture Spec Location
 
-The full architecture spec (6 agents, 12 handoff protocols, 15 message types, validation firewall rules, error handling matrix, bootstrap sequence) was provided in conversation. Key details are captured in the agent docstrings and this file. If you need the exact spec text, check the system prompts in each agent's `.py` file — they reference the relevant spec sections.
+The full architecture spec (6 agents, 12 handoff protocols, 15 message types, validation firewall rules, error handling matrix, bootstrap sequence) was provided in conversation. Key details are captured in the agent system prompt files in `docs/agent_prompts/` and this file.
