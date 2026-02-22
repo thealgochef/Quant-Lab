@@ -70,4 +70,44 @@ This prevents re-litigating settled questions across sessions.
 
 ---
 
+## D-009: Polygon.io as Data Vendor
+**Date**: 2026-02-22
+**Context**: Needed to choose a market data vendor for NQ/ES futures bars.
+**Decision**: Polygon.io via `polygon-api-client` Python SDK. Uses `list_futures_aggregates()` endpoint.
+**Rationale**: User already has a working Polygon integration in their `Claude-my-quant` project. Proven patterns for futures data, API key management, and caching. Minimizes integration risk.
+
+---
+
+## D-010: Skip Tick Bars (Time Bars Only)
+**Date**: 2026-02-22
+**Context**: Architecture spec defines 987-tick and 2000-tick bars. Polygon's futures endpoint provides time-based bars only (not individual trades).
+**Decision**: `aggregate_tick_bars()` remains `NotImplementedError`. Only time-based bars (1m through 1D) are implemented. `build_data_bundle()` silently skips tick timeframes.
+**Rationale**: User's Polygon plan doesn't include tick-level futures data. Time bars cover all current needs. Tick bars can be added later when a tick data source is available.
+
+---
+
+## D-011: Front-Month Contract Auto-Detection
+**Date**: 2026-02-22
+**Context**: NQ/ES futures have quarterly expiry (H/M/U/Z). Needed to decide between manual ticker entry and automatic detection.
+**Decision**: `PolygonDataProvider.resolve_front_month_ticker()` auto-detects based on CME quarterly cycle. Rolls to next contract on the 15th of the expiry month.
+**Rationale**: User chose auto-detect. The 15th rollover is a conservative default. Static method so it's independently testable. 9 test cases cover all edge cases including year boundary.
+
+---
+
+## D-012: 1-Minute Bars as Base Resolution
+**Date**: 2026-02-22
+**Context**: Could fetch each timeframe separately from Polygon, or fetch 1m and resample locally.
+**Decision**: Fetch 1m bars from Polygon, resample to all higher timeframes (3m-1D) using pandas. Daily bars use session-aware grouping (not UTC midnight).
+**Rationale**: Fewer API calls. Guaranteed cross-timeframe consistency (all derived from same source). Session-aware daily aggregation respects the 18:00 ET trading day boundary.
+
+---
+
+## D-013: Parquet Caching for Fetched Data
+**Date**: 2026-02-22
+**Context**: Polygon API calls are rate-limited and slow for large date ranges.
+**Decision**: Cache fetched bars as `.parquet` files in `data/cache/`. Cache key: `{ticker}_{timeframe}_{startdate}_{enddate}.parquet`.
+**Rationale**: Avoids re-fetching during development iterations. `.gitignore` already excludes `*.parquet`. Parquet is fast and compact for columnar OHLCV data.
+
+---
+
 *Add new decisions below this line.*

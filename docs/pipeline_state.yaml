@@ -3,9 +3,9 @@
 # Updated manually after each significant development milestone.
 # Read by Claude Code at session start (referenced in CLAUDE.md).
 
-current_phase: "PHASE_0_SCAFFOLD"
+current_phase: "PHASE_1_DATA_PIPELINE"
 last_updated: "2026-02-22"
-last_commit: "32c539e"
+last_commit: "pending"
 
 # ─── Phase Tracker ──────────────────────────────────────────────
 
@@ -24,15 +24,19 @@ phases:
       - "Config: instruments, prop firms, thresholds, killzones"
 
   PHASE_1_DATA_PIPELINE:
-    status: "NOT_STARTED"
+    status: "COMPLETE"
     description: "DATA-001 implementation — clean market data at all timeframes"
-    blocked_by: "Need to choose data vendor"
-    files_to_implement:
-      - "agents/data_infra/providers/<vendor>.py"
-      - "agents/data_infra/aggregation.py"
-      - "agents/data_infra/sessions.py"
-      - "agents/data_infra/quality.py"
-      - "agents/data_infra/agent.py (build_data_bundle)"
+    data_vendor: "Polygon.io"
+    deliverables:
+      - "PolygonDataProvider with front-month auto-detection"
+      - "Time bar aggregation (1m through 1D via resample)"
+      - "Session tagging (RTH/GLOBEX) with trading-date logic"
+      - "Killzone classification (London/NY/Asia/Overlap)"
+      - "6 quality validators + QualityReport assembly"
+      - "PD levels (prev day/week/overnight) computation"
+      - "build_data_bundle() wiring all components"
+      - "53 new tests (130 total, all passing)"
+      - "Tick bars (987t/2000t) deferred — time bars only"
 
   PHASE_2_TIER1_SIGNALS:
     status: "NOT_STARTED"
@@ -137,5 +141,4 @@ signals:
 # ─── Open Questions ─────────────────────────────────────────────
 
 open_questions:
-  - "Which data vendor API? (Databento, Polygon, or other)"
-  - "Should we start with historical CSV/Parquet files while vendor is decided?"
+  - "Add tick-level data (987t/2000t bars) when Polygon plan supports futures trades?"
