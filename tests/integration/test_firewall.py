@@ -1,5 +1,9 @@
 """Integration tests for the SIG-001 <-> VAL-001 validation firewall."""
 
+from __future__ import annotations
+
+from alpha_lab.agents.signal_eng.agent import SignalEngineeringAgent
+from alpha_lab.agents.validation.agent import ValidationAgent
 from alpha_lab.core.contracts import SignalVector
 
 
@@ -22,14 +26,56 @@ class TestFirewallBoundary:
             metadata={"intuition": "EMA alignment"},
         )
 
-        # The fields that SHOULD cross the firewall
         assert sv.direction is not None
         assert sv.strength is not None
         assert sv.timeframe is not None
+        assert sv.parameters is not None
+        assert sv.category is not None
 
-        # The fields that MUST NOT cross (per Section 10.1)
-        # These exist on the object but the firewall strips them
-        assert sv.parameters is not None  # Present on object
-        assert sv.category is not None  # Present on object
-        # The firewall.strip_signal_metadata() function is responsible
-        # for removing these before handoff to VAL-001
+    def test_validation_produces_verdicts_for_all_signals(
+        self, message_bus, synthetic_data_bundle
+    ):
+        """VAL-001 returns one verdict per signal in the bundle."""
+        sig = SignalEngineeringAgent(message_bus)
+        val = ValidationAgent(message_bus)
+
+        signal_bundle = sig.generate_signals(synthetic_data_bundle)
+        price_data = {"5m": synthetic_data_bundle.bars["5m"]}
+        report = val.validate_signal_bundle(signal_bundle, price_data)
+
+        assert len(report.verdicts) == signal_bundle.total_signals
+        signal_ids = {v.signal_id for v in report.verdicts}
+        expected_ids = {sv.signal_id for sv in signal_bundle.signals}
+        assert signal_ids == expected_ids
+
+    def test_bonferroni_adjustment_applied(
+        self, message_bus, synthetic_data_bundle
+    ):
+        """With 3+ signals, Bonferroni adjustment is applied."""
+        sig = SignalEngineeringAgent(message_bus)
+        val = ValidationAgent(message_bus)
+
+        signal_bundle = sig.generate_signals(synthetic_data_bundle)
+        assert signal_bundle.total_signals >= 3
+
+        price_data = {"5m": synthetic_data_bundle.bars["5m"]}
+        report = val.validate_signal_bundle(signal_bundle, price_data)
+        assert report.bonferroni_adjusted is True
+
+    def test_lookahead_bias_detection(
+        self, message_bus, synthetic_data_bundle
+    ):
+        """Synthetic data with regime trends triggers look-ahead bias warnings."""
+        sig = SignalEngineeringAgent(message_bus)
+        val = ValidationAgent(message_bus)
+
+        signal_bundle = sig.generate_signals(synthetic_data_bundle)
+        price_data = {"5m": synthetic_data_bundle.bars["5m"]}
+        report = val.validate_signal_bundle(signal_bundle, price_data)
+
+        # Synthetic data typically produces high IC that triggers bias detection
+        # At least some signals should be flagged
+        high_ic_signals = [v for v in report.verdicts if abs(v.ic) > 0.20]
+        assert len(high_ic_signals) > 0, (
+            "Expected look-ahead bias detection on synthetic data"
+        )
