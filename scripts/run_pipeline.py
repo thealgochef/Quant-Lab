@@ -32,7 +32,8 @@ from alpha_lab.core.contracts import (
     SignalVerdict,
     ValidationReport,
 )
-from alpha_lab.core.message import MessageBus
+from alpha_lab.core.enums import AgentID, MessageType
+from alpha_lab.core.message import MessageBus, MessageEnvelope
 
 # ─── Logging Setup ─────────────────────────────────────────────
 
@@ -332,8 +333,77 @@ def run_pipeline():
         print(f"    VETOED  {v.signal_id}: {v.veto_reason}")
     print()
 
-    # 6. Summary
-    print("[6/6] Pipeline Summary")
+    # 6. Demonstrate monitoring (MON-001)
+    print("[6/7] Demonstrating live monitoring (MON-001)...")
+    mon = MonitoringAgent(bus)
+
+    # Deploy approved signals for monitoring
+    if exec_report.approved_signals:
+        deploy_payload = {
+            "approved_signals": [
+                {
+                    "signal_id": v.signal_id,
+                    "ic": 0.05,
+                    "hit_rate": 0.55,
+                    "sharpe": 1.5,
+                    "risk_parameters": v.risk_parameters,
+                }
+                for v in exec_report.approved_signals
+            ]
+        }
+        deploy_env = MessageEnvelope(
+            request_id="deploy-001",
+            sender=AgentID.ORCHESTRATOR,
+            receiver=AgentID.MONITORING,
+            message_type=MessageType.DEPLOY_COMMAND,
+            payload=deploy_payload,
+        )
+        mon.handle_message(deploy_env)
+        print(f"  Deployed {len(exec_report.approved_signals)} signals for monitoring")
+
+        # Simulate metric updates (degrading IC)
+        for sid in mon.active_signals:
+            mon.update_metrics(
+                sid, live_ic=0.03, live_hit_rate=0.52, live_sharpe=1.1,
+                trades_today=12, gross_pnl_today=200.0, net_pnl_today=150.0,
+            )
+
+        # Check signal health
+        for sid in mon.active_signals:
+            health = mon.check_signal_health(sid)
+            print(f"  {sid}: {health.status}"
+                  f" (IC={health.live_ic:.3f}/{health.backtest_ic:.3f},"
+                  f" hit={health.live_hit_rate:.1%},"
+                  f" sharpe={health.live_sharpe:.2f})")
+
+        # Classify regime
+        market_data = {
+            "ema_values": [
+                float(bars_5m["close"].iloc[-1]),
+                float(bars_5m["close"].iloc[-20]),
+                float(bars_5m["close"].iloc[-50]),
+            ],
+            "kama_slope": 0.3,
+            "atr_current": float(bars_5m["high"].iloc[-20:].mean()
+                                 - bars_5m["low"].iloc[-20:].mean()),
+            "atr_avg": float(bars_5m["high"].mean() - bars_5m["low"].mean()),
+            "adx": 25.0,
+        }
+        mon.update_regime(market_data)
+        print(f"  Regime: {mon.current_regime.value}")
+
+        # Generate daily report
+        daily = mon.generate_daily_report()
+        print(f"  Daily report: {len(daily.signals)} signals,"
+              f" {len(daily.alerts)} alerts")
+        for rec in daily.recommendations:
+            print(f"    -> {rec}")
+    else:
+        print("  No approved signals to monitor")
+    print()
+
+    # 7. Summary
+    print("[7/7] Pipeline Summary")
     print("=" * 70)
     status = orch.get_pipeline_status()
     print(f"  Phase: {status['current_phase']}")
@@ -349,6 +419,8 @@ def run_pipeline():
         print(f"  Portfolio: {portfolio['total_signals']} signals,"
               f" {portfolio['total_contracts']} contracts,"
               f" net_sharpe={portfolio['combined_net_sharpe']:.2f}")
+    print(f"  Monitoring: {len(mon.active_signals)} signals tracked,"
+          f" regime={mon.current_regime.value}")
     print("=" * 70)
 
     return exec_report
