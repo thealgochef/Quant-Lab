@@ -10,6 +10,8 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 
+# Import detectors package to trigger __init_subclass__ auto-registration
+import alpha_lab.agents.signal_eng.detectors  # noqa: F401
 from alpha_lab.agents.signal_eng.detector_base import (
     SignalDetector,
     SignalDetectorRegistry,
