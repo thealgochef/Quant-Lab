@@ -86,6 +86,14 @@ class LiquiditySweepsDetector(SignalDetector):
                 levels.append((attr, float(val), "resistance"))
         return levels
 
+    # Map timeframe string to approximate bars per RTH session (6.5h)
+    _SESSION_BARS: dict[str, int] = {
+        "1m": 390,
+        "5m": 78,
+        "15m": 26,
+        "1h": 7,
+    }
+
     def _compute_timeframe(
         self, df: pd.DataFrame, timeframe: str, data: DataBundle,
     ) -> SignalVector | None:
@@ -103,9 +111,10 @@ class LiquiditySweepsDetector(SignalDetector):
         vol_avg = pd.Series(volumes).rolling(20, min_periods=1).mean().values
         atr_vals = atr_safe.values
 
-        # Also track rolling session high/low for intraday sweeps
-        session_high = pd.Series(highs).rolling(78, min_periods=1).max().values
-        session_low = pd.Series(lows).rolling(78, min_periods=1).min().values
+        # Rolling session high/low: use timeframe-aware window
+        session_window = self._SESSION_BARS.get(timeframe, 78)
+        session_high = pd.Series(highs).rolling(session_window, min_periods=1).max().values
+        session_low = pd.Series(lows).rolling(session_window, min_periods=1).min().values
 
         level_cache: dict[str, list[tuple[str, float, str]]] = {}
 

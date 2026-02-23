@@ -61,8 +61,8 @@ class ScalpEntryDetector(SignalDetector):
         return has_micro and has_macro
 
     def compute(self, data: DataBundle) -> list[SignalVector]:
-        # Determine macro direction from higher TFs
-        macro_dirs: list[int] = []
+        # Compute per-bar EMA direction Series for each macro TF
+        macro_dir_series: list[pd.Series] = []
         for tf in self.macro_timeframes:
             df = data.bars.get(tf)
             if not isinstance(df, pd.DataFrame) or len(df) <= _MIN_BARS:
@@ -70,24 +70,13 @@ class ScalpEntryDetector(SignalDetector):
             close = df["close"]
             ema_f = compute_ema(close, self.macro_ema_fast)
             ema_s = compute_ema(close, self.macro_ema_slow)
-            if ema_f.iloc[-1] > ema_s.iloc[-1]:
-                macro_dirs.append(1)
-            elif ema_f.iloc[-1] < ema_s.iloc[-1]:
-                macro_dirs.append(-1)
+            dir_s = pd.Series(0, index=df.index, dtype=int)
+            dir_s = dir_s.where(~(ema_f > ema_s), 1)
+            dir_s = dir_s.where(~(ema_f < ema_s), -1)
+            macro_dir_series.append(dir_s)
 
-        if not macro_dirs:
+        if not macro_dir_series:
             return []
-
-        n_bull = sum(1 for d in macro_dirs if d > 0)
-        n_bear = sum(1 for d in macro_dirs if d < 0)
-        if n_bull > n_bear:
-            macro_dir = 1
-        elif n_bear > n_bull:
-            macro_dir = -1
-        else:
-            macro_dir = 0
-
-        macro_alignment = max(n_bull, n_bear) / len(macro_dirs) if macro_dirs else 0.0
 
         # Generate signals on micro TFs
         signals: list[SignalVector] = []
@@ -95,7 +84,9 @@ class ScalpEntryDetector(SignalDetector):
             df = data.bars.get(tf)
             if not isinstance(df, pd.DataFrame) or len(df) <= _MIN_BARS:
                 continue
-            sv = self._compute_timeframe(df, tf, data.instrument, macro_dir, macro_alignment)
+            sv = self._compute_timeframe(
+                df, tf, data.instrument, macro_dir_series,
+            )
             if sv is not None:
                 signals.append(sv)
 
@@ -106,31 +97,59 @@ class ScalpEntryDetector(SignalDetector):
         df: pd.DataFrame,
         timeframe: str,
         instrument: str,
-        macro_dir: int,
-        macro_alignment: float,
+        macro_dir_series: list[pd.Series],
     ) -> SignalVector | None:
-        if macro_dir == 0:
-            return None
-
         close = df["close"]
         volume = df["volume"] if "volume" in df.columns else pd.Series(1.0, index=df.index)
 
         atr = compute_atr(df)
         atr_safe = atr.replace(0, np.nan).ffill().fillna(1.0)
 
+        # Align each macro TF direction to this micro TF's index
+        has_tz = hasattr(df.index, "tz") and df.index.tz
+        left_idx = df.index.tz_localize(None) if has_tz else df.index
+        n_bull = pd.Series(0, index=df.index, dtype=int)
+        n_bear = pd.Series(0, index=df.index, dtype=int)
+        n_macro = 0
+
+        for macro_s in macro_dir_series:
+            has_tz_r = hasattr(macro_s.index, "tz") and macro_s.index.tz
+            right_idx = (
+                macro_s.index.tz_localize(None) if has_tz_r
+                else macro_s.index
+            )
+            left_df = pd.DataFrame({"_key": 0}, index=left_idx)
+            right_df = pd.DataFrame({"dir": macro_s.values}, index=right_idx)
+            aligned = pd.merge_asof(
+                left_df, right_df,
+                left_index=True, right_index=True,
+                direction="backward",
+            )
+            aligned_dir = aligned["dir"].fillna(0).astype(int).values
+            n_bull += (aligned_dir > 0).astype(int)
+            n_bear += (aligned_dir < 0).astype(int)
+            n_macro += 1
+
+        # Per-bar macro direction: majority vote across macro TFs
+        macro_dir = pd.Series(0, index=df.index, dtype=int)
+        macro_dir = macro_dir.where(~(n_bull > n_bear), 1)
+        macro_dir = macro_dir.where(~(n_bear > n_bull), -1)
+
+        macro_alignment = pd.concat(
+            [n_bull, n_bear], axis=1,
+        ).max(axis=1) / max(n_macro, 1)
+
         # Micro momentum: velocity of price change / ATR
         velocity = close.diff(self.momentum_lookback) / atr_safe
         velocity = velocity.fillna(0.0)
 
-        # Direction: micro momentum matches macro direction
+        # Direction: micro momentum matches per-bar macro direction
         micro_bull = velocity > self.min_velocity_atr
         micro_bear = velocity < -self.min_velocity_atr
 
         direction = pd.Series(0, index=df.index, dtype=int)
-        if macro_dir == 1:
-            direction = direction.where(~micro_bull, 1)
-        else:
-            direction = direction.where(~micro_bear, -1)
+        direction = direction.where(~(micro_bull & (macro_dir == 1)), 1)
+        direction = direction.where(~(micro_bear & (macro_dir == -1)), -1)
 
         # Strength components
         momentum_mag = velocity.abs().clip(0.0, 3.0) / 3.0
@@ -169,7 +188,5 @@ class ScalpEntryDetector(SignalDetector):
                 "instrument": instrument,
                 "intuition": "Lower-TF momentum burst confirming higher-TF direction",
                 "bars_processed": len(df),
-                "macro_direction": macro_dir,
-                "macro_alignment": macro_alignment,
             },
         )

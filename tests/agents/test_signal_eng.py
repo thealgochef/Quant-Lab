@@ -795,8 +795,10 @@ class TestSwingIndicators:
         valid = sh.dropna()
         for idx in valid.index:
             pos = df.index.get_loc(idx)
-            window = df["high"].iloc[max(0, pos - 3): pos + 4]
-            assert df["high"].iloc[pos] == window.max()
+            # Swing stamped at confirmation bar (pos), pivot was at pos - right
+            pivot_pos = pos - 3
+            window = df["high"].iloc[max(0, pivot_pos - 3): pivot_pos + 4]
+            assert valid[idx] == window.max()
 
     def test_swing_lows_are_local_minima(self):
         df = _make_ohlcv(300)
@@ -804,8 +806,10 @@ class TestSwingIndicators:
         valid = sl.dropna()
         for idx in valid.index:
             pos = df.index.get_loc(idx)
-            window = df["low"].iloc[max(0, pos - 3): pos + 4]
-            assert df["low"].iloc[pos] == window.min()
+            # Swing stamped at confirmation bar (pos), pivot was at pos - right
+            pivot_pos = pos - 3
+            window = df["low"].iloc[max(0, pivot_pos - 3): pivot_pos + 4]
+            assert valid[idx] == window.min()
 
 
 # ═══════════════════════════════════════════════════════════════════

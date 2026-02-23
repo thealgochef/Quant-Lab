@@ -2,7 +2,7 @@
 Bar aggregation logic.
 
 Handles:
-- Tick chart construction (987-tick, 2000-tick bars) — NOT YET IMPLEMENTED
+- Tick chart construction (987-tick, 2000-tick bars)
 - Time bar resampling from 1-minute bars (1m through 1D)
 - Partial bar handling at session boundaries
 - Exchange session alignment (not UTC midnight)
@@ -30,14 +30,62 @@ _RESAMPLE_RULES: dict[str, str] = {
 def aggregate_tick_bars(ticks: pd.DataFrame, tick_count: int) -> pd.DataFrame:
     """Aggregate raw ticks into tick-count bars.
 
+    Groups consecutive ticks into chunks of ``tick_count`` and computes
+    OHLCV for each chunk.  The final partial chunk is included only if
+    it contains more than 50 % of the target tick count.
+
     Args:
-        ticks: DataFrame with columns [price, size, timestamp]
-        tick_count: Number of ticks per bar (987 or 2000)
+        ticks: DataFrame with columns [price, size].  Timestamps are
+               taken from a ``timestamp`` column if present, otherwise
+               from the DataFrame index.
+        tick_count: Number of ticks per bar (e.g. 987 or 2000)
 
     Returns:
-        DataFrame with columns [open, high, low, close, volume, tick_count, timestamp]
+        DataFrame with DatetimeIndex and columns
+        [open, high, low, close, volume, tick_count]
     """
-    raise NotImplementedError("Tick bar aggregation not implemented — using time-based bars only")
+    if ticks.empty:
+        return pd.DataFrame(
+            columns=["open", "high", "low", "close", "volume", "tick_count"],
+        )
+
+    # Normalise: ensure we have price, size, and a timestamp series
+    if "timestamp" in ticks.columns:
+        ts_values = ticks["timestamp"].values
+    elif isinstance(ticks.index, pd.DatetimeIndex):
+        ts_values = ticks.index.values
+    else:
+        msg = "ticks must have a 'timestamp' column or a DatetimeIndex"
+        raise ValueError(msg)
+
+    prices = ticks["price"].values
+    sizes = ticks["size"].values
+    n = len(ticks)
+
+    groups = pd.DataFrame({
+        "price": prices,
+        "size": sizes,
+        "timestamp": ts_values,
+        "group": [i // tick_count for i in range(n)],
+    })
+
+    agg = groups.groupby("group").agg(
+        open=("price", "first"),
+        high=("price", "max"),
+        low=("price", "min"),
+        close=("price", "last"),
+        volume=("size", "sum"),
+        tick_count=("price", "count"),
+        timestamp=("timestamp", "last"),
+    )
+
+    # Drop partial final chunk if less than 50 % full
+    if len(agg) > 1 and agg.iloc[-1]["tick_count"] < tick_count * 0.5:
+        agg = agg.iloc[:-1]
+
+    result = agg.set_index("timestamp")
+    result.index.name = "timestamp"
+    return result
 
 
 def aggregate_time_bars(

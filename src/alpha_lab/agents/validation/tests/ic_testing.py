@@ -69,14 +69,11 @@ class ICTest(ValidationTest):
         ic_std = float(np.std(ic_values)) if len(ic_values) > 1 else 1.0
         ic_ir = ic_mean / ic_std if ic_std > 0 else 0.0
 
-        # IC t-stat: mean / (std / sqrt(n))
-        n = len(ic_values)
-        ic_tstat = ic_mean / (ic_std / np.sqrt(n)) if ic_std > 0 and n > 1 else 0.0
-
         # Rolling IC at primary horizon (first available)
         primary_h = self.horizons[0]
         rolling_ic_mean = 0.0
         rolling_ic_std = 1.0
+        ic_tstat = 0.0
         if primary_h < len(close):
             fwd = compute_forward_returns(close, primary_h)
             rolling_ic = _rolling_spearman(sig, fwd, window=min(_ROLLING_WINDOW, len(close) // 2))
@@ -85,11 +82,16 @@ class ICTest(ValidationTest):
                 rolling_ic_mean = float(valid_ic.mean())
                 rolling_ic_std = float(valid_ic.std()) if len(valid_ic) > 1 else 1.0
 
+                # IC t-stat from rolling IC observations (not horizons)
+                n_obs = len(valid_ic)
+                if rolling_ic_std > 0 and n_obs > 1:
+                    ic_tstat = rolling_ic_mean / (rolling_ic_std / np.sqrt(n_obs))
+
         return {
             "ic_mean": ic_mean,
             "ic_std": ic_std,
             "ic_ir": ic_ir,
-            "ic_tstat": ic_tstat,
+            "ic_tstat": float(ic_tstat),
             "ic_by_horizon": ic_by_horizon,
             "rolling_ic_mean": rolling_ic_mean,
             "rolling_ic_std": rolling_ic_std,

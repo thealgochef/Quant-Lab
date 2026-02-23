@@ -99,7 +99,7 @@ class VwapDeviationDetector(SignalDetector):
         # --- Z-score: price deviation from VWAP normalized by band width ---
         band_width = (upper - lower).replace(0, np.nan)
         deviation = close - vwap
-        zscore = (2.0 * deviation / band_width).fillna(0.0)
+        zscore = (deviation / band_width).fillna(0.0)
 
         # --- Direction ---
         # Above upper band (+1) or below lower band (-1)

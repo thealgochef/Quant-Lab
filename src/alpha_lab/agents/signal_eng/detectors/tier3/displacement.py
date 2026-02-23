@@ -138,7 +138,7 @@ class DisplacementDetector(SignalDetector):
             strength.iloc[i] = round(min(s, 1.0), 6)
             formation_idx.iloc[i] = i
 
-        # Forward-fill from displacement events
+        # Forward-fill from displacement events with exponential decay
         fi = formation_idx.replace(0, np.nan)
         formation_idx = fi.ffill().fillna(0).astype(int)
 
@@ -148,6 +148,11 @@ class DisplacementDetector(SignalDetector):
         has_signal = formation_idx > 0
         direction = dir_filled.where(has_signal, 0)
         strength = str_filled.where(has_signal, 0.0).clip(0.0, 1.0)
+
+        # Decay strength: halve every 20 bars from formation
+        bars_since = pd.Series(np.arange(len(df)), index=df.index) - formation_idx
+        decay = np.power(0.5, bars_since.clip(lower=0) / 20.0)
+        strength = (strength * decay).clip(0.0, 1.0)
         strength = strength.where(direction != 0, 0.0)
 
         return SignalVector(

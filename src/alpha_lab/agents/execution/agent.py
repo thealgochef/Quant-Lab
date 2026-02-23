@@ -9,6 +9,7 @@ See architecture spec Section 6 for full system prompt.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -253,19 +254,24 @@ class ExecutionAgent(BaseAgent):
         # --- Monte Carlo ruin probability ---
         mc_ruin = 1.0
         if prop_firm is not None and win_rate > 0 and avg_win > 0 and avg_loss > 0:
+            # Derive seed from signal_id for unique-per-signal but reproducible paths
+            sig_hash = int(hashlib.sha256(sv.signal_id.encode()).hexdigest(), 16)
+            rng_seed = sig_hash % (2**31)
             ruin_probs = simulate_ruin_probability(
                 win_rate, avg_win, avg_loss, prop_firm,
                 num_simulations=1000,
                 trade_sequences=[100, 500],
-                rng_seed=42,
+                rng_seed=rng_seed,
             )
             mc_ruin = max(ruin_probs.values()) if ruin_probs else 1.0
 
         # --- Prop firm feasibility ---
         if prop_firm is not None:
             # Build synthetic daily P&L from trade stats
+            pnl_hash = int(hashlib.sha256(sv.signal_id.encode()).hexdigest(), 16)
             daily_pnl = _synthetic_daily_pnl(
-                win_rate, avg_win, avg_loss, num_trades, n_days=60
+                win_rate, avg_win, avg_loss, num_trades, n_days=60,
+                seed=pnl_hash % (2**31),
             )
             feasibility = validate_prop_firm_constraints(
                 daily_pnl, prop_firm,
@@ -363,6 +369,7 @@ def _synthetic_daily_pnl(
     avg_loss: float,
     num_trades: int,
     n_days: int = 60,
+    seed: int | None = None,
 ) -> list[float]:
     """Generate synthetic daily P&L for prop firm constraint testing.
 
@@ -373,7 +380,7 @@ def _synthetic_daily_pnl(
     daily_ev = ev_per_trade * trades_per_day
 
     # Add realistic variance: std proportional to sqrt(trades_per_day)
-    rng = np.random.default_rng(42)
+    rng = np.random.default_rng(seed)
     trade_std = np.sqrt(win_rate * avg_win**2 + (1 - win_rate) * avg_loss**2)
     daily_std = trade_std * np.sqrt(trades_per_day)
 

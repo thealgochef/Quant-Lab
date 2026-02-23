@@ -66,8 +66,11 @@ class KillzoneTimingDetector(SignalDetector):
                 signals.append(sv)
         return signals
 
-    def _in_killzone(self, hour: int) -> tuple[bool, str, float]:
-        """Check if hour falls in a killzone.
+    def _in_killzone(self, hour: float) -> tuple[bool, str, float]:
+        """Check if fractional hour falls in a killzone.
+
+        Args:
+            hour: Fractional hour (e.g. 8.5 = 8:30am)
 
         Returns (in_kz, kz_name, proximity_to_start).
         proximity_to_start is 1.0 at start, decaying toward 0 at end.
@@ -106,16 +109,16 @@ class KillzoneTimingDetector(SignalDetector):
         # Bar-level returns for momentum
         returns = pd.Series(closes).diff().fillna(0.0).values
 
-        # Try to extract hour — handle both tz-aware and naive
+        # Extract fractional hours for sub-hourly precision
         try:
-            hours = df.index.hour
+            hours = df.index.hour + df.index.minute / 60.0
         except AttributeError:
             return None
 
         last_kz_start = 0
 
         for i in range(self.direction_window, len(df)):
-            hour = int(hours[i])
+            hour = float(hours[i])
             in_kz, kz_name, proximity = self._in_killzone(hour)
 
             if not in_kz:
@@ -162,7 +165,7 @@ class KillzoneTimingDetector(SignalDetector):
             strength.iloc[i] = round(min(score, 1.0), 6)
 
             # Track killzone start
-            if i > 0 and not self._in_killzone(int(hours[i - 1]))[0]:
+            if i > 0 and not self._in_killzone(float(hours[i - 1]))[0]:
                 last_kz_start = i
             formation_idx.iloc[i] = last_kz_start
 

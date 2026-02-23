@@ -14,8 +14,11 @@ from datetime import datetime
 
 import pandas as pd
 
-from alpha_lab.agents.data_infra.aggregation import aggregate_time_bars
-from alpha_lab.agents.data_infra.providers.polygon import PolygonDataProvider
+from alpha_lab.agents.data_infra.aggregation import (
+    aggregate_tick_bars,
+    aggregate_time_bars,
+)
+from alpha_lab.agents.data_infra.providers import create_provider
 from alpha_lab.agents.data_infra.quality import run_quality_checks
 from alpha_lab.agents.data_infra.sessions import tag_killzones, tag_sessions
 from alpha_lab.core.agent_base import BaseAgent
@@ -96,7 +99,7 @@ class DataInfraAgent(BaseAgent):
         start = datetime.fromisoformat(date_range[0])
         end = datetime.fromisoformat(date_range[1])
 
-        provider = PolygonDataProvider()
+        provider = self._create_provider()
         provider.connect()
 
         try:
@@ -128,6 +131,26 @@ class DataInfraAgent(BaseAgent):
                     agg = tag_killzones(agg)
                     bars_dict[tf_str] = agg
 
+            # Tick bar aggregation (if provider supports ticks)
+            tick_tfs = [
+                tf for tf in timeframes
+                if tf in (Timeframe.TICK_987, Timeframe.TICK_2000)
+            ]
+            if tick_tfs:
+                try:
+                    ticks = provider.get_ticks(instrument, start, end)
+                    if not ticks.empty:
+                        for tf_str in tick_tfs:
+                            tick_count = 987 if tf_str == Timeframe.TICK_987 else 2000
+                            tick_bars = aggregate_tick_bars(ticks, tick_count)
+                            if not tick_bars.empty:
+                                bars_dict[tf_str] = tick_bars
+                except NotImplementedError:
+                    self.logger.debug(
+                        "Provider %s does not support tick data",
+                        provider.provider_name,
+                    )
+
             # Compute previous day/week levels
             pd_levels = _compute_pd_levels(
                 bars_dict.get("1D", pd.DataFrame()),
@@ -151,14 +174,16 @@ class DataInfraAgent(BaseAgent):
                 date_range=date_range,
                 metadata={
                     "provider": provider.provider_name,
-                    "ticker": PolygonDataProvider.resolve_front_month_ticker(
-                        instrument, start
-                    ),
                     "timeframes": timeframes,
                 },
             )
         finally:
             provider.disconnect()
+
+    @staticmethod
+    def _create_provider(provider_name: str = "polygon"):
+        """Create a DataProvider by name using the factory."""
+        return create_provider(provider_name)
 
 
 # ── Helpers ───────────────────────────────────────────────────────

@@ -166,17 +166,20 @@ class EmaReclaimDetector(SignalDetector):
                     bear_state = 1
                     bear_max_depth = 0.0
 
-        # Forward-fill formation index
+        # Forward-fill with exponential decay
         fi = formation_idx.replace(0, np.nan)
         formation_idx = fi.ffill().fillna(0).astype(int)
 
-        # Forward-fill direction and strength from reclaim events
         dir_filled = direction.replace(0, np.nan).ffill().fillna(0).astype(int)
         str_filled = strength.replace(0.0, np.nan).ffill().fillna(0.0)
-        # Only keep filled values where there has been a signal
         has_signal = formation_idx > 0
         direction = dir_filled.where(has_signal, 0)
         strength = str_filled.where(has_signal, 0.0).clip(0.0, 1.0)
+
+        # Decay strength: halve every 20 bars from formation
+        bars_since = pd.Series(np.arange(len(df)), index=df.index) - formation_idx
+        decay = np.power(0.5, bars_since.clip(lower=0) / 20.0)
+        strength = (strength * decay).clip(0.0, 1.0)
         strength = strength.where(direction != 0, 0.0)
 
         return SignalVector(

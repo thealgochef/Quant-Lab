@@ -42,21 +42,40 @@ class RobustnessTest(ValidationTest):
 
         fwd = compute_forward_returns(close, self.horizon)
 
-        # Subsample stability: split into N non-overlapping chunks
-        n = len(close)
-        chunk_size = n // self.n_subsamples
+        # Subsample stability: split by calendar quarter boundaries
         subsample_ics: list[float] = []
 
-        for i in range(self.n_subsamples):
-            start = i * chunk_size
-            end = start + chunk_size if i < self.n_subsamples - 1 else n
-            s_chunk = sig.iloc[start:end]
-            f_chunk = fwd.iloc[start:end]
-            mask = s_chunk.notna() & f_chunk.notna() & (s_chunk != 0)
-            if mask.sum() >= 20:
-                corr, _ = stats.spearmanr(s_chunk[mask], f_chunk[mask])
-                if np.isfinite(corr):
-                    subsample_ics.append(float(corr))
+        try:
+            quarters = close.index.to_period("Q")
+            unique_quarters = quarters.unique()
+        except (AttributeError, TypeError):
+            # Fallback to positional split if index isn't datetime
+            unique_quarters = None
+
+        if unique_quarters is not None and len(unique_quarters) >= 2:
+            for q in unique_quarters:
+                mask_q = quarters == q
+                s_chunk = sig[mask_q]
+                f_chunk = fwd[mask_q]
+                mask = s_chunk.notna() & f_chunk.notna() & (s_chunk != 0)
+                if mask.sum() >= 20:
+                    corr, _ = stats.spearmanr(s_chunk[mask], f_chunk[mask])
+                    if np.isfinite(corr):
+                        subsample_ics.append(float(corr))
+        else:
+            # Fallback: positional split when no datetime index
+            n = len(close)
+            chunk_size = n // self.n_subsamples
+            for i in range(self.n_subsamples):
+                start = i * chunk_size
+                end = start + chunk_size if i < self.n_subsamples - 1 else n
+                s_chunk = sig.iloc[start:end]
+                f_chunk = fwd.iloc[start:end]
+                mask = s_chunk.notna() & f_chunk.notna() & (s_chunk != 0)
+                if mask.sum() >= 20:
+                    corr, _ = stats.spearmanr(s_chunk[mask], f_chunk[mask])
+                    if np.isfinite(corr):
+                        subsample_ics.append(float(corr))
 
         # Subsample stable if:
         # 1. All subsamples have same sign IC

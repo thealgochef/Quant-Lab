@@ -84,17 +84,20 @@ def compute_kama(
 
     sc = (er * (fast_sc - slow_sc) + slow_sc) ** 2
 
-    kama = pd.Series(np.nan, index=close.index)
+    close_vals = close.values
+    sc_vals = sc.values
+    kama_vals = np.full(len(close), np.nan)
+
     first_valid = period
     if first_valid < len(close):
-        kama.iloc[first_valid] = close.iloc[first_valid]
+        kama_vals[first_valid] = close_vals[first_valid]
 
     for i in range(first_valid + 1, len(close)):
-        kama.iloc[i] = kama.iloc[i - 1] + sc.iloc[i] * (
-            close.iloc[i] - kama.iloc[i - 1]
+        kama_vals[i] = kama_vals[i - 1] + sc_vals[i] * (
+            close_vals[i] - kama_vals[i - 1]
         )
 
-    return kama
+    return pd.Series(kama_vals, index=close.index)
 
 
 def compute_kama_efficiency_ratio(
@@ -177,9 +180,10 @@ def compute_swing_highs(
 ) -> pd.Series:
     """Detect swing highs using N-bar pivot logic.
 
-    A swing high at bar *i* means ``highs[i]`` is the maximum of the
-    window ``[i-left, i+right]``.  Bars near the edges where the full
-    window is unavailable are set to NaN.
+    A swing high at bar *i* requires ``highs[i]`` to be the strict
+    maximum of the window ``[i-left, i+right]``.  The swing is stamped
+    at bar ``i + right`` (the earliest bar where the pivot is confirmed)
+    to prevent look-ahead bias.
 
     Args:
         highs: Series of high prices
@@ -193,8 +197,11 @@ def compute_swing_highs(
     vals = highs.values
     for i in range(left, len(vals) - right):
         window = vals[i - left: i + right + 1]
-        if vals[i] == window.max() and np.sum(window == vals[i]) == 1:
-            result.iloc[i] = vals[i]
+        if vals[i] == window.max():
+            # On tie, pick leftmost: only stamp if no earlier bar in window matches
+            tie_indices = np.where(window == vals[i])[0]
+            if tie_indices[0] == left:  # i is the leftmost max
+                result.iloc[i + right] = vals[i]
     return result
 
 
@@ -203,8 +210,10 @@ def compute_swing_lows(
 ) -> pd.Series:
     """Detect swing lows using N-bar pivot logic.
 
-    A swing low at bar *i* means ``lows[i]`` is the minimum of the
-    window ``[i-left, i+right]``.
+    A swing low at bar *i* requires ``lows[i]`` to be the strict
+    minimum of the window ``[i-left, i+right]``.  The swing is stamped
+    at bar ``i + right`` (the earliest bar where the pivot is confirmed)
+    to prevent look-ahead bias.
 
     Args:
         lows: Series of low prices
@@ -218,6 +227,9 @@ def compute_swing_lows(
     vals = lows.values
     for i in range(left, len(vals) - right):
         window = vals[i - left: i + right + 1]
-        if vals[i] == window.min() and np.sum(window == vals[i]) == 1:
-            result.iloc[i] = vals[i]
+        if vals[i] == window.min():
+            # On tie, pick leftmost: only stamp if no earlier bar in window matches
+            tie_indices = np.where(window == vals[i])[0]
+            if tie_indices[0] == left:  # i is the leftmost min
+                result.iloc[i + right] = vals[i]
     return result

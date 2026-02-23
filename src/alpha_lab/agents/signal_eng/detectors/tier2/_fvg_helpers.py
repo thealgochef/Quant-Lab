@@ -26,8 +26,8 @@ def detect_fvgs(
 
     Returns:
         List of dicts, each with keys:
-        - idx: integer position where FVG formed (middle candle)
-        - bar_index: DatetimeIndex label of the middle candle
+        - idx: integer position where FVG is confirmed (3rd candle, i+1)
+        - bar_index: DatetimeIndex label of the confirmation candle
         - type: "bullish" or "bearish"
         - zone_low: lower bound of FVG zone
         - zone_high: upper bound of FVG zone
@@ -47,12 +47,13 @@ def detect_fvgs(
             continue
 
         # Bullish FVG: candle before's high < candle after's low
+        # FVG is confirmed at bar i+1 (the 3rd candle that completes the gap)
         if highs[i - 1] < lows[i + 1]:
             gap_size = lows[i + 1] - highs[i - 1]
             if gap_size / atr_i >= min_gap_atr:
                 fvgs.append({
-                    "idx": i,
-                    "bar_index": df.index[i],
+                    "idx": i + 1,
+                    "bar_index": df.index[i + 1],
                     "type": "bullish",
                     "zone_low": highs[i - 1],
                     "zone_high": lows[i + 1],
@@ -64,8 +65,8 @@ def detect_fvgs(
             gap_size = lows[i - 1] - highs[i + 1]
             if gap_size / atr_i >= min_gap_atr:
                 fvgs.append({
-                    "idx": i,
-                    "bar_index": df.index[i],
+                    "idx": i + 1,
+                    "bar_index": df.index[i + 1],
                     "type": "bearish",
                     "zone_low": highs[i + 1],
                     "zone_high": lows[i - 1],
@@ -101,7 +102,7 @@ def track_fvg_fills(
     for fvg in fvgs:
         fvg["filled"] = False
         fvg["fill_idx"] = -1
-        start = fvg["idx"] + 2  # check from 2 bars after formation
+        start = fvg["idx"] + 1  # check from 1 bar after confirmation
         end = min(fvg["idx"] + max_age, n)
 
         for j in range(start, end):

@@ -125,36 +125,56 @@ def generate_synthetic_bars(n_bars: int = 2000) -> pd.DataFrame:
     )
 
 
-def build_bundle(bars_5m: pd.DataFrame, instrument: str) -> DataBundle:
-    """Wrap bars into a DataBundle."""
+def build_bundle(
+    bars_input: pd.DataFrame | dict[str, pd.DataFrame],
+    instrument: str,
+) -> DataBundle:
+    """Wrap bars into a DataBundle.
+
+    Args:
+        bars_input: Either a single 5m DataFrame or a dict of {tf: DataFrame}
+        instrument: Instrument symbol
+    """
     now = datetime.now(UTC)
-    fd = (bars_5m.index[0].strftime("%Y-%m-%d")
-          if hasattr(bars_5m.index[0], "strftime") else "2026-01-05")
-    ld = (bars_5m.index[-1].strftime("%Y-%m-%d")
-          if hasattr(bars_5m.index[-1], "strftime") else "2026-02-20")
+
+    # Normalize to dict
+    if isinstance(bars_input, pd.DataFrame):
+        bars_dict: dict[str, pd.DataFrame] = {"5m": bars_input}
+    else:
+        bars_dict = bars_input
+
+    # Pick a primary TF for metadata
+    primary_tf = "5m" if "5m" in bars_dict else next(iter(bars_dict))
+    primary_bars = bars_dict[primary_tf]
+
+    fd = (primary_bars.index[0].strftime("%Y-%m-%d")
+          if hasattr(primary_bars.index[0], "strftime") else "2026-01-05")
+    ld = (primary_bars.index[-1].strftime("%Y-%m-%d")
+          if hasattr(primary_bars.index[-1], "strftime") else "2026-02-20")
+
+    n_first_day = min(78, len(primary_bars))
     return DataBundle(
-        instrument=instrument, bars={"5m": bars_5m},
+        instrument=instrument, bars=bars_dict,
         sessions=[SessionMetadata(
             session_id=f"{instrument}_{fd}_RTH", session_type="RTH",
             killzone="NEW_YORK",
             rth_open=f"{fd}T09:30:00-05:00", rth_close=f"{fd}T16:15:00-05:00",
         )],
         pd_levels={fd: PreviousDayLevels(
-            pd_high=float(bars_5m["high"].iloc[:78].max()),
-            pd_low=float(bars_5m["low"].iloc[:78].min()),
-            pd_mid=float((bars_5m["high"].iloc[:78].max()
-                          + bars_5m["low"].iloc[:78].min()) / 2),
-            pd_close=float(bars_5m["close"].iloc[77]
-                           if len(bars_5m) > 77
-                           else bars_5m["close"].iloc[-1]),
-            pw_high=float(bars_5m["high"].max()),
-            pw_low=float(bars_5m["low"].min()),
-            overnight_high=float(bars_5m["high"].iloc[0]),
-            overnight_low=float(bars_5m["low"].iloc[0]),
+            pd_high=float(primary_bars["high"].iloc[:n_first_day].max()),
+            pd_low=float(primary_bars["low"].iloc[:n_first_day].min()),
+            pd_mid=float((primary_bars["high"].iloc[:n_first_day].max()
+                          + primary_bars["low"].iloc[:n_first_day].min()) / 2),
+            pd_close=float(primary_bars["close"].iloc[min(77, len(primary_bars) - 1)]),
+            pw_high=float(primary_bars["high"].max()),
+            pw_low=float(primary_bars["low"].min()),
+            overnight_high=float(primary_bars["high"].iloc[0]),
+            overnight_low=float(primary_bars["low"].iloc[0]),
         )},
         quality=QualityReport(
-            passed=True, total_bars=len(bars_5m), gaps_found=0,
-            gaps_detail=[], volume_zeros=int((bars_5m["volume"] == 0).sum()),
+            passed=True, total_bars=len(primary_bars), gaps_found=0,
+            gaps_detail=[],
+            volume_zeros=int((primary_bars["volume"] == 0).sum()),
             ohlc_violations=0, cross_tf_mismatches=0,
             timestamp_coverage=1.0, report_generated_at=now.isoformat(),
         ),
@@ -186,6 +206,109 @@ def fetch_live_data(symbol: str, days: int = 30) -> pd.DataFrame:
         f"{symbol}_{ts.strftime('%Y-%m-%d')}_RTH" for ts in bars.index
     ]
     return bars
+
+
+def fetch_databento_data(
+    symbol: str,
+    days: int = 10,
+    include_ticks: bool = False,
+) -> dict[str, pd.DataFrame]:
+    """Fetch real bars from Databento across multiple timeframes.
+
+    Fetches 1m bars then resamples to all standard timeframes.
+    When *include_ticks* is True, also fetches raw MBP-10 tick data
+    and builds 987-tick and 2000-tick bars.
+
+    Returns:
+        dict mapping timeframe string to tagged bars DataFrame.
+    """
+    from alpha_lab.agents.data_infra.aggregation import (
+        aggregate_tick_bars,
+        aggregate_time_bars,
+    )
+    from alpha_lab.agents.data_infra.providers.databento import DatabentDataProvider
+    from alpha_lab.agents.data_infra.sessions import tag_killzones, tag_sessions
+    from alpha_lab.core.enums import Timeframe
+
+    api_key = os.environ.get("DATABENTO_API_KEY", "")
+    if not api_key:
+        st.error("DATABENTO_API_KEY not set. See .env.example.")
+        st.stop()
+
+    provider = DatabentDataProvider(api_key=api_key)
+    provider.connect()
+
+    # Databento historical data has a short lag; back off 1 hour
+    end = datetime.now(UTC) - timedelta(hours=1)
+    start = end - timedelta(days=days)
+
+    try:
+        bars_1m = provider.get_ohlcv(symbol, Timeframe.M1, start, end)
+
+        # Fetch trade ticks for tick-bar construction (lightweight)
+        raw_ticks = pd.DataFrame()
+        if include_ticks:
+            raw_ticks = provider.get_trades(symbol, start, end)
+    finally:
+        provider.disconnect()
+
+    if bars_1m.empty:
+        st.error("No data returned from Databento")
+        st.stop()
+
+    # Convert to Eastern for session tagging
+    if bars_1m.index.tz is not None:
+        bars_1m.index = bars_1m.index.tz_convert("US/Eastern")
+    else:
+        bars_1m.index = bars_1m.index.tz_localize("UTC").tz_convert("US/Eastern")
+
+    # Tag sessions and killzones
+    bars_1m = tag_sessions(bars_1m, symbol)
+    bars_1m = tag_killzones(bars_1m)
+
+    session_boundaries = {
+        "rth_open": "09:30", "rth_close": "16:15",
+        "globex_open": "18:00", "globex_close": "17:00",
+    }
+
+    # Build multi-TF time bars
+    bars_dict: dict[str, pd.DataFrame] = {"1m": bars_1m}
+
+    for tf in (Timeframe.M3, Timeframe.M5, Timeframe.M10,
+               Timeframe.M15, Timeframe.M30, Timeframe.H1, Timeframe.H4):
+        agg = aggregate_time_bars(bars_1m, tf, session_boundaries)
+        agg = tag_sessions(agg, symbol)
+        agg = tag_killzones(agg)
+        bars_dict[tf.value] = agg
+
+    # Build tick bars from trade data
+    if not raw_ticks.empty and "price" in raw_ticks.columns:
+        # Filter obvious price outliers (>50% from median)
+        median_px = raw_ticks["price"].median()
+        raw_ticks = raw_ticks[
+            (raw_ticks["price"] > median_px * 0.5)
+            & (raw_ticks["price"] < median_px * 1.5)
+        ]
+
+        for count, label in ((987, "987t"), (2000, "2000t")):
+            tick_bars = aggregate_tick_bars(raw_ticks, tick_count=count)
+            if not tick_bars.empty:
+                # Ensure DatetimeIndex and convert to Eastern
+                if not isinstance(tick_bars.index, pd.DatetimeIndex):
+                    tick_bars.index = pd.DatetimeIndex(tick_bars.index)
+                # Round to seconds — removes nanosecond noise from tick timestamps
+                tick_bars.index = tick_bars.index.round("s")
+                if tick_bars.index.tz is not None:
+                    tick_bars.index = tick_bars.index.tz_convert("US/Eastern")
+                else:
+                    tick_bars.index = tick_bars.index.tz_localize(
+                        "UTC",
+                    ).tz_convert("US/Eastern")
+                tick_bars = tag_sessions(tick_bars, symbol)
+                tick_bars = tag_killzones(tick_bars)
+                bars_dict[label] = tick_bars
+
+    return bars_dict
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -324,6 +447,8 @@ def simulate_trades(
 @st.cache_data(ttl=300)
 def run_pipeline(
     mode: str, symbol: str, days: int,
+    chart_tf: str = "5m",
+    include_ticks: bool = False,
     strength_threshold: float = 0.4,
     stop_loss_ticks: float = 8.0,
     take_profit_ticks: float = 16.0,
@@ -338,18 +463,31 @@ def run_pipeline(
     val = ValidationAgent(bus)
     exec_agent = ExecutionAgent(bus, instrument=instrument, prop_firm=APEX_50K)
 
-    if mode == "Live (Polygon.io)":
+    if mode == "Live (Databento)":
+        bars_dict = fetch_databento_data(
+            symbol, days=days, include_ticks=include_ticks,
+        )
+    elif mode == "Live (Polygon.io)":
         bars_5m = fetch_live_data(symbol, days=days)
+        bars_dict = {"5m": bars_5m}
     else:
         bars_5m = generate_synthetic_bars(n_bars=2000)
+        bars_dict = {"5m": bars_5m}
 
-    bundle = build_bundle(bars_5m, symbol)
+    # Primary bars for chart display
+    if chart_tf in bars_dict:
+        bars_primary = bars_dict[chart_tf]
+    elif "5m" in bars_dict:
+        bars_primary = bars_dict["5m"]
+    else:
+        bars_primary = next(iter(bars_dict.values()))
+
+    bundle = build_bundle(bars_dict, symbol)
     signal_bundle = sig.generate_signals(bundle)
 
-    price_data = {"5m": bars_5m}
-    val_report = val.validate_signal_bundle(signal_bundle, price_data)
+    val_report = val.validate_signal_bundle(signal_bundle, bars_dict)
 
-    exec_report = exec_agent.analyze_signals(val_report, price_data)
+    exec_report = exec_agent.analyze_signals(val_report, bars_dict)
     demo_mode = False
     if (not exec_report.approved_signals
             and not exec_report.vetoed_signals
@@ -367,20 +505,26 @@ def run_pipeline(
             overall_assessment="1 DEPLOY (demo override)",
             timestamp=val_report.timestamp,
         )
-        exec_report = exec_agent.analyze_signals(demo_report, price_data)
+        exec_report = exec_agent.analyze_signals(demo_report, bars_dict)
 
-    # Simulate trades per signal
+    # Simulate trades per signal (only for signals matching chart TF)
     all_trades = {}
     for sv in signal_bundle.signals:
-        if hasattr(sv.direction, "iloc") and hasattr(sv.strength, "iloc"):
-            tdf = simulate_trades(
-                sv.direction, sv.strength, bars_5m, instrument,
-                strength_threshold=strength_threshold,
-                stop_loss_ticks=stop_loss_ticks,
-                take_profit_ticks=take_profit_ticks,
-                max_hold_bars=max_hold_bars,
-            )
-            all_trades[sv.signal_id] = tdf
+        if not (hasattr(sv.direction, "iloc") and hasattr(sv.strength, "iloc")):
+            continue
+        # Match signal to its timeframe's bars
+        sv_tf = sv.timeframe if hasattr(sv, "timeframe") else chart_tf
+        sv_bars = bars_dict.get(sv_tf, bars_primary)
+        if len(sv.direction) != len(sv_bars):
+            continue
+        tdf = simulate_trades(
+            sv.direction, sv.strength, sv_bars, instrument,
+            strength_threshold=strength_threshold,
+            stop_loss_ticks=stop_loss_ticks,
+            take_profit_ticks=take_profit_ticks,
+            max_hold_bars=max_hold_bars,
+        )
+        all_trades[sv.signal_id] = tdf
 
     # Monitoring
     mon = MonitoringAgent(bus)
@@ -402,13 +546,14 @@ def run_pipeline(
                 trades_today=12, gross_pnl_today=200.0, net_pnl_today=150.0,
             )
         market_data = {
-            "ema_values": [float(bars_5m["close"].iloc[-1]),
-                           float(bars_5m["close"].iloc[-20]),
-                           float(bars_5m["close"].iloc[-50])],
+            "ema_values": [float(bars_primary["close"].iloc[-1]),
+                           float(bars_primary["close"].iloc[-20]),
+                           float(bars_primary["close"].iloc[-50])],
             "kama_slope": 0.3,
-            "atr_current": float(bars_5m["high"].iloc[-20:].mean()
-                                 - bars_5m["low"].iloc[-20:].mean()),
-            "atr_avg": float(bars_5m["high"].mean() - bars_5m["low"].mean()),
+            "atr_current": float(bars_primary["high"].iloc[-20:].mean()
+                                 - bars_primary["low"].iloc[-20:].mean()),
+            "atr_avg": float(bars_primary["high"].mean()
+                             - bars_primary["low"].mean()),
             "adx": 25.0,
         }
         mon.update_regime(market_data)
@@ -417,7 +562,10 @@ def run_pipeline(
     daily_report = mon.generate_daily_report() if mon.active_signals else None
 
     return {
-        "bars_5m": bars_5m, "bundle": bundle,
+        "bars_primary": bars_primary,
+        "bars_dict": bars_dict,
+        "chart_tf": chart_tf,
+        "bundle": bundle,
         "signal_bundle": signal_bundle, "val_report": val_report,
         "exec_report": exec_report, "demo_mode": demo_mode,
         "all_trades": all_trades,
@@ -433,13 +581,58 @@ def run_pipeline(
 # ═══════════════════════════════════════════════════════════════
 
 
+def _format_bar_index(display: pd.DataFrame) -> pd.DataFrame:
+    """Format DatetimeIndex to short readable strings for chart x-axis.
+
+    Converts nanosecond-precision tick bar timestamps (and regular bar
+    timestamps) to compact 'MM/DD HH:MM' labels so the chart x-axis
+    stays readable.  Appends a sequence suffix when labels collide
+    (common with tick bars where multiple bars share the same minute).
+    """
+    df = display.copy()
+    idx = df.index
+    if isinstance(idx, pd.DatetimeIndex):
+        if idx.tz is not None:
+            idx = idx.tz_localize(None)
+        labels = idx.strftime("%m/%d %H:%M")
+        # De-duplicate: append .N suffix for repeated labels within a minute
+        seen: dict[str, int] = {}
+        unique: list[str] = []
+        for lbl in labels:
+            count = seen.get(lbl, 0)
+            if count > 0:
+                unique.append(f"{lbl}.{count}")
+            else:
+                unique.append(lbl)
+            seen[lbl] = count + 1
+        df.index = pd.Index(unique)
+    return df
+
+
 def chart_candlestick_with_signals(
     bars: pd.DataFrame, signal_bundle, selected_signal: str,
     trades_df: pd.DataFrame, n_bars: int = 200,
 ) -> go.Figure:
     """Candlestick chart with signal arrows and trade markers."""
-    # Use last n_bars for readability
-    display = bars.iloc[-n_bars:]
+    display = bars.iloc[-n_bars:].copy()
+    n = len(display)
+    x_int = list(range(n))
+
+    # Build readable tick labels from the original index
+    raw_idx = display.index
+    if isinstance(raw_idx, pd.DatetimeIndex):
+        fmt_idx = raw_idx.tz_localize(None) if raw_idx.tz is not None else raw_idx
+        tick_labels = fmt_idx.strftime("%m/%d %H:%M").tolist()
+    else:
+        tick_labels = [str(x) for x in raw_idx]
+
+    # Timestamp → integer position map (for trade marker placement)
+    def _strip_tz(ts: pd.Timestamp) -> pd.Timestamp:
+        return ts.tz_localize(None) if ts.tz is not None else ts
+
+    ts_to_pos: dict = {}
+    for i, ts in enumerate(display.index):
+        ts_to_pos[_strip_tz(pd.Timestamp(ts))] = i
 
     fig = make_subplots(
         rows=2, cols=1, shared_xaxes=True,
@@ -448,121 +641,147 @@ def chart_candlestick_with_signals(
         subplot_titles=("Price Action + Signals", "Volume"),
     )
 
-    # Candlesticks
+    # ── Candlestick ──────────────────────────────────────────────
     fig.add_trace(go.Candlestick(
-        x=display.index, open=display["open"], high=display["high"],
-        low=display["low"], close=display["close"],
-        name="OHLC", increasing_line_color="#26a69a",
+        x=x_int,
+        open=display["open"].values,
+        high=display["high"].values,
+        low=display["low"].values,
+        close=display["close"].values,
+        name="OHLC",
+        increasing_line_color="#26a69a",
         decreasing_line_color="#ef5350",
     ), row=1, col=1)
 
-    # Signal arrows
+    price_range = float(display["high"].max() - display["low"].min())
+
+    # ── Signal arrows ────────────────────────────────────────────
     for sv in signal_bundle.signals:
         if sv.signal_id != selected_signal:
             continue
         if not hasattr(sv.direction, "iloc"):
             continue
-        sig_slice = sv.direction.iloc[-n_bars:]
+        sig_dir = sv.direction.iloc[-n_bars:]
+        long_mask = (sig_dir == 1).values[:n]
+        short_mask = (sig_dir == -1).values[:n]
 
-        long_mask = sig_slice == 1
-        short_mask = sig_slice == -1
+        long_pos = [i for i in range(n) if long_mask[i]]
+        short_pos = [i for i in range(n) if short_mask[i]]
 
-        long_idx = display.index[long_mask.values[:len(display)]] if long_mask.any() else []
-        short_idx = display.index[short_mask.values[:len(display)]] if short_mask.any() else []
-
-        if len(long_idx) > 0:
+        if long_pos:
             fig.add_trace(go.Scatter(
-                x=long_idx,
-                y=(display.loc[long_idx, "low"]
-                   - (display["high"].max() - display["low"].min()) * 0.02),
+                x=long_pos,
+                y=[float(display["low"].iloc[i]) - price_range * 0.02
+                   for i in long_pos],
                 mode="markers",
-                marker=dict(symbol="triangle-up", size=8, color="#26a69a", opacity=0.7),
+                marker=dict(symbol="triangle-up", size=8,
+                            color="#26a69a", opacity=0.7),
                 name=f"{sv.signal_id} LONG",
-                hovertemplate="LONG<br>%{x}<br>Price: %{y:.2f}<extra></extra>",
+                hovertemplate="LONG<br>Price: %{y:.2f}<extra></extra>",
             ), row=1, col=1)
 
-        if len(short_idx) > 0:
+        if short_pos:
             fig.add_trace(go.Scatter(
-                x=short_idx,
-                y=(display.loc[short_idx, "high"]
-                   + (display["high"].max() - display["low"].min()) * 0.02),
+                x=short_pos,
+                y=[float(display["high"].iloc[i]) + price_range * 0.02
+                   for i in short_pos],
                 mode="markers",
-                marker=dict(symbol="triangle-down", size=8, color="#ef5350", opacity=0.7),
+                marker=dict(symbol="triangle-down", size=8,
+                            color="#ef5350", opacity=0.7),
                 name=f"{sv.signal_id} SHORT",
-                hovertemplate="SHORT<br>%{x}<br>Price: %{y:.2f}<extra></extra>",
+                hovertemplate="SHORT<br>Price: %{y:.2f}<extra></extra>",
             ), row=1, col=1)
 
-    # Trade entry/exit markers
+    # ── Trade entry/exit markers ─────────────────────────────────
     if not trades_df.empty:
-        visible_trades = trades_df[
-            trades_df["entry_time"] >= display.index[0]
-        ]
-        if not visible_trades.empty:
-            # Entries
+        entry_x, entry_y, entry_dirs = [], [], []
+        win_x, win_y, win_pnls = [], [], []
+        loss_x, loss_y, loss_pnls = [], [], []
+
+        for _, row in trades_df.iterrows():
+            et = _strip_tz(pd.Timestamp(row["entry_time"]))
+            xt = _strip_tz(pd.Timestamp(row["exit_time"]))
+            e_pos = ts_to_pos.get(et)
+            x_pos = ts_to_pos.get(xt)
+
+            if e_pos is not None:
+                entry_x.append(e_pos)
+                entry_y.append(float(row["entry_price"]))
+                entry_dirs.append(row["direction"])
+
+            if x_pos is not None:
+                pnl = float(row["net_pnl"])
+                if pnl >= 0:
+                    win_x.append(x_pos)
+                    win_y.append(float(row["exit_price"]))
+                    win_pnls.append(pnl)
+                else:
+                    loss_x.append(x_pos)
+                    loss_y.append(float(row["exit_price"]))
+                    loss_pnls.append(pnl)
+
+        if entry_x:
             fig.add_trace(go.Scatter(
-                x=visible_trades["entry_time"],
-                y=visible_trades["entry_price"],
-                mode="markers",
+                x=entry_x, y=entry_y, mode="markers",
                 marker=dict(symbol="diamond", size=12, color="#FFD700",
                             line=dict(width=2, color="black")),
                 name="Trade Entry",
+                customdata=[[d] for d in entry_dirs],
                 hovertemplate=(
                     "ENTRY %{customdata[0]}<br>"
-                    "%{x}<br>Price: %{y:.2f}<extra></extra>"
+                    "Price: %{y:.2f}<extra></extra>"
                 ),
-                customdata=visible_trades[["direction"]].values,
             ), row=1, col=1)
 
-            # Exits color-coded by P&L
-            win_trades = visible_trades[visible_trades["net_pnl"] >= 0]
-            loss_trades = visible_trades[visible_trades["net_pnl"] < 0]
+        if win_x:
+            fig.add_trace(go.Scatter(
+                x=win_x, y=win_y, mode="markers",
+                marker=dict(symbol="star", size=14, color="#26a69a",
+                            line=dict(width=2, color="black")),
+                name="Exit (Win)",
+                customdata=[[p] for p in win_pnls],
+                hovertemplate=(
+                    "WIN $%{customdata[0]:+.2f}<br>"
+                    "Price: %{y:.2f}<extra></extra>"
+                ),
+            ), row=1, col=1)
 
-            if not win_trades.empty:
-                fig.add_trace(go.Scatter(
-                    x=win_trades["exit_time"],
-                    y=win_trades["exit_price"],
-                    mode="markers",
-                    marker=dict(symbol="star", size=14, color="#26a69a",
-                                line=dict(width=2, color="black")),
-                    name="Exit (Win)",
-                    hovertemplate=(
-                        "WIN $%{customdata[0]:+.2f}<br>"
-                        "%{x}<br>Price: %{y:.2f}<extra></extra>"
-                    ),
-                    customdata=win_trades[["net_pnl"]].values,
-                ), row=1, col=1)
+        if loss_x:
+            fig.add_trace(go.Scatter(
+                x=loss_x, y=loss_y, mode="markers",
+                marker=dict(symbol="x", size=12, color="#ef5350",
+                            line=dict(width=3, color="#ef5350")),
+                name="Exit (Loss)",
+                customdata=[[p] for p in loss_pnls],
+                hovertemplate=(
+                    "LOSS $%{customdata[0]:+.2f}<br>"
+                    "Price: %{y:.2f}<extra></extra>"
+                ),
+            ), row=1, col=1)
 
-            if not loss_trades.empty:
-                fig.add_trace(go.Scatter(
-                    x=loss_trades["exit_time"],
-                    y=loss_trades["exit_price"],
-                    mode="markers",
-                    marker=dict(symbol="x", size=12, color="#ef5350",
-                                line=dict(width=3, color="#ef5350")),
-                    name="Exit (Loss)",
-                    hovertemplate=(
-                        "LOSS $%{customdata[0]:+.2f}<br>"
-                        "%{x}<br>Price: %{y:.2f}<extra></extra>"
-                    ),
-                    customdata=loss_trades[["net_pnl"]].values,
-                ), row=1, col=1)
-
-    # Volume bars
-    colors = ["#26a69a" if c >= o else "#ef5350"
-              for c, o in zip(display["close"], display["open"], strict=False)]
+    # ── Volume bars ──────────────────────────────────────────────
+    vol_colors = ["#26a69a" if c >= o else "#ef5350"
+                  for c, o in zip(display["close"], display["open"], strict=False)]
     fig.add_trace(go.Bar(
-        x=display.index, y=display["volume"], name="Volume",
-        marker_color=colors, opacity=0.5,
+        x=x_int, y=display["volume"].values, name="Volume",
+        marker_color=vol_colors, opacity=0.5,
     ), row=2, col=1)
 
+    # ── Layout ───────────────────────────────────────────────────
     fig.update_layout(
-        height=700, xaxis_rangeslider_visible=False,
+        height=700,
+        xaxis_rangeslider_visible=False,
         template="plotly_dark",
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
         margin=dict(l=50, r=20, t=40, b=20),
     )
-    fig.update_xaxes(type="category", nticks=20, row=1, col=1)
-    fig.update_xaxes(type="category", nticks=20, row=2, col=1)
+
+    # Readable tick labels (~20 evenly spaced)
+    step = max(1, n // 20)
+    t_pos = list(range(0, n, step))
+    t_txt = [tick_labels[i] for i in t_pos]
+    fig.update_xaxes(tickvals=t_pos, ticktext=t_txt, row=1, col=1)
+    fig.update_xaxes(tickvals=t_pos, ticktext=t_txt, row=2, col=1)
 
     return fig
 
@@ -620,7 +839,7 @@ def chart_signal_strength(
 ) -> go.Figure:
     """Signal strength heatmap over time."""
     fig = go.Figure()
-    display = bars.iloc[-n_bars:]
+    display = _format_bar_index(bars.iloc[-n_bars:])
 
     for sv in signal_bundle.signals:
         if sv.signal_id != selected_signal:
@@ -734,10 +953,30 @@ def main() -> None:
     # ── Sidebar ───────────────────────────────────────────────
     with st.sidebar:
         st.title("⚙️ Pipeline Config")
-        mode = st.radio("Data Source", ["Synthetic", "Live (Polygon.io)"])
+        mode = st.radio("Data Source",
+                         ["Synthetic", "Live (Databento)", "Live (Polygon.io)"])
         symbol = st.selectbox("Instrument", ["NQ", "ES"])
-        days = st.slider("History (days)", 7, 90, 30,
+        days = st.slider("History (days)", 7, 90, 10 if "Databento" in mode else 30,
                           disabled=(mode == "Synthetic"))
+
+        # Tick data toggle (Databento only — fetches L2 MBP-10)
+        include_ticks = False
+        if "Databento" in mode:
+            include_ticks = st.checkbox(
+                "Include tick bars (987t / 2000t)",
+                value=False,
+                help="Fetches raw L2 book data and builds tick-count bars. "
+                     "Slower but gives microstructure view.",
+            )
+
+        # Timeframe selector (multi-TF only for Databento)
+        tf_time = ["1m", "3m", "5m", "10m", "15m", "30m", "1H", "4H"]
+        tf_tick = ["987t", "2000t"] if include_ticks else []
+        tf_options = (tf_time + tf_tick if "Databento" in mode else ["5m"])
+        chart_tf = st.selectbox("Chart Timeframe", tf_options,
+                                index=tf_options.index("5m")
+                                if "5m" in tf_options else 0)
+
         chart_bars = st.slider("Chart bars to show", 50, 500, 200)
 
         st.divider()
@@ -769,7 +1008,7 @@ def main() -> None:
 
     # ── Header ────────────────────────────────────────────────
     st.title("📊 Alpha Signal Research Lab")
-    st.caption(f"{symbol}  |  {mode}  |  "
+    st.caption(f"{symbol}  |  {mode}  |  {chart_tf}  |  "
                f"{datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
     if not run_btn and "results" not in st.session_state:
@@ -780,6 +1019,8 @@ def main() -> None:
         with st.spinner("Running pipeline..."):
             st.session_state["results"] = run_pipeline(
                 mode, symbol, days,
+                chart_tf=chart_tf,
+                include_ticks=(include_ticks if "Databento" in mode else False),
                 strength_threshold=strength_threshold,
                 stop_loss_ticks=stop_loss_ticks,
                 take_profit_ticks=take_profit_ticks,
@@ -787,7 +1028,8 @@ def main() -> None:
             )
 
     r = st.session_state["results"]
-    bars_5m = r["bars_5m"]
+    bars_primary = r["bars_primary"]
+    bars_dict = r["bars_dict"]
     signal_bundle = r["signal_bundle"]
     val_report = r["val_report"]
     exec_report = r["exec_report"]
@@ -812,34 +1054,46 @@ def main() -> None:
     # TAB 1: PRICE & SIGNALS
     # ══════════════════════════════════════════════════════════
     with tab_chart:
+        # Data source info
+        n_tfs = len(bars_dict)
+        if n_tfs > 1:
+            st.caption(f"Timeframes loaded: {', '.join(sorted(bars_dict.keys()))} "
+                       f"| Showing: {r['chart_tf']}")
+
         selected = st.selectbox("Select Signal", signal_ids,
                                 key="sig_select_chart")
         trades_df = r["all_trades"].get(selected, pd.DataFrame())
 
         st.plotly_chart(
             chart_candlestick_with_signals(
-                bars_5m, signal_bundle, selected, trades_df, chart_bars,
+                bars_primary, signal_bundle, selected, trades_df, chart_bars,
             ),
             use_container_width=True,
         )
 
         st.plotly_chart(
-            chart_signal_strength(bars_5m, signal_bundle, selected, chart_bars),
+            chart_signal_strength(
+                bars_primary, signal_bundle, selected, chart_bars,
+            ),
             use_container_width=True,
         )
 
         # Quick stats
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3, c4, c5 = st.columns(5)
         with c1:
-            st.metric("Bars", f"{len(bars_5m):,}")
+            st.metric("Bars", f"{len(bars_primary):,}")
         with c2:
-            st.metric("Current Price", f"${bars_5m['close'].iloc[-1]:,.2f}")
+            st.metric("Current Price",
+                       f"${bars_primary['close'].iloc[-1]:,.2f}")
         with c3:
-            pct = (bars_5m["close"].iloc[-1] / bars_5m["close"].iloc[0] - 1) * 100
+            pct = ((bars_primary["close"].iloc[-1]
+                    / bars_primary["close"].iloc[0] - 1) * 100)
             st.metric("Period Return", f"{pct:+.2f}%")
         with c4:
+            st.metric("Signals", signal_bundle.total_signals)
+        with c5:
             st.metric("Quality",
-                       "✅ PASS" if r["bundle"].quality.passed else "❌ FAIL")
+                       "PASS" if r["bundle"].quality.passed else "FAIL")
 
     # ══════════════════════════════════════════════════════════
     # TAB 2: TRADE LOG

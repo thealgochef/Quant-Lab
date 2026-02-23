@@ -74,6 +74,7 @@ class SessionGapDetector(SignalDetector):
         atr = compute_atr(df)
         atr_safe = atr.replace(0, np.nan).ffill().fillna(1.0)
 
+        open_vals = df["open"].values
         close_vals = close.values
         high_vals = high.values
         low_vals = low.values
@@ -104,7 +105,7 @@ class SessionGapDetector(SignalDetector):
 
             if is_new_session:
                 # Gap = open of new session - close of previous session
-                gap = close_vals[i] - prev_close  # Using close[i] as proxy for open
+                gap = open_vals[i] - prev_close
                 gap_atr = abs(gap) / a
 
                 if gap_atr >= self.min_gap_atr:

@@ -137,7 +137,7 @@ class OrderBlocksDetector(SignalDetector):
                             "break_dist": break_dist,
                         })
                         break
-                last_swing_hi = close_vals[i]
+                # Don't reset last_swing_hi to close — let detected swings update it
 
             if bearish_bos:
                 break_dist = last_swing_lo - close_vals[i]
@@ -151,7 +151,7 @@ class OrderBlocksDetector(SignalDetector):
                             "break_dist": break_dist,
                         })
                         break
-                last_swing_lo = close_vals[i]
+                # Don't reset last_swing_lo to close — let detected swings update it
 
             # Expire old OBs and limit count
             active_obs = [
@@ -215,7 +215,7 @@ class OrderBlocksDetector(SignalDetector):
                 strength.iloc[i] = round(min(best_score, 1.0), 6)
                 formation_idx.iloc[i] = i
 
-        # Forward-fill
+        # Forward-fill with exponential decay
         fi = formation_idx.replace(0, np.nan)
         formation_idx = fi.ffill().fillna(0).astype(int)
 
@@ -224,6 +224,11 @@ class OrderBlocksDetector(SignalDetector):
         has_signal = formation_idx > 0
         direction = dir_filled.where(has_signal, 0)
         strength = str_filled.where(has_signal, 0.0).clip(0.0, 1.0)
+
+        # Decay strength: halve every 20 bars from formation
+        bars_since = pd.Series(np.arange(len(df)), index=df.index) - formation_idx
+        decay = np.power(0.5, bars_since.clip(lower=0) / 20.0)
+        strength = (strength * decay).clip(0.0, 1.0)
         strength = strength.where(direction != 0, 0.0)
 
         return SignalVector(

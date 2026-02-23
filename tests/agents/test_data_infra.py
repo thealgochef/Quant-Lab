@@ -325,9 +325,9 @@ class TestAggregation:
         "globex_close": "17:00",
     }
 
-    def test_tick_bars_raises(self):
-        with pytest.raises(NotImplementedError):
-            aggregate_tick_bars(pd.DataFrame(), 987)
+    def test_tick_bars_empty_input(self):
+        result = aggregate_tick_bars(pd.DataFrame(columns=["price", "size"]), 987)
+        assert result.empty
 
     def test_1m_passthrough(self, sample_1m_bars):
         result = aggregate_time_bars(sample_1m_bars, Timeframe.M1, self.BOUNDARIES)

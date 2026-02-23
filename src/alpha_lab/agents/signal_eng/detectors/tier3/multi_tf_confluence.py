@@ -50,8 +50,8 @@ class MultiTFConfluenceDetector(SignalDetector):
         return count >= self.min_timeframes
 
     def compute(self, data: DataBundle) -> list[SignalVector]:
-        # First pass: compute EMA direction for each available TF
-        tf_directions: dict[str, int] = {}
+        # First pass: compute per-bar EMA direction Series for each TF
+        tf_dir_series: dict[str, pd.Series] = {}
         tf_dataframes: dict[str, pd.DataFrame] = {}
 
         for tf in self.timeframes:
@@ -63,20 +63,25 @@ class MultiTFConfluenceDetector(SignalDetector):
             ema_f = compute_ema(close, self.ema_fast)
             ema_m = compute_ema(close, min(self.ema_mid, len(df) - 1))
 
-            # Use last value for cross-TF voting
-            bull = ema_f.iloc[-1] > ema_m.iloc[-1]
-            bear = ema_f.iloc[-1] < ema_m.iloc[-1]
-            tf_directions[tf] = 1 if bull else (-1 if bear else 0)
+            # Per-bar direction: no look-ahead
+            bullish = ema_f > ema_m
+            bearish = ema_f < ema_m
+            dir_series = pd.Series(0, index=df.index, dtype=int)
+            dir_series = dir_series.where(~bullish, 1)
+            dir_series = dir_series.where(~bearish, -1)
+            tf_dir_series[tf] = dir_series
 
         if len(tf_dataframes) < self.min_timeframes:
             return []
 
-        n_tfs = len(tf_directions)
+        n_tfs = len(tf_dir_series)
 
         # Second pass: produce signals per TF using cross-TF agreement
         signals: list[SignalVector] = []
         for tf, df in tf_dataframes.items():
-            sv = self._compute_timeframe(df, tf, data.instrument, tf_directions, n_tfs)
+            sv = self._compute_timeframe(
+                df, tf, data.instrument, tf_dir_series, n_tfs,
+            )
             if sv is not None:
                 signals.append(sv)
 
@@ -87,7 +92,7 @@ class MultiTFConfluenceDetector(SignalDetector):
         df: pd.DataFrame,
         timeframe: str,
         instrument: str,
-        tf_directions: dict[str, int],
+        tf_dir_series: dict[str, pd.Series],
         n_tfs: int,
     ) -> SignalVector | None:
         close = df["close"]
@@ -104,30 +109,51 @@ class MultiTFConfluenceDetector(SignalDetector):
         local_dir = local_dir.where(~bullish, 1)
         local_dir = local_dir.where(~bearish, -1)
 
-        # Cross-TF vote (static for the analysis window)
-        other_dirs = [d for tf, d in tf_directions.items() if tf != timeframe and d != 0]
-        n_bull_others = sum(1 for d in other_dirs if d > 0)
-        n_bear_others = sum(1 for d in other_dirs if d < 0)
+        # Cross-TF vote: align each other TF's per-bar direction to this TF's index
+        # using merge_asof so each bar sees only the most recent completed higher-TF bar
+        other_tfs = [tf for tf in tf_dir_series if tf != timeframe]
+        n_bull = pd.Series(0, index=df.index, dtype=int)
+        n_bear = pd.Series(0, index=df.index, dtype=int)
+        n_others_counted = 0
 
-        # Direction: local direction confirmed by cross-TF majority
-        n_others = len(other_dirs)
-        if n_others > 0:
-            agreement_bull = n_bull_others / n_others
-            agreement_bear = n_bear_others / n_others
+        for otf in other_tfs:
+            otf_dir = tf_dir_series[otf]
+            # Build a tz-naive index for merge_asof alignment
+            has_tz = hasattr(df.index, "tz") and df.index.tz
+            left_idx = df.index.tz_localize(None) if has_tz else df.index
+            has_tz_r = hasattr(otf_dir.index, "tz") and otf_dir.index.tz
+            right_idx = (
+                otf_dir.index.tz_localize(None) if has_tz_r
+                else otf_dir.index
+            )
+
+            left_df = pd.DataFrame({"_key": 0}, index=left_idx)
+            right_df = pd.DataFrame({"dir": otf_dir.values}, index=right_idx)
+
+            aligned = pd.merge_asof(
+                left_df, right_df,
+                left_index=True, right_index=True,
+                direction="backward",
+            )
+            aligned_dir = aligned["dir"].fillna(0).astype(int).values
+            n_bull += (aligned_dir > 0).astype(int)
+            n_bear += (aligned_dir < 0).astype(int)
+            n_others_counted += 1
+
+        if n_others_counted > 0:
+            agreement_bull = n_bull / n_others_counted
+            agreement_bear = n_bear / n_others_counted
         else:
-            agreement_bull = 0.0
-            agreement_bear = 0.0
+            agreement_bull = pd.Series(0.0, index=df.index)
+            agreement_bear = pd.Series(0.0, index=df.index)
 
-        # Direction = local, but weaken if cross-TF disagrees
+        # Direction = local, but weaken if cross-TF disagrees per bar
         direction = local_dir.copy()
-        # If majority of other TFs disagree, set to neutral
-        if agreement_bear > 0.5:
-            direction = direction.where(direction != 1, 0)
-        if agreement_bull > 0.5:
-            direction = direction.where(direction != -1, 0)
+        direction = direction.where(~((agreement_bear > 0.5) & (direction == 1)), 0)
+        direction = direction.where(~((agreement_bull > 0.5) & (direction == -1)), 0)
 
-        # Strength component 1: agreement ratio
-        agreement_ratio = max(agreement_bull, agreement_bear)
+        # Strength component 1: per-bar agreement ratio
+        agreement_ratio = pd.concat([agreement_bull, agreement_bear], axis=1).max(axis=1)
 
         # Strength component 2: local EMA spread rank
         spread = (ema_f - ema_m).abs() / atr_safe
@@ -160,7 +186,7 @@ class MultiTFConfluenceDetector(SignalDetector):
                 "instrument": instrument,
                 "intuition": "Cross-TF EMA agreement voting with local confirmation",
                 "bars_processed": len(df),
-                "timeframes_available": list(tf_directions.keys()),
-                "n_timeframes": len(tf_directions),
+                "timeframes_available": list(tf_dir_series.keys()),
+                "n_timeframes": len(tf_dir_series),
             },
         )
