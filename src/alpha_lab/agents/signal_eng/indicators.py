@@ -170,3 +170,54 @@ def compute_session_vwap_bands(
     upper = vwap + num_std * running_std
     lower = vwap - num_std * running_std
     return vwap, upper, lower
+
+
+def compute_swing_highs(
+    highs: pd.Series, left: int = 3, right: int = 3
+) -> pd.Series:
+    """Detect swing highs using N-bar pivot logic.
+
+    A swing high at bar *i* means ``highs[i]`` is the maximum of the
+    window ``[i-left, i+right]``.  Bars near the edges where the full
+    window is unavailable are set to NaN.
+
+    Args:
+        highs: Series of high prices
+        left: Bars to the left of pivot
+        right: Bars to the right of pivot
+
+    Returns:
+        pd.Series with swing high values where detected, NaN elsewhere.
+    """
+    result = pd.Series(np.nan, index=highs.index)
+    vals = highs.values
+    for i in range(left, len(vals) - right):
+        window = vals[i - left: i + right + 1]
+        if vals[i] == window.max() and np.sum(window == vals[i]) == 1:
+            result.iloc[i] = vals[i]
+    return result
+
+
+def compute_swing_lows(
+    lows: pd.Series, left: int = 3, right: int = 3
+) -> pd.Series:
+    """Detect swing lows using N-bar pivot logic.
+
+    A swing low at bar *i* means ``lows[i]`` is the minimum of the
+    window ``[i-left, i+right]``.
+
+    Args:
+        lows: Series of low prices
+        left: Bars to the left of pivot
+        right: Bars to the right of pivot
+
+    Returns:
+        pd.Series with swing low values where detected, NaN elsewhere.
+    """
+    result = pd.Series(np.nan, index=lows.index)
+    vals = lows.values
+    for i in range(left, len(vals) - right):
+        window = vals[i - left: i + right + 1]
+        if vals[i] == window.min() and np.sum(window == vals[i]) == 1:
+            result.iloc[i] = vals[i]
+    return result

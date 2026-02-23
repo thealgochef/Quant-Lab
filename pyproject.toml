@@ -17,6 +17,9 @@ dependencies = [
     "PyYAML>=6.0",
     "polygon-api-client>=1.14.0",
     "python-dotenv>=1.0",
+    "rich>=13.7",
+    "streamlit>=1.38",
+    "plotly>=5.18",
 ]
 
 [project.optional-dependencies]
