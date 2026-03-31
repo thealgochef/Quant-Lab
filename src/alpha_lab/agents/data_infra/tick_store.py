@@ -31,6 +31,9 @@ logger = logging.getLogger(__name__)
 _TICK_FILENAME = "mbp10.parquet"
 _OHLCV_FILENAME_PATTERN = "ohlcv_{tf}.parquet"
 
+# Tick filenames to search for, in priority order
+_TICK_FILENAMES = ["mbp10.parquet", "mbp1.parquet", "trades.parquet"]
+
 
 class TickStore:
     """DuckDB-backed query and replay layer over partitioned Parquet files.
@@ -44,11 +47,17 @@ class TickStore:
     * Results are always sorted by ``ts_event ASC``.
     """
 
-    def __init__(self, data_dir: Path | str, read_only: bool = True) -> None:
+    def __init__(
+        self,
+        data_dir: Path | str,
+        read_only: bool = True,
+        tick_filename: str | None = None,
+    ) -> None:
         self._data_dir = Path(data_dir)
         self._conn = duckdb.connect(database=":memory:", read_only=False)
         self._registered: dict[str, list[str]] = {}  # symbol -> [date_str, ...]
         self._read_only = read_only
+        self._tick_filename = tick_filename  # None = auto-detect
         logger.info("TickStore opened (data_dir=%s)", self._data_dir)
 
     # ── Registration ──────────────────────────────────────────────
@@ -59,10 +68,10 @@ class TickStore:
         Returns True if the file was found and registered.
         """
         date_str = dt.isoformat() if isinstance(dt, date) else str(dt)
-        parquet_path = self._data_dir / symbol / date_str / _TICK_FILENAME
+        parquet_path = self._resolve_tick_path(symbol, date_str)
 
-        if not parquet_path.exists():
-            logger.debug("No parquet at %s", parquet_path)
+        if parquet_path is None:
+            logger.debug("No tick parquet for %s/%s", symbol, date_str)
             return False
 
         view_name = self._view_name(symbol, date_str)
@@ -114,11 +123,101 @@ class TickStore:
             return pd.DataFrame()
 
         union_sql = self._union_views_sql(views)
+
+        # Detect whether data has a symbol column (real Databento data does,
+        # synthetic test data may not)
+        sample_sql = (
+            f"SELECT column_name FROM "
+            f"(DESCRIBE SELECT * FROM ({union_sql}) LIMIT 0)"
+        )
+        cols = {r[0] for r in self._conn.execute(sample_sql).fetchall()}
+        has_symbol = "symbol" in cols
+
+        # Keep only the most liquid (front-month) outright contract
+        if has_symbol:
+            front = self._conn.execute(f"""
+                SELECT symbol, count(*) AS n
+                FROM ({union_sql}) AS t
+                WHERE symbol NOT LIKE '%-%'
+                GROUP BY symbol ORDER BY n DESC LIMIT 1
+            """).fetchone()
+            if front:
+                sym_filter = f"AND symbol = '{front[0]}'"
+            else:
+                sym_filter = "AND symbol NOT LIKE '%-%'"
+        else:
+            sym_filter = ""
+
         sql = (
             f"SELECT * FROM ({union_sql}) AS t "
             f"WHERE ts_event >= $1 AND ts_event <= $2 "
+            f"{sym_filter} "
             f"ORDER BY ts_event ASC"
         )
+        return self._conn.execute(
+            sql, [pd.Timestamp(start), pd.Timestamp(end)]
+        ).fetchdf()
+
+    def query_tick_prices(
+        self,
+        symbol: str,
+        start: datetime,
+        end: datetime,
+    ) -> pd.DataFrame:
+        """Return lean tick data (ts_event, price, size) within [start, end].
+
+        For MBP order-book data, ``price`` is the top-of-book mid-price
+        ``(bid_px_00 + ask_px_00) / 2``.  Only the front-month contract is
+        included.  This is **~24x faster** than :meth:`query_ticks` because
+        it fetches 3 columns instead of 72.
+        """
+        views = self._get_views(symbol)
+        if not views:
+            return pd.DataFrame(columns=["ts_event", "price", "size"])
+
+        union_sql = self._union_views_sql(views)
+
+        # Detect columns
+        sample_sql = (
+            f"SELECT column_name FROM "
+            f"(DESCRIBE SELECT * FROM ({union_sql}) LIMIT 0)"
+        )
+        cols = {r[0] for r in self._conn.execute(sample_sql).fetchall()}
+        has_book = "bid_px_00" in cols and "ask_px_00" in cols
+        has_symbol = "symbol" in cols
+
+        # Front-month filter
+        if has_symbol:
+            front = self._conn.execute(f"""
+                SELECT symbol, count(*) AS n
+                FROM ({union_sql}) AS t
+                WHERE symbol NOT LIKE '%-%'
+                GROUP BY symbol ORDER BY n DESC LIMIT 1
+            """).fetchone()
+            sym_f = f"AND symbol = '{front[0]}'" if front else "AND symbol NOT LIKE '%-%'"
+        else:
+            sym_f = ""
+
+        if has_book:
+            sql = f"""
+                SELECT ts_event,
+                       (bid_px_00 + ask_px_00) / 2.0 AS price,
+                       size
+                FROM ({union_sql}) AS t
+                WHERE ts_event >= $1 AND ts_event <= $2
+                  AND bid_px_00 > 0 AND ask_px_00 > 0
+                  {sym_f}
+                ORDER BY ts_event ASC
+            """
+        else:
+            sql = f"""
+                SELECT ts_event, price, size
+                FROM ({union_sql}) AS t
+                WHERE ts_event >= $1 AND ts_event <= $2
+                  AND price IS NOT NULL AND price > 0
+                  {sym_f}
+                ORDER BY ts_event ASC
+            """
         return self._conn.execute(
             sql, [pd.Timestamp(start), pd.Timestamp(end)]
         ).fetchdf()
@@ -187,21 +286,72 @@ class TickStore:
 
         union_sql = self._union_views_sql(views)
 
-        # Use first() / last() with ORDER BY for correct OHLC
-        sql = f"""
-            SELECT
-                time_bucket(INTERVAL '{bar_size}', ts_event) AS bar_time,
-                first(price ORDER BY ts_event) AS open,
-                max(price) AS high,
-                min(price) AS low,
-                last(price ORDER BY ts_event) AS close,
-                sum(size) AS volume
-            FROM ({union_sql}) AS t
-            WHERE ts_event >= $1 AND ts_event <= $2
-              AND price IS NOT NULL AND price > 0
-            GROUP BY bar_time
-            ORDER BY bar_time ASC
-        """
+        # Detect whether this is MBP (order-book) data with bid/ask columns.
+        # If so, build OHLCV from top-of-book mid-price to avoid extreme
+        # wicks caused by deep book levels (bid_px_09 / ask_px_09).
+        sample_sql = f"SELECT column_name FROM (DESCRIBE SELECT * FROM ({union_sql}) LIMIT 0)"
+        cols = {
+            r[0]
+            for r in self._conn.execute(sample_sql).fetchall()
+        }
+        has_book = "bid_px_00" in cols and "ask_px_00" in cols
+
+        # Filter out calendar-spread symbols (e.g. "NQZ5-NQH6") and
+        # back-month contracts whose different price levels corrupt OHLCV.
+        # Keep only the most liquid (front-month) outright contract.
+        has_symbol = "symbol" in cols
+        if has_symbol:
+            front = self._conn.execute(f"""
+                SELECT symbol, count(*) AS n
+                FROM ({union_sql}) AS t
+                WHERE symbol NOT LIKE '%-%'
+                GROUP BY symbol ORDER BY n DESC LIMIT 1
+            """).fetchone()
+            if front:
+                symbol_filter = f"AND symbol = '{front[0]}'"
+            else:
+                symbol_filter = "AND symbol NOT LIKE '%-%'"
+        else:
+            symbol_filter = ""
+
+        if has_book:
+            # Mid-price from top-of-book gives clean OHLCV
+            sql = f"""
+                SELECT
+                    time_bucket(INTERVAL '{bar_size}', ts_event) AS bar_time,
+                    first(mid ORDER BY ts_event) AS open,
+                    max(mid) AS high,
+                    min(mid) AS low,
+                    last(mid ORDER BY ts_event) AS close,
+                    sum(size) AS volume
+                FROM (
+                    SELECT ts_event, size,
+                           (bid_px_00 + ask_px_00) / 2.0 AS mid
+                    FROM ({union_sql}) AS t
+                    WHERE ts_event >= $1 AND ts_event <= $2
+                      AND bid_px_00 > 0 AND ask_px_00 > 0
+                      {symbol_filter}
+                ) AS m
+                GROUP BY bar_time
+                ORDER BY bar_time ASC
+            """
+        else:
+            # Fallback for trades-only data: use raw price
+            sql = f"""
+                SELECT
+                    time_bucket(INTERVAL '{bar_size}', ts_event) AS bar_time,
+                    first(price ORDER BY ts_event) AS open,
+                    max(price) AS high,
+                    min(price) AS low,
+                    last(price ORDER BY ts_event) AS close,
+                    sum(size) AS volume
+                FROM ({union_sql}) AS t
+                WHERE ts_event >= $1 AND ts_event <= $2
+                  AND price IS NOT NULL AND price > 0
+                  {symbol_filter}
+                GROUP BY bar_time
+                ORDER BY bar_time ASC
+            """
         df = self._conn.execute(
             sql, [pd.Timestamp(start), pd.Timestamp(end)]
         ).fetchdf()
@@ -293,6 +443,22 @@ class TickStore:
         logger.info("TickStore closed")
 
     # ── Private helpers ───────────────────────────────────────────
+
+    def _resolve_tick_path(self, symbol: str, date_str: str) -> Path | None:
+        """Find the tick parquet file for a given symbol/date.
+
+        If tick_filename was set explicitly, use that. Otherwise search
+        in priority order: mbp10 > mbp1 > trades.
+        """
+        date_dir = self._data_dir / symbol / date_str
+        if self._tick_filename:
+            p = date_dir / self._tick_filename
+            return p if p.exists() else None
+        for fname in _TICK_FILENAMES:
+            p = date_dir / fname
+            if p.exists():
+                return p
+        return None
 
     @staticmethod
     def _view_name(symbol: str, date_str: str) -> str:

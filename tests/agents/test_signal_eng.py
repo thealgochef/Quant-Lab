@@ -293,8 +293,8 @@ class TestComputeSessionVwap:
 
 
 class TestDetectorRegistry:
-    def test_all_20_detectors_registered(self):
-        assert SignalDetectorRegistry.count() == 20
+    def test_all_21_detectors_registered(self):
+        assert SignalDetectorRegistry.count() == 21
 
     def test_tier1_has_3(self):
         tier1 = SignalDetectorRegistry.get_by_tier(SignalTier.CORE)
@@ -304,9 +304,9 @@ class TestDetectorRegistry:
         tier2 = SignalDetectorRegistry.get_by_tier(SignalTier.ICT_STRUCTURAL)
         assert len(tier2) == 7
 
-    def test_tier3_has_10(self):
+    def test_tier3_has_11(self):
         tier3 = SignalDetectorRegistry.get_by_tier(SignalTier.COMPOSITE)
-        assert len(tier3) == 10
+        assert len(tier3) == 11
 
     def test_get_by_id(self):
         cls = SignalDetectorRegistry.get("ema_confluence")
@@ -319,7 +319,8 @@ class TestDetectorRegistry:
             "adaptive_regime", "displacement", "ema_confluence",
             "ema_reclaim", "ema_vwap_interaction", "fair_value_gaps",
             "ifvg", "kama_regime", "killzone_timing", "liquidity_sweeps",
-            "market_structure", "multi_tf_confluence", "order_blocks",
+            "market_structure", "ml_extrema_classifier",
+            "multi_tf_confluence", "order_blocks",
             "pd_levels_poi", "scalp_entry", "session_gap",
             "sweep_fvg_combo", "tick_microstructure", "volume_profile",
             "vwap_deviation",
@@ -633,6 +634,35 @@ class TestBundleBuilder:
         bundle = build_signal_bundle(data, detector_ids=[])
         assert bundle.total_signals == 0
 
+    def test_build_with_detector_kwargs(self):
+        """detector_kwargs are passed through to detector constructors."""
+        data = _make_data_bundle()
+        bundle = build_signal_bundle(
+            data,
+            detector_ids=["ema_confluence"],
+            detector_kwargs={"ema_confluence": {"ema_fast": 8}},
+        )
+        assert bundle.total_signals > 0
+        for sv in bundle.signals:
+            assert sv.parameters["ema_fast"] == 8
+
+    def test_build_with_detector_kwargs_none(self):
+        """Passing None for detector_kwargs is backward compatible."""
+        data = _make_data_bundle()
+        bundle = build_signal_bundle(
+            data, detector_ids=["ema_confluence"], detector_kwargs=None,
+        )
+        assert bundle.total_signals > 0
+
+    def test_run_single_detector_with_kwargs(self):
+        """run_single_detector passes kwargs to constructor."""
+        data = _make_data_bundle()
+        signals = run_single_detector(
+            EmaConfluenceDetector, data, kwargs={"ema_fast": 8},
+        )
+        assert len(signals) > 0
+        assert signals[0].parameters["ema_fast"] == 8
+
 
 # ═══════════════════════════════════════════════════════════════════
 # Agent Tests
@@ -657,6 +687,17 @@ class TestSignalEngineeringAgent:
         bundle = agent.generate_signals(data, detector_ids=["ema_confluence"])
         categories = {sv.category for sv in bundle.signals}
         assert categories == {"ema_confluence"}
+
+    def test_generate_signals_with_detector_kwargs(self, message_bus):
+        agent = SignalEngineeringAgent(message_bus)
+        data = _make_data_bundle()
+        bundle = agent.generate_signals(
+            data,
+            detector_ids=["ema_confluence"],
+            detector_kwargs={"ema_confluence": {"ema_fast": 8}},
+        )
+        assert bundle.total_signals > 0
+        assert bundle.signals[0].parameters["ema_fast"] == 8
 
     def test_handle_data_bundle_message(self, message_bus):
         agent = SignalEngineeringAgent(message_bus)

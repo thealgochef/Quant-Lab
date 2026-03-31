@@ -124,11 +124,18 @@ class TestDatabentDataProvider:
             "price": [22000.0, 22001.0, 22002.0],
             "size": [10, 20, 15],
         })
-        mock_data = MagicMock()
-        mock_data.to_df.return_value = mock_df
+        empty_df = pd.DataFrame(columns=["ts_event", "price", "size"])
+
+        # First hour returns data, remaining hours return empty
+        mock_data_with_rows = MagicMock()
+        mock_data_with_rows.to_df.return_value = mock_df
+        mock_data_empty = MagicMock()
+        mock_data_empty.to_df.return_value = empty_df
 
         mock_client = MagicMock()
-        mock_client.timeseries.get_range.return_value = mock_data
+        mock_client.timeseries.get_range.side_effect = (
+            [mock_data_with_rows] + [mock_data_empty] * 23
+        )
         provider._client = mock_client
 
         result = provider._fetch_and_cache_ticks("NQ", dt.date(2026, 2, 20))

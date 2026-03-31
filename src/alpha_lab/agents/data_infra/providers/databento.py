@@ -1,7 +1,10 @@
 """
 Databento data provider for CME futures (NQ/ES).
 
-Fetches L2 (MBP-10) tick data and OHLCV bars via the databento Python client.
+Fetches tick data (MBP-10, MBP-1, or trades) and OHLCV bars via the
+databento Python client.  Supports both streaming (small requests) and
+batch download (large multi-day requests).
+
 Stores data as date/symbol-partitioned Parquet files for efficient replay.
 Auto-detects front-month contract using CME quarterly cycle.
 """
@@ -10,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -173,7 +177,9 @@ class DatabentDataProvider(DataProvider):
     def _fetch_and_cache_ticks(self, symbol: str, date) -> pd.DataFrame:
         """Fetch a single day of MBP-10 data, caching as Parquet.
 
-        Returns cached data if the Parquet file already exists.
+        Splits the day into 1-hour chunks to keep each streaming request
+        under Databento's 5 GB limit.  Returns cached data if the
+        Parquet file already exists.
         """
         parquet_path = self._parquet_path(symbol, date, "mbp10")
 
@@ -185,49 +191,69 @@ class DatabentDataProvider(DataProvider):
             msg = "Not connected. Call connect() first."
             raise RuntimeError(msg)
 
-        date_str = date.isoformat() if hasattr(date, "isoformat") else str(date)
-        next_date = date + timedelta(days=1)
-        # Clamp end to ~1 hour before now to avoid data_end_after_available
         from datetime import UTC
 
         now_utc = datetime.now(UTC) - timedelta(hours=1)
-        if next_date > now_utc.date():
-            next_date_str = now_utc.strftime("%Y-%m-%dT%H:%M:%S+00:00")
-        else:
-            next_date_str = (
-                next_date.isoformat()
-                if hasattr(next_date, "isoformat")
-                else str(next_date)
-            )
+        date_str = date.isoformat() if hasattr(date, "isoformat") else str(date)
 
-        try:
-            data = self._client.timeseries.get_range(
-                dataset="GLBX.MDP3",
-                symbols=f"{symbol}.FUT",
-                stype_in="parent",
-                schema="mbp-10",
-                start=date_str,
-                end=next_date_str,
-            )
+        # Split the day into 1-hour chunks — NQ MBP-10 can exceed 5 GB
+        # even in a few hours during RTH, so 1-hour keeps each request safe.
+        day_start = datetime.fromisoformat(f"{date_str}T00:00:00+00:00")
+        chunks: list[pd.DataFrame] = []
 
-            df = data.to_df()
-            if df.empty:
-                logger.info("No tick data for %s on %s", symbol, date_str)
-                return pd.DataFrame()
+        for h in range(24):
+            chunk_start = day_start + timedelta(hours=h)
+            chunk_end = day_start + timedelta(hours=h + 1)
 
-            # Ensure directory exists and write Parquet
-            parquet_path.parent.mkdir(parents=True, exist_ok=True)
-            df.to_parquet(parquet_path)
-            logger.info(
-                "Cached %d ticks to %s", len(df), parquet_path.name
-            )
-            return df
+            # Clamp to ~1 hour before now to avoid data_end_after_available
+            if chunk_start.date() > now_utc.date():
+                break
+            if chunk_end > now_utc:
+                chunk_end = now_utc
+            if chunk_start >= chunk_end:
+                break
 
-        except Exception:
-            logger.exception(
-                "Failed to fetch ticks for %s on %s", symbol, date_str
-            )
+            start_iso = chunk_start.strftime("%Y-%m-%dT%H:%M:%S+00:00")
+            end_iso = chunk_end.strftime("%Y-%m-%dT%H:%M:%S+00:00")
+
+            try:
+                logger.info(
+                    "Fetching %s MBP-10 chunk %02d:00-%02d:00 on %s",
+                    symbol, h, h + 1, date_str,
+                )
+                data = self._client.timeseries.get_range(
+                    dataset="GLBX.MDP3",
+                    symbols=f"{symbol}.FUT",
+                    stype_in="parent",
+                    schema="mbp-10",
+                    start=start_iso,
+                    end=end_iso,
+                )
+                chunk_df = data.to_df()
+                if not chunk_df.empty:
+                    chunks.append(chunk_df)
+                    logger.info(
+                        "  → %d rows for hour %02d", len(chunk_df), h,
+                    )
+            except Exception:
+                logger.exception(
+                    "Failed to fetch chunk %02d:00 for %s on %s",
+                    h, symbol, date_str,
+                )
+
+        if not chunks:
+            logger.info("No tick data for %s on %s", symbol, date_str)
             return pd.DataFrame()
+
+        df = pd.concat(chunks, ignore_index=True)
+
+        # Ensure directory exists and write Parquet
+        parquet_path.parent.mkdir(parents=True, exist_ok=True)
+        df.to_parquet(parquet_path)
+        logger.info(
+            "Cached %d ticks to %s", len(df), parquet_path.name,
+        )
+        return df
 
     # ── Trade ticks (lightweight) ─────────────────────────────────
 
@@ -414,6 +440,186 @@ class DatabentDataProvider(DataProvider):
             msg = f"No daily data for {symbol} on {date.date()}"
             raise ValueError(msg)
         return float(df["close"].iloc[-1])
+
+    # ── Batch download (for large multi-day requests) ────────────
+
+    def fetch_batch(
+        self,
+        symbol: str,
+        start_date,
+        end_date,
+        schema: str = "mbp-1",
+        on_progress=None,
+    ) -> dict:
+        """Fetch a date range via Databento batch API, split into per-day Parquet.
+
+        Batch download is ideal for large requests (>5 GB):
+        - Server processes the data and makes files available for HTTP download
+        - Re-downloads are free (unlike streaming which charges every time)
+        - No streaming timeout issues
+
+        Args:
+            symbol: Base symbol ("NQ" or "ES").
+            start_date: Start date.
+            end_date: End date.
+            schema: Databento schema ("mbp-10", "mbp-1", "trades").
+            on_progress: Optional callback(status_str) for UI updates.
+
+        Returns:
+            Summary dict with fetched/cached/failed counts.
+        """
+        if self._client is None:
+            msg = "Not connected. Call connect() first."
+            raise RuntimeError(msg)
+
+        from datetime import date as date_type
+
+        start_d = start_date if isinstance(start_date, date_type) else start_date.date()
+        end_d = end_date if isinstance(end_date, date_type) else end_date.date()
+
+        # Determine cache filename based on schema
+        cache_name = self._schema_to_filename(schema)
+
+        # Check which dates are already cached
+        summary = {"fetched": 0, "cached": 0, "failed": 0, "total_ticks": 0}
+        missing_dates: list[date_type] = []
+        current = start_d
+        while current <= end_d:
+            parquet_path = self._data_dir / symbol / current.isoformat() / f"{cache_name}.parquet"
+            if parquet_path.exists():
+                summary["cached"] += 1
+            else:
+                missing_dates.append(current)
+            current += timedelta(days=1)
+
+        if not missing_dates:
+            if on_progress:
+                on_progress("All dates already cached.")
+            return summary
+
+        # Submit batch job for all missing dates
+        batch_start = min(missing_dates).isoformat()
+        batch_end = (max(missing_dates) + timedelta(days=1)).isoformat()
+
+        if on_progress:
+            on_progress(f"Submitting batch job: {batch_start} → {batch_end} ({schema})...")
+
+        try:
+            job = self._client.batch.submit_job(
+                dataset="GLBX.MDP3",
+                symbols=[f"{symbol}.FUT"],
+                stype_in="parent",
+                schema=schema,
+                start=batch_start,
+                end=batch_end,
+                encoding="dbn",
+                compression="zstd",
+                split_duration="day",
+            )
+        except Exception:
+            logger.exception("Failed to submit batch job for %s", symbol)
+            summary["failed"] = len(missing_dates)
+            return summary
+
+        if isinstance(job, dict):
+            job_id = job.get("job_id") or job.get("id") or next(iter(job.values()))
+        else:
+            job_id = job.job_id
+        if on_progress:
+            on_progress(f"Batch job submitted: {job_id}. Waiting for processing...")
+
+        # Poll until job is done
+        max_wait = 3600  # 1 hour max
+        poll_interval = 10
+        elapsed = 0
+        while elapsed < max_wait:
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+
+            jobs = self._client.batch.list_jobs(states="done")
+            job_ids = [
+                (j.get("job_id") or j.get("id") if isinstance(j, dict) else j.job_id)
+                for j in jobs
+            ]
+            if job_id in job_ids:
+                break
+
+            if on_progress:
+                on_progress(f"Waiting for batch job... ({elapsed}s elapsed)")
+        else:
+            logger.error("Batch job %s timed out after %ds", job_id, max_wait)
+            summary["failed"] = len(missing_dates)
+            return summary
+
+        # Download to temp directory
+        if on_progress:
+            on_progress("Downloading batch files...")
+
+        download_dir = self._data_dir / "_batch_tmp" / job_id
+        download_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            self._client.batch.download(
+                job_id=job_id,
+                output_dir=str(download_dir),
+            )
+        except Exception:
+            logger.exception("Failed to download batch job %s", job_id)
+            summary["failed"] = len(missing_dates)
+            return summary
+
+        # Process downloaded files → per-day Parquet
+        if on_progress:
+            on_progress("Splitting into per-day Parquet files...")
+
+        import databento as db
+
+        for dbn_file in download_dir.glob("*.dbn*"):
+            try:
+                store = db.DBNStore.from_file(str(dbn_file))
+                df = store.to_df()
+                if df.empty:
+                    continue
+
+                # Split by date
+                if "ts_event" in df.columns:
+                    ts_col = pd.to_datetime(df["ts_event"])
+                else:
+                    ts_col = pd.to_datetime(df.index)
+
+                for dt, day_df in df.groupby(ts_col.dt.date):
+                    dt_str = dt.isoformat()
+                    out_path = self._data_dir / symbol / dt_str / f"{cache_name}.parquet"
+                    out_path.parent.mkdir(parents=True, exist_ok=True)
+                    day_df.to_parquet(out_path)
+                    summary["fetched"] += 1
+                    summary["total_ticks"] += len(day_df)
+                    logger.info("Cached %d rows → %s", len(day_df), out_path)
+
+            except Exception:
+                logger.exception("Failed to process %s", dbn_file.name)
+                summary["failed"] += 1
+
+        # Clean up temp files
+        import shutil
+        shutil.rmtree(download_dir, ignore_errors=True)
+
+        if on_progress:
+            on_progress(
+                f"Done: {summary['fetched']} days fetched, "
+                f"{summary['cached']} cached, {summary['total_ticks']:,} ticks."
+            )
+
+        return summary
+
+    @staticmethod
+    def _schema_to_filename(schema: str) -> str:
+        """Map Databento schema to cache filename (without .parquet)."""
+        return {
+            "mbp-10": "mbp10",
+            "mbp-1": "mbp1",
+            "trades": "trades",
+        }.get(schema, schema.replace("-", ""))
 
     # ── Helpers ────────────────────────────────────────────────────
 

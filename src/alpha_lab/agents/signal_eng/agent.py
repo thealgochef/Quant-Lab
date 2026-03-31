@@ -9,6 +9,8 @@ See docs/agent_prompts/SIG-001.md for full system prompt.
 
 from __future__ import annotations
 
+from typing import Any
+
 from alpha_lab.agents.signal_eng.bundle_builder import build_signal_bundle
 from alpha_lab.core.agent_base import BaseAgent
 from alpha_lab.core.contracts import DataBundle, SignalBundle
@@ -90,6 +92,7 @@ class SignalEngineeringAgent(BaseAgent):
         self,
         data_bundle: DataBundle,
         detector_ids: list[str] | None = None,
+        detector_kwargs: dict[str, dict[str, Any]] | None = None,
     ) -> SignalBundle:
         """
         Run all registered signal detectors on the DataBundle.
@@ -97,11 +100,12 @@ class SignalEngineeringAgent(BaseAgent):
         Args:
             data_bundle: Clean DataBundle from DATA-001
             detector_ids: Optional subset of detectors to run
+            detector_kwargs: Optional per-detector constructor kwargs.
 
         Returns:
             SignalBundle containing all signal vectors
         """
-        return build_signal_bundle(data_bundle, detector_ids)
+        return build_signal_bundle(data_bundle, detector_ids, detector_kwargs)
 
     def refine_signal(
         self,

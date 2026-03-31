@@ -212,49 +212,144 @@ def fetch_databento_data(
     symbol: str,
     days: int = 10,
     include_ticks: bool = False,
+    progress_callback=None,
 ) -> dict[str, pd.DataFrame]:
-    """Fetch real bars from Databento across multiple timeframes.
+    """Build multi-TF bars from local Databento Parquet files.
 
-    Fetches 1m bars then resamples to all standard timeframes.
-    When *include_ticks* is True, also fetches raw MBP-10 tick data
-    and builds 987-tick and 2000-tick bars.
+    Reads pre-downloaded tick data from data/databento/{symbol}/{date}/,
+    builds 1m bars day-by-day for memory efficiency, then resamples to
+    all standard timeframes.  When *include_ticks* is True, also builds
+    987-tick and 2000-tick bars (day-by-day).
+
+    **No Databento API calls are made.**
 
     Returns:
         dict mapping timeframe string to tagged bars DataFrame.
     """
+    from pathlib import Path
+
     from alpha_lab.agents.data_infra.aggregation import (
         aggregate_tick_bars,
         aggregate_time_bars,
     )
-    from alpha_lab.agents.data_infra.providers.databento import DatabentDataProvider
     from alpha_lab.agents.data_infra.sessions import tag_killzones, tag_sessions
+    from alpha_lab.agents.data_infra.tick_store import TickStore
     from alpha_lab.core.enums import Timeframe
 
-    api_key = os.environ.get("DATABENTO_API_KEY", "")
-    if not api_key:
-        st.error("DATABENTO_API_KEY not set. See .env.example.")
-        st.stop()
+    data_dir = Path(__file__).resolve().parent.parent / "data" / "databento"
 
-    provider = DatabentDataProvider(api_key=api_key)
-    provider.connect()
-
-    # Databento historical data has a short lag; back off 1 hour
     end = datetime.now(UTC) - timedelta(hours=1)
     start = end - timedelta(days=days)
 
-    try:
-        bars_1m = provider.get_ohlcv(symbol, Timeframe.M1, start, end)
+    # Collect dates with data in range
+    current = start.date() if hasattr(start, "date") else start
+    end_date = end.date() if hasattr(end, "date") else end
+    available_dates: list = []
+    dt = current
+    while dt <= end_date:
+        dt_str = dt.isoformat()
+        dt_dir = data_dir / symbol / dt_str
+        if dt_dir.exists() and any(dt_dir.glob("*.parquet")):
+            available_dates.append(dt)
+        dt += timedelta(days=1)
 
-        # Fetch trade ticks for tick-bar construction (lightweight)
-        raw_ticks = pd.DataFrame()
-        if include_ticks:
-            raw_ticks = provider.get_trades(symbol, start, end)
-    finally:
-        provider.disconnect()
-
-    if bars_1m.empty:
-        st.error("No data returned from Databento")
+    if not available_dates:
+        st.error(
+            f"No local tick data found for {symbol} in the last {days} days.\n\n"
+            f"Data directory: `{data_dir / symbol}`"
+        )
         st.stop()
+
+    # Process day-by-day to avoid OOM on multi-GB MBP-10 data.
+    # Cached 1m bars (~50KB) are saved per date so subsequent runs
+    # skip the expensive MBP-10 tick aggregation (~1-2GB per day).
+    bar_frames: list[pd.DataFrame] = []
+    tick_frames: list[pd.DataFrame] = []
+    n_dates = len(available_dates)
+
+    for i_dt, dt in enumerate(available_dates):
+        dt_str = dt.isoformat()
+        cache_path = data_dir / symbol / dt_str / "ohlcv_1m.parquet"
+
+        if progress_callback is not None:
+            cached = cache_path.exists()
+            progress_callback(
+                i_dt / n_dates,
+                f"{'Reading cached' if cached else 'Building'} "
+                f"bars {dt_str} ({i_dt + 1}/{n_dates})...",
+            )
+
+        if cache_path.exists():
+            # Fast path: read pre-built 1m bars (~50KB vs ~1GB raw)
+            day_bars = pd.read_parquet(cache_path)
+            if not day_bars.empty:
+                bar_frames.append(day_bars)
+        else:
+            # Slow path: aggregate from raw MBP-10 ticks
+            store = TickStore(data_dir)
+            store.register_symbol_date(symbol, dt)
+            day_start = datetime.combine(dt, datetime.min.time())
+            day_end = datetime.combine(dt, datetime.max.time())
+            day_bars = store.build_bars_from_ticks(
+                symbol, day_start, day_end, bar_size="1 minute",
+            )
+            store.close()
+            if not day_bars.empty:
+                day_bars.to_parquet(cache_path)
+                bar_frames.append(day_bars)
+
+        # Optionally collect tick data for tick-bar construction
+        if include_ticks:
+            if progress_callback is not None:
+                progress_callback(
+                    (i_dt + 0.5) / n_dates,
+                    f"Loading ticks {dt_str} ({i_dt + 1}/{n_dates})...",
+                )
+            # Lean query: only fetch 3 columns with mid-price computed
+            # in DuckDB instead of loading all 72 MBP-10 columns into pandas.
+            import duckdb as _ddb
+            dt_dir = data_dir / symbol / dt_str
+            pq = dt_dir / "mbp10.parquet"
+            if not pq.exists():
+                pq = dt_dir / "mbp1.parquet"
+            if pq.exists():
+                _conn = _ddb.connect(":memory:")
+                _conn.execute(
+                    f"CREATE VIEW _t AS SELECT * FROM "
+                    f"read_parquet('{pq.as_posix()}')"
+                )
+                # Detect front-month symbol
+                front = _conn.execute("""
+                    SELECT symbol, count(*) AS n FROM _t
+                    WHERE symbol NOT LIKE '%-%'
+                    GROUP BY symbol ORDER BY n DESC LIMIT 1
+                """).fetchone()
+                sym_f = f"AND symbol = '{front[0]}'" if front else "AND symbol NOT LIKE '%-%'"
+                day_ticks = _conn.execute(f"""
+                    SELECT ts_event,
+                           (bid_px_00 + ask_px_00) / 2.0 AS price,
+                           size
+                    FROM _t
+                    WHERE bid_px_00 > 0 AND ask_px_00 > 0
+                      {sym_f}
+                    ORDER BY ts_event
+                """).fetchdf()
+                _conn.close()
+                if not day_ticks.empty:
+                    tick_frames.append(day_ticks)
+
+    if progress_callback is not None:
+        progress_callback(0.80, "Resampling to multi-timeframe bars...")
+
+    if not bar_frames:
+        st.error(f"No tick data found for {symbol} in range {start} to {end}")
+        st.stop()
+
+    bars_1m = pd.concat(bar_frames).sort_index()
+
+    # Ensure DatetimeIndex
+    if not isinstance(bars_1m.index, pd.DatetimeIndex):
+        bars_1m.index = pd.DatetimeIndex(bars_1m.index)
 
     # Convert to Eastern for session tagging
     if bars_1m.index.tz is not None:
@@ -281,8 +376,15 @@ def fetch_databento_data(
         agg = tag_killzones(agg)
         bars_dict[tf.value] = agg
 
-    # Build tick bars from trade data
-    if not raw_ticks.empty and "price" in raw_ticks.columns:
+    if progress_callback is not None:
+        progress_callback(0.95, "Building tick bars..." if tick_frames else "Data ready")
+
+    # Build tick bars from collected tick data
+    if tick_frames:
+        raw_ticks = pd.concat(tick_frames).sort_values("ts_event")
+        # Rename ts_event -> timestamp for aggregate_tick_bars compatibility
+        raw_ticks = raw_ticks.rename(columns={"ts_event": "timestamp"})
+
         # Filter obvious price outliers (>50% from median)
         median_px = raw_ticks["price"].median()
         raw_ticks = raw_ticks[
@@ -444,7 +546,6 @@ def simulate_trades(
 # ═══════════════════════════════════════════════════════════════
 
 
-@st.cache_data(ttl=300)
 def run_pipeline(
     mode: str, symbol: str, days: int,
     chart_tf: str = "5m",
@@ -453,8 +554,25 @@ def run_pipeline(
     stop_loss_ticks: float = 8.0,
     take_profit_ticks: float = 16.0,
     max_hold_bars: int = 30,
+    ml_model_path: str = "",
+    ml_min_confidence: float = 0.6,
+    progress_bar=None,
+    status_text=None,
 ) -> dict:
     """Run pipeline and return all results."""
+    import time as _time
+    _t0 = _time.perf_counter()
+    _timings: list[str] = []
+
+    def _update(pct: float, msg: str) -> None:
+        elapsed = _time.perf_counter() - _t0
+        _timings.append(f"{elapsed:6.1f}s  {msg}")
+        if progress_bar is not None:
+            progress_bar.progress(pct, text=f"{msg}  ({elapsed:.0f}s)")
+        if status_text is not None:
+            status_text.text(f"{msg}  ({elapsed:.0f}s)")
+
+    _update(0.05, "Initialising agents...")
     instrument = INSTRUMENTS[symbol]
     bus = MessageBus()
     orch = OrchestratorAgent(bus)
@@ -463,9 +581,11 @@ def run_pipeline(
     val = ValidationAgent(bus)
     exec_agent = ExecutionAgent(bus, instrument=instrument, prop_firm=APEX_50K)
 
-    if mode == "Live (Databento)":
+    _update(0.10, "Loading market data...")
+    if mode == "Local (Databento)":
         bars_dict = fetch_databento_data(
             symbol, days=days, include_ticks=include_ticks,
+            progress_callback=lambda pct, msg: _update(0.10 + pct * 0.40, msg),
         )
     elif mode == "Live (Polygon.io)":
         bars_5m = fetch_live_data(symbol, days=days)
@@ -482,11 +602,28 @@ def run_pipeline(
     else:
         bars_primary = next(iter(bars_dict.values()))
 
+    _update(0.52, "Building data bundle...")
     bundle = build_bundle(bars_dict, symbol)
-    signal_bundle = sig.generate_signals(bundle)
 
+    # Build detector kwargs for ML detector
+    detector_kwargs: dict[str, dict] | None = None
+    if ml_model_path:
+        detector_kwargs = {
+            "ml_extrema_classifier": {
+                "model_path": ml_model_path,
+                "min_confidence": ml_min_confidence,
+            },
+        }
+
+    _update(0.55, "Generating signals (20 detectors)...")
+    signal_bundle = sig.generate_signals(
+        bundle, detector_kwargs=detector_kwargs,
+    )
+
+    _update(0.70, "Running validation battery...")
     val_report = val.validate_signal_bundle(signal_bundle, bars_dict)
 
+    _update(0.80, "Execution analysis & risk checks...")
     exec_report = exec_agent.analyze_signals(val_report, bars_dict)
     demo_mode = False
     if (not exec_report.approved_signals
@@ -507,6 +644,7 @@ def run_pipeline(
         )
         exec_report = exec_agent.analyze_signals(demo_report, bars_dict)
 
+    _update(0.88, "Simulating trades...")
     # Simulate trades per signal (only for signals matching chart TF)
     all_trades = {}
     for sv in signal_bundle.signals:
@@ -526,6 +664,7 @@ def run_pipeline(
         )
         all_trades[sv.signal_id] = tdf
 
+    _update(0.95, "Running monitoring checks...")
     # Monitoring
     mon = MonitoringAgent(bus)
     if exec_report.approved_signals:
@@ -561,6 +700,10 @@ def run_pipeline(
     health_reports = [mon.check_signal_health(s) for s in mon.active_signals]
     daily_report = mon.generate_daily_report() if mon.active_signals else None
 
+    _update(1.0, "Pipeline complete!")
+    # Log timing breakdown to console for debugging
+    for t in _timings:
+        print(t)
     return {
         "bars_primary": bars_primary,
         "bars_dict": bars_dict,
@@ -954,7 +1097,7 @@ def main() -> None:
     with st.sidebar:
         st.title("⚙️ Pipeline Config")
         mode = st.radio("Data Source",
-                         ["Synthetic", "Live (Databento)", "Live (Polygon.io)"])
+                         ["Synthetic", "Local (Databento)", "Live (Polygon.io)"])
         symbol = st.selectbox("Instrument", ["NQ", "ES"])
         days = st.slider("History (days)", 7, 90, 10 if "Databento" in mode else 30,
                           disabled=(mode == "Synthetic"))
@@ -965,7 +1108,7 @@ def main() -> None:
             include_ticks = st.checkbox(
                 "Include tick bars (987t / 2000t)",
                 value=False,
-                help="Fetches raw L2 book data and builds tick-count bars. "
+                help="Reads local tick data and builds tick-count bars. "
                      "Slower but gives microstructure view.",
             )
 
@@ -999,6 +1142,20 @@ def main() -> None:
         )
 
         st.divider()
+        st.markdown("**ML Extrema Classifier**")
+        ml_model_path = st.text_input(
+            "Model directory",
+            value="",
+            help="Path to trained CatBoost model directory "
+                 "(contains model.cbm + metadata.json). "
+                 "Leave empty to skip ML detector.",
+        )
+        ml_min_confidence = st.slider(
+            "Min confidence", 0.3, 0.95, 0.6, 0.05,
+            help="Minimum predicted rebound probability to emit a signal",
+        )
+
+        st.divider()
         st.markdown("**Apex 50K Profile**")
         st.caption("Max DD: $2,500 | Contracts: 4 | Target: $3,000")
 
@@ -1011,381 +1168,412 @@ def main() -> None:
     st.caption(f"{symbol}  |  {mode}  |  {chart_tf}  |  "
                f"{datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
-    if not run_btn and "results" not in st.session_state:
-        st.info("Click **Run Pipeline** in the sidebar to start.")
-        return
-
-    if run_btn:
-        with st.spinner("Running pipeline..."):
-            st.session_state["results"] = run_pipeline(
-                mode, symbol, days,
-                chart_tf=chart_tf,
-                include_ticks=(include_ticks if "Databento" in mode else False),
-                strength_threshold=strength_threshold,
-                stop_loss_ticks=stop_loss_ticks,
-                take_profit_ticks=take_profit_ticks,
-                max_hold_bars=max_hold_bars,
-            )
-
-    r = st.session_state["results"]
-    bars_primary = r["bars_primary"]
-    bars_dict = r["bars_dict"]
-    signal_bundle = r["signal_bundle"]
-    val_report = r["val_report"]
-    exec_report = r["exec_report"]
-
     # ══════════════════════════════════════════════════════════
-    # TAB LAYOUT
+    # TAB LAYOUT — ML Training is always accessible
     # ══════════════════════════════════════════════════════════
 
-    tab_chart, tab_trades, tab_val, tab_exec, tab_mon = st.tabs([
+    tab_ml, tab_exp, tab_chart, tab_trades, tab_val, tab_exec, tab_mon = st.tabs([
+        "🧠 ML Training",
+        "🔬 Order Flow Experiment",
         "📈 Price & Signals",
         "📋 Trade Log",
-        "🔬 Validation",
+        "✅ Validation",
         "💰 Execution",
         "🖥️ Monitoring",
     ])
 
-    # Signal selector (used across tabs)
-    signal_ids = [sv.signal_id for sv in signal_bundle.signals]
-    selected = signal_ids[0] if signal_ids else None
+    # ── ML Training tab (always available) ────────────────────
+    with tab_ml:
+        from ml_training_tab import render_ml_training_tab
 
-    # ══════════════════════════════════════════════════════════
-    # TAB 1: PRICE & SIGNALS
-    # ══════════════════════════════════════════════════════════
-    with tab_chart:
-        # Data source info
-        n_tfs = len(bars_dict)
-        if n_tfs > 1:
-            st.caption(f"Timeframes loaded: {', '.join(sorted(bars_dict.keys()))} "
-                       f"| Showing: {r['chart_tf']}")
+        render_ml_training_tab()
 
-        selected = st.selectbox("Select Signal", signal_ids,
-                                key="sig_select_chart")
-        trades_df = r["all_trades"].get(selected, pd.DataFrame())
+    # ── Order Flow Experiment tab (always available) ──────────
+    with tab_exp:
+        from experiment_tab import render_experiment_tab
 
-        st.plotly_chart(
-            chart_candlestick_with_signals(
-                bars_primary, signal_bundle, selected, trades_df, chart_bars,
-            ),
-            use_container_width=True,
+        render_experiment_tab()
+
+    # ── Pipeline-dependent tabs ───────────────────────────────
+    if run_btn:
+        progress_bar = st.progress(0, text="Starting pipeline...")
+        status_text = st.empty()
+        st.session_state["results"] = run_pipeline(
+            mode, symbol, days,
+            chart_tf=chart_tf,
+            include_ticks=(include_ticks if "Databento" in mode else False),
+            strength_threshold=strength_threshold,
+            stop_loss_ticks=stop_loss_ticks,
+            take_profit_ticks=take_profit_ticks,
+            max_hold_bars=max_hold_bars,
+            ml_model_path=ml_model_path,
+            ml_min_confidence=ml_min_confidence,
+            progress_bar=progress_bar,
+            status_text=status_text,
         )
+        progress_bar.empty()
+        status_text.empty()
 
-        st.plotly_chart(
-            chart_signal_strength(
-                bars_primary, signal_bundle, selected, chart_bars,
-            ),
-            use_container_width=True,
-        )
+    has_results = "results" in st.session_state
+    if not has_results:
+        with tab_chart:
+            st.info("Click **Run Pipeline** in the sidebar to load data and signals.")
+        with tab_trades:
+            st.info("Click **Run Pipeline** in the sidebar to generate trades.")
+        with tab_val:
+            st.info("Click **Run Pipeline** in the sidebar to run validation.")
+        with tab_exec:
+            st.info("Click **Run Pipeline** in the sidebar to run execution analysis.")
+        with tab_mon:
+            st.info("Click **Run Pipeline** in the sidebar to start monitoring.")
+    else:
+        r = st.session_state["results"]
+        bars_primary = r["bars_primary"]
+        bars_dict = r["bars_dict"]
+        signal_bundle = r["signal_bundle"]
+        val_report = r["val_report"]
+        exec_report = r["exec_report"]
 
-        # Quick stats
-        c1, c2, c3, c4, c5 = st.columns(5)
-        with c1:
-            st.metric("Bars", f"{len(bars_primary):,}")
-        with c2:
-            st.metric("Current Price",
-                       f"${bars_primary['close'].iloc[-1]:,.2f}")
-        with c3:
-            pct = ((bars_primary["close"].iloc[-1]
-                    / bars_primary["close"].iloc[0] - 1) * 100)
-            st.metric("Period Return", f"{pct:+.2f}%")
-        with c4:
-            st.metric("Signals", signal_bundle.total_signals)
-        with c5:
-            st.metric("Quality",
-                       "PASS" if r["bundle"].quality.passed else "FAIL")
+        # Signal selector (used across tabs)
+        signal_ids = [sv.signal_id for sv in signal_bundle.signals]
+        selected = signal_ids[0] if signal_ids else None
 
-    # ══════════════════════════════════════════════════════════
-    # TAB 2: TRADE LOG
-    # ══════════════════════════════════════════════════════════
-    with tab_trades:
-        sel_trade = st.selectbox("Select Signal", signal_ids,
-                                 key="sig_select_trades")
-        trades_df = r["all_trades"].get(sel_trade, pd.DataFrame())
+        # ══════════════════════════════════════════════════════════
+        # TAB 1: PRICE & SIGNALS
+        # ══════════════════════════════════════════════════════════
+        with tab_chart:
+            # Data source info
+            n_tfs = len(bars_dict)
+            if n_tfs > 1:
+                st.caption(f"Timeframes loaded: {', '.join(sorted(bars_dict.keys()))} "
+                           f"| Showing: {r['chart_tf']}")
 
-        if trades_df.empty:
-            st.warning("No trades generated for this signal.")
-        else:
-            # Equity curve
-            st.plotly_chart(chart_equity_curve(trades_df),
-                            use_container_width=True)
+            selected = st.selectbox("Select Signal", signal_ids,
+                                    key="sig_select_chart")
+            trades_df = r["all_trades"].get(selected, pd.DataFrame())
+
+            st.plotly_chart(
+                chart_candlestick_with_signals(
+                    bars_primary, signal_bundle, selected, trades_df, chart_bars,
+                ),
+                use_container_width=True,
+            )
+
+            st.plotly_chart(
+                chart_signal_strength(
+                    bars_primary, signal_bundle, selected, chart_bars,
+                ),
+                use_container_width=True,
+            )
+
+            # Quick stats
+            c1, c2, c3, c4, c5 = st.columns(5)
+            with c1:
+                st.metric("Bars", f"{len(bars_primary):,}")
+            with c2:
+                st.metric("Current Price",
+                           f"${bars_primary['close'].iloc[-1]:,.2f}")
+            with c3:
+                pct = ((bars_primary["close"].iloc[-1]
+                        / bars_primary["close"].iloc[0] - 1) * 100)
+                st.metric("Period Return", f"{pct:+.2f}%")
+            with c4:
+                st.metric("Signals", signal_bundle.total_signals)
+            with c5:
+                st.metric("Quality",
+                           "PASS" if r["bundle"].quality.passed else "FAIL")
+
+        # ══════════════════════════════════════════════════════════
+        # TAB 2: TRADE LOG
+        # ══════════════════════════════════════════════════════════
+        with tab_trades:
+            sel_trade = st.selectbox("Select Signal", signal_ids,
+                                     key="sig_select_trades")
+            trades_df = r["all_trades"].get(sel_trade, pd.DataFrame())
+
+            if trades_df.empty:
+                st.warning("No trades generated for this signal.")
+            else:
+                # Equity curve
+                st.plotly_chart(chart_equity_curve(trades_df),
+                                use_container_width=True)
+
+                # Summary metrics
+                c1, c2, c3, c4, c5, c6 = st.columns(6)
+                total_pnl = trades_df["net_pnl"].sum()
+                n_wins = (trades_df["net_pnl"] >= 0).sum()
+                n_losses = (trades_df["net_pnl"] < 0).sum()
+                win_rate = n_wins / len(trades_df) if len(trades_df) > 0 else 0
+                avg_win = (trades_df.loc[trades_df["net_pnl"] >= 0, "net_pnl"].mean()
+                           if n_wins > 0 else 0)
+                avg_loss = (trades_df.loc[trades_df["net_pnl"] < 0, "net_pnl"].mean()
+                            if n_losses > 0 else 0)
+
+                with c1:
+                    st.metric("Total Trades", len(trades_df))
+                with c2:
+                    st.metric("Net P&L", f"${total_pnl:+,.2f}",
+                               delta=f"${total_pnl:+,.2f}")
+                with c3:
+                    st.metric("Win Rate", f"{win_rate:.1%}")
+                with c4:
+                    st.metric("Avg Win", f"${avg_win:+,.2f}")
+                with c5:
+                    st.metric("Avg Loss", f"${avg_loss:,.2f}")
+                with c6:
+                    total_costs = trades_df["costs"].sum()
+                    st.metric("Total Costs", f"${total_costs:,.2f}")
+
+                # Full trade log
+                st.subheader("Trade-by-Trade Log")
+                display_df = trades_df.copy()
+                display_df["entry_time"] = display_df["entry_time"].astype(str)
+                display_df["exit_time"] = display_df["exit_time"].astype(str)
+                st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+                # P&L distribution
+                st.subheader("P&L Distribution")
+                fig_dist = go.Figure()
+                fig_dist.add_trace(go.Histogram(
+                    x=trades_df["net_pnl"], nbinsx=30, name="Net P&L",
+                    marker_color=["#26a69a" if x >= 0 else "#ef5350"
+                                  for x in trades_df["net_pnl"]],
+                ))
+                fig_dist.add_vline(x=0, line_dash="dash", line_color="white")
+                fig_dist.update_layout(
+                    height=300, template="plotly_dark",
+                    xaxis_title="Net P&L ($)", yaxis_title="Count",
+                    margin=dict(l=50, r=20, t=20, b=40),
+                )
+                st.plotly_chart(fig_dist, use_container_width=True)
+
+        # ══════════════════════════════════════════════════════════
+        # TAB 3: VALIDATION
+        # ══════════════════════════════════════════════════════════
+        with tab_val:
+            st.subheader("Validation Verdicts")
 
             # Summary metrics
-            c1, c2, c3, c4, c5, c6 = st.columns(6)
-            total_pnl = trades_df["net_pnl"].sum()
-            n_wins = (trades_df["net_pnl"] >= 0).sum()
-            n_losses = (trades_df["net_pnl"] < 0).sum()
-            win_rate = n_wins / len(trades_df) if len(trades_df) > 0 else 0
-            avg_win = (trades_df.loc[trades_df["net_pnl"] >= 0, "net_pnl"].mean()
-                       if n_wins > 0 else 0)
-            avg_loss = (trades_df.loc[trades_df["net_pnl"] < 0, "net_pnl"].mean()
-                        if n_losses > 0 else 0)
-
+            c1, c2, c3, c4 = st.columns(4)
             with c1:
-                st.metric("Total Trades", len(trades_df))
+                st.metric("DEPLOY", val_report.deploy_count)
             with c2:
-                st.metric("Net P&L", f"${total_pnl:+,.2f}",
-                           delta=f"${total_pnl:+,.2f}")
+                st.metric("REFINE", val_report.refine_count)
             with c3:
-                st.metric("Win Rate", f"{win_rate:.1%}")
+                st.metric("REJECT", val_report.reject_count)
             with c4:
-                st.metric("Avg Win", f"${avg_win:+,.2f}")
-            with c5:
-                st.metric("Avg Loss", f"${avg_loss:,.2f}")
-            with c6:
-                total_costs = trades_df["costs"].sum()
-                st.metric("Total Costs", f"${total_costs:,.2f}")
+                st.metric("Bonferroni",
+                           "Yes" if val_report.bonferroni_adjusted else "No")
 
-            # Full trade log
-            st.subheader("Trade-by-Trade Log")
-            display_df = trades_df.copy()
-            display_df["entry_time"] = display_df["entry_time"].astype(str)
-            display_df["exit_time"] = display_df["exit_time"].astype(str)
-            st.dataframe(display_df, use_container_width=True, hide_index=True)
-
-            # P&L distribution
-            st.subheader("P&L Distribution")
-            fig_dist = go.Figure()
-            fig_dist.add_trace(go.Histogram(
-                x=trades_df["net_pnl"], nbinsx=30, name="Net P&L",
-                marker_color=["#26a69a" if x >= 0 else "#ef5350"
-                              for x in trades_df["net_pnl"]],
-            ))
-            fig_dist.add_vline(x=0, line_dash="dash", line_color="white")
-            fig_dist.update_layout(
-                height=300, template="plotly_dark",
-                xaxis_title="Net P&L ($)", yaxis_title="Count",
-                margin=dict(l=50, r=20, t=20, b=40),
-            )
-            st.plotly_chart(fig_dist, use_container_width=True)
-
-    # ══════════════════════════════════════════════════════════
-    # TAB 3: VALIDATION
-    # ══════════════════════════════════════════════════════════
-    with tab_val:
-        st.subheader("Validation Verdicts")
-
-        # Summary metrics
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
-            st.metric("DEPLOY", val_report.deploy_count)
-        with c2:
-            st.metric("REFINE", val_report.refine_count)
-        with c3:
-            st.metric("REJECT", val_report.reject_count)
-        with c4:
-            st.metric("Bonferroni",
-                       "Yes" if val_report.bonferroni_adjusted else "No")
-
-        # Verdict table
-        vdata = []
-        for v in val_report.verdicts:
-            vdata.append({
-                "Signal": v.signal_id,
-                "Verdict": v.verdict,
-                "IC": v.ic,
-                "t-stat": v.ic_tstat,
-                "Hit Rate": v.hit_rate,
-                "Hit Long": v.hit_rate_long,
-                "Hit Short": v.hit_rate_short,
-                "Sharpe": v.sharpe,
-                "Sortino": v.sortino,
-                "Max DD": v.max_drawdown,
-                "Profit Factor": v.profit_factor,
-                "Decay": v.decay_class,
-                "Decay HL": v.decay_half_life,
-                "Max Corr": v.max_factor_corr,
-                "Orthogonal": v.is_orthogonal,
-                "Stable": v.subsample_stable,
-                "Failed": len(v.failed_metrics),
-            })
-        st.dataframe(pd.DataFrame(vdata), use_container_width=True,
-                      hide_index=True)
-
-        # Per-signal detail
-        st.divider()
-        for v in val_report.verdicts:
-            with st.expander(
-                f"{'🟢' if v.verdict == 'DEPLOY' else '🔴' if v.verdict == 'REJECT' else '🟡'} "
-                f"{v.signal_id} — {v.verdict}",
-                expanded=(v.verdict != "REJECT"),
-            ):
-                col_radar, col_detail = st.columns([1, 1])
-                with col_radar:
-                    st.plotly_chart(chart_validation_radar(v),
-                                    use_container_width=True)
-                with col_detail:
-                    st.markdown("**Test Results**")
-                    st.markdown(f"- IC: `{v.ic:.4f}` (t={v.ic_tstat:.2f})")
-                    st.markdown(f"- Hit Rate: `{v.hit_rate:.1%}` "
-                                f"(L={v.hit_rate_long:.1%}, S={v.hit_rate_short:.1%})")
-                    st.markdown(f"- Sharpe: `{v.sharpe:.2f}` | "
-                                f"Sortino: `{v.sortino:.2f}`")
-                    st.markdown(f"- Max DD: `{v.max_drawdown:.1%}` | "
-                                f"PF: `{v.profit_factor:.2f}`")
-                    st.markdown(f"- Decay: `{v.decay_class}` "
-                                f"(half-life={v.decay_half_life:.0f} bars)")
-                    st.markdown(f"- Max Factor Corr: `{v.max_factor_corr:.3f}` | "
-                                f"Orthogonal: `{v.is_orthogonal}`")
-
-                    if v.failed_metrics:
-                        st.markdown("**Failed Checks:**")
-                        for fm in v.failed_metrics:
-                            st.error(
-                                f"**{fm['metric']}** = {fm['value']:.4f} "
-                                f"(threshold: {fm['threshold']})"
-                            )
-
-    # ══════════════════════════════════════════════════════════
-    # TAB 4: EXECUTION
-    # ══════════════════════════════════════════════════════════
-    with tab_exec:
-        if r["demo_mode"]:
-            st.warning("All signals REJECTED by firewall. "
-                       "Showing EXEC-001 demo with forced DEPLOY override.")
-
-        st.subheader("Execution Verdicts")
-        all_exec = exec_report.approved_signals + exec_report.vetoed_signals
-
-        if not all_exec:
-            st.info("No signals reached execution analysis.")
-        else:
-            for ev in all_exec:
-                icon = "✅" if ev.verdict == "APPROVED" else "❌"
-                with st.expander(
-                    f"{icon} {ev.signal_id} — {ev.verdict}", expanded=True
-                ):
-                    c1, c2, c3 = st.columns(3)
-
-                    with c1:
-                        st.markdown("**Cost Analysis**")
-                        st.metric("Gross Sharpe", f"{ev.costs.gross_sharpe:.2f}")
-                        st.metric("Net Sharpe", f"{ev.costs.net_sharpe:.2f}")
-                        st.metric("Cost Drag", f"{ev.costs.cost_drag_pct:.1%}")
-                        st.metric("Breakeven HR",
-                                  f"{ev.costs.breakeven_hit_rate:.1%}")
-
-                    with c2:
-                        st.markdown("**Prop Firm Feasibility**")
-                        st.metric("Kelly f*",
-                                  f"{ev.prop_firm.kelly_fraction:.3f}")
-                        st.metric("Half-Kelly Contracts",
-                                  ev.prop_firm.half_kelly_contracts)
-                        st.metric("MC Ruin Prob",
-                                  f"{ev.prop_firm.mc_ruin_probability:.2%}")
-                        st.metric("Consistency",
-                                  f"{ev.prop_firm.consistency_score:.1%}")
-
-                    with c3:
-                        st.markdown("**Risk Parameters**")
-                        st.metric("Max Contracts",
-                                  ev.risk_parameters.get("max_contracts", 0))
-                        st.metric("Stop Loss",
-                                  f"{ev.risk_parameters.get('stop_loss_ticks', 0)} ticks")
-                        st.metric("Worst Day",
-                                  f"${ev.prop_firm.worst_day_pnl:,.2f}")
-                        st.metric("Max Trail DD",
-                                  f"${ev.prop_firm.max_trailing_dd:,.2f}")
-
-                    if ev.veto_reason:
-                        st.error(f"**Veto Reason:** {ev.veto_reason}")
-
-                    # Cost waterfall
-                    st.plotly_chart(chart_cost_breakdown(ev),
-                                    use_container_width=True)
-
-                    # Turnover details
-                    st.markdown("**Turnover Analysis**")
-                    tc1, tc2, tc3 = st.columns(3)
-                    with tc1:
-                        st.metric("Trades/Day",
-                                  f"{ev.turnover.get('trades_per_day', 0):.1f}")
-                    with tc2:
-                        st.metric("Avg Holding",
-                                  f"{ev.turnover.get('avg_holding_bars', 0):.1f} bars")
-                    with tc3:
-                        st.metric("Flip Rate",
-                                  f"{ev.turnover.get('flip_rate', 0):.1%}")
-
-            # Portfolio summary
-            portfolio = exec_report.portfolio_risk
-            if portfolio.get("total_signals", 0) > 0:
-                st.divider()
-                st.subheader("Portfolio Risk")
-                pc1, pc2, pc3 = st.columns(3)
-                with pc1:
-                    st.metric("Total Signals", portfolio["total_signals"])
-                with pc2:
-                    st.metric("Total Contracts", portfolio["total_contracts"])
-                with pc3:
-                    st.metric("Combined Net Sharpe",
-                              f"{portfolio['combined_net_sharpe']:.2f}")
-
-    # ══════════════════════════════════════════════════════════
-    # TAB 5: MONITORING
-    # ══════════════════════════════════════════════════════════
-    with tab_mon:
-        mc1, mc2 = st.columns(2)
-        regime = r["mon_regime"]
-        regime_icons = {"TRENDING": "📈", "RANGING": "↔️",
-                        "VOLATILE": "🌊", "TRANSITIONAL": "🔄"}
-        with mc1:
-            st.metric("Market Regime",
-                       f"{regime_icons.get(regime, '')} {regime}")
-        with mc2:
-            st.metric("Signals Tracked", r["mon_active"])
-
-        if r["health_reports"]:
-            st.subheader("Signal Health")
-            hdata = []
-            for h in r["health_reports"]:
-                hdata.append({
-                    "Signal": h.signal_id,
-                    "Status": h.status,
-                    "Live IC": h.live_ic,
-                    "BT IC": h.backtest_ic,
-                    "IC Ratio": f"{h.ic_ratio:.0%}",
-                    "Hit Rate": f"{h.live_hit_rate:.1%}",
-                    "Sharpe": h.live_sharpe,
-                    "Net P&L": f"${h.net_pnl_today:+,.2f}",
-                    "Trades": h.trades_today,
+            # Verdict table
+            vdata = []
+            for v in val_report.verdicts:
+                vdata.append({
+                    "Signal": v.signal_id,
+                    "Verdict": v.verdict,
+                    "IC": v.ic,
+                    "t-stat": v.ic_tstat,
+                    "Hit Rate": v.hit_rate,
+                    "Hit Long": v.hit_rate_long,
+                    "Hit Short": v.hit_rate_short,
+                    "Sharpe": v.sharpe,
+                    "Sortino": v.sortino,
+                    "Max DD": v.max_drawdown,
+                    "Profit Factor": v.profit_factor,
+                    "Decay": v.decay_class,
+                    "Decay HL": v.decay_half_life,
+                    "Max Corr": v.max_factor_corr,
+                    "Orthogonal": v.is_orthogonal,
+                    "Stable": v.subsample_stable,
+                    "Failed": len(v.failed_metrics),
                 })
-            st.dataframe(pd.DataFrame(hdata), use_container_width=True,
+            st.dataframe(pd.DataFrame(vdata), use_container_width=True,
                           hide_index=True)
 
-        daily = r["daily_report"]
-        if daily:
-            if daily.alerts:
-                st.subheader("Active Alerts")
-                for a in daily.alerts:
-                    icons = {"HALT": "🚨", "CRITICAL": "🔴",
-                             "WARNING": "⚠️", "INFO": "ℹ️"}
-                    st.markdown(f"{icons.get(a.level, '')} **{a.level}** — "
-                                f"{a.metric}: {a.message}")
+            # Per-signal detail
+            st.divider()
+            for v in val_report.verdicts:
+                with st.expander(
+                    f"{'🟢' if v.verdict == 'DEPLOY' else '🔴' if v.verdict == 'REJECT' else '🟡'} "
+                    f"{v.signal_id} — {v.verdict}",
+                    expanded=(v.verdict != "REJECT"),
+                ):
+                    col_radar, col_detail = st.columns([1, 1])
+                    with col_radar:
+                        st.plotly_chart(chart_validation_radar(v),
+                                        use_container_width=True)
+                    with col_detail:
+                        st.markdown("**Test Results**")
+                        st.markdown(f"- IC: `{v.ic:.4f}` (t={v.ic_tstat:.2f})")
+                        st.markdown(f"- Hit Rate: `{v.hit_rate:.1%}` "
+                                    f"(L={v.hit_rate_long:.1%}, S={v.hit_rate_short:.1%})")
+                        st.markdown(f"- Sharpe: `{v.sharpe:.2f}` | "
+                                    f"Sortino: `{v.sortino:.2f}`")
+                        st.markdown(f"- Max DD: `{v.max_drawdown:.1%}` | "
+                                    f"PF: `{v.profit_factor:.2f}`")
+                        st.markdown(f"- Decay: `{v.decay_class}` "
+                                    f"(half-life={v.decay_half_life:.0f} bars)")
+                        st.markdown(f"- Max Factor Corr: `{v.max_factor_corr:.3f}` | "
+                                    f"Orthogonal: `{v.is_orthogonal}`")
+
+                        if v.failed_metrics:
+                            st.markdown("**Failed Checks:**")
+                            for fm in v.failed_metrics:
+                                st.error(
+                                    f"**{fm['metric']}** = {fm['value']:.4f} "
+                                    f"(threshold: {fm['threshold']})"
+                                )
+
+        # ══════════════════════════════════════════════════════════
+        # TAB 4: EXECUTION
+        # ══════════════════════════════════════════════════════════
+        with tab_exec:
+            if r["demo_mode"]:
+                st.warning("All signals REJECTED by firewall. "
+                           "Showing EXEC-001 demo with forced DEPLOY override.")
+
+            st.subheader("Execution Verdicts")
+            all_exec = exec_report.approved_signals + exec_report.vetoed_signals
+
+            if not all_exec:
+                st.info("No signals reached execution analysis.")
             else:
-                st.success("No active alerts")
+                for ev in all_exec:
+                    icon = "✅" if ev.verdict == "APPROVED" else "❌"
+                    with st.expander(
+                        f"{icon} {ev.signal_id} — {ev.verdict}", expanded=True
+                    ):
+                        c1, c2, c3 = st.columns(3)
 
-            st.subheader("Recommendations")
-            for rec in daily.recommendations:
-                if "HALT" in rec:
-                    st.error(rec)
-                elif "Reduce" in rec:
-                    st.warning(rec)
+                        with c1:
+                            st.markdown("**Cost Analysis**")
+                            st.metric("Gross Sharpe", f"{ev.costs.gross_sharpe:.2f}")
+                            st.metric("Net Sharpe", f"{ev.costs.net_sharpe:.2f}")
+                            st.metric("Cost Drag", f"{ev.costs.cost_drag_pct:.1%}")
+                            st.metric("Breakeven HR",
+                                      f"{ev.costs.breakeven_hit_rate:.1%}")
+
+                        with c2:
+                            st.markdown("**Prop Firm Feasibility**")
+                            st.metric("Kelly f*",
+                                      f"{ev.prop_firm.kelly_fraction:.3f}")
+                            st.metric("Half-Kelly Contracts",
+                                      ev.prop_firm.half_kelly_contracts)
+                            st.metric("MC Ruin Prob",
+                                      f"{ev.prop_firm.mc_ruin_probability:.2%}")
+                            st.metric("Consistency",
+                                      f"{ev.prop_firm.consistency_score:.1%}")
+
+                        with c3:
+                            st.markdown("**Risk Parameters**")
+                            st.metric("Max Contracts",
+                                      ev.risk_parameters.get("max_contracts", 0))
+                            st.metric("Stop Loss",
+                                      f"{ev.risk_parameters.get('stop_loss_ticks', 0)} ticks")
+                            st.metric("Worst Day",
+                                      f"${ev.prop_firm.worst_day_pnl:,.2f}")
+                            st.metric("Max Trail DD",
+                                      f"${ev.prop_firm.max_trailing_dd:,.2f}")
+
+                        if ev.veto_reason:
+                            st.error(f"**Veto Reason:** {ev.veto_reason}")
+
+                        # Cost waterfall
+                        st.plotly_chart(chart_cost_breakdown(ev),
+                                        use_container_width=True)
+
+                        # Turnover details
+                        st.markdown("**Turnover Analysis**")
+                        tc1, tc2, tc3 = st.columns(3)
+                        with tc1:
+                            st.metric("Trades/Day",
+                                      f"{ev.turnover.get('trades_per_day', 0):.1f}")
+                        with tc2:
+                            st.metric("Avg Holding",
+                                      f"{ev.turnover.get('avg_holding_bars', 0):.1f} bars")
+                        with tc3:
+                            st.metric("Flip Rate",
+                                      f"{ev.turnover.get('flip_rate', 0):.1%}")
+
+                # Portfolio summary
+                portfolio = exec_report.portfolio_risk
+                if portfolio.get("total_signals", 0) > 0:
+                    st.divider()
+                    st.subheader("Portfolio Risk")
+                    pc1, pc2, pc3 = st.columns(3)
+                    with pc1:
+                        st.metric("Total Signals", portfolio["total_signals"])
+                    with pc2:
+                        st.metric("Total Contracts", portfolio["total_contracts"])
+                    with pc3:
+                        st.metric("Combined Net Sharpe",
+                                  f"{portfolio['combined_net_sharpe']:.2f}")
+
+        # ══════════════════════════════════════════════════════════
+        # TAB 5: MONITORING
+        # ══════════════════════════════════════════════════════════
+        with tab_mon:
+            mc1, mc2 = st.columns(2)
+            regime = r["mon_regime"]
+            regime_icons = {"TRENDING": "📈", "RANGING": "↔️",
+                            "VOLATILE": "🌊", "TRANSITIONAL": "🔄"}
+            with mc1:
+                st.metric("Market Regime",
+                           f"{regime_icons.get(regime, '')} {regime}")
+            with mc2:
+                st.metric("Signals Tracked", r["mon_active"])
+
+            if r["health_reports"]:
+                st.subheader("Signal Health")
+                hdata = []
+                for h in r["health_reports"]:
+                    hdata.append({
+                        "Signal": h.signal_id,
+                        "Status": h.status,
+                        "Live IC": h.live_ic,
+                        "BT IC": h.backtest_ic,
+                        "IC Ratio": f"{h.ic_ratio:.0%}",
+                        "Hit Rate": f"{h.live_hit_rate:.1%}",
+                        "Sharpe": h.live_sharpe,
+                        "Net P&L": f"${h.net_pnl_today:+,.2f}",
+                        "Trades": h.trades_today,
+                    })
+                st.dataframe(pd.DataFrame(hdata), use_container_width=True,
+                              hide_index=True)
+
+            daily = r["daily_report"]
+            if daily:
+                if daily.alerts:
+                    st.subheader("Active Alerts")
+                    for a in daily.alerts:
+                        icons = {"HALT": "🚨", "CRITICAL": "🔴",
+                                 "WARNING": "⚠️", "INFO": "ℹ️"}
+                        st.markdown(f"{icons.get(a.level, '')} **{a.level}** — "
+                                    f"{a.metric}: {a.message}")
                 else:
-                    st.info(rec)
-        elif r["mon_active"] == 0:
-            st.info("No signals deployed for monitoring.")
+                    st.success("No active alerts")
 
-    # ── Footer ────────────────────────────────────────────────
-    st.divider()
-    status = r["status"]
-    st.caption(
-        f"Pipeline: {status['current_phase']} | "
-        f"Signals: {signal_bundle.total_signals} | "
-        f"Approved: {len(exec_report.approved_signals)} | "
-        f"Vetoed: {len(exec_report.vetoed_signals)} | "
-        f"Decisions: {status['decisions_made']}"
-    )
+                st.subheader("Recommendations")
+                for rec in daily.recommendations:
+                    if "HALT" in rec:
+                        st.error(rec)
+                    elif "Reduce" in rec:
+                        st.warning(rec)
+                    else:
+                        st.info(rec)
+            elif r["mon_active"] == 0:
+                st.info("No signals deployed for monitoring.")
+
+        # ── Footer ────────────────────────────────────────────────
+        st.divider()
+        status = r["status"]
+        st.caption(
+            f"Pipeline: {status['current_phase']} | "
+            f"Signals: {signal_bundle.total_signals} | "
+            f"Approved: {len(exec_report.approved_signals)} | "
+            f"Vetoed: {len(exec_report.vetoed_signals)} | "
+            f"Decisions: {status['decisions_made']}"
+        )
 
 
 if __name__ == "__main__":

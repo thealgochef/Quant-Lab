@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from typing import Any
 
 # Import detectors package to trigger __init_subclass__ auto-registration
 import alpha_lab.agents.signal_eng.detectors  # noqa: F401
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 def build_signal_bundle(
     data: DataBundle,
     detector_ids: list[str] | None = None,
+    detector_kwargs: dict[str, dict[str, Any]] | None = None,
 ) -> SignalBundle:
     """
     Run detectors and assemble a SignalBundle.
@@ -33,6 +35,8 @@ def build_signal_bundle(
         data: Clean DataBundle from DATA-001
         detector_ids: Optional list of specific detectors to run.
                       If None, runs all registered detectors.
+        detector_kwargs: Optional per-detector constructor kwargs.
+                         Maps detector_id to dict of keyword arguments.
 
     Returns:
         SignalBundle containing all signal vectors
@@ -57,7 +61,8 @@ def build_signal_bundle(
 
     for detector_id, detector_cls in sorted(detectors_to_run.items()):
         try:
-            signals = run_single_detector(detector_cls, data)
+            kwargs = (detector_kwargs or {}).get(detector_id, {})
+            signals = run_single_detector(detector_cls, data, kwargs)
             all_signals.extend(signals)
             for sv in signals:
                 timeframes_seen.add(sv.timeframe)
@@ -90,7 +95,9 @@ def build_signal_bundle(
 
 
 def run_single_detector(
-    detector_cls: type[SignalDetector], data: DataBundle
+    detector_cls: type[SignalDetector],
+    data: DataBundle,
+    kwargs: dict[str, Any] | None = None,
 ) -> list[SignalVector]:
     """
     Instantiate and run a single detector.
@@ -100,6 +107,7 @@ def run_single_detector(
     Args:
         detector_cls: The detector class to instantiate and run
         data: DataBundle to compute signals from
+        kwargs: Optional constructor keyword arguments for the detector
 
     Returns:
         List of SignalVector (empty if validation fails)
@@ -108,7 +116,7 @@ def run_single_detector(
         NotImplementedError: If detector is a stub
         SignalComputationError: If computation fails unexpectedly
     """
-    detector = detector_cls()
+    detector = detector_cls(**(kwargs or {}))
 
     if not detector.validate_inputs(data):
         logger.debug(

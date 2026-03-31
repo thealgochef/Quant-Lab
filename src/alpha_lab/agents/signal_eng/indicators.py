@@ -121,28 +121,19 @@ def compute_kama_efficiency_ratio(
 
 
 def compute_session_vwap(df: pd.DataFrame) -> pd.Series:
-    """Session-anchored VWAP with daily reset.
+    # Ensure session_id is present (from tag_sessions)
+    if 'session_id' not in df.columns:
+        raise ValueError("DataFrame missing 'session_id' column for proper anchoring.")
 
-    Resets cumulative sums at each new session (grouped by date in
-    the DatetimeIndex).  Falls back to typical price when cumulative
-    volume is zero.
-
-    Args:
-        df: DataFrame with 'high', 'low', 'close', 'volume' columns
-            and a DatetimeIndex
-
-    Returns:
-        pd.Series of VWAP values
-    """
     typical_price = (df["high"] + df["low"] + df["close"]) / 3.0
     tp_vol = typical_price * df["volume"]
 
-    dates = df.index.date
-    cum_tp_vol = tp_vol.groupby(dates).cumsum()
-    cum_vol = df["volume"].groupby(dates).cumsum()
+    # Group by session_id instead of calendar date
+    cum_tp_vol = tp_vol.groupby(df['session_id']).cumsum()
+    cum_vol = df["volume"].groupby(df['session_id']).cumsum()
 
-    vwap = cum_tp_vol / cum_vol.replace(0, np.nan)
-    return vwap.fillna(typical_price)
+    vwap = cum_tp_vol / cum_vol
+    return vwap.fillna(method='ffill')  # Forward-fill any initial NaNs if needed
 
 
 def compute_session_vwap_bands(

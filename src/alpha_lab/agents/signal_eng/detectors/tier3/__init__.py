@@ -5,6 +5,9 @@ from alpha_lab.agents.signal_eng.detectors.tier3.ema_reclaim import EmaReclaimDe
 from alpha_lab.agents.signal_eng.detectors.tier3.ema_vwap_interaction import (
     EmaVwapInteractionDetector,
 )
+from alpha_lab.agents.signal_eng.detectors.tier3.ml_extrema_classifier import (
+    MLExtremaClassifierDetector,
+)
 from alpha_lab.agents.signal_eng.detectors.tier3.multi_tf_confluence import (
     MultiTFConfluenceDetector,
 )
@@ -19,4 +22,5 @@ __all__ = [
     "OrderBlocksDetector", "VolumeProfileDetector", "ScalpEntryDetector",
     "SweepFVGComboDetector", "EmaReclaimDetector", "SessionGapDetector",
     "AdaptiveRegimeDetector",
+    "MLExtremaClassifierDetector",
 ]
