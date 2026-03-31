@@ -1,0 +1,37 @@
+======================================================================
+  DIAGNOSTIC 6: SLOW REVERSAL ANALYSIS (int_time_beyond_level > 100s)
+======================================================================
+
+  Filter: int_time_beyond_level > 100 seconds
+  Total events matching: 166 / 284 (58.5%)
+
+  --- Class Distribution ---
+    tradeable_reversal       :  68 (41.0%)
+    trap_reversal            :  49 (29.5%)
+    aggressive_blowthrough   :  49 (29.5%)
+
+  --- Top 10 Features by |mean(reversal) - mean(trap)| in Slow Subset ---
+
+    Rank  Feature                                Rev Mean   Trap Mean     BT Mean     Delta
+    ----  -------                                --------    --------     -------     -----
+       1  app_total_trade_volume                37827.250   51138.122   48851.633  -13310.872
+       2  app_trade_count                       26194.647   35463.551   33972.857  -9268.904
+       3  app_buy_volume                        18911.515   25710.959   24393.469  -6799.444
+       4  app_sell_volume                       18915.735   25427.163   24458.122  -6511.428
+       5  int_total_trade_volume                 6246.015    9441.510    9166.714  -3195.495
+       6  int_volume_through_level               3662.206    6556.449    7924.531  -2894.243
+       7  int_trade_count                        4234.574    6414.265    6067.673  -2179.692
+       8  int_sweep_volume                        135.735     216.327     341.306   -80.591
+       9  int_time_within_2pts                     80.273      48.923      30.972   +31.350
+      10  app_price_change                          8.761     -14.939      -6.417   +23.700
+
+  --- Requested Features (in top 10?) ---
+
+    Feature                                Rev Mean   Trap Mean     Delta   Rank  Top 10?
+    -------                                --------    --------     -----   ----  -------
+    int_aggression_flip                      -0.010      -0.000    -0.009     36  no
+    int_book_imbalance_shift                 -0.000       0.002    -0.002     41  no
+    int_sweep_volume                        135.735     216.327   -80.591      8  YES
+    int_buy_sell_ratio                        0.489       0.499    -0.010     34  no
+    app_buy_sell_ratio                        0.499       0.500    -0.000     51  no
+    int_cancel_burst                          0.124       0.125    -0.001     50  no

@@ -1,0 +1,32 @@
+======================================================================
+  DIAGNOSTIC 2: BINARY CLASSIFICATION (reversal vs no_reversal)
+======================================================================
+
+  Labels: reversal=1 (tradeable_reversal), no_reversal=0 (trap + blowthrough)
+
+  Fold  N_test  Accuracy  Rev Prec  Rev Recall
+  ----  ------  --------  --------  ----------
+     0      17     0.471     0.571       0.400
+     1      20     0.850     0.909       0.833
+     2      22     0.500     0.500       0.545
+     3      20     0.950     1.000       0.941
+     4      24     0.625     0.818       0.562
+
+  --- Pooled Binary Results ---
+    Pooled accuracy:       0.6796
+    Reversal precision:    0.7895
+    Reversal recall:       0.6818
+    Cross-fold acc std:    0.1903
+
+  --- Aggregated Binary Confusion Matrix ---
+  Actual \ Predicted         Pred NoRev  Pred Rev
+  no_reversal                        25        12
+  reversal                           21        45
+
+  --- Binary vs 3-Class Comparison ---
+    3-class pooled accuracy:   0.4854
+    Binary pooled accuracy:    0.6796
+    3-class rev precision:     0.7442
+    Binary rev precision:      0.7895
+    3-class cross-fold std:    0.1350
+    Binary cross-fold std:     0.1903

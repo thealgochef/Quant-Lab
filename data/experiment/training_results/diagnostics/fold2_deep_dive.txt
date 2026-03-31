@@ -1,0 +1,45 @@
+======================================================================
+  DIAGNOSTIC 1: FOLD 2 DEEP DIVE (Jan 27 - Feb 2)
+======================================================================
+
+  Test dates: 2026-01-27 -- 2026-02-02
+  N events: 22
+  Accuracy: 0.273
+  Reversal precision: 0.444
+  Blowthrough recall: 0.000
+
+  --- Class Distribution in Test Window ---
+    tradeable_reversal       :  11 (50.0%)
+    trap_reversal            :   9 (40.9%)
+    aggressive_blowthrough   :   2 (9.1%)
+
+  --- Per-Class Accuracy ---
+    tradeable_reversal       : 4/11 correct (36.4%)
+    trap_reversal            : 2/9 correct (22.2%)
+    aggressive_blowthrough   : 0/2 correct (0.0%)
+
+  --- Fold 2 Confusion Matrix ---
+  Actual \ Predicted         Pred Rev  Pred Trap  Pred BT
+  tradeable_reversal                4          6        1
+  trap_reversal                     4          2        3
+  aggressive_blowthrough            1          1        0
+
+  --- Misclassifications by Level Type ---
+    PDH                 : 2/3 correct
+    PDL                 : 0/2 correct
+    asia_high           : 2/5 correct
+    asia_low            : 1/5 correct
+    london_high         : 1/3 correct
+    london_low          : 0/4 correct
+
+  --- Misclassifications by Session ---
+    Asia                : 1/2 correct
+    London              : 1/6 correct
+    NY RTH              : 4/11 correct
+    Pre-market          : 0/3 correct
+
+  --- Top Feature Values: Fold 2 vs Other Folds ---
+    int_time_beyond_level                Fold2:   129.91 +/-100.84  Others:   129.94 +/- 98.16
+    int_time_within_2pts                 Fold2:    55.77 +/- 61.86  Others:    43.79 +/- 47.43
+    int_absorption_ratio                 Fold2:     0.18 +/-  0.19  Others:     0.16 +/-  0.20
+    ctx_time_normalized                  Fold2:     0.37 +/-  0.21  Others:     0.34 +/-  0.17

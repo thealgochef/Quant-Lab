@@ -1,0 +1,57 @@
+======================================================================
+  DIAGNOSTIC 5: MISCLASSIFICATION PATTERNS
+======================================================================
+
+  --- Error Type 1: Actual REVERSAL predicted as TRAP ---
+  Count: 26
+
+  Feature comparison (misclassified vs correctly classified reversals):
+    Feature                              Misclass Mean  Correct Mean     Delta
+    -------                              -------------  ------------     -----
+    int_time_beyond_level                      137.367        40.817   +96.550
+    int_time_within_2pts                        73.562        25.428   +48.135
+    int_absorption_ratio                         0.172         0.224    -0.053
+    ctx_time_normalized                          0.283         0.441    -0.158
+
+  Misclassified reversals by level type:
+    asia_high           : 10
+    london_low          : 5
+    asia_low            : 4
+    london_high         : 4
+    PDH                 : 2
+    PDL                 : 1
+
+  Misclassified reversals by session:
+    London              : 10
+    NY RTH              : 9
+    Pre-market          : 7
+
+  --- Error Type 2: Actual TRAP predicted as REVERSAL ---
+  Count: 9
+
+  Feature comparison (traps misclassified as reversals vs correctly classified traps):
+    Feature                              Misclass Mean  Correct Mean     Delta
+    -------                              -------------  ------------     -----
+    int_time_beyond_level                      134.438       129.100    +5.338
+    int_time_within_2pts                        76.337        60.581   +15.756
+    int_absorption_ratio                         0.174         0.120    +0.054
+    ctx_time_normalized                          0.174         0.274    -0.100
+
+  Traps misclassified as reversals by level type:
+    asia_low            : 5
+    asia_high           : 2
+    PDH                 : 1
+    london_high         : 1
+
+  Traps misclassified as reversals by session:
+    London              : 7
+    NY RTH              : 1
+    Pre-market          : 1
+
+  --- Full Error Type Summary ---
+    tradeable_reversal -> trap_reversal: 26 events
+    tradeable_reversal -> aggressive_blowthrough: 8 events
+    trap_reversal -> tradeable_reversal: 9 events
+    trap_reversal -> aggressive_blowthrough: 5 events
+    aggressive_blowthrough -> tradeable_reversal: 2 events
+    aggressive_blowthrough -> trap_reversal: 3 events

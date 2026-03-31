@@ -1,0 +1,29 @@
+{
+  "overall_accuracy": 0.4854368932038835,
+  "reversal_precision": 0.7441860465116279,
+  "blowthrough_recall": 0.6428571428571429,
+  "accuracy_variance": 0.13496673628469708,
+  "n_folds": 5,
+  "verdict": {
+    "Overall Accuracy > 40%": {
+      "value": 0.4854368932038835,
+      "threshold": 0.4,
+      "passed": true
+    },
+    "Tradeable Reversal Precision > 50%": {
+      "value": 0.7441860465116279,
+      "threshold": 0.5,
+      "passed": true
+    },
+    "Blow-through Recall > 60%": {
+      "value": 0.6428571428571429,
+      "threshold": 0.6,
+      "passed": true
+    },
+    "Cross-fold Accuracy StdDev < 10%": {
+      "value": 0.13496673628469708,
+      "threshold": 0.1,
+      "passed": false
+    }
+  }
+}

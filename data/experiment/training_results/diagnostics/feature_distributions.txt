@@ -1,0 +1,40 @@
+======================================================================
+  DIAGNOSTIC 4: PER-FEATURE CLASS DISTRIBUTIONS
+======================================================================
+
+  Top 5 features by Phase 5 mean importance:
+    int_time_beyond_level, int_time_within_2pts, int_absorption_ratio, ctx_time_normalized, ctx_session
+
+  --- int_time_beyond_level ---
+  (Numeric)
+    Class                            Mean         Std      Median      N
+    tradeable_reversal             90.222      88.088      69.529    165
+    trap_reversal                 158.377      80.230     164.422     64
+    aggressive_blowthrough        229.098      83.908     263.564     55
+
+  --- int_time_within_2pts ---
+  (Numeric)
+    Class                            Mean         Std      Median      N
+    tradeable_reversal             56.239      64.887      28.533    165
+    trap_reversal                  62.565      59.518      37.876     64
+    aggressive_blowthrough         29.292      47.669       9.067     55
+
+  --- int_absorption_ratio ---
+  (Numeric)
+    Class                            Mean         Std      Median      N
+    tradeable_reversal              0.239       0.234       0.155    165
+    trap_reversal                   0.138       0.195       0.056     64
+    aggressive_blowthrough          0.089       0.187       0.017     55
+
+  --- ctx_time_normalized ---
+  (Numeric)
+    Class                            Mean         Std      Median      N
+    tradeable_reversal              0.360       0.192       0.396    165
+    trap_reversal                   0.304       0.160       0.396     64
+    aggressive_blowthrough          0.399       0.182       0.396     55
+
+  --- ctx_session ---
+  (Categorical)
+    tradeable_reversal        (n=165): NY RTH=87(53%), London=45(27%), Pre-market=24(15%), Asia=6(4%), Post-market=3(2%)
+    trap_reversal             (n= 64): NY RTH=34(53%), London=23(36%), Pre-market=7(11%)
+    aggressive_blowthrough    (n= 55): NY RTH=26(47%), Pre-market=14(25%), London=9(16%), Asia=6(11%)

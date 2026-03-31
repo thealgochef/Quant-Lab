@@ -33,3 +33,13 @@ data/processed/
 *~
 .DS_Store
 Thumbs.db
+
+# Node
+node_modules/
+
+# ML artifacts
+catboost_info/
+models/
+
+# Build cache
+*.tsbuildinfo

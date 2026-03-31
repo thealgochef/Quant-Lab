@@ -1,0 +1,44 @@
+======================================================================
+  DIAGNOSTIC 7: SESSION ACCURACY BREAKDOWN (Top-3 Model)
+======================================================================
+
+  Session              N  Accuracy  Rev Prec  Rev Recall  Rev N  Trap N  BT N
+  -------            ---  --------  --------  ----------  -----  ------  ----
+  Asia                 3     0.667     0.667       1.000      2       0     1
+  London              30     0.500     0.571       0.267     15      11     4
+  NY RTH              54     0.574     0.955       0.568     37      11     6
+  Pre-market          16     0.438     1.000       0.333     12       1     3
+
+  TOTAL              103     0.534
+
+  --- Per-Session Confusion Matrices ---
+
+  Asia:
+                               Pred Rev  Pred Trap  Pred BT
+    tradeable_reversal                2          0        0
+    trap_reversal                     0          0        0
+    aggressive_blowthrough            1          0        0
+
+  London:
+                               Pred Rev  Pred Trap  Pred BT
+    tradeable_reversal                4          8        3
+    trap_reversal                     3          8        0
+    aggressive_blowthrough            0          1        3
+
+  NY RTH:
+                               Pred Rev  Pred Trap  Pred BT
+    tradeable_reversal               21          9        7
+    trap_reversal                     1          5        5
+    aggressive_blowthrough            0          1        5
+
+  Pre-market:
+                               Pred Rev  Pred Trap  Pred BT
+    tradeable_reversal                4          5        3
+    trap_reversal                     0          1        0
+    aggressive_blowthrough            0          1        2
+
+  --- Error Analysis: Reversal<->Trap Confusion by Session ---
+    Asia           : rev->trap 0/2 (0%), trap->rev 0/0 (0%)
+    London         : rev->trap 8/15 (53%), trap->rev 3/11 (27%)
+    NY RTH         : rev->trap 9/37 (24%), trap->rev 1/11 (9%)
+    Pre-market     : rev->trap 5/12 (42%), trap->rev 0/1 (0%)

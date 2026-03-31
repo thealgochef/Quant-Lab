@@ -1,0 +1,390 @@
+// ═══════════════════════════════════════════════════════════════════
+// Level Reaction Scorer (LRS)
+// ═══════════════════════════════════════════════════════════════════
+// Approximates two order-flow features from a CatBoost walk-forward
+// model trained on NQ futures MBP-10 tick data:
+//
+//   1. time_beyond_level  (importance 29.7 / 50)
+//      Seconds price spends on the adverse side of a key level
+//      after crossing it.  More time beyond → blowthrough.
+//
+//   2. time_within_zone   (importance  7.3 / 50)
+//      Seconds price lingers within ±2 pts of the level
+//      (order-flow absorption proxy).  More time near → reversal.
+//
+// The original model also used int_absorption_ratio (L2 volume
+// at-level vs through-level).  That feature requires order-book
+// data unavailable on TradingView, so it is omitted here.
+//
+// HOW IT WORKS
+// ─────────────
+// 1. Key levels are drawn: prior-day H/L, session open, etc.
+// 2. When a bar's range comes within Touch Distance of a level,
+//    an observation window opens for the next N bars.
+// 3. Each bar in the window is scored using fractional overlap:
+//    - Beyond%  = fraction of bar range on the far side of level
+//    - Within%  = fraction of bar range inside the ±zone
+// 4. After the window closes, a composite score is computed:
+//      score = (100 − beyond%) × 0.80  +  within% × 0.20
+//    and a verdict label is placed on the chart.
+//
+// CALIBRATION (from model feature distributions)
+// ──────────────────────────────────────────────────
+//   Class               beyond%    within%    score
+//   Tradeable reversal    23%        10%       ~64
+//   Trap reversal         55%        13%       ~39
+//   Blowthrough           88%         3%       ~10
+//
+// BEST TIMEFRAME: 1-minute chart (matches the 5-min model window).
+// On higher timeframes, increase the observation window or adjust
+// the Near-Level Zone proportionally.
+// ═══════════════════════════════════════════════════════════════════
+
+//@version=5
+indicator("Level Reaction Scorer", "LRS", overlay = true,
+     max_labels_count = 500, max_lines_count = 500)
+
+// ── Inputs ──────────────────────────────────────────────────────────
+
+// Core
+GRP_OBS = "Observation"
+i_window = input.int(5, "Window (bars after touch)",
+     minval = 2, maxval = 20, group = GRP_OBS,
+     tooltip = "Bars to observe after a level touch.\n" +
+               "Model used 5 min → 5 bars on a 1m chart.")
+i_near_pts = input.float(2.0, "Near-Level Zone (± pts)",
+     minval = 0.25, step = 0.25, group = GRP_OBS,
+     tooltip = "Points from level considered 'near'.\n" +
+               "Model used ±2.0 for NQ futures.")
+i_touch_pts = input.float(1.5, "Touch Distance (pts)",
+     minval = 0.25, step = 0.25, group = GRP_OBS,
+     tooltip = "Bar must come within this distance to register a touch.")
+i_cooldown = input.int(10, "Cooldown per Level (bars)",
+     minval = 3, group = GRP_OBS,
+     tooltip = "Min bars between events on the same level.")
+
+// Levels
+GRP_LVL = "Key Levels"
+i_pdhl     = input.bool(true,  "Prior Day High / Low", group = GRP_LVL)
+i_pwhl     = input.bool(false, "Prior Week High / Low", group = GRP_LVL)
+i_ny_open  = input.bool(true,  "NY RTH Open (9:30 ET)", group = GRP_LVL,
+     tooltip = "New York Regular Trading Hours open.\n" +
+               "Model: 54 events, 57% accuracy.")
+i_ldn_open = input.bool(true,  "London Open (3:00 ET)", group = GRP_LVL,
+     tooltip = "London session open.\n" +
+               "Model: 30 events, 50% accuracy.")
+i_asia_open = input.bool(false, "Asia Open (6:00 PM ET)", group = GRP_LVL,
+     tooltip = "Asia/Globex session open.\n" +
+               "Model: 3 events (small sample).")
+i_custom1  = input.float(0, "Custom Level 1 (0 = off)", group = GRP_LVL)
+i_custom2  = input.float(0, "Custom Level 2 (0 = off)", group = GRP_LVL)
+i_custom3  = input.float(0, "Custom Level 3 (0 = off)", group = GRP_LVL)
+
+// Scoring thresholds
+GRP_THR = "Scoring"
+i_w_beyond = input.float(0.80, "Beyond Weight",
+     minval = 0.5, maxval = 1.0, step = 0.05, group = GRP_THR,
+     tooltip = "Weight for (100 − beyond%) in the composite score.\n" +
+               "Model importance ratio suggests ~0.80.")
+i_w_within = input.float(0.20, "Within Weight",
+     minval = 0.0, maxval = 0.5, step = 0.05, group = GRP_THR,
+     tooltip = "Weight for within% in the composite score.")
+i_rev_thr = input.float(55, "Reversal Threshold (score ≥)",
+     minval = 30, maxval = 80, group = GRP_THR)
+i_bt_thr  = input.float(25, "Blowthrough Threshold (score <)",
+     minval = 5, maxval = 50, group = GRP_THR)
+
+// Display
+GRP_DSP = "Display"
+i_show_lvl = input.bool(true,  "Draw Level Lines",           group = GRP_DSP)
+i_show_bg  = input.bool(false, "Shade Observation Window",   group = GRP_DSP)
+i_lbl_size = input.string("small", "Label Size",
+     options = ["tiny", "small", "normal"], group = GRP_DSP)
+
+
+// ── Higher-Timeframe Level Data ─────────────────────────────────────
+
+[pdh, pdl] = request.security(syminfo.tickerid, "D",
+     [high[1], low[1]], lookahead = barmerge.lookahead_on)
+
+[pwh, pwl] = request.security(syminfo.tickerid, "W",
+     [high[1], low[1]], lookahead = barmerge.lookahead_on)
+
+// Session opens by killzone (time-of-day detection, exchange timezone)
+// NQ/ES on CME: exchange TZ = America/Chicago (CT)
+// NY RTH  = 08:30 CT  (09:30 ET)
+// London  = 02:00 CT  (03:00 ET)
+// Asia    = 17:00 CT  (18:00 ET / 6 PM ET, prior day Globex open)
+
+var float ny_open   = na
+var float ldn_open  = na
+var float asia_open = na
+
+cur_hour = hour(time, "America/Chicago")
+cur_min  = minute(time, "America/Chicago")
+prev_hour = hour(time[1], "America/Chicago")
+
+// NY RTH open: first bar at or after 08:30 CT
+if cur_hour == 8 and cur_min >= 30 and (prev_hour < 8 or (prev_hour == 8 and minute(time[1], "America/Chicago") < 30))
+    ny_open := open
+
+// London open: first bar at or after 02:00 CT
+if cur_hour == 2 and cur_min >= 0 and prev_hour != 2
+    ldn_open := open
+
+// Asia / Globex open: first bar at or after 17:00 CT
+if cur_hour == 17 and cur_min >= 0 and prev_hour != 17
+    asia_open := open
+
+
+// ── Build Level Arrays ──────────────────────────────────────────────
+// Rebuilt each bar (levels change at session/day boundaries).
+// Cooldown array is persistent (var) but reset at session start.
+
+MAX_LVL = 12
+var int[] lcd = array.new_int(MAX_LVL, 0)   // per-slot cooldown
+
+float[] lp = array.new_float(MAX_LVL, na)   // prices
+string[] ln_ = array.new_string(MAX_LVL, "") // names
+
+int nl = 0
+if i_pdhl and not na(pdh)
+    array.set(lp, nl, pdh)
+    array.set(ln_, nl, "PDH")
+    nl += 1
+    array.set(lp, nl, pdl)
+    array.set(ln_, nl, "PDL")
+    nl += 1
+if i_pwhl and not na(pwh)
+    array.set(lp, nl, pwh)
+    array.set(ln_, nl, "PWH")
+    nl += 1
+    array.set(lp, nl, pwl)
+    array.set(ln_, nl, "PWL")
+    nl += 1
+if i_ny_open and not na(ny_open)
+    array.set(lp, nl, ny_open)
+    array.set(ln_, nl, "NY Open")
+    nl += 1
+if i_ldn_open and not na(ldn_open)
+    array.set(lp, nl, ldn_open)
+    array.set(ln_, nl, "LDN Open")
+    nl += 1
+if i_asia_open and not na(asia_open)
+    array.set(lp, nl, asia_open)
+    array.set(ln_, nl, "Asia Open")
+    nl += 1
+if i_custom1 != 0
+    array.set(lp, nl, i_custom1)
+    array.set(ln_, nl, "C1")
+    nl += 1
+if i_custom2 != 0
+    array.set(lp, nl, i_custom2)
+    array.set(ln_, nl, "C2")
+    nl += 1
+if i_custom3 != 0
+    array.set(lp, nl, i_custom3)
+    array.set(ln_, nl, "C3")
+    nl += 1
+
+
+// ── Event Tracking (parallel arrays) ────────────────────────────────
+// Each slot tracks one active observation window.
+
+MAX_EV = 10
+var int[]    ev_bar = array.new_int(MAX_EV, 0)
+var float[]  ev_lvl = array.new_float(MAX_EV, na)
+var string[] ev_nm  = array.new_string(MAX_EV, "")
+var int[]    ev_dir = array.new_int(MAX_EV, 0)      // +1 crossed up, −1 crossed down
+var float[]  ev_bey = array.new_float(MAX_EV, 0.0)  // cumulative beyond-fraction
+var float[]  ev_wit = array.new_float(MAX_EV, 0.0)  // cumulative within-fraction
+var bool[]   ev_on  = array.new_bool(MAX_EV, false)
+
+
+// ── Helper Functions ────────────────────────────────────────────────
+
+// Fraction of bar range [lo, hi] that is "beyond" the level.
+// dir = +1 (crossed above): beyond = portion above level
+// dir = −1 (crossed below): beyond = portion below level
+f_beyond(float hi, float lo, float lvl, int dir) =>
+    float rng = math.max(hi - lo, syminfo.mintick)
+    float r = 0.0
+    if dir == 1
+        r := hi <= lvl ? 0.0 : lo >= lvl ? 1.0 : (hi - lvl) / rng
+    else
+        r := lo >= lvl ? 0.0 : hi <= lvl ? 1.0 : (lvl - lo) / rng
+    r
+
+// Fraction of bar range [lo, hi] overlapping [lvl − zone, lvl + zone].
+f_within(float hi, float lo, float lvl, float zone) =>
+    float rng = math.max(hi - lo, syminfo.mintick)
+    float olo = math.max(lo, lvl - zone)
+    float ohi = math.min(hi, lvl + zone)
+    ohi > olo ? (ohi - olo) / rng : 0.0
+
+// Label size mapping
+lsz = i_lbl_size == "tiny" ? size.tiny :
+      i_lbl_size == "normal" ? size.normal : size.small
+
+
+// ── Alert Flags ─────────────────────────────────────────────────────
+// Reset each execution; set inside confirmed-bar logic.
+bool alert_rev = false
+bool alert_bt  = false
+
+
+// ── Main Logic (only on confirmed bars) ─────────────────────────────
+
+if barstate.isconfirmed
+
+    // Reset cooldowns at session start
+    if session.isfirstbar
+        for i = 0 to MAX_LVL - 1
+            array.set(lcd, i, 0)
+
+    // ── 1. Detect new level touches ─────────────────────────────
+    for li = 0 to nl - 1
+        float px = array.get(lp, li)
+        if na(px)
+            continue
+
+        // Check & decrement cooldown
+        int cd = array.get(lcd, li)
+        if cd > 0
+            array.set(lcd, li, cd - 1)
+            continue
+
+        // Touch: bar range overlaps [px − touch, px + touch]
+        if not (low <= px + i_touch_pts and high >= px - i_touch_pts)
+            continue
+
+        // Direction from prior bar
+        if na(close[1])
+            continue
+        int dir = close[1] < px ? 1 : -1
+
+        // Skip if already tracking this level
+        bool dup = false
+        for ei = 0 to MAX_EV - 1
+            if array.get(ev_on, ei) and math.abs(array.get(ev_lvl, ei) - px) < 0.5
+                dup := true
+                break
+        if dup
+            continue
+
+        // Find empty slot
+        for ei = 0 to MAX_EV - 1
+            if not array.get(ev_on, ei)
+                array.set(ev_bar, ei, bar_index)
+                array.set(ev_lvl, ei, px)
+                array.set(ev_nm,  ei, array.get(ln_, li))
+                array.set(ev_dir, ei, dir)
+                array.set(ev_bey, ei, 0.0)
+                array.set(ev_wit, ei, 0.0)
+                array.set(ev_on,  ei, true)
+                array.set(lcd, li, i_cooldown)
+                break
+
+    // ── 2. Update active events ─────────────────────────────────
+    for ei = 0 to MAX_EV - 1
+        if not array.get(ev_on, ei)
+            continue
+
+        int elapsed = bar_index - array.get(ev_bar, ei)
+        float lvl   = array.get(ev_lvl, ei)
+        int   dir   = array.get(ev_dir, ei)
+
+        // Accumulate during observation window (bars 1 .. window)
+        if elapsed >= 1 and elapsed <= i_window
+            array.set(ev_bey, ei,
+                 array.get(ev_bey, ei) + f_beyond(high, low, lvl, dir))
+            array.set(ev_wit, ei,
+                 array.get(ev_wit, ei) + f_within(high, low, lvl, i_near_pts))
+
+        // Score when window completes
+        if elapsed == i_window + 1
+            float sb = array.get(ev_bey, ei)
+            float sw = array.get(ev_wit, ei)
+            float pct_b = sb / i_window * 100
+            float pct_w = sw / i_window * 100
+
+            // Composite score: higher = more likely reversal
+            float score = (100 - pct_b) * i_w_beyond + pct_w * i_w_within
+
+            string verdict = ""
+            color  clr     = color.gray
+            if score >= i_rev_thr
+                verdict := "REVERSAL"
+                clr     := #26a69a
+                alert_rev := true
+            else if score < i_bt_thr
+                verdict := "BLOWTHROUGH"
+                clr     := #ef5350
+                alert_bt := true
+            else
+                verdict := "CAUTION"
+                clr     := #FFA726
+
+            // Tooltip with full breakdown
+            string nm  = array.get(ev_nm, ei)
+            string tip = nm + " @ " + str.tostring(lvl, "#.##") +
+                 "\n────────────────" +
+                 "\nVerdict:     " + verdict +
+                 "\nScore:       " + str.tostring(score, "#.#") +
+                 "\n────────────────" +
+                 "\nBeyond:      " + str.tostring(pct_b, "#.#") + "%" +
+                 "\nAbsorption:  " + str.tostring(pct_w, "#.#") + "%" +
+                 "\nDirection:   " + (dir == 1 ? "↑ from below" : "↓ from above")
+
+            // Place verdict label
+            float y_off = syminfo.mintick * 20
+            float y_pos = dir == -1 ? low - y_off : high + y_off
+            label.new(bar_index, y_pos, verdict,
+                 style = dir == -1 ? label.style_label_up : label.style_label_down,
+                 color = clr, textcolor = color.white, size = lsz,
+                 tooltip = tip)
+
+            // Dashed line at level price during event window
+            if i_show_lvl
+                line.new(array.get(ev_bar, ei) - 2, lvl, bar_index + 2, lvl,
+                     color = clr, width = 1, style = line.style_dashed)
+
+            // Deactivate event
+            array.set(ev_on, ei, false)
+
+
+// ── Observation-Window Background ───────────────────────────────────
+
+bool any_active = false
+if i_show_bg
+    for ei = 0 to MAX_EV - 1
+        if array.get(ev_on, ei)
+            any_active := true
+            break
+bgcolor(any_active and i_show_bg ? color.new(#2196F3, 93) : na)
+
+
+// ── Persistent Level Lines ──────────────────────────────────────────
+
+plot(i_pdhl ? pdh : na, "PDH",
+     color = color.new(#9E9E9E, 40), style = plot.style_linebr, linewidth = 1)
+plot(i_pdhl ? pdl : na, "PDL",
+     color = color.new(#9E9E9E, 40), style = plot.style_linebr, linewidth = 1)
+plot(i_pwhl ? pwh : na, "PWH",
+     color = color.new(#7986CB, 40), style = plot.style_linebr, linewidth = 1)
+plot(i_pwhl ? pwl : na, "PWL",
+     color = color.new(#7986CB, 40), style = plot.style_linebr, linewidth = 1)
+plot(i_ny_open ? ny_open : na, "NY RTH Open",
+     color = color.new(#FFD54F, 40), style = plot.style_linebr, linewidth = 1)
+plot(i_ldn_open ? ldn_open : na, "London Open",
+     color = color.new(#CE93D8, 40), style = plot.style_linebr, linewidth = 1)
+plot(i_asia_open ? asia_open : na, "Asia Open",
+     color = color.new(#80CBC4, 50), style = plot.style_linebr, linewidth = 1)
+
+
+// ── Alert Conditions ────────────────────────────────────────────────
+
+alertcondition(alert_rev, "Reversal Signal",
+     "LRS: REVERSAL detected at {{close}} on {{ticker}}")
+alertcondition(alert_bt,  "Blowthrough Signal",
+     "LRS: BLOWTHROUGH detected at {{close}} on {{ticker}}")
