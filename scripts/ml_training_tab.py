@@ -282,6 +282,9 @@ def run_walk_forward_training(
 
     # Aggregate true out-of-sample fold predictions for quality gates.
     eval_result = evaluator.evaluate_out_of_sample_folds(fold_predictions)
+    oos_summary = evaluator.summarize_out_of_sample_predictions(
+        fold_predictions,
+    )
 
     # Final model on all data (full dataset has both classes).
     trainer = ExtremaModelTrainer(config.model)
@@ -296,9 +299,14 @@ def run_walk_forward_training(
         "n_total_folds": len(splits),
         "n_valid_folds": len(valid_cv_splits),
         "n_skipped_folds": skipped,
-        "class_balance": {
+        "oos_summary": oos_summary,
+        "full_dataset_class_balance": {
             "rebound": int((y == 1).sum()),
             "crossing": int((y == 0).sum()),
+        },
+        "class_balance": {
+            "rebound": oos_summary["class_balance_true"]["rebound"],
+            "crossing": oos_summary["class_balance_true"]["crossing"],
         },
     }
 
@@ -703,13 +711,16 @@ def render_ml_training_tab() -> None:
             result = st.session_state["ml_training_result"]
             ev = result["eval_result"]
             st.info(
-                "Aggregate metrics and quality gates below come from concatenated "
-                "out-of-sample fold predictions. Saving then refits a runtime model "
-                "on all labeled rows using the selected feature set."
+                "Metrics and quality gates below are computed from concatenated "
+                "out-of-sample fold predictions (evaluation population). "
+                "Saving then refits a runtime model on all labeled rows."
             )
 
+            oos = result.get("oos_summary", {})
+            oos_rates = oos.get("confusion_rates", {})
+
             # Aggregate metrics
-            st.markdown("#### Aggregate Metrics")
+            st.markdown("#### Out-of-Sample (OOS) Aggregate Metrics")
             c1, c2, c3, c4, c5 = st.columns(5)
             with c1:
                 st.metric("Precision", f"{ev.precision:.3f}",
@@ -744,8 +755,29 @@ def render_ml_training_tab() -> None:
                            if ev.cohens_d is not None else "N/A")
             with c4:
                 balance = result["class_balance"]
-                st.metric("Class Balance",
+                st.metric("OOS Class Balance",
                            f"{balance['rebound']}R / {balance['crossing']}C")
+
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.metric("Specificity (TNR)",
+                          f"{oos_rates.get('tnr_specificity', 0.0):.3f}")
+            with c2:
+                st.metric("False Positive Rate (FPR)",
+                          f"{oos_rates.get('fpr', 0.0):.3f}")
+            with c3:
+                st.metric("Predicted Rebound Rate",
+                          f"{oos_rates.get('predicted_positive_rate', 0.0):.3f}")
+
+            full_balance = result.get("full_dataset_class_balance", {})
+            st.caption(
+                "Reference only (refit population): full labeled dataset balance = "
+                f"{full_balance.get('rebound', 0)}R / {full_balance.get('crossing', 0)}C"
+            )
+            st.caption(
+                "Statistical note: bootstrap CI and permutation test currently use "
+                "IID row assumptions; market events may be serially correlated."
+            )
 
             # Quality gates
             st.markdown("#### Quality Gates")
@@ -770,6 +802,10 @@ def render_ml_training_tab() -> None:
             # Charts
             col_chart1, col_chart2 = st.columns(2)
             with col_chart1:
+                st.caption(
+                    "Feature importance from final refit runtime model "
+                    "(trained on all labeled rows, not OOS folds)."
+                )
                 st.plotly_chart(
                     _chart_feature_importance(result["trained_model"]),
                     use_container_width=True,
@@ -784,6 +820,23 @@ def render_ml_training_tab() -> None:
                 _chart_fold_metrics(result["fold_details"]),
                 use_container_width=True,
             )
+
+            if oos.get("threshold_table"):
+                st.markdown("#### OOS Threshold vs Coverage")
+                threshold_df = pd.DataFrame(oos["threshold_table"])
+                for col in ["threshold", "coverage", "precision"]:
+                    if col in threshold_df.columns:
+                        threshold_df[col] = threshold_df[col].round(3)
+                st.dataframe(threshold_df, use_container_width=True, hide_index=True)
+
+            if oos.get("calibration_table"):
+                st.markdown("#### OOS Calibration Buckets")
+                calib_df = pd.DataFrame(oos["calibration_table"])
+                for col in ["bucket_low", "bucket_high",
+                            "mean_predicted_prob", "observed_positive_rate"]:
+                    if col in calib_df.columns:
+                        calib_df[col] = calib_df[col].round(3)
+                st.dataframe(calib_df, use_container_width=True, hide_index=True)
 
             # Fold details table
             with st.expander("Fold Details"):

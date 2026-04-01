@@ -413,6 +413,44 @@ class TestModelEvaluator:
         assert len(result.fold_metrics) == 2
         assert result.roc_auc is not None
 
+    def test_summarize_out_of_sample_predictions_class_balance(self):
+        """OOS summary should report true/pred class balance from fold predictions."""
+        evaluator = ModelEvaluator(n_bootstrap=20, n_permutations=20)
+        fold_predictions = [
+            {
+                "fold": 0,
+                "y_true": np.array([1, 0, 1, 0]),
+                "y_pred": np.array([1, 0, 1, 0]),
+                "y_prob": np.array([0.9, 0.2, 0.8, 0.1]),
+            },
+            {
+                "fold": 1,
+                "y_true": np.array([1, 1, 0, 0]),
+                "y_pred": np.array([1, 0, 0, 0]),
+                "y_prob": np.array([0.7, 0.4, 0.3, 0.2]),
+            },
+        ]
+
+        summary = evaluator.summarize_out_of_sample_predictions(fold_predictions)
+
+        assert summary["n_samples"] == 8
+        assert summary["class_balance_true"] == {"rebound": 4, "crossing": 4}
+        assert summary["class_balance_pred"] == {"rebound": 3, "crossing": 5}
+        assert summary["has_probabilities"] is True
+        assert len(summary["threshold_table"]) > 0
+        assert len(summary["calibration_table"]) > 0
+
+    def test_permutation_p_value_uses_plus_one_correction(self):
+        """Permutation p-value should never be a literal 0 with finite permutations."""
+        y_true = np.array([1] * 30 + [0] * 30)
+        y_pred = y_true.copy()
+
+        evaluator = ModelEvaluator(n_bootstrap=20, n_permutations=10)
+        result = evaluator.evaluate(y_true, y_pred)
+
+        assert result.permutation_p_value is not None
+        assert result.permutation_p_value >= 1 / 11
+
 
 # ────────────────────────────────────────────────────────────────
 # Full Pipeline Integration
