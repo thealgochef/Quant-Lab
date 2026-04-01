@@ -179,6 +179,32 @@ class TestTickStore:
         )
         assert result.empty
 
+    def test_query_tick_feature_rows_includes_mbp10_columns(self, tick_store):
+        """Feature-row query should include full MBP-10 depth columns."""
+        result = tick_store.query_tick_feature_rows(
+            "NQ",
+            datetime(2026, 2, 20, 9, 30, tzinfo=dt.UTC),
+            datetime(2026, 2, 20, 9, 30, 5, tzinfo=dt.UTC),
+        )
+        assert not result.empty
+        assert "ts_event" in result.columns
+        assert "price" in result.columns
+        assert "size" in result.columns
+        assert "bid_px_00" in result.columns
+        assert "ask_px_09" in result.columns
+        assert "bid_sz_00" in result.columns
+        assert "ask_sz_09" in result.columns
+
+    def test_query_tick_prices_remains_lean(self, tick_store):
+        """Lean query path should remain compact for non-book consumers."""
+        result = tick_store.query_tick_prices(
+            "NQ",
+            datetime(2026, 2, 20, 9, 30, tzinfo=dt.UTC),
+            datetime(2026, 2, 20, 9, 30, 5, tzinfo=dt.UTC),
+        )
+        assert not result.empty
+        assert set(result.columns) == {"ts_event", "price", "size"}
+
     def test_register_missing_file_returns_false(self, tick_store):
         """Registering a non-existent date returns False."""
         assert tick_store.register_symbol_date("NQ", "2099-01-01") is False
