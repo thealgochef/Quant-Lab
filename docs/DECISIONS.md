@@ -149,7 +149,7 @@ This prevents re-litigating settled questions across sessions.
 ## D-018: Final Extrema Runtime Model Is Refit on All Labeled Rows
 **Date**: 2026-03-31
 **Context**: The previous trainer path concatenated overlapping historical CV windows and held out only the last split, which both duplicated rows and failed to produce a clean final runtime fit.
-**Decision**: Use CV splits only for optional RFECV feature selection, then fit the final extrema model once on the full labeled dataset.
+**Decision**: Use CV splits only for optional RFECV feature selection, then fit the final extrema model once on the full labeled dataset..
 **Rationale**: This produces a cleaner runtime model and avoids misleading overlap-driven training behavior.
 **Trade-off**: The final runtime fit no longer uses early stopping against a held-out fold by default.
 
