@@ -76,7 +76,7 @@ class ExtremaDatasetBuilder:
         Returns:
             DataFrame with one row per extremum, feature columns + labels.
         """
-        ticks = self._store.query_tick_prices(symbol, start, end)
+        ticks = self._store.query_tick_feature_rows(symbol, start, end)
         if ticks.empty:
             logger.warning("No ticks found for %s [%s, %s]", symbol, start, end)
             return pd.DataFrame()
@@ -103,7 +103,7 @@ class ExtremaDatasetBuilder:
             start = datetime.fromisoformat(f"{date_str}T00:00:00")
             end = start + timedelta(days=1) - timedelta(microseconds=1)
 
-            ticks = self._store.query_tick_prices(symbol, start, end)
+            ticks = self._store.query_tick_feature_rows(symbol, start, end)
             if ticks.empty:
                 logger.debug("No ticks for %s on %s", symbol, date_str)
                 continue

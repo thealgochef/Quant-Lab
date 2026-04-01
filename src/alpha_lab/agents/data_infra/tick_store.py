@@ -141,10 +141,10 @@ class TickStore:
                 WHERE symbol NOT LIKE '%-%'
                 GROUP BY symbol ORDER BY n DESC LIMIT 1
             """).fetchone()
-            if front:
-                sym_filter = f"AND symbol = '{front[0]}'"
-            else:
-                sym_filter = "AND symbol NOT LIKE '%-%'"
+            sym_filter = (
+                f"AND symbol = '{front[0]}'"
+                if front else "AND symbol NOT LIKE '%-%'"
+            )
         else:
             sym_filter = ""
 
@@ -218,6 +218,79 @@ class TickStore:
                   {sym_f}
                 ORDER BY ts_event ASC
             """
+        return self._conn.execute(
+            sql, [pd.Timestamp(start), pd.Timestamp(end)]
+        ).fetchdf()
+
+    def query_tick_feature_rows(
+        self,
+        symbol: str,
+        start: datetime,
+        end: datetime,
+    ) -> pd.DataFrame:
+        """Return ML feature rows with MBP-10 depth columns when available.
+
+        This query is intended for ML feature extraction where we need more
+        than lean (ts_event, price, size) data, but still avoid loading every
+        raw column from the parquet source.
+        """
+        views = self._get_views(symbol)
+        if not views:
+            return pd.DataFrame(columns=["ts_event", "price", "size"])
+
+        union_sql = self._union_views_sql(views)
+        sample_sql = (
+            f"SELECT column_name FROM "
+            f"(DESCRIBE SELECT * FROM ({union_sql}) LIMIT 0)"
+        )
+        cols = {r[0] for r in self._conn.execute(sample_sql).fetchall()}
+        has_symbol = "symbol" in cols
+        has_book = "bid_px_00" in cols and "ask_px_00" in cols
+        has_size = "size" in cols
+
+        if has_symbol:
+            front = self._conn.execute(f"""
+                SELECT symbol, count(*) AS n
+                FROM ({union_sql}) AS t
+                WHERE symbol NOT LIKE '%-%'
+                GROUP BY symbol ORDER BY n DESC LIMIT 1
+            """).fetchone()
+            sym_f = f"AND symbol = '{front[0]}'" if front else "AND symbol NOT LIKE '%-%'"
+        else:
+            sym_f = ""
+
+        select_cols = ["ts_event"]
+        if has_book:
+            select_cols.append("(bid_px_00 + ask_px_00) / 2.0 AS price")
+            select_cols.append("size" if has_size else "1.0 AS size")
+            for i in range(10):
+                select_cols.extend([
+                    f"bid_px_{i:02d}",
+                    f"ask_px_{i:02d}",
+                    f"bid_sz_{i:02d}",
+                    f"ask_sz_{i:02d}",
+                ])
+            sql = f"""
+                SELECT {", ".join(select_cols)}
+                FROM ({union_sql}) AS t
+                WHERE ts_event >= $1 AND ts_event <= $2
+                  AND bid_px_00 > 0 AND ask_px_00 > 0
+                  {sym_f}
+                ORDER BY ts_event ASC
+            """
+        else:
+            # Fallback for trades-only schemas.
+            select_cols.append("price")
+            select_cols.append("size" if has_size else "1.0 AS size")
+            sql = f"""
+                SELECT {", ".join(select_cols)}
+                FROM ({union_sql}) AS t
+                WHERE ts_event >= $1 AND ts_event <= $2
+                  AND price IS NOT NULL AND price > 0
+                  {sym_f}
+                ORDER BY ts_event ASC
+            """
+
         return self._conn.execute(
             sql, [pd.Timestamp(start), pd.Timestamp(end)]
         ).fetchdf()
@@ -307,10 +380,10 @@ class TickStore:
                 WHERE symbol NOT LIKE '%-%'
                 GROUP BY symbol ORDER BY n DESC LIMIT 1
             """).fetchone()
-            if front:
-                symbol_filter = f"AND symbol = '{front[0]}'"
-            else:
-                symbol_filter = "AND symbol NOT LIKE '%-%'"
+            symbol_filter = (
+                f"AND symbol = '{front[0]}'"
+                if front else "AND symbol NOT LIKE '%-%'"
+            )
         else:
             symbol_filter = ""
 
