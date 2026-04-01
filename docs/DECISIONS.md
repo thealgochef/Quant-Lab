@@ -110,4 +110,58 @@ This prevents re-litigating settled questions across sessions.
 
 ---
 
+## D-014: Primary Repo Role Is the Streamlit Extrema Workflow
+**Date**: 2026-03-31
+**Context**: The repo had accumulated a real extrema training pipeline, a retained 3-class dashboard path, multi-agent infrastructure, and multiple UI surfaces. The old scaffold-first framing no longer matched how the repo is actually used.
+**Decision**: Treat `scripts/ml_training_tab.py` and `src/alpha_lab/agents/data_infra/ml/` as the primary application and primary training architecture.
+**Rationale**: This is the main workflow the user cares about, and it is the clearest entrypoint for understanding the current codebase.
+**Trade-off**: The broader multi-agent architecture remains important, but it is no longer the best first explanation of repo purpose.
+
+---
+
+## D-015: Keep the 3-Class Path as a Secondary Compatibility / Export Surface
+**Date**: 2026-03-31
+**Context**: The older 3-class dashboard model path is still needed by ML-Trading-Dashboard even though it is no longer the main research direction inside this repo.
+**Decision**: Preserve the 3-class path as a supported secondary compatibility/export workflow.
+**Rationale**: Downstream consumers still depend on it, so the correct move is clearer separation, not silent removal.
+**Trade-off**: The repo carries conceptual overlap between two model worlds, so docs and UI must keep that distinction explicit.
+
+---
+
+## D-016: Canonical Dashboard Compatibility Export Artifact
+**Date**: 2026-03-31
+**Context**: The older dashboard path had multiple training/result locations, which made it unclear which file downstream consumers should trust.
+**Decision**: Treat `scripts/train_dashboard_model.py` -> `data/models/dashboard_3feature_v1.cbm` as the canonical downstream compatibility/export boundary.
+**Rationale**: A single export contract reduces confusion without deleting supporting experiment diagnostics.
+**Trade-off**: `src/alpha_lab/experiment/training.py` still produces useful diagnostics, but it is no longer the canonical downstream artifact producer.
+
+---
+
+## D-017: ML Quality Gates Must Use True Out-of-Sample Fold Predictions
+**Date**: 2026-03-31
+**Context**: The Streamlit extrema workflow displayed walk-forward quality gates, but aggregate metrics were being computed by replaying a later refit model across historical test windows.
+**Decision**: Compute aggregate ML metrics and quality gates from concatenated out-of-sample fold predictions produced by the per-fold models.
+**Rationale**: This matches the semantics implied by walk-forward validation and keeps the primary workflow's quality signal trustworthy.
+**Trade-off**: The final saved runtime model is now a separate refit step after evaluation rather than the object used to generate historical fold metrics.
+
+---
+
+## D-018: Final Extrema Runtime Model Is Refit on All Labeled Rows
+**Date**: 2026-03-31
+**Context**: The previous trainer path concatenated overlapping historical CV windows and held out only the last split, which both duplicated rows and failed to produce a clean final runtime fit.
+**Decision**: Use CV splits only for optional RFECV feature selection, then fit the final extrema model once on the full labeled dataset.
+**Rationale**: This produces a cleaner runtime model and avoids misleading overlap-driven training behavior.
+**Trade-off**: The final runtime fit no longer uses early stopping against a held-out fold by default.
+
+---
+
+## D-019: Generated Models and CatBoost Scratch Logs Are Local Outputs
+**Date**: 2026-03-31
+**Context**: Model bundles, CatBoost logs, cached feature files, and scratch chart HTML were easy to mistake for tracked source-of-truth artifacts.
+**Decision**: Treat model binaries, runtime bundles, CatBoost scratch output, cached parquet/csv files, and scratch chart HTML as generated local outputs.
+**Rationale**: This keeps the repo centered on source code and documentation rather than mutable generated state.
+**Trade-off**: Reproducing some local artifacts now requires rerunning the corresponding workflow instead of relying on checked-in outputs.
+
+---
+
 *Add new decisions below this line.*

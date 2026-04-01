@@ -1,11 +1,14 @@
 """
-Train a 3-feature CatBoost model for the live dashboard.
+Train the canonical 3-feature CatBoost compatibility model.
 
 Features: int_time_beyond_level, int_time_within_2pts, int_absorption_ratio
 Classes:  0=tradeable_reversal, 1=trap_reversal, 2=aggressive_blowthrough
 
 Uses purged walk-forward validation (gap between train/test to prevent
 label leakage from overlapping forward windows).
+
+This is the retained secondary export path for ML-Trading-Dashboard.
+The primary training workflow lives in scripts/ml_training_tab.py.
 
 Output: data/models/dashboard_3feature_v1.cbm
 """
@@ -41,6 +44,7 @@ MIN_TRAIN_EVENTS = 30
 
 # Paths
 FEATURE_MATRIX_PATH = Path("data/experiment/feature_matrix.parquet")
+# Canonical downstream compatibility export artifact.
 OUTPUT_MODEL_PATH = Path("data/models/dashboard_3feature_v1.cbm")
 
 

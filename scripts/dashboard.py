@@ -1143,6 +1143,9 @@ def main() -> None:
 
         st.divider()
         st.markdown("**ML Extrema Classifier**")
+        st.caption(
+            "Primary runtime hook for extrema models saved from the ML Training tab."
+        )
         ml_model_path = st.text_input(
             "Model directory",
             value="",
@@ -1165,16 +1168,20 @@ def main() -> None:
 
     # ── Header ────────────────────────────────────────────────
     st.title("📊 Alpha Signal Research Lab")
+    st.caption(
+        "Primary workflow: ML extrema training and runtime. "
+        "Secondary workflow: retained 3-class dashboard compatibility/export path."
+    )
     st.caption(f"{symbol}  |  {mode}  |  {chart_tf}  |  "
                f"{datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
     # ══════════════════════════════════════════════════════════
-    # TAB LAYOUT — ML Training is always accessible
+    # TAB LAYOUT — primary extrema workflow + retained compatibility path
     # ══════════════════════════════════════════════════════════
 
     tab_ml, tab_exp, tab_chart, tab_trades, tab_val, tab_exec, tab_mon = st.tabs([
         "🧠 ML Training",
-        "🔬 Order Flow Experiment",
+        "🔬 Dashboard Compatibility",
         "📈 Price & Signals",
         "📋 Trade Log",
         "✅ Validation",
@@ -1182,13 +1189,13 @@ def main() -> None:
         "🖥️ Monitoring",
     ])
 
-    # ── ML Training tab (always available) ────────────────────
+    # ── Primary ML training tab (always available) ────────────
     with tab_ml:
         from ml_training_tab import render_ml_training_tab
 
         render_ml_training_tab()
 
-    # ── Order Flow Experiment tab (always available) ──────────
+    # ── Secondary dashboard-compatibility tab (always available) ──
     with tab_exp:
         from experiment_tab import render_experiment_tab
 

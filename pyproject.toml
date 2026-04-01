@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "alpha-signal-lab"
 version = "0.1.0"
-description = "Multi-agent quantitative trading research system for NQ/ES futures"
+description = "Streamlit extrema-training workbench with retained dashboard compatibility/export tooling for NQ/ES futures"
 requires-python = ">=3.11"
 license = {text = "Proprietary"}
 

@@ -1,8 +1,8 @@
 """
-ML Training workflow tab for the Streamlit dashboard.
+Primary extrema-model training workflow for the Streamlit dashboard.
 
-Orchestrates: local tick data scan → dataset build → walk-forward
-CatBoost training → evaluation → model save.
+Orchestrates: local tick data scan -> dataset build -> out-of-sample
+walk-forward evaluation -> final CatBoost fit -> model save.
 
 All tick data is read from local Parquet files (no Databento API calls).
 Data must be pre-downloaded into data/databento/{symbol}/{date}/mbp10.parquet.
@@ -163,7 +163,8 @@ def run_walk_forward_training(
 ) -> dict:
     """Walk-forward train + evaluate.
 
-    Returns dict with trained model, evaluation result, and fold details.
+    Returns dict with the refit runtime model, out-of-sample evaluation
+    result, and per-fold diagnostics.
     """
     from alpha_lab.agents.data_infra.ml.model_evaluator import ModelEvaluator
     from alpha_lab.agents.data_infra.ml.model_trainer import ExtremaModelTrainer
@@ -209,6 +210,7 @@ def run_walk_forward_training(
     # Per-fold evaluation
     evaluator = ModelEvaluator(n_bootstrap=200, n_permutations=100)
     fold_details: list[dict] = []
+    fold_predictions: list[dict[str, object]] = []
 
     valid_cv_splits: list[tuple] = []
     skipped = 0
@@ -242,6 +244,12 @@ def run_walk_forward_training(
             y_test.values, preds, rebound_prob,
         )
         valid_cv_splits.append((split.train_indices, split.test_indices))
+        fold_predictions.append({
+            "fold": split.fold,
+            "y_true": y_test.values,
+            "y_pred": preds,
+            "y_prob": rebound_prob,
+        })
         fold_details.append({
             "fold": split.fold,
             "train_start": str(split.train_start.date()),
@@ -272,14 +280,12 @@ def run_walk_forward_training(
             len(valid_cv_splits), len(splits), skipped,
         )
 
-    # Final model on all data (full dataset has both classes)
+    # Aggregate true out-of-sample fold predictions for quality gates.
+    eval_result = evaluator.evaluate_out_of_sample_folds(fold_predictions)
+
+    # Final model on all data (full dataset has both classes).
     trainer = ExtremaModelTrainer(config.model)
     final_model = trainer.train(features, y, cv_splits=valid_cv_splits)
-
-    # Aggregate evaluation across valid folds
-    eval_result = evaluator.evaluate_walk_forward(
-        final_model.model, features, y, valid_cv_splits, final_model.selected_features,
-    )
 
     return {
         "trained_model": final_model,
@@ -287,6 +293,9 @@ def run_walk_forward_training(
         "fold_details": fold_details,
         "feature_cols": feature_cols,
         "n_total": len(valid),
+        "n_total_folds": len(splits),
+        "n_valid_folds": len(valid_cv_splits),
+        "n_skipped_folds": skipped,
         "class_balance": {
             "rebound": int((y == 1).sum()),
             "crossing": int((y == 0).sum()),
@@ -300,6 +309,10 @@ def check_quality_gates(eval_result) -> dict[str, dict]:
         f.get("precision", 0) for f in eval_result.fold_metrics
     ]
     fold_std = float(np.std(fold_precisions)) if fold_precisions else 1.0
+    permutation_p = (
+        eval_result.permutation_p_value
+        if eval_result.permutation_p_value is not None else 1.0
+    )
 
     gates = {
         "Precision >= 0.55": {
@@ -308,8 +321,8 @@ def check_quality_gates(eval_result) -> dict[str, dict]:
             "threshold": "0.55",
         },
         "Permutation p < 0.05": {
-            "passed": (eval_result.permutation_p_value if eval_result.permutation_p_value is not None else 1.0) < 0.05,
-            "value": f"{eval_result.permutation_p_value if eval_result.permutation_p_value is not None else 1.0:.4f}",
+            "passed": permutation_p < 0.05,
+            "value": f"{permutation_p:.4f}",
             "threshold": "0.05",
         },
         "Fold stability (std < 0.15)": {
@@ -454,10 +467,14 @@ def _chart_fold_metrics(fold_details: list[dict]) -> go.Figure:
 
 def render_ml_training_tab() -> None:
     """Render the ML Training tab content."""
-    st.subheader("ML Extrema Classifier — Training Pipeline")
+    st.subheader("Primary Workflow: ML Extrema Training")
     st.caption(
-        "Fetch tick data, build labeled dataset, train CatBoost with "
-        "walk-forward validation, and save the model."
+        "Build the extrema dataset from local Databento files, score true "
+        "out-of-sample walk-forward folds, then refit and save the runtime model."
+    )
+    st.info(
+        "The Dashboard Compatibility tab is the retained secondary 3-class "
+        "export path for ML-Trading-Dashboard."
     )
 
     # ── Configuration ─────────────────────────────────────────
@@ -685,6 +702,11 @@ def render_ml_training_tab() -> None:
         if "ml_training_result" in st.session_state:
             result = st.session_state["ml_training_result"]
             ev = result["eval_result"]
+            st.info(
+                "Aggregate metrics and quality gates below come from concatenated "
+                "out-of-sample fold predictions. Saving then refits a runtime model "
+                "on all labeled rows using the selected feature set."
+            )
 
             # Aggregate metrics
             st.markdown("#### Aggregate Metrics")
@@ -702,16 +724,25 @@ def render_ml_training_tab() -> None:
             with c5:
                 st.metric("Samples", ev.n_samples)
 
-            c1, c2, c3 = st.columns(3)
+            c1, c2, c3, c4 = st.columns(4)
             with c1:
+                st.metric(
+                    "Walk-forward folds",
+                    f"{result['n_valid_folds']} / {result['n_total_folds']}",
+                    help=(
+                        f"{result['n_skipped_folds']} fold(s) skipped because a "
+                        "training window contained only one class."
+                    ),
+                )
+            with c2:
                 st.metric("Permutation p-value",
                            f"{ev.permutation_p_value:.4f}"
                            if ev.permutation_p_value is not None else "N/A")
-            with c2:
+            with c3:
                 st.metric("Cohen's d",
                            f"{ev.cohens_d:.3f}"
                            if ev.cohens_d is not None else "N/A")
-            with c3:
+            with c4:
                 balance = result["class_balance"]
                 st.metric("Class Balance",
                            f"{balance['rebound']}R / {balance['crossing']}C")
@@ -789,7 +820,8 @@ def render_ml_training_tab() -> None:
                 st.success(f"Model saved to `{saved_path}`")
                 st.info(
                     "Paste this path into the sidebar **ML Extrema Classifier > "
-                    "Model directory** field to use this model for signal generation.",
+                    "Model directory** field to use this saved runtime bundle for "
+                    "signal generation.",
                 )
 
             if "ml_saved_path" in st.session_state:

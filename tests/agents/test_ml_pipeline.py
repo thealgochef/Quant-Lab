@@ -219,6 +219,19 @@ class TestModelTrainer:
         result = trainer.train(feats, y, cv_splits=cv)
         assert isinstance(result, TrainedModel)
 
+    def test_training_with_cv_splits_refits_on_full_dataset(self):
+        """Final runtime fit should use all labeled rows after CV-based selection."""
+        feats, y, timestamps = _make_classification_data(n=300, n_features=5)
+        wf_config = WalkForwardConfig(train_days=30, test_days=10)
+        splitter = WalkForwardSplitter(wf_config)
+        cv = splitter.as_sklearn_cv(timestamps)
+
+        config = ModelConfig(iterations=50, depth=4, rfecv_enabled=False)
+        trainer = ExtremaModelTrainer(config)
+
+        result = trainer.train(feats, y, cv_splits=cv)
+        assert result.train_metrics["n_train_samples"] == float(len(feats))
+
     def test_save_and_load(self, tmp_path):
         """Model should round-trip through save/load."""
         feats, y, _ = _make_classification_data(n=200, n_features=5)
@@ -374,6 +387,31 @@ class TestModelEvaluator:
         assert isinstance(result, EvaluationResult)
         assert len(result.fold_metrics) == len(cv)
         assert result.n_samples > 0
+
+    def test_evaluate_out_of_sample_folds(self):
+        """Aggregate metrics should support true per-fold out-of-sample predictions."""
+        evaluator = ModelEvaluator(n_bootstrap=50, n_permutations=50)
+        fold_predictions = [
+            {
+                "fold": 0,
+                "y_true": np.array([1, 0, 1, 0]),
+                "y_pred": np.array([1, 0, 1, 0]),
+                "y_prob": np.array([0.9, 0.2, 0.8, 0.1]),
+            },
+            {
+                "fold": 1,
+                "y_true": np.array([1, 1, 0, 0]),
+                "y_pred": np.array([1, 0, 0, 0]),
+                "y_prob": np.array([0.7, 0.4, 0.3, 0.2]),
+            },
+        ]
+
+        result = evaluator.evaluate_out_of_sample_folds(fold_predictions)
+
+        assert isinstance(result, EvaluationResult)
+        assert result.n_samples == 8
+        assert len(result.fold_metrics) == 2
+        assert result.roc_auc is not None
 
 
 # ────────────────────────────────────────────────────────────────

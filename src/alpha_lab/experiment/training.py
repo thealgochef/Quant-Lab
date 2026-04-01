@@ -1,12 +1,17 @@
 """
-Phase 5 — Walk-Forward CatBoost 3-Class Model Training.
+Phase 5 - Walk-Forward CatBoost 3-Class Compatibility Training.
 
 Trains a CatBoost MultiClass classifier using walk-forward validation
 on the order flow feature matrix (Phase 4 output).  Evaluates against
 hypothesis thresholds for tradeable_reversal precision, blow-through
 recall, cross-fold stability, and overall accuracy.
 
-Self-contained: does NOT import from agents/data_infra/ml/ infrastructure.
+This is the retained secondary compatibility/export path for
+ML-Trading-Dashboard. It stays self-contained and does not import from
+the primary extrema pipeline under agents/data_infra/ml/.
+
+Canonical downstream model export is produced by scripts/train_dashboard_model.py
+at data/models/dashboard_3feature_v1.cbm.
 
 Output: printed verdict + saved results to data/experiment/training_results/
 """

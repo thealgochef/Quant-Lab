@@ -35,7 +35,7 @@ class EvaluationResult:
     n_samples: int = 0
     n_positive: int = 0
     n_negative: int = 0
-    fold_metrics: list[dict[str, float]] = field(default_factory=list)
+    fold_metrics: list[dict[str, float | int]] = field(default_factory=list)
 
 
 class ModelEvaluator:
@@ -123,6 +123,55 @@ class ModelEvaluator:
             n_negative=int(np.sum(y_t == 0)),
         )
 
+    def evaluate_out_of_sample_folds(
+        self,
+        fold_predictions: list[dict[str, object]],
+    ) -> EvaluationResult:
+        """Evaluate true out-of-sample predictions collected per fold.
+
+        Each item must contain ``y_true`` and ``y_pred`` arrays, and may
+        optionally include ``y_prob`` and ``fold`` metadata.
+        """
+        if not fold_predictions:
+            msg = "fold_predictions must contain at least one evaluated fold"
+            raise ValueError(msg)
+
+        all_true: list[np.ndarray] = []
+        all_pred: list[np.ndarray] = []
+        all_prob: list[np.ndarray] = []
+        fold_metrics: list[dict[str, float | int]] = []
+        has_probabilities = True
+
+        for idx, fold_data in enumerate(fold_predictions):
+            y_true = np.asarray(fold_data["y_true"]).flatten()
+            y_pred = np.asarray(fold_data["y_pred"]).flatten()
+            y_prob_raw = fold_data.get("y_prob")
+            y_prob = None if y_prob_raw is None else np.asarray(y_prob_raw).flatten()
+
+            fold_result = self.evaluate(y_true, y_pred, y_prob)
+            fold_metrics.append({
+                "fold": int(fold_data.get("fold", idx)),
+                "precision": fold_result.precision,
+                "recall": fold_result.recall,
+                "f1": fold_result.f1,
+                "n_test": int(len(y_true)),
+            })
+
+            all_true.append(y_true)
+            all_pred.append(y_pred)
+            if y_prob is None:
+                has_probabilities = False
+            else:
+                all_prob.append(y_prob)
+
+        aggregate = self.evaluate(
+            np.concatenate(all_true),
+            np.concatenate(all_pred),
+            np.concatenate(all_prob) if has_probabilities else None,
+        )
+        aggregate.fold_metrics = fold_metrics
+        return aggregate
+
     def evaluate_walk_forward(
         self,
         model: object,
@@ -146,7 +195,7 @@ class ModelEvaluator:
         all_true: list[np.ndarray] = []
         all_pred: list[np.ndarray] = []
         all_prob: list[np.ndarray] = []
-        fold_metrics: list[dict[str, float]] = []
+        fold_metrics: list[dict[str, float | int]] = []
 
         cols = feature_names or list(features.columns)
 

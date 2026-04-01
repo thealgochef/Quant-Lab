@@ -20,10 +20,18 @@ env/
 .pytest_cache/
 .coverage
 htmlcov/
+# Generated ML artifacts
+catboost_info/
+models/
+*.cbm
+# Cached data exports
 *.csv
 *.parquet
 *.h5
 *.hdf5
+# Scratch chart outputs
+test-chart/*.html
+test_chart_output.html
 data/raw/
 data/processed/
 .idea/

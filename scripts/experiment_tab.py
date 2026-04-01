@@ -1,11 +1,13 @@
 """
-Order Flow Experiment tab for the Streamlit dashboard.
+Dashboard compatibility/export tab for the retained 3-class workflow.
 
-Visualizes Phase 5-6 results: walk-forward CatBoost 3-class model
-performance, feature importance, confusion matrices, session accuracy,
-MAE distribution, and event timeline.
+Visualizes walk-forward CatBoost 3-class model performance, feature
+importance, confusion matrices, session accuracy, MAE distribution, and
+event timelines.
 
-All data loaded from saved CSV/JSON files — no model training.
+All data loads from saved CSV/JSON artifacts. This is the secondary
+compatibility path kept for ML-Trading-Dashboard, not the primary extrema
+training workflow.
 """
 
 from __future__ import annotations
@@ -585,8 +587,12 @@ def _chart_event_timeline(
 
 
 def render_experiment_tab() -> None:
-    """Render the Order Flow Experiment tab."""
-    st.subheader("Order Flow Hypothesis Test — Walk-Forward Results")
+    """Render the dashboard compatibility tab."""
+    st.subheader("Dashboard Compatibility Export — 3-Class Results")
+    st.caption(
+        "Secondary workflow kept to support ML-Trading-Dashboard. "
+        "Use the ML Training tab for the primary extrema pipeline."
+    )
 
     # Load all data
     summary = _load_summary()
@@ -602,9 +608,11 @@ def render_experiment_tab() -> None:
 
     if summary is None or fold_58 is None:
         st.info(
-            "No experiment results found. Run the training pipeline first:\n\n"
+            "No dashboard-compatibility results found. Refresh the retained "
+            "3-class pipeline first:\n\n"
             "```bash\npython -m alpha_lab.experiment.training\n"
-            "python -m alpha_lab.experiment.diagnostics\n```"
+            "python -m alpha_lab.experiment.diagnostics\n"
+            "python scripts/train_dashboard_model.py\n```"
         )
         return
 

@@ -2,8 +2,8 @@
 CatBoost model training with optional RFECV feature selection.
 
 Trains a CatBoost classifier for extrema rebound/crossing prediction.
-Supports walk-forward CV splits and automatic feature selection via
-sklearn's RFECV.
+Walk-forward CV splits are used only for feature selection; the final
+runtime model is fit once on the full labeled dataset.
 """
 
 from __future__ import annotations
@@ -59,8 +59,6 @@ class ExtremaModelTrainer:
         Returns:
             TrainedModel with trained classifier and metadata.
         """
-        from catboost import CatBoostClassifier
-
         cfg = self._config
         feature_names = list(features.columns)
 
@@ -76,37 +74,8 @@ class ExtremaModelTrainer:
                 )
 
         x_train = features[selected_features]
-
-        model = CatBoostClassifier(
-            iterations=cfg.iterations,
-            depth=cfg.depth,
-            learning_rate=cfg.learning_rate,
-            auto_class_weights=cfg.auto_class_weights,
-            random_seed=42,
-            verbose=0,
-            early_stopping_rounds=cfg.early_stopping_rounds,
-        )
-
-        # If we have CV splits, use the last split for eval set
-        if cv_splits and len(cv_splits) >= 1:
-            last_train_idx, last_test_idx = cv_splits[-1]
-            # Use all but last split for training, last for eval
-            all_train_idx = np.concatenate(
-                [ti for ti, _ in cv_splits[:-1]]
-            ) if len(cv_splits) > 1 else last_train_idx
-
-            x_fit = x_train.iloc[all_train_idx]
-            y_fit = y.iloc[all_train_idx]
-            x_eval = x_train.iloc[last_test_idx]
-            y_eval = y.iloc[last_test_idx]
-
-            model.fit(
-                x_fit, y_fit,
-                eval_set=(x_eval, y_eval),
-                verbose=0,
-            )
-        else:
-            model.fit(x_train, y, verbose=0)
+        model = self._build_classifier(enable_early_stopping=False)
+        model.fit(x_train, y, verbose=0)
 
         # Feature importances
         importances = model.get_feature_importance()
@@ -122,7 +91,11 @@ class ExtremaModelTrainer:
             model=model,
             selected_features=selected_features,
             feature_importances=importance_dict,
-            train_metrics={"train_accuracy": train_accuracy},
+            train_metrics={
+                "train_accuracy": train_accuracy,
+                "n_train_samples": float(len(x_train)),
+                "n_selected_features": float(len(selected_features)),
+            },
             config=cfg,
         )
 
@@ -133,17 +106,12 @@ class ExtremaModelTrainer:
         cv_splits: list[tuple[np.ndarray, np.ndarray]],
     ) -> list[str]:
         """Run RFECV feature selection."""
-        from catboost import CatBoostClassifier
         from sklearn.feature_selection import RFECV
 
         cfg = self._config
-        estimator = CatBoostClassifier(
-            iterations=min(cfg.iterations, 200),  # Faster for feature selection
-            depth=cfg.depth,
-            learning_rate=cfg.learning_rate,
-            auto_class_weights=cfg.auto_class_weights,
-            random_seed=42,
-            verbose=0,
+        estimator = self._build_classifier(
+            iterations=min(cfg.iterations, 200),
+            enable_early_stopping=False,
         )
 
         rfecv = RFECV(
@@ -167,6 +135,29 @@ class ExtremaModelTrainer:
             len(selected), len(features.columns),
         )
         return selected
+
+    def _build_classifier(
+        self,
+        *,
+        iterations: int | None = None,
+        enable_early_stopping: bool = False,
+    ):
+        """Construct a CatBoost classifier with repo-safe defaults."""
+        from catboost import CatBoostClassifier
+
+        cfg = self._config
+        model_kwargs = {
+            "iterations": iterations or cfg.iterations,
+            "depth": cfg.depth,
+            "learning_rate": cfg.learning_rate,
+            "auto_class_weights": cfg.auto_class_weights,
+            "random_seed": 42,
+            "verbose": 0,
+            "allow_writing_files": False,
+        }
+        if enable_early_stopping and cfg.early_stopping_rounds is not None:
+            model_kwargs["early_stopping_rounds"] = cfg.early_stopping_rounds
+        return CatBoostClassifier(**model_kwargs)
 
     @staticmethod
     def save_model(trained: TrainedModel, path: str | Path) -> None:
