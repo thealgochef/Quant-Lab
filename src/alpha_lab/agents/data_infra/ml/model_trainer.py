@@ -160,7 +160,11 @@ class ExtremaModelTrainer:
         return CatBoostClassifier(**model_kwargs)
 
     @staticmethod
-    def save_model(trained: TrainedModel, path: str | Path) -> None:
+    def save_model(
+        trained: TrainedModel,
+        path: str | Path,
+        extra_metadata: dict[str, object] | None = None,
+    ) -> None:
         """Save a trained model to disk.
 
         Args:
@@ -180,6 +184,8 @@ class ExtremaModelTrainer:
             "train_metrics": trained.train_metrics,
             "config": trained.config.model_dump(),
         }
+        if extra_metadata:
+            metadata.update(extra_metadata)
         with open(out / "metadata.json", "w") as f:
             json.dump(metadata, f, indent=2)
 

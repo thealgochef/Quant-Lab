@@ -54,19 +54,26 @@ def get_available_dates(symbol: str, data_dir: Path) -> list[str]:
     return dates
 
 
-def get_cached_ml_dates(symbol: str, data_dir: Path) -> list[str]:
-    """Return dates that have cached ml_features.parquet files."""
+def get_cached_ml_dates(
+    symbol: str, data_dir: Path, cache_filename: str = "ml_features_extrema.parquet",
+) -> list[str]:
+    """Return dates that have cached feature files for a specific mode."""
     symbol_dir = data_dir / symbol
     if not symbol_dir.exists():
         return []
     cached = []
     for d in sorted(symbol_dir.iterdir()):
-        if d.is_dir() and (d / "ml_features.parquet").exists():
+        if d.is_dir() and (d / cache_filename).exists():
             cached.append(d.name)
     return cached
 
 
-def clear_ml_cache(symbol: str, data_dir: Path, dates: list[str] | None = None) -> int:
+def clear_ml_cache(
+    symbol: str,
+    data_dir: Path,
+    dates: list[str] | None = None,
+    cache_filename: str = "ml_features_extrema.parquet",
+) -> int:
     """Delete cached ml_features.parquet files. Returns count deleted."""
     symbol_dir = data_dir / symbol
     if not symbol_dir.exists():
@@ -77,7 +84,7 @@ def clear_ml_cache(symbol: str, data_dir: Path, dates: list[str] | None = None) 
             continue
         if dates is not None and d.name not in dates:
             continue
-        cache_file = d / "ml_features.parquet"
+        cache_file = d / cache_filename
         if cache_file.exists():
             cache_file.unlink()
             count += 1
@@ -90,6 +97,7 @@ def build_training_dataset(
     data_dir: Path,
     config,
     progress_bar=None,
+    cache_filename: str = "ml_features_extrema.parquet",
 ) -> pd.DataFrame:
     """Build labeled feature matrix from cached tick data.
 
@@ -106,7 +114,7 @@ def build_training_dataset(
     cached_count = 0
 
     for i, date_str in enumerate(dates):
-        cache_path = data_dir / symbol / date_str / "ml_features.parquet"
+        cache_path = data_dir / symbol / date_str / cache_filename
         t0 = _time.perf_counter()
 
         if cache_path.exists():
@@ -249,6 +257,31 @@ def run_walk_forward_training(
             "y_true": y_test.values,
             "y_pred": preds,
             "y_prob": rebound_prob,
+            "session": (
+                valid.iloc[split.test_indices]["session"].astype(str).values
+                if "session" in valid.columns
+                else None
+            ),
+            "zone_id": (
+                valid.iloc[split.test_indices]["zone_id"].astype(str).values
+                if "zone_id" in valid.columns
+                else None
+            ),
+            "level_names": (
+                valid.iloc[split.test_indices]["level_names"].astype(str).values
+                if "level_names" in valid.columns
+                else None
+            ),
+            "direction": (
+                valid.iloc[split.test_indices]["direction"].astype(str).values
+                if "direction" in valid.columns
+                else None
+            ),
+            "approach_direction": (
+                valid.iloc[split.test_indices]["approach_direction"].astype(str).values
+                if "approach_direction" in valid.columns
+                else None
+            ),
         })
         fold_details.append({
             "fold": split.fold,
@@ -282,6 +315,26 @@ def run_walk_forward_training(
 
     # Aggregate true out-of-sample fold predictions for quality gates.
     eval_result = evaluator.evaluate_out_of_sample_folds(fold_predictions)
+    oos_summary = evaluator.summarize_out_of_sample_predictions(
+        fold_predictions,
+    )
+    utility_summary = None
+    if label_column == "label_15_30":
+        utility_all = evaluator.summarize_utility_15_30_from_oos(
+            fold_predictions,
+            tp_points=15.0,
+            sl_points=30.0,
+        )
+        utility_ny_rth = evaluator.summarize_utility_15_30_from_oos(
+            fold_predictions,
+            tp_points=15.0,
+            sl_points=30.0,
+            session_filter="ny_rth",
+        )
+        utility_summary = {
+            "all": utility_all,
+            "ny_rth": utility_ny_rth,
+        }
 
     # Final model on all data (full dataset has both classes).
     trainer = ExtremaModelTrainer(config.model)
@@ -296,11 +349,63 @@ def run_walk_forward_training(
         "n_total_folds": len(splits),
         "n_valid_folds": len(valid_cv_splits),
         "n_skipped_folds": skipped,
-        "class_balance": {
+        "oos_summary": oos_summary,
+        "utility_summary": utility_summary,
+        "full_dataset_class_balance": {
             "rebound": int((y == 1).sum()),
             "crossing": int((y == 0).sum()),
         },
+        "class_balance": {
+            "rebound": oos_summary["class_balance_true"]["rebound"],
+            "crossing": oos_summary["class_balance_true"]["crossing"],
+        },
     }
+
+
+def build_dashboard_utility_dataset(
+    symbol: str,
+    dates: list[str],
+    data_dir: Path,
+    tp_ticks: int = 15,
+    sl_ticks: int = 30,
+    progress_bar=None,
+    cache_filename: str = "ml_features_dashboard_utility_15_30.parquet",
+) -> pd.DataFrame:
+    """Build touch-anchored dashboard utility dataset for +15/-30 mode."""
+    from alpha_lab.agents.data_infra.ml.dashboard_utility_builder import (
+        DashboardUtilityConfig,
+        DashboardUtilityDatasetBuilder,
+    )
+
+    builder = DashboardUtilityDatasetBuilder(
+        data_dir,
+        DashboardUtilityConfig(tp_ticks=tp_ticks, sl_ticks=sl_ticks),
+    )
+    all_frames: list[pd.DataFrame] = []
+    for i, date_str in enumerate(dates):
+        cache_path = data_dir / symbol / date_str / cache_filename
+        if cache_path.exists():
+            try:
+                day_df = pd.read_parquet(cache_path)
+            except Exception:
+                day_df = pd.DataFrame()
+        else:
+            day_df = builder.build_for_dates(symbol, [date_str])
+            if not day_df.empty:
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                day_df.to_parquet(cache_path, index=False)
+
+        if not day_df.empty:
+            all_frames.append(day_df)
+
+        if progress_bar:
+            progress_bar.progress(
+                (i + 1) / len(dates), text=f"Processed {i + 1}/{len(dates)} dates...",
+            )
+
+    if not all_frames:
+        return pd.DataFrame()
+    return pd.concat(all_frames, ignore_index=True)
 
 
 def check_quality_gates(eval_result) -> dict[str, dict]:
@@ -357,8 +462,32 @@ def save_trained_model(
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    is_dashboard_mode = (
+        config is not None
+        and getattr(config, "training_mode", "") == "dashboard_utility_15_30"
+    )
+    extra_metadata = {
+        "training_mode": getattr(config, "training_mode", "extrema_rebound_crossing")
+        if config is not None else "extrema_rebound_crossing",
+        "label_semantics": (
+            "label_15_30=1 if +15 hits before -30, else 0"
+            if is_dashboard_mode
+            else "rebound_vs_crossing"
+        ),
+        "event_anchor_semantics": (
+            "experiment first-touch key-level event seed (1m intersection approximation)"
+            if is_dashboard_mode
+            else "detected tick extrema"
+        ),
+        "execution_approximation_semantics": (
+            "bullish entry ask / bearish entry bid; long exits vs bid; short exits vs ask"
+            if is_dashboard_mode
+            else "N/A"
+        ),
+        "evaluation_population": "concatenated_out_of_sample_fold_predictions",
+    }
     # Save model + metadata
-    ExtremaModelTrainer.save_model(trained_model, output_dir)
+    ExtremaModelTrainer.save_model(trained_model, output_dir, extra_metadata=extra_metadata)
 
     # Save evaluation
     eval_dict = asdict(eval_result)
@@ -469,13 +598,26 @@ def render_ml_training_tab() -> None:
     """Render the ML Training tab content."""
     st.subheader("Primary Workflow: ML Extrema Training")
     st.caption(
-        "Build the extrema dataset from local Databento files, score true "
-        "out-of-sample walk-forward folds, then refit and save the runtime model."
+        "Train either the primary extrema rebound/crossing mode or the "
+        "dashboard utility +15/-30 mode with out-of-sample walk-forward evaluation."
     )
     st.info(
         "The Dashboard Compatibility tab is the retained secondary 3-class "
         "export path for ML-Trading-Dashboard."
     )
+
+    mode_options = {
+        "Primary: Extrema Rebound/Crossing": "extrema_rebound_crossing",
+        "Dashboard Utility 15/30": "dashboard_utility_15_30",
+    }
+    mode_label = st.selectbox("Training mode", list(mode_options.keys()), key="ml_mode")
+    training_mode = mode_options[mode_label]
+    if training_mode == "dashboard_utility_15_30":
+        st.info(
+            "Event anchor: experiment first-touch key-level events (seed only). "
+            "Execution approximation: bullish entry ask / bearish entry bid; "
+            "long exits vs bid / short exits vs ask. Immediate touch-anchored baseline."
+        )
 
     # ── Configuration ─────────────────────────────────────────
     col_cfg1, col_cfg2, col_cfg3 = st.columns(3)
@@ -517,10 +659,14 @@ def render_ml_training_tab() -> None:
         _min_1 = ml_train_days + ml_gap_days + ml_test_days
         _est_folds = max(0, (_span - ml_train_days - ml_gap_days) // ml_test_days)
         st.caption(f"~{_est_folds} folds from {_span}d span (need {_min_1}d for 1st fold)")
-        ml_label = st.selectbox(
-            "Label threshold", list(_LABEL_OPTIONS.keys()),
-            key="ml_label",
-        )
+        if training_mode == "extrema_rebound_crossing":
+            ml_label = st.selectbox(
+                "Label threshold", list(_LABEL_OPTIONS.keys()),
+                key="ml_label",
+            )
+        else:
+            ml_label = "Utility +15/-30"
+            st.caption("Label semantics: +15 before -30 (binary)")
 
     with col_cfg3:
         st.markdown("**CatBoost**")
@@ -536,7 +682,15 @@ def render_ml_training_tab() -> None:
     st.divider()
 
     data_dir = Path(ml_data_dir)
-    label_col = _LABEL_OPTIONS[ml_label]
+    if training_mode == "extrema_rebound_crossing":
+        label_col = _LABEL_OPTIONS[ml_label]
+    else:
+        label_col = "label_15_30"
+    cache_filename = (
+        "ml_features_extrema.parquet"
+        if training_mode == "extrema_rebound_crossing"
+        else "ml_features_dashboard_utility_15_30.parquet"
+    )
 
     # ── Phase 1: Local Data ───────────────────────────────────
     st.markdown("### Step 1: Local Data")
@@ -570,7 +724,7 @@ def render_ml_training_tab() -> None:
         st.warning("No local data found. See Step 1 above.")
     else:
         # Show cache status
-        cached_dates = get_cached_ml_dates(ml_symbol, data_dir)
+        cached_dates = get_cached_ml_dates(ml_symbol, data_dir, cache_filename)
         cached_in_range = [d for d in cached_dates
                            if ml_start.isoformat() <= d <= ml_end.isoformat()]
         uncached = len(dates_in_range) - len(cached_in_range)
@@ -596,7 +750,9 @@ def render_ml_training_tab() -> None:
                 help="Delete cached ML features to force recomputation",
             )
             if clear_btn:
-                n_cleared = clear_ml_cache(ml_symbol, data_dir, dates_in_range)
+                n_cleared = clear_ml_cache(
+                    ml_symbol, data_dir, dates_in_range, cache_filename,
+                )
                 st.toast(f"Cleared {n_cleared} cached feature files")
                 st.rerun()
 
@@ -610,12 +766,25 @@ def render_ml_training_tab() -> None:
                 features=FeatureConfig(include_signal_features=False),
                 tick_size=0.25,
                 instrument=ml_symbol,
+                training_mode=training_mode,
             )
 
             progress = st.progress(0, text="Building dataset...")
-            dataset = build_training_dataset(
-                ml_symbol, dates_in_range, data_dir, build_config, progress,
-            )
+            if training_mode == "extrema_rebound_crossing":
+                dataset = build_training_dataset(
+                    ml_symbol, dates_in_range, data_dir, build_config, progress,
+                    cache_filename=cache_filename,
+                )
+            else:
+                dataset = build_dashboard_utility_dataset(
+                    ml_symbol,
+                    dates_in_range,
+                    data_dir,
+                    tp_ticks=15,
+                    sl_ticks=30,
+                    progress_bar=progress,
+                    cache_filename=cache_filename,
+                )
 
             if dataset.empty:
                 st.error("No extrema detected. Try a longer date range.")
@@ -626,8 +795,8 @@ def render_ml_training_tab() -> None:
         if "ml_dataset" in st.session_state:
             dataset = st.session_state["ml_dataset"]
             n_valid = dataset[label_col].notna().sum() if label_col in dataset.columns else 0
-            n_rebound = int((dataset[label_col] == 1).sum()) if label_col in dataset.columns else 0
-            n_crossing = int((dataset[label_col] == 0).sum()) if label_col in dataset.columns else 0
+            n_positive = int((dataset[label_col] == 1).sum()) if label_col in dataset.columns else 0
+            n_negative = int((dataset[label_col] == 0).sum()) if label_col in dataset.columns else 0
 
             c1, c2, c3, c4 = st.columns(4)
             with c1:
@@ -635,9 +804,9 @@ def render_ml_training_tab() -> None:
             with c2:
                 st.metric("Labeled", int(n_valid))
             with c3:
-                st.metric("Rebound (1)", n_rebound)
+                st.metric("Positive (1)", n_positive)
             with c4:
-                st.metric("Crossing (0)", n_crossing)
+                st.metric("Negative (0)", n_negative)
 
             feature_cols = [c for c in dataset.columns
                             if c.startswith(("pl_", "ms_"))]
@@ -685,6 +854,9 @@ def render_ml_training_tab() -> None:
                 ),
                 tick_size=0.25,
                 instrument=ml_symbol,
+                training_mode=training_mode,
+                utility_tp_ticks=15,
+                utility_sl_ticks=30,
             )
 
             with st.spinner("Training walk-forward model... this may take a few minutes."):
@@ -703,13 +875,16 @@ def render_ml_training_tab() -> None:
             result = st.session_state["ml_training_result"]
             ev = result["eval_result"]
             st.info(
-                "Aggregate metrics and quality gates below come from concatenated "
-                "out-of-sample fold predictions. Saving then refits a runtime model "
-                "on all labeled rows using the selected feature set."
+                "Metrics and quality gates below are computed from concatenated "
+                "out-of-sample fold predictions (evaluation population). "
+                "Saving then refits a runtime model on all labeled rows."
             )
 
+            oos = result.get("oos_summary", {})
+            oos_rates = oos.get("confusion_rates", {})
+
             # Aggregate metrics
-            st.markdown("#### Aggregate Metrics")
+            st.markdown("#### Out-of-Sample (OOS) Aggregate Metrics")
             c1, c2, c3, c4, c5 = st.columns(5)
             with c1:
                 st.metric("Precision", f"{ev.precision:.3f}",
@@ -723,6 +898,33 @@ def render_ml_training_tab() -> None:
                 st.metric("ROC-AUC", f"{ev.roc_auc:.3f}" if ev.roc_auc else "N/A")
             with c5:
                 st.metric("Samples", ev.n_samples)
+
+            utility = result.get("utility_summary")
+            utility_all = utility.get("all") if utility else None
+            utility_ny = utility.get("ny_rth") if utility else None
+            if utility_all is not None:
+                st.markdown("#### OOS Utility Metrics (15/30)")
+                c1, c2, c3, c4 = st.columns(4)
+                with c1:
+                    st.metric("Win Rate 15/30", f"{utility_all['win_rate_15_30']:.3f}")
+                with c2:
+                    st.metric(
+                        "Expectancy (pts)",
+                        f"{utility_all['expectancy_points_15_30']:.3f}",
+                    )
+                with c3:
+                    pf = utility_all["profit_factor_15_30"]
+                    st.metric("Profit Factor", "inf" if pf == float("inf") else f"{pf:.3f}")
+                with c4:
+                    st.metric("Taken Trades", utility_all["n_taken_trades"])
+                if utility_ny is not None:
+                    st.caption(
+                        "NY RTH filter: "
+                        f"n={utility_ny['n_samples']}, "
+                        f"taken={utility_ny['n_taken_trades']}, "
+                        f"win_rate={utility_ny['win_rate_15_30']:.3f}, "
+                        f"expectancy={utility_ny['expectancy_points_15_30']:.3f}",
+                    )
 
             c1, c2, c3, c4 = st.columns(4)
             with c1:
@@ -744,8 +946,29 @@ def render_ml_training_tab() -> None:
                            if ev.cohens_d is not None else "N/A")
             with c4:
                 balance = result["class_balance"]
-                st.metric("Class Balance",
+                st.metric("OOS Class Balance",
                            f"{balance['rebound']}R / {balance['crossing']}C")
+
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.metric("Specificity (TNR)",
+                          f"{oos_rates.get('tnr_specificity', 0.0):.3f}")
+            with c2:
+                st.metric("False Positive Rate (FPR)",
+                          f"{oos_rates.get('fpr', 0.0):.3f}")
+            with c3:
+                st.metric("Predicted Rebound Rate",
+                          f"{oos_rates.get('predicted_positive_rate', 0.0):.3f}")
+
+            full_balance = result.get("full_dataset_class_balance", {})
+            st.caption(
+                "Reference only (refit population): full labeled dataset balance = "
+                f"{full_balance.get('rebound', 0)}R / {full_balance.get('crossing', 0)}C"
+            )
+            st.caption(
+                "Statistical note: bootstrap CI and permutation test currently use "
+                "IID row assumptions; market events may be serially correlated."
+            )
 
             # Quality gates
             st.markdown("#### Quality Gates")
@@ -770,6 +993,10 @@ def render_ml_training_tab() -> None:
             # Charts
             col_chart1, col_chart2 = st.columns(2)
             with col_chart1:
+                st.caption(
+                    "Feature importance from final refit runtime model "
+                    "(trained on all labeled rows, not OOS folds)."
+                )
                 st.plotly_chart(
                     _chart_feature_importance(result["trained_model"]),
                     use_container_width=True,
@@ -784,6 +1011,31 @@ def render_ml_training_tab() -> None:
                 _chart_fold_metrics(result["fold_details"]),
                 use_container_width=True,
             )
+
+            if oos.get("threshold_table"):
+                st.markdown("#### OOS Threshold vs Coverage")
+                threshold_df = pd.DataFrame(oos["threshold_table"])
+                for col in ["threshold", "coverage", "precision"]:
+                    if col in threshold_df.columns:
+                        threshold_df[col] = threshold_df[col].round(3)
+                st.dataframe(threshold_df, use_container_width=True, hide_index=True)
+
+            if oos.get("calibration_table"):
+                st.markdown("#### OOS Calibration Buckets")
+                calib_df = pd.DataFrame(oos["calibration_table"])
+                for col in ["bucket_low", "bucket_high",
+                            "mean_predicted_prob", "observed_positive_rate"]:
+                    if col in calib_df.columns:
+                        calib_df[col] = calib_df[col].round(3)
+                st.dataframe(calib_df, use_container_width=True, hide_index=True)
+
+            if utility_all is not None and utility_all.get("threshold_table_15_30"):
+                st.markdown("#### OOS Threshold vs Utility (15/30)")
+                util_df = pd.DataFrame(utility_all["threshold_table_15_30"])
+                for col in ["threshold", "coverage", "win_rate_15_30", "expectancy_points_15_30"]:
+                    if col in util_df.columns:
+                        util_df[col] = util_df[col].round(3)
+                st.dataframe(util_df, use_container_width=True, hide_index=True)
 
             # Fold details table
             with st.expander("Fold Details"):
@@ -802,7 +1054,11 @@ def render_ml_training_tab() -> None:
             st.markdown("#### Save Model")
 
             timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-            default_name = f"{ml_symbol}_{timestamp_str}"
+            if training_mode == "extrema_rebound_crossing":
+                prefix = "extrema"
+            else:
+                prefix = "dashboard_utility_15_30"
+            default_name = f"{prefix}_{ml_symbol}_{timestamp_str}"
             model_name = st.text_input(
                 "Model name", value=default_name, key="ml_model_name",
             )

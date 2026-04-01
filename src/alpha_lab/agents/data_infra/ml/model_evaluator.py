@@ -172,6 +172,207 @@ class ModelEvaluator:
         aggregate.fold_metrics = fold_metrics
         return aggregate
 
+    def summarize_out_of_sample_predictions(
+        self,
+        fold_predictions: list[dict[str, object]],
+        *,
+        thresholds: list[float] | None = None,
+        n_calibration_buckets: int = 5,
+    ) -> dict[str, object]:
+        """Summarize OOS fold predictions for UI-safe reporting.
+
+        This helper is intentionally separate from ``EvaluationResult`` so we can
+        expose richer diagnostics (population counts, threshold coverage,
+        calibration) without changing the core dataclass contract.
+        """
+        if not fold_predictions:
+            msg = "fold_predictions must contain at least one evaluated fold"
+            raise ValueError(msg)
+
+        all_true = np.concatenate([
+            np.asarray(fold_data["y_true"]).flatten() for fold_data in fold_predictions
+        ])
+        all_pred = np.concatenate([
+            np.asarray(fold_data["y_pred"]).flatten() for fold_data in fold_predictions
+        ])
+
+        all_prob_list: list[np.ndarray] = []
+        has_probabilities = True
+        for fold_data in fold_predictions:
+            y_prob_raw = fold_data.get("y_prob")
+            if y_prob_raw is None:
+                has_probabilities = False
+                break
+            all_prob_list.append(np.asarray(y_prob_raw).flatten())
+        all_prob = np.concatenate(all_prob_list) if has_probabilities else None
+
+        n_total = int(len(all_true))
+        n_rebound_true = int(np.sum(all_true == 1))
+        n_crossing_true = int(np.sum(all_true == 0))
+        n_pred_rebound = int(np.sum(all_pred == 1))
+        n_pred_crossing = int(np.sum(all_pred == 0))
+
+        tn = int(np.sum((all_true == 0) & (all_pred == 0)))
+        fp = int(np.sum((all_true == 0) & (all_pred == 1)))
+        fn = int(np.sum((all_true == 1) & (all_pred == 0)))
+        tp = int(np.sum((all_true == 1) & (all_pred == 1)))
+
+        rates = {
+            "tpr_recall": float(tp / (tp + fn)) if (tp + fn) > 0 else 0.0,
+            "tnr_specificity": float(tn / (tn + fp)) if (tn + fp) > 0 else 0.0,
+            "fpr": float(fp / (fp + tn)) if (fp + tn) > 0 else 0.0,
+            "fnr": float(fn / (fn + tp)) if (fn + tp) > 0 else 0.0,
+            "predicted_positive_rate": float((tp + fp) / n_total) if n_total > 0 else 0.0,
+        }
+
+        threshold_rows: list[dict[str, float]] = []
+        calibration_rows: list[dict[str, float]] = []
+
+        if all_prob is not None and len(all_prob) == len(all_true):
+            threshold_values = thresholds or [0.5, 0.6, 0.7, 0.8, 0.9]
+            for t in threshold_values:
+                pred_t = (all_prob >= t).astype(int)
+                coverage = float(np.mean(pred_t == 1)) if len(pred_t) > 0 else 0.0
+                if np.sum(pred_t == 1) > 0:
+                    precision_t = float(np.mean(all_true[pred_t == 1] == 1))
+                else:
+                    precision_t = 0.0
+                threshold_rows.append({
+                    "threshold": float(t),
+                    "coverage": coverage,
+                    "precision": precision_t,
+                })
+
+            # Equal-width calibration buckets on [0, 1]
+            n_b = max(2, int(n_calibration_buckets))
+            edges = np.linspace(0.0, 1.0, n_b + 1)
+            for i in range(n_b):
+                left = edges[i]
+                right = edges[i + 1]
+                if i == n_b - 1:
+                    mask = (all_prob >= left) & (all_prob <= right)
+                else:
+                    mask = (all_prob >= left) & (all_prob < right)
+                count = int(np.sum(mask))
+                if count == 0:
+                    continue
+                mean_prob = float(np.mean(all_prob[mask]))
+                observed_rate = float(np.mean(all_true[mask] == 1))
+                calibration_rows.append({
+                    "bucket_low": float(left),
+                    "bucket_high": float(right),
+                    "count": float(count),
+                    "mean_predicted_prob": mean_prob,
+                    "observed_positive_rate": observed_rate,
+                })
+
+        return {
+            "n_samples": n_total,
+            "class_balance_true": {
+                "rebound": n_rebound_true,
+                "crossing": n_crossing_true,
+            },
+            "class_balance_pred": {
+                "rebound": n_pred_rebound,
+                "crossing": n_pred_crossing,
+            },
+            "confusion_rates": rates,
+            "threshold_table": threshold_rows,
+            "calibration_table": calibration_rows,
+            "has_probabilities": all_prob is not None,
+        }
+
+    def summarize_utility_15_30_from_oos(
+        self,
+        fold_predictions: list[dict[str, object]],
+        *,
+        tp_points: float = 15.0,
+        sl_points: float = 30.0,
+        thresholds: list[float] | None = None,
+        session_filter: str | None = None,
+    ) -> dict[str, object]:
+        """Compute utility-first OOS metrics for +15/-30 decisioning."""
+        if not fold_predictions:
+            msg = "fold_predictions must contain at least one evaluated fold"
+            raise ValueError(msg)
+
+        y_true = np.concatenate([
+            np.asarray(f["y_true"]).flatten() for f in fold_predictions
+        ])
+        y_pred = np.concatenate([
+            np.asarray(f["y_pred"]).flatten() for f in fold_predictions
+        ])
+
+        all_sessions: np.ndarray | None = None
+        if all(f.get("session") is not None for f in fold_predictions):
+            all_sessions = np.concatenate([
+                np.asarray(f["session"]).astype(str).flatten() for f in fold_predictions
+            ])
+
+        if session_filter is not None and all_sessions is not None:
+            mask = all_sessions == session_filter
+            y_true = y_true[mask]
+            y_pred = y_pred[mask]
+            all_prob = None
+            if all(f.get("y_prob") is not None for f in fold_predictions):
+                all_prob = np.concatenate([
+                    np.asarray(f["y_prob"]).flatten() for f in fold_predictions
+                ])[mask]
+        else:
+            all_prob = None
+
+        # Strategy takes trades only when prediction is positive.
+        take_mask = y_pred == 1
+        taken_true = y_true[take_mask]
+        pnl = np.where(taken_true == 1, tp_points, -sl_points).astype(float)
+
+        wins = pnl[pnl > 0]
+        losses = pnl[pnl < 0]
+        gross_win = float(wins.sum()) if len(wins) else 0.0
+        gross_loss_abs = float(np.abs(losses.sum())) if len(losses) else 0.0
+
+        win_rate = float(np.mean(taken_true == 1)) if len(taken_true) > 0 else 0.0
+        expectancy = float(np.mean(pnl)) if len(pnl) > 0 else 0.0
+        profit_factor = (gross_win / gross_loss_abs) if gross_loss_abs > 0 else (
+            float("inf") if gross_win > 0 else 0.0
+        )
+
+        threshold_rows: list[dict[str, float]] = []
+        if all_prob is None and all(f.get("y_prob") is not None for f in fold_predictions):
+            all_prob = np.concatenate([
+                np.asarray(f["y_prob"]).flatten() for f in fold_predictions
+            ])
+            tvals = thresholds or [0.5, 0.6, 0.7, 0.8, 0.9]
+            for t in tvals:
+                tm = all_prob >= t
+                y_t = y_true[tm]
+                if len(y_t) == 0:
+                    threshold_rows.append({
+                        "threshold": float(t),
+                        "coverage": 0.0,
+                        "win_rate_15_30": 0.0,
+                        "expectancy_points_15_30": 0.0,
+                    })
+                    continue
+                pnl_t = np.where(y_t == 1, tp_points, -sl_points).astype(float)
+                threshold_rows.append({
+                    "threshold": float(t),
+                    "coverage": float(len(y_t) / len(y_true)),
+                    "win_rate_15_30": float(np.mean(y_t == 1)),
+                    "expectancy_points_15_30": float(np.mean(pnl_t)),
+                })
+
+        return {
+            "win_rate_15_30": win_rate,
+            "expectancy_points_15_30": expectancy,
+            "profit_factor_15_30": profit_factor,
+            "n_samples": int(len(y_true)),
+            "n_taken_trades": int(len(taken_true)),
+            "session_filter": session_filter,
+            "threshold_table_15_30": threshold_rows,
+            "has_probabilities": all_prob is not None,
+        }
+
     def evaluate_walk_forward(
         self,
         model: object,
@@ -304,7 +505,9 @@ class ModelEvaluator:
             if perm_prec >= obs_precision:
                 count_ge += 1
 
-        return count_ge / self._n_permutations
+        # Plus-one correction to avoid reporting impossible literal zero
+        # from finite Monte Carlo sampling.
+        return (count_ge + 1) / (self._n_permutations + 1)
 
     @staticmethod
     def _compute_cohens_d(

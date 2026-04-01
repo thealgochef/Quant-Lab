@@ -176,3 +176,17 @@ class MLPipelineConfig(BaseModel):
         default="NQ",
         description="Target instrument symbol",
     )
+    training_mode: str = Field(
+        default="extrema_rebound_crossing",
+        description="Training mode: extrema_rebound_crossing | dashboard_utility_15_30",
+    )
+    utility_tp_ticks: int = Field(
+        default=15,
+        ge=1,
+        description="TP ticks for dashboard utility mode",
+    )
+    utility_sl_ticks: int = Field(
+        default=30,
+        ge=1,
+        description="SL ticks for dashboard utility mode",
+    )

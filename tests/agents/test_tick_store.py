@@ -24,6 +24,7 @@ def _make_synthetic_ticks(
     n: int = 1000,
     base_price: float = 22000.0,
     seed: int = 42,
+    depth_levels: int = 10,
 ) -> pd.DataFrame:
     """Create a synthetic MBP-10 tick DataFrame for testing."""
     rng = np.random.default_rng(seed)
@@ -41,8 +42,8 @@ def _make_synthetic_ticks(
         "size": rng.integers(1, 50, n),
     })
 
-    # Add 10-level book depth columns
-    for i in range(10):
+    # Add variable-depth book columns (e.g., 10 for MBP-10, 1 for MBP-1)
+    for i in range(depth_levels):
         spread = (i + 1) * 0.25
         df[f"bid_px_{i:02d}"] = prices - spread
         df[f"ask_px_{i:02d}"] = prices + spread
@@ -178,6 +179,81 @@ class TestTickStore:
             datetime(2026, 2, 20, 9, 31, tzinfo=dt.UTC),
         )
         assert result.empty
+
+    def test_query_tick_feature_rows_includes_mbp10_columns(self, tick_store):
+        """Feature-row query should include full MBP-10 depth columns."""
+        result = tick_store.query_tick_feature_rows(
+            "NQ",
+            datetime(2026, 2, 20, 9, 30, tzinfo=dt.UTC),
+            datetime(2026, 2, 20, 9, 30, 5, tzinfo=dt.UTC),
+        )
+        assert not result.empty
+        assert "ts_event" in result.columns
+        assert "price" in result.columns
+        assert "size" in result.columns
+        assert "bid_px_00" in result.columns
+        assert "ask_px_09" in result.columns
+        assert "bid_sz_00" in result.columns
+        assert "ask_sz_09" in result.columns
+
+    def test_query_tick_prices_remains_lean(self, tick_store):
+        """Lean query path should remain compact for non-book consumers."""
+        result = tick_store.query_tick_prices(
+            "NQ",
+            datetime(2026, 2, 20, 9, 30, tzinfo=dt.UTC),
+            datetime(2026, 2, 20, 9, 30, 5, tzinfo=dt.UTC),
+        )
+        assert not result.empty
+        assert set(result.columns) == {"ts_event", "price", "size"}
+
+    def test_query_tick_feature_rows_handles_mbp1(self, tmp_path):
+        """Feature-row query should gracefully project only available depth."""
+        ticks = _make_synthetic_ticks(date_str="2026-02-20", n=200, depth_levels=1)
+        out_dir = tmp_path / "NQ" / "2026-02-20"
+        out_dir.mkdir(parents=True)
+        ticks.to_parquet(out_dir / "mbp1.parquet")
+
+        store = TickStore(tmp_path)
+        store.register_symbol_date("NQ", "2026-02-20")
+        result = store.query_tick_feature_rows(
+            "NQ",
+            datetime(2026, 2, 20, 9, 30, tzinfo=dt.UTC),
+            datetime(2026, 2, 20, 9, 30, 5, tzinfo=dt.UTC),
+        )
+        store.close()
+
+        assert not result.empty
+        assert "bid_px_00" in result.columns
+        assert "ask_px_00" in result.columns
+        assert "bid_sz_00" in result.columns
+        assert "ask_sz_00" in result.columns
+        assert "bid_px_01" not in result.columns
+        assert "ask_sz_09" not in result.columns
+
+    def test_query_tick_feature_rows_handles_trades_only(self, tmp_path):
+        """Feature-row query should fall back to compact projection for trades schema."""
+        ts = pd.date_range("2026-02-20 09:30", periods=200, freq="100ms", tz="UTC")
+        rng = np.random.default_rng(123)
+        trades = pd.DataFrame({
+            "ts_event": ts,
+            "price": 22000.0 + rng.standard_normal(200).cumsum() * 0.25,
+            "size": rng.integers(1, 20, 200),
+        })
+        out_dir = tmp_path / "NQ" / "2026-02-20"
+        out_dir.mkdir(parents=True)
+        trades.to_parquet(out_dir / "trades.parquet")
+
+        store = TickStore(tmp_path, tick_filename="trades.parquet")
+        store.register_symbol_date("NQ", "2026-02-20")
+        result = store.query_tick_feature_rows(
+            "NQ",
+            datetime(2026, 2, 20, 9, 30, tzinfo=dt.UTC),
+            datetime(2026, 2, 20, 9, 30, 5, tzinfo=dt.UTC),
+        )
+        store.close()
+
+        assert not result.empty
+        assert set(result.columns) == {"ts_event", "price", "size"}
 
     def test_register_missing_file_returns_false(self, tick_store):
         """Registering a non-existent date returns False."""
