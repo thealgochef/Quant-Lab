@@ -11,6 +11,7 @@ import pytest
 
 from alpha_lab.agents.data_infra.ml.config import (
     ExtremaConfig,
+    LabelingConfig,
     MLPipelineConfig,
 )
 from alpha_lab.agents.data_infra.ml.dataset_builder import ExtremaDatasetBuilder
@@ -475,6 +476,34 @@ class TestDatasetBuilder:
         df = builder.build_dataset_daily("NQ", ["2026-02-20"])
 
         assert isinstance(df, pd.DataFrame)
+
+    def test_build_dataset_uses_mbp10_depth_features(self, tick_store):
+        """PL feature columns should be populated from MBP-10 depth snapshots."""
+        config = MLPipelineConfig(
+            extrema=ExtremaConfig(
+                window_size=400,
+                min_peak_width=10,
+                max_peak_width=300,
+                min_prominence_ticks=0.5,
+            ),
+            labeling=LabelingConfig(
+                rebound_thresholds=[5],
+                crossing_threshold=5,
+                forward_window=300,
+            ),
+        )
+        builder = ExtremaDatasetBuilder(tick_store, config)
+        df = builder.build_dataset(
+            "NQ",
+            datetime(2026, 2, 20, 9, 30),
+            datetime(2026, 2, 20, 10, 0),
+        )
+
+        if not df.empty:
+            assert "pl_total_bid_vol" in df.columns
+            assert "pl_total_ask_vol" in df.columns
+            assert (df["pl_total_bid_vol"] > 0).any()
+            assert (df["pl_total_ask_vol"] > 0).any()
 
     def test_no_data(self, tick_store):
         builder = ExtremaDatasetBuilder(tick_store)
