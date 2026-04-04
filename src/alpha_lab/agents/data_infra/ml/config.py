@@ -176,3 +176,19 @@ class MLPipelineConfig(BaseModel):
         default="NQ",
         description="Target instrument symbol",
     )
+
+    def dataset_config_hash(self) -> str:
+        """Short hex hash of config fields that affect dataset generation.
+
+        Covers extrema, labeling, features, and tick_size.  Walk-forward
+        and model configs do NOT affect the cached feature matrix.
+        """
+        import hashlib
+
+        payload = (
+            self.extrema.model_dump_json(sort_keys=True)
+            + self.labeling.model_dump_json(sort_keys=True)
+            + self.features.model_dump_json(sort_keys=True)
+            + f"|tick_size={self.tick_size}"
+        )
+        return hashlib.sha256(payload.encode()).hexdigest()[:8]

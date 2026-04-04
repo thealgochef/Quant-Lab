@@ -51,7 +51,7 @@ def extract_pl_features(
 
     features.update(_book_volume_features(ticks_at_extremum, extremum.price, tick_size))
     features.update(_trade_features(ticks_at_extremum))
-    features.update(_book_ratio_features(ticks_at_extremum))
+    features.update(_book_ratio_features(ticks_at_extremum, tick_size))
     features.update(_depth_shape_features(ticks_at_extremum))
     features.update(_peak_morphology_features(extremum))
 
@@ -133,7 +133,7 @@ def _trade_features(ticks: pd.DataFrame) -> dict[str, float]:
     return features
 
 
-def _book_ratio_features(ticks: pd.DataFrame) -> dict[str, float]:
+def _book_ratio_features(ticks: pd.DataFrame, tick_size: float = 0.25) -> dict[str, float]:
     """Bid/ask ratio and depth imbalance features."""
     features: dict[str, float] = {}
     last = ticks.iloc[-1]
@@ -187,7 +187,7 @@ def _book_ratio_features(ticks: pd.DataFrame) -> dict[str, float]:
         ap = float(last[ask_px_col]) if not pd.isna(last[ask_px_col]) else 0.0
         if bp > 0 and ap > 0:
             features["pl_spread"] = ap - bp
-            features["pl_spread_ticks"] = (ap - bp) / 0.25
+            features["pl_spread_ticks"] = (ap - bp) / tick_size
 
     return features
 

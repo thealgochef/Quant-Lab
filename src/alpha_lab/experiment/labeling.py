@@ -6,7 +6,7 @@ using 1m bar high/low to compute MFE (max favorable excursion) and MAE
 (max adverse excursion) from the representative_price entry point.
 
 Label logic:
-    - tradeable_reversal:      MFE >= 10 pts before MAE >= 37.5 pts
+    - tradeable_reversal:      MFE >= 25 pts before MAE >= 37.5 pts
     - trap_reversal:           MAE >= 37.5 (stopped out) AND MFE >= 5 pts
     - aggressive_blowthrough:  MAE >= 37.5 (stopped out) AND MFE < 5 pts
     - no_resolution:           Neither threshold hit by end of RTH (16:15 ET)

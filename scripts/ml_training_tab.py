@@ -55,19 +55,19 @@ def get_available_dates(symbol: str, data_dir: Path) -> list[str]:
 
 
 def get_cached_ml_dates(symbol: str, data_dir: Path) -> list[str]:
-    """Return dates that have cached ml_features.parquet files."""
+    """Return dates that have any cached ml_features_*.parquet file."""
     symbol_dir = data_dir / symbol
     if not symbol_dir.exists():
         return []
     cached = []
     for d in sorted(symbol_dir.iterdir()):
-        if d.is_dir() and (d / "ml_features.parquet").exists():
+        if d.is_dir() and any(d.glob("ml_features_*.parquet")):
             cached.append(d.name)
     return cached
 
 
 def clear_ml_cache(symbol: str, data_dir: Path, dates: list[str] | None = None) -> int:
-    """Delete cached ml_features.parquet files. Returns count deleted."""
+    """Delete ALL cached ml_features_*.parquet files. Returns count deleted."""
     symbol_dir = data_dir / symbol
     if not symbol_dir.exists():
         return 0
@@ -77,8 +77,7 @@ def clear_ml_cache(symbol: str, data_dir: Path, dates: list[str] | None = None) 
             continue
         if dates is not None and d.name not in dates:
             continue
-        cache_file = d / "ml_features.parquet"
-        if cache_file.exists():
+        for cache_file in d.glob("ml_features_*.parquet"):
             cache_file.unlink()
             count += 1
     return count
@@ -104,9 +103,10 @@ def build_training_dataset(
 
     frames: list[pd.DataFrame] = []
     cached_count = 0
+    cache_tag = config.dataset_config_hash()
 
     for i, date_str in enumerate(dates):
-        cache_path = data_dir / symbol / date_str / "ml_features.parquet"
+        cache_path = data_dir / symbol / date_str / f"ml_features_{cache_tag}.parquet"
         t0 = _time.perf_counter()
 
         if cache_path.exists():
@@ -159,7 +159,7 @@ def build_training_dataset(
 def run_walk_forward_training(
     dataset: pd.DataFrame,
     config,
-    label_column: str = "label_7t",
+    label_column: str = "label_20t",
 ) -> dict:
     """Walk-forward train + evaluate.
 
@@ -183,7 +183,7 @@ def run_walk_forward_training(
         msg = "No valid labeled samples after filtering"
         raise ValueError(msg)
 
-    features = valid[feature_cols].fillna(0.0)
+    features = valid[feature_cols]
     y = valid[label_column].astype(int)
     timestamps = pd.to_datetime(valid["timestamp"])
 
@@ -207,6 +207,44 @@ def run_walk_forward_training(
         )
         raise ValueError(msg)
 
+    # Build preliminary CV index pairs for RFECV (skip single-class folds).
+    preliminary_cv: list[tuple] = []
+    for split in splits:
+        y_train_fold = y.iloc[split.train_indices]
+        if y_train_fold.nunique() >= 2:
+            preliminary_cv.append((split.train_indices, split.test_indices))
+
+    if not preliminary_cv:
+        class_dist = y.value_counts().to_dict()
+        msg = (
+            f"All {len(splits)} folds skipped — training data in each fold "
+            f"had only one class.\n"
+            f"Overall class distribution: {class_dist}\n"
+            f"Try a larger train window so each fold captures both classes."
+        )
+        raise ValueError(msg)
+
+    # RFECV: run ONCE before the walk-forward loop so the same feature
+    # subset is used for every per-fold model AND the final saved model.
+    selected_features = feature_cols
+    if (
+        config.model.rfecv_enabled
+        and len(preliminary_cv) >= 2
+    ):
+        rfecv_trainer = ExtremaModelTrainer(config.model)
+        rfecv_result = rfecv_trainer.train(features, y, cv_splits=preliminary_cv)
+        selected_features = rfecv_result.selected_features
+        logger.info(
+            "RFECV selected %d/%d features (used for all folds and final model)",
+            len(selected_features), len(feature_cols),
+        )
+
+    # Per-fold config with RFECV disabled (already done above).
+    from alpha_lab.agents.data_infra.ml.config import ModelConfig
+    fold_model_config = config.model.model_copy(
+        update={"rfecv_enabled": False},
+    )
+
     # Per-fold evaluation
     evaluator = ModelEvaluator(n_bootstrap=200, n_permutations=100)
     fold_details: list[dict] = []
@@ -215,9 +253,9 @@ def run_walk_forward_training(
     valid_cv_splits: list[tuple] = []
     skipped = 0
     for split in splits:
-        x_train = features.iloc[split.train_indices]
+        x_train = features.iloc[split.train_indices][selected_features]
         y_train = y.iloc[split.train_indices]
-        x_test = features.iloc[split.test_indices]
+        x_test = features.iloc[split.test_indices][selected_features]
         y_test = y.iloc[split.test_indices]
 
         # CatBoost requires both classes in training data
@@ -229,14 +267,10 @@ def run_walk_forward_training(
             skipped += 1
             continue
 
-        trainer = ExtremaModelTrainer(config.model)
+        trainer = ExtremaModelTrainer(fold_model_config)
         fold_model = trainer.train(x_train, y_train)
-        preds = fold_model.model.predict(
-            x_test[fold_model.selected_features],
-        ).flatten().astype(int)
-        probs = fold_model.model.predict_proba(
-            x_test[fold_model.selected_features],
-        )
+        preds = fold_model.model.predict(x_test).flatten().astype(int)
+        probs = fold_model.model.predict_proba(x_test)
         rebound_prob = probs[:, 1] if probs.shape[1] > 1 else probs[:, 0]
 
         # Evaluate — handle single-class test gracefully
@@ -286,9 +320,10 @@ def run_walk_forward_training(
         fold_predictions,
     )
 
-    # Final model on all data (full dataset has both classes).
-    trainer = ExtremaModelTrainer(config.model)
-    final_model = trainer.train(features, y, cv_splits=valid_cv_splits)
+    # Final model on all data using the same feature subset. RFECV
+    # is disabled here because feature selection was already done above.
+    final_trainer = ExtremaModelTrainer(fold_model_config)
+    final_model = final_trainer.train(features[selected_features], y)
 
     return {
         "trained_model": final_model,
