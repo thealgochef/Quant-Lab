@@ -31,9 +31,18 @@ _MIN_BARS = 50
 class MLExtremaClassifierDetector(SignalDetector):
     """ML Extrema Classifier: CatBoost rebound/crossing prediction.
 
+    **RESEARCH / EXPERIMENTAL** — This detector approximates tick-level
+    training features from bar-level OHLCV data.  Missing features are
+    filled with 0.0 and some values (e.g. ``pl_width``) are placeholders.
+    The resulting predictions are NOT execution-faithful and should not be
+    treated as production-grade signals.  For production-grade level-touch
+    predictions, use the retained 3-feature dashboard model path.
+
     Requires a trained model loaded from disk. If no model is available,
     validate_inputs returns False and the detector is silently skipped.
     """
+
+    _EXPERIMENTAL = True
 
     detector_id = "ml_extrema_classifier"
     category = "ml_extrema_classifier"
@@ -53,6 +62,15 @@ class MLExtremaClassifierDetector(SignalDetector):
 
         if model_path is not None:
             self._try_load_model()
+            if self._loaded:
+                import warnings
+                warnings.warn(
+                    "MLExtremaClassifierDetector uses bar-level feature "
+                    "approximations that differ from the tick-level features "
+                    "the model was trained on. Predictions are experimental "
+                    "and not execution-faithful.",
+                    stacklevel=2,
+                )
 
     def _try_load_model(self) -> None:
         """Attempt to load a trained model from disk."""

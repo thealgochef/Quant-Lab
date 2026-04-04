@@ -250,11 +250,29 @@ def run_walk_forward_training(
     fold_details: list[dict] = []
     fold_predictions: list[dict[str, object]] = []
 
+    # Label purge buffer: remove training rows whose forward labeling
+    # window (in ticks) could extend into the test period.  Convert
+    # tick-based forward_window to a conservative time buffer.
+    # NQ averages ~500-1500 ticks/min during RTH; use 5 min as a safe
+    # floor per 5000-tick window, then add the walk-forward gap.
+    _fw_minutes = max(5, config.labeling.forward_window // 500)
+    _purge_buffer = pd.Timedelta(minutes=_fw_minutes)
+
     valid_cv_splits: list[tuple] = []
+    fold_importances: list[dict[str, float]] = []
     skipped = 0
+    n_purged_total = 0
     for split in splits:
-        x_train = features.iloc[split.train_indices][selected_features]
-        y_train = y.iloc[split.train_indices]
+        # Purge training rows whose labeling horizon may cross into test
+        train_ts = timestamps.iloc[split.train_indices]
+        safe_cutoff = split.test_start - _purge_buffer
+        safe_mask = train_ts <= safe_cutoff
+        purged_train_idx = split.train_indices[safe_mask.values]
+        n_purged = len(split.train_indices) - len(purged_train_idx)
+        n_purged_total += n_purged
+
+        x_train = features.iloc[purged_train_idx][selected_features]
+        y_train = y.iloc[purged_train_idx]
         x_test = features.iloc[split.test_indices][selected_features]
         y_test = y.iloc[split.test_indices]
 
@@ -277,7 +295,8 @@ def run_walk_forward_training(
         fold_eval = evaluator.evaluate(
             y_test.values, preds, rebound_prob,
         )
-        valid_cv_splits.append((split.train_indices, split.test_indices))
+        valid_cv_splits.append((purged_train_idx, split.test_indices))
+        fold_importances.append(fold_model.feature_importances)
         fold_predictions.append({
             "fold": split.fold,
             "y_true": y_test.values,
@@ -320,6 +339,26 @@ def run_walk_forward_training(
         fold_predictions,
     )
 
+    # Feature stability: Spearman rank-correlation of feature importances
+    # across folds. Low values indicate the model relies on unstable signals.
+    feature_stability = None
+    if len(fold_importances) >= 2:
+        from scipy.stats import spearmanr
+        # Build importance matrix (folds x features)
+        all_feats = selected_features
+        imp_matrix = []
+        for imp_dict in fold_importances:
+            imp_matrix.append([imp_dict.get(f, 0.0) for f in all_feats])
+        imp_arr = np.array(imp_matrix)
+        # Mean pairwise Spearman rank-correlation
+        correlations = []
+        for i in range(len(imp_arr)):
+            for j in range(i + 1, len(imp_arr)):
+                rho, _ = spearmanr(imp_arr[i], imp_arr[j])
+                if np.isfinite(rho):
+                    correlations.append(rho)
+        feature_stability = float(np.mean(correlations)) if correlations else None
+
     # RTH coverage: what fraction of OOS samples fall within NY RTH
     # (09:30-16:15 ET). If low, the evaluation may not represent the
     # execution population (dashboard only executes in NY RTH).
@@ -354,6 +393,8 @@ def run_walk_forward_training(
         "feature_cols": feature_cols,
         "selected_features": selected_features,
         "n_total": len(valid),
+        "n_purged_total": n_purged_total,
+        "feature_stability": feature_stability,
         "n_total_folds": len(splits),
         "n_valid_folds": len(valid_cv_splits),
         "n_skipped_folds": skipped,
@@ -416,6 +457,39 @@ def check_quality_gates(eval_result) -> dict[str, dict]:
 
     all_passed = all(g["passed"] for g in gates.values())
     return {"gates": gates, "all_passed": all_passed}
+
+
+def compute_utility_metrics(
+    eval_result,
+    tp_points: float = 15.0,
+    sl_points: float = 30.0,
+) -> dict[str, float]:
+    """Compute trade-utility metrics from OOS evaluation result.
+
+    Simulates a strategy that takes the predicted rebound side with
+    fixed TP/SL and computes expectancy and profit factor.
+    """
+    cm = eval_result.confusion_matrix
+    tp = cm.get("tp", 0)
+    fp = cm.get("fp", 0)
+
+    n_trades = tp + fp
+    if n_trades == 0:
+        return {"expectancy_pts": 0.0, "profit_factor": 0.0, "n_simulated_trades": 0}
+
+    wins = tp
+    losses = fp
+    gross_gain = wins * tp_points
+    gross_loss = losses * sl_points
+
+    expectancy = (gross_gain - gross_loss) / n_trades
+    profit_factor = gross_gain / gross_loss if gross_loss > 0 else float("inf")
+
+    return {
+        "expectancy_pts": round(expectancy, 2),
+        "profit_factor": round(profit_factor, 3),
+        "n_simulated_trades": n_trades,
+    }
 
 
 def save_trained_model(
@@ -833,14 +907,35 @@ def render_ml_training_tab() -> None:
                 st.metric("Predicted Rebound Rate",
                           f"{oos_rates.get('predicted_positive_rate', 0.0):.3f}")
 
+            # RTH coverage, label purging, and feature stability info
+            rth_frac = result.get("rth_fraction")
+            n_purged = result.get("n_purged_total", 0)
+            feat_stability = result.get("feature_stability")
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                if rth_frac is not None:
+                    st.metric("RTH Coverage", f"{rth_frac:.1%}",
+                              help="Fraction of OOS samples within NY RTH (09:30-16:15 ET)")
+                    if rth_frac < 0.5:
+                        st.warning(
+                            "Low RTH coverage — OOS metrics may not represent "
+                            "the dashboard's NY RTH execution population."
+                        )
+            with c2:
+                if n_purged > 0:
+                    st.metric("Label-Purged Rows", n_purged,
+                              help="Training rows removed to prevent forward-window label leakage")
+            with c3:
+                if feat_stability is not None:
+                    st.metric("Feature Stability", f"{feat_stability:.3f}",
+                              help="Mean pairwise Spearman rank-correlation of feature importances across folds (1.0 = perfectly stable)")
+                    if feat_stability < 0.5:
+                        st.warning("Low feature stability — model may rely on non-stationary signals.")
+
             full_balance = result.get("full_dataset_class_balance", {})
             st.caption(
                 "Reference only (refit population): full labeled dataset balance = "
                 f"{full_balance.get('rebound', 0)}R / {full_balance.get('crossing', 0)}C"
-            )
-            st.caption(
-                "Statistical note: bootstrap CI and permutation test currently use "
-                "IID row assumptions; market events may be serially correlated."
             )
 
             # Quality gates
@@ -862,6 +957,28 @@ def render_ml_training_tab() -> None:
                 st.success("All quality gates passed.")
             else:
                 st.warning("Some quality gates failed. Review before saving.")
+
+            # Utility metrics (simulated trade expectancy)
+            st.markdown("#### Trade Utility (Simulated)")
+            utility_15_15 = compute_utility_metrics(ev, tp_points=15.0, sl_points=15.0)
+            utility_15_30 = compute_utility_metrics(ev, tp_points=15.0, sl_points=30.0)
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.metric("Expectancy (15/15)",
+                          f"{utility_15_15['expectancy_pts']:+.2f} pts",
+                          help="Expected points per trade at TP=15 SL=15")
+            with c2:
+                st.metric("Expectancy (15/30)",
+                          f"{utility_15_30['expectancy_pts']:+.2f} pts",
+                          help="Expected points per trade at TP=15 SL=30")
+            with c3:
+                st.metric("Profit Factor (15/30)",
+                          f"{utility_15_30['profit_factor']:.2f}",
+                          help="Gross gains / gross losses at TP=15 SL=30")
+            st.caption(
+                f"Based on {utility_15_30['n_simulated_trades']} OOS predicted-rebound trades. "
+                "Assumes all predicted rebounds are executed at stated TP/SL."
+            )
 
             # Charts
             col_chart1, col_chart2 = st.columns(2)

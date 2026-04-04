@@ -125,6 +125,26 @@ def process_zip(zip_path: Path) -> None:
                 _safe_remove(tmp_path)
                 continue
 
+            # ── Ingest quality checks ─────────────────────────────
+            _warnings = []
+            if "ts_event" in df.columns:
+                ts = df["ts_event"]
+                if not ts.is_monotonic_increasing:
+                    n_unsorted = int((ts.diff().dropna() < pd.Timedelta(0)).sum())
+                    _warnings.append(f"non-monotonic timestamps ({n_unsorted:,} reversals)")
+                n_dup_ts = int(ts.duplicated().sum())
+                if n_dup_ts > 0:
+                    _warnings.append(f"{n_dup_ts:,} duplicate timestamps")
+            if "price" in df.columns:
+                bad_price = (df["price"] <= 0) | (df["price"] > 100_000)
+                n_bad = int(bad_price.sum())
+                if n_bad > 0:
+                    _warnings.append(f"{n_bad:,} invalid prices (<=0 or >100k)")
+            if len(df) < 1000:
+                _warnings.append(f"low row count ({len(df):,})")
+            if _warnings:
+                print(f" WARN: {'; '.join(_warnings)}", end="", flush=True)
+
             # Save as Parquet
             out_dir.mkdir(parents=True, exist_ok=True)
             df.to_parquet(out_path)

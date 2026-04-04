@@ -53,6 +53,7 @@ def extract_pl_features(
     features.update(_trade_features(ticks_at_extremum))
     features.update(_book_ratio_features(ticks_at_extremum, tick_size))
     features.update(_depth_shape_features(ticks_at_extremum))
+    features.update(_depth_dynamics_features(ticks_at_extremum))
     features.update(_peak_morphology_features(extremum))
 
     return features
@@ -235,6 +236,66 @@ def _depth_shape_features(ticks: pd.DataFrame) -> dict[str, float]:
             if len(x) >= 2:
                 slope = np.polyfit(x, cum_ask, 1)[0]
                 features["pl_ask_depth_slope"] = float(slope)
+
+    return features
+
+
+def _depth_dynamics_features(ticks: pd.DataFrame) -> dict[str, float]:
+    """Time-dynamic depth features over the full tick slice.
+
+    Captures how the order book evolves approaching the extremum,
+    not just its final snapshot.
+    """
+    features: dict[str, float] = {}
+    if len(ticks) < 5:
+        return features
+
+    # Compute per-tick total bid/ask/imbalance if book columns exist
+    bid_totals: list[float] = []
+    ask_totals: list[float] = []
+    imbalances: list[float] = []
+    spreads: list[float] = []
+
+    for _, row in ticks.iloc[::max(1, len(ticks) // 20)].iterrows():
+        bid_sum = 0.0
+        ask_sum = 0.0
+        for i in range(10):
+            bid_col = f"bid_sz_{i:02d}"
+            ask_col = f"ask_sz_{i:02d}"
+            if bid_col not in row.index:
+                break
+            bsz = float(row[bid_col]) if not pd.isna(row[bid_col]) else 0.0
+            asz = float(row[ask_col]) if not pd.isna(row[ask_col]) else 0.0
+            bid_sum += bsz
+            ask_sum += asz
+        bid_totals.append(bid_sum)
+        ask_totals.append(ask_sum)
+        total = bid_sum + ask_sum
+        imbalances.append(bid_sum / total if total > 0 else 0.5)
+
+        bid_px = f"bid_px_00"
+        ask_px = f"ask_px_00"
+        if bid_px in row.index and ask_px in row.index:
+            bp = float(row[bid_px]) if not pd.isna(row[bid_px]) else 0.0
+            ap = float(row[ask_px]) if not pd.isna(row[ask_px]) else 0.0
+            if bp > 0 and ap > 0:
+                spreads.append(ap - bp)
+
+    if len(bid_totals) >= 3:
+        bid_arr = np.array(bid_totals)
+        ask_arr = np.array(ask_totals)
+        x = np.arange(len(bid_arr))
+
+        # Volume trends (slope of bid/ask totals over time)
+        features["pl_bid_vol_trend"] = float(np.polyfit(x, bid_arr, 1)[0])
+        features["pl_ask_vol_trend"] = float(np.polyfit(x, ask_arr, 1)[0])
+
+        # Imbalance volatility (instability of bid/ask ratio)
+        imb_arr = np.array(imbalances)
+        features["pl_imbalance_volatility"] = float(np.std(imb_arr))
+
+    if len(spreads) >= 2:
+        features["pl_spread_max"] = float(max(spreads))
 
     return features
 
