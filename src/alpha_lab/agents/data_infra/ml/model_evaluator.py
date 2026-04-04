@@ -32,6 +32,7 @@ class EvaluationResult:
     f1_ci: tuple[float, float] = (0.0, 0.0)
     permutation_p_value: float | None = None
     cohens_d: float | None = None
+    brier_score: float | None = None
     n_samples: int = 0
     n_positive: int = 0
     n_negative: int = 0
@@ -103,8 +104,15 @@ class ModelEvaluator:
         # Permutation test
         perm_p = self._permutation_test(y_t, y_p)
 
-        # Cohen's d effect size
-        cohens_d = self._compute_cohens_d(y_t, y_p)
+        # Cohen's d effect size (prefer probabilities when available)
+        cohens_d = self._compute_cohens_d(
+            y_t, y_p, y_proba if y_prob is not None else None,
+        )
+
+        # Brier score (mean squared error of probability estimates)
+        brier = None
+        if y_prob is not None:
+            brier = float(np.mean((y_proba - y_t) ** 2))
 
         return EvaluationResult(
             precision=precision,
@@ -118,6 +126,7 @@ class ModelEvaluator:
             f1_ci=f1_ci,
             permutation_p_value=perm_p,
             cohens_d=cohens_d,
+            brier_score=brier,
             n_samples=len(y_t),
             n_positive=int(np.sum(y_t == 1)),
             n_negative=int(np.sum(y_t == 0)),
@@ -290,7 +299,14 @@ class ModelEvaluator:
         splits: list[tuple[np.ndarray, np.ndarray]],
         feature_names: list[str] | None = None,
     ) -> EvaluationResult:
-        """Evaluate model across walk-forward splits.
+        """Evaluate a SINGLE model across walk-forward splits (**in-sample**).
+
+        .. deprecated::
+            This replays one already-trained model across all CV folds,
+            which means the model has already seen the training portion of
+            every fold.  The resulting metrics are **not** true
+            out-of-sample.  Use :meth:`evaluate_out_of_sample_folds`
+            with per-fold predictions instead.
 
         Args:
             model: Trained classifier with predict/predict_proba methods.
@@ -302,6 +318,14 @@ class ModelEvaluator:
         Returns:
             EvaluationResult with fold-level and aggregate metrics.
         """
+        import warnings
+        warnings.warn(
+            "evaluate_walk_forward() produces in-sample metrics because it "
+            "replays a single model across all folds. Use "
+            "evaluate_out_of_sample_folds() with per-fold predictions instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         all_true: list[np.ndarray] = []
         all_pred: list[np.ndarray] = []
         all_prob: list[np.ndarray] = []
@@ -355,15 +379,27 @@ class ModelEvaluator:
         y_pred: np.ndarray,
         metric: str,
         alpha: float = 0.05,
+        block_size: int = 10,
     ) -> tuple[float, float]:
-        """Compute bootstrap confidence interval for a metric."""
+        """Compute block-bootstrap confidence interval for a metric.
+
+        Uses a moving-block bootstrap to respect the autocorrelation
+        structure of time-ordered predictions.  Contiguous blocks of
+        ``block_size`` samples are resampled with replacement.
+        """
         n = len(y_true)
         if n < 10:
             return (0.0, 1.0)
 
+        # Clamp block size to something sensible
+        bs = max(1, min(block_size, n // 2))
+        n_blocks = max(1, (n + bs - 1) // bs)  # ceil(n / bs)
+
         scores: list[float] = []
         for _ in range(self._n_bootstrap):
-            idx = self._rng.integers(0, n, size=n)
+            # Sample n_blocks contiguous blocks with replacement
+            starts = self._rng.integers(0, n - bs + 1, size=n_blocks)
+            idx = np.concatenate([np.arange(s, s + bs) for s in starts])[:n]
             yt = y_true[idx]
             yp = y_pred[idx]
 
@@ -420,25 +456,33 @@ class ModelEvaluator:
 
     @staticmethod
     def _compute_cohens_d(
-        y_true: np.ndarray, y_pred: np.ndarray,
+        y_true: np.ndarray,
+        y_pred: np.ndarray,
+        y_prob: np.ndarray | None = None,
     ) -> float | None:
-        """Cohen's d effect size for the classifier's discrimination."""
-        # Compare predicted scores for actual positives vs actual negatives
-        pos_correct = y_pred[y_true == 1].astype(float)
-        neg_correct = y_pred[y_true == 0].astype(float)
+        """Cohen's d effect size for the classifier's discrimination.
 
-        if len(pos_correct) < 2 or len(neg_correct) < 2:
+        When ``y_prob`` is provided, computes the effect size on continuous
+        predicted probabilities (more informative).  Falls back to binary
+        predictions otherwise.
+        """
+        scores = y_prob if y_prob is not None else y_pred.astype(float)
+
+        pos_scores = scores[y_true == 1]
+        neg_scores = scores[y_true == 0]
+
+        if len(pos_scores) < 2 or len(neg_scores) < 2:
             return None
 
-        mean_diff = np.mean(pos_correct) - np.mean(neg_correct)
-        pooled_std = np.sqrt(
-            (np.var(pos_correct, ddof=1) + np.var(neg_correct, ddof=1)) / 2
-        )
+        mean_diff = float(np.mean(pos_scores) - np.mean(neg_scores))
+        pooled_std = float(np.sqrt(
+            (np.var(pos_scores, ddof=1) + np.var(neg_scores, ddof=1)) / 2
+        ))
 
         if pooled_std == 0:
             return 0.0
 
-        return float(mean_diff / pooled_std)
+        return mean_diff / pooled_std
 
     @staticmethod
     def _compute_roc_auc(

@@ -246,7 +246,7 @@ def run_walk_forward_training(
     )
 
     # Per-fold evaluation
-    evaluator = ModelEvaluator(n_bootstrap=200, n_permutations=100)
+    evaluator = ModelEvaluator(n_bootstrap=1000, n_permutations=500)
     fold_details: list[dict] = []
     fold_predictions: list[dict[str, object]] = []
 
@@ -320,6 +320,28 @@ def run_walk_forward_training(
         fold_predictions,
     )
 
+    # RTH coverage: what fraction of OOS samples fall within NY RTH
+    # (09:30-16:15 ET). If low, the evaluation may not represent the
+    # execution population (dashboard only executes in NY RTH).
+    try:
+        from zoneinfo import ZoneInfo
+        _et = ZoneInfo("America/New_York")
+        oos_ts = pd.concat([
+            pd.Series(fp["y_true"]).index.to_series()
+            for fp in fold_predictions
+        ], ignore_index=True) if False else timestamps.iloc[
+            np.concatenate([s.test_indices for s in splits if len(s.test_indices) > 0])
+        ]
+        oos_et = oos_ts.dt.tz_convert(_et) if oos_ts.dt.tz is not None else oos_ts
+        rth_mask = (oos_et.dt.hour >= 9) & (
+            (oos_et.dt.hour > 9) | (oos_et.dt.minute >= 30)
+        ) & (
+            (oos_et.dt.hour < 16) | ((oos_et.dt.hour == 16) & (oos_et.dt.minute <= 15))
+        )
+        rth_fraction = float(rth_mask.mean()) if len(rth_mask) > 0 else 0.0
+    except Exception:
+        rth_fraction = None
+
     # Final model on all data using the same feature subset. RFECV
     # is disabled here because feature selection was already done above.
     final_trainer = ExtremaModelTrainer(fold_model_config)
@@ -330,11 +352,13 @@ def run_walk_forward_training(
         "eval_result": eval_result,
         "fold_details": fold_details,
         "feature_cols": feature_cols,
+        "selected_features": selected_features,
         "n_total": len(valid),
         "n_total_folds": len(splits),
         "n_valid_folds": len(valid_cv_splits),
         "n_skipped_folds": skipped,
         "oos_summary": oos_summary,
+        "rth_fraction": rth_fraction,
         "full_dataset_class_balance": {
             "rebound": int((y == 1).sum()),
             "crossing": int((y == 0).sum()),
@@ -378,10 +402,15 @@ def check_quality_gates(eval_result) -> dict[str, dict]:
             "value": f"{eval_result.roc_auc or 0:.3f}",
             "threshold": "0.55",
         },
-        "Test samples >= 50": {
-            "passed": eval_result.n_samples >= 50,
+        "Brier score < 0.25": {
+            "passed": (eval_result.brier_score or 1.0) < 0.25,
+            "value": f"{eval_result.brier_score or 1.0:.3f}",
+            "threshold": "0.25",
+        },
+        "Test samples >= 200": {
+            "passed": eval_result.n_samples >= 200,
             "value": str(eval_result.n_samples),
-            "threshold": "50",
+            "threshold": "200",
         },
     }
 
