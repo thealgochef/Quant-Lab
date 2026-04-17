@@ -1,0 +1,56 @@
+{
+  "selected_features": [
+    "int_time_beyond_level",
+    "int_time_within_2pts",
+    "int_absorption_ratio",
+    "app_sell_volume",
+    "app_large_trade_vol_pct",
+    "app_trade_count",
+    "app_avg_trade_size",
+    "app_avg_tob_imbalance",
+    "app_avg_spread",
+    "app_cancel_rate",
+    "app_avg_bid_depth_ratio",
+    "app_depth_concentration",
+    "app_price_change_pct",
+    "app_price_velocity_15m",
+    "app_volatility_full",
+    "app_volatility_recent",
+    "app_volatility_ratio"
+  ],
+  "feature_importances": {
+    "int_time_beyond_level": 25.239958797077918,
+    "int_time_within_2pts": 9.06140454402837,
+    "int_absorption_ratio": 6.468486755331786,
+    "app_sell_volume": 3.414231524619191,
+    "app_large_trade_vol_pct": 4.0850426353053075,
+    "app_trade_count": 3.228742379091899,
+    "app_avg_trade_size": 3.585422168888942,
+    "app_avg_tob_imbalance": 5.181353352114125,
+    "app_avg_spread": 4.694919870762197,
+    "app_cancel_rate": 4.715184377433908,
+    "app_avg_bid_depth_ratio": 4.404460799442185,
+    "app_depth_concentration": 5.462503816513446,
+    "app_price_change_pct": 2.48211411558885,
+    "app_price_velocity_15m": 3.4923617592406293,
+    "app_volatility_full": 3.86732527005872,
+    "app_volatility_recent": 5.064977207084081,
+    "app_volatility_ratio": 5.551510627418445
+  },
+  "train_metrics": {
+    "train_accuracy": 0.9598108747044918,
+    "n_train_samples": 846.0,
+    "n_selected_features": 17.0
+  },
+  "config": {
+    "model_type": "catboost",
+    "iterations": 500,
+    "depth": 6,
+    "learning_rate": 0.03,
+    "loss_function": "MultiClass",
+    "auto_class_weights": "Balanced",
+    "rfecv_enabled": false,
+    "rfecv_min_features": 5,
+    "early_stopping_rounds": 50
+  }
+}

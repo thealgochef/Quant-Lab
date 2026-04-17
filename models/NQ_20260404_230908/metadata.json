@@ -1,0 +1,28 @@
+{
+  "selected_features": [
+    "int_time_beyond_level",
+    "int_time_within_2pts",
+    "int_absorption_ratio"
+  ],
+  "feature_importances": {
+    "int_time_beyond_level": 43.49263740634433,
+    "int_time_within_2pts": 35.17960228223317,
+    "int_absorption_ratio": 21.327760311422495
+  },
+  "train_metrics": {
+    "train_accuracy": 0.855787476280835,
+    "n_train_samples": 527.0,
+    "n_selected_features": 3.0
+  },
+  "config": {
+    "model_type": "catboost",
+    "iterations": 500,
+    "depth": 6,
+    "learning_rate": 0.03,
+    "loss_function": "MultiClass",
+    "auto_class_weights": "Balanced",
+    "rfecv_enabled": false,
+    "rfecv_min_features": 5,
+    "early_stopping_rounds": 50
+  }
+}
