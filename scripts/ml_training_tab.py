@@ -171,8 +171,13 @@ def run_walk_forward_training(
     from alpha_lab.agents.data_infra.ml.walk_forward import WalkForwardSplitter
 
     # Separate features from labels/metadata
-    feature_cols = [c for c in dataset.columns
-                    if c.startswith(("pl_", "ms_", "sig_"))]
+    if config.training_mode == "dashboard_utility":
+        # Dynamic: detect int_* (interaction) and app_* (approach) columns
+        feature_cols = [c for c in dataset.columns
+                        if c.startswith(("int_", "app_"))]
+    else:
+        feature_cols = [c for c in dataset.columns
+                        if c.startswith(("pl_", "ms_", "sig_"))]
     if label_column not in dataset.columns:
         msg = f"Label column '{label_column}' not found in dataset"
         raise ValueError(msg)
@@ -287,21 +292,30 @@ def run_walk_forward_training(
 
         trainer = ExtremaModelTrainer(fold_model_config)
         fold_model = trainer.train(x_train, y_train)
-        preds = fold_model.model.predict(x_test).flatten().astype(int)
-        probs = fold_model.model.predict_proba(x_test)
-        rebound_prob = probs[:, 1] if probs.shape[1] > 1 else probs[:, 0]
+        raw_preds = fold_model.model.predict(x_test).flatten().astype(int)
+        raw_probs = fold_model.model.predict_proba(x_test)
+
+        # For evaluation, binarize: "positive" = the signal class.
+        # Extrema mode: class 1 (rebound) is positive.
+        # Utility mode: class 0 (tradeable_reversal) is positive.
+        if config.training_mode == "dashboard_utility":
+            eval_y = (y_test.values == 0).astype(int)  # reversal = 1
+            eval_preds = (raw_preds == 0).astype(int)
+            eval_prob = raw_probs[:, 0]  # P(tradeable_reversal)
+        else:
+            eval_y = y_test.values
+            eval_preds = raw_preds
+            eval_prob = raw_probs[:, 1] if raw_probs.shape[1] > 1 else raw_probs[:, 0]
 
         # Evaluate — handle single-class test gracefully
-        fold_eval = evaluator.evaluate(
-            y_test.values, preds, rebound_prob,
-        )
+        fold_eval = evaluator.evaluate(eval_y, eval_preds, eval_prob)
         valid_cv_splits.append((purged_train_idx, split.test_indices))
         fold_importances.append(fold_model.feature_importances)
         fold_predictions.append({
             "fold": split.fold,
-            "y_true": y_test.values,
-            "y_pred": preds,
-            "y_prob": rebound_prob,
+            "y_true": eval_y,
+            "y_pred": eval_preds,
+            "y_prob": eval_prob,
         })
         fold_details.append({
             "fold": split.fold,
@@ -400,10 +414,18 @@ def run_walk_forward_training(
         "n_skipped_folds": skipped,
         "oos_summary": oos_summary,
         "rth_fraction": rth_fraction,
-        "full_dataset_class_balance": {
-            "rebound": int((y == 1).sum()),
-            "crossing": int((y == 0).sum()),
-        },
+        "full_dataset_class_balance": (
+            {
+                "tradeable_reversal": int((y == 0).sum()),
+                "trap_reversal": int((y == 1).sum()),
+                "aggressive_blowthrough": int((y == 2).sum()),
+            }
+            if config.training_mode == "dashboard_utility"
+            else {
+                "rebound": int((y == 1).sum()),
+                "crossing": int((y == 0).sum()),
+            }
+        ),
         "class_balance": {
             "rebound": oos_summary["class_balance_true"]["rebound"],
             "crossing": oos_summary["class_balance_true"]["crossing"],
@@ -497,8 +519,15 @@ def save_trained_model(
     eval_result,
     config,
     output_dir: Path,
+    *,
+    training_result: dict | None = None,
+    dates_used: list[str] | None = None,
 ) -> Path:
-    """Save model artifacts and evaluation results."""
+    """Save model artifacts and evaluation results.
+
+    Includes ALL metrics shown in the training UI so the saved artifact
+    is a complete record of the training run.
+    """
     from alpha_lab.agents.data_infra.ml.model_trainer import ExtremaModelTrainer
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -506,7 +535,7 @@ def save_trained_model(
     # Save model + metadata
     ExtremaModelTrainer.save_model(trained_model, output_dir)
 
-    # Save evaluation
+    # Save evaluation — start with the EvaluationResult dataclass
     eval_dict = asdict(eval_result)
     # Convert numpy types for JSON serialization
     for key, val in eval_dict.items():
@@ -516,6 +545,56 @@ def save_trained_model(
             eval_dict[key] = float(val)
         elif isinstance(val, tuple):
             eval_dict[key] = [float(v) for v in val]
+
+    # ── Derived rates (shown in UI but not in EvaluationResult) ──
+    cm = eval_result.confusion_matrix
+    tp = cm.get("tp", 0)
+    fp = cm.get("fp", 0)
+    tn = cm.get("tn", 0)
+    fn = cm.get("fn", 0)
+    eval_dict["specificity_tnr"] = tn / (tn + fp) if (tn + fp) > 0 else 0.0
+    eval_dict["false_positive_rate"] = fp / (fp + tn) if (fp + tn) > 0 else 0.0
+    eval_dict["predicted_positive_rate"] = (tp + fp) / eval_result.n_samples if eval_result.n_samples > 0 else 0.0
+
+    # ── Trade utility metrics ────────────────────────────────────
+    utility_15_15 = compute_utility_metrics(eval_result, tp_points=15.0, sl_points=15.0)
+    utility_15_30 = compute_utility_metrics(eval_result, tp_points=15.0, sl_points=30.0)
+    eval_dict["trade_utility"] = {
+        "expectancy_15_15_pts": utility_15_15["expectancy_pts"],
+        "expectancy_15_30_pts": utility_15_30["expectancy_pts"],
+        "profit_factor_15_30": utility_15_30["profit_factor"],
+        "n_simulated_trades": utility_15_30["n_simulated_trades"],
+    }
+
+    # ── Training result extras (RTH, stability, OOS summary) ─────
+    if training_result is not None:
+        eval_dict["rth_fraction"] = training_result.get("rth_fraction")
+        eval_dict["feature_stability"] = training_result.get("feature_stability")
+        eval_dict["n_purged_total"] = training_result.get("n_purged_total", 0)
+        eval_dict["n_total_folds"] = training_result.get("n_total_folds")
+        eval_dict["n_valid_folds"] = training_result.get("n_valid_folds")
+        eval_dict["n_skipped_folds"] = training_result.get("n_skipped_folds", 0)
+        eval_dict["selected_features"] = training_result.get("selected_features")
+        eval_dict["class_balance"] = training_result.get("class_balance")
+        eval_dict["full_dataset_class_balance"] = training_result.get("full_dataset_class_balance")
+
+        oos = training_result.get("oos_summary")
+        if oos:
+            eval_dict["oos_summary"] = oos
+
+    # ── Full pipeline config for reproducibility ─────────────────
+    if config is not None:
+        eval_dict["training_mode"] = getattr(config, "training_mode", "unknown")
+        eval_dict["full_config"] = config.model_dump()
+
+    # ── Training dates for reproducibility ────────────────────────
+    if dates_used is not None:
+        eval_dict["dates_used"] = dates_used
+        eval_dict["date_range"] = {
+            "start": dates_used[0] if dates_used else None,
+            "end": dates_used[-1] if dates_used else None,
+            "count": len(dates_used),
+        }
 
     with open(output_dir / "evaluation.json", "w") as f:
         json.dump(eval_dict, f, indent=2, default=str)
@@ -613,15 +692,33 @@ def _chart_fold_metrics(fold_details: list[dict]) -> go.Figure:
 
 def render_ml_training_tab() -> None:
     """Render the ML Training tab content."""
-    st.subheader("Primary Workflow: ML Extrema Training")
-    st.caption(
-        "Build the extrema dataset from local Databento files, score true "
-        "out-of-sample walk-forward folds, then refit and save the runtime model."
+    st.subheader("ML Training Workbench")
+
+    # ── Mode Selector ─────────────────────────────────────────
+    training_mode = st.radio(
+        "Training Mode",
+        ["Extrema Rebound/Crossing", "Dashboard Utility (3-class)"],
+        key="ml_training_mode",
+        horizontal=True,
+        help=(
+            "**Extrema**: Binary rebound/crossing on tick extrema (research). "
+            "**Dashboard Utility**: 3-class level-touch model aligned to "
+            "Trading-Dashboard execution semantics."
+        ),
     )
-    st.info(
-        "The Dashboard Compatibility tab is the retained secondary 3-class "
-        "export path for ML-Trading-Dashboard."
-    )
+    is_utility_mode = training_mode == "Dashboard Utility (3-class)"
+
+    if is_utility_mode:
+        st.caption(
+            "Dashboard-utility mode: train a 3-class CatBoost model on "
+            "level-touch events with utility-aligned TP/SL labeling. "
+            "Output is directly compatible with Trading-Dashboard."
+        )
+    else:
+        st.caption(
+            "Extrema mode: binary rebound/crossing classifier on tick-level "
+            "extrema. This is the research pipeline."
+        )
 
     # ── Configuration ─────────────────────────────────────────
     col_cfg1, col_cfg2, col_cfg3 = st.columns(3)
@@ -663,10 +760,32 @@ def render_ml_training_tab() -> None:
         _min_1 = ml_train_days + ml_gap_days + ml_test_days
         _est_folds = max(0, (_span - ml_train_days - ml_gap_days) // ml_test_days)
         st.caption(f"~{_est_folds} folds from {_span}d span (need {_min_1}d for 1st fold)")
-        ml_label = st.selectbox(
-            "Label threshold", list(_LABEL_OPTIONS.keys()),
-            key="ml_label",
-        )
+        if is_utility_mode:
+            ml_tp = st.slider("TP (points)", 5, 50, 15, key="ml_util_tp")
+            ml_sl = st.slider("SL (points)", 5, 50, 30, key="ml_util_sl")
+            ml_bar_type = st.selectbox(
+                "Bar type", ["987t", "2000t", "147t", "1m"],
+                key="ml_bar_type",
+                help="Tick bars give finer touch detection than 1m time bars",
+            )
+            ml_int_window = st.slider(
+                "Interaction window (min)", 1, 15, 5, key="ml_int_window",
+            )
+            ml_approach = st.checkbox(
+                "Include approach features",
+                key="ml_approach",
+                help="Add 27 pre-touch order flow features (90-min window)",
+            )
+            ml_approach_window = 90
+            if ml_approach:
+                ml_approach_window = st.slider(
+                    "Approach window (min)", 15, 120, 90, key="ml_approach_window",
+                )
+        else:
+            ml_label = st.selectbox(
+                "Label threshold", list(_LABEL_OPTIONS.keys()),
+                key="ml_label",
+            )
 
     with col_cfg3:
         st.markdown("**CatBoost**")
@@ -682,7 +801,28 @@ def render_ml_training_tab() -> None:
     st.divider()
 
     data_dir = Path(ml_data_dir)
-    label_col = _LABEL_OPTIONS[ml_label]
+    if is_utility_mode:
+        label_col = "label_encoded"
+    else:
+        label_col = _LABEL_OPTIONS[ml_label]
+
+    # Build a fingerprint of the current UI selections so we can detect
+    # when the user changes settings and the stored dataset is stale.
+    _util_identity = ""
+    if is_utility_mode:
+        _util_identity = f"|{ml_bar_type}|{ml_int_window}|{ml_approach}|{ml_approach_window}|{ml_tp}|{ml_sl}"
+    _dataset_identity = (
+        f"{training_mode}|{ml_symbol}|{ml_start}|{ml_end}|"
+        f"{label_col}|{ml_train_days}|{ml_test_days}|{ml_gap_days}"
+        f"{_util_identity}"
+    )
+    if st.session_state.get("_ml_dataset_identity") != _dataset_identity:
+        # Settings changed since last build — clear stale results
+        st.session_state.pop("ml_dataset", None)
+        st.session_state.pop("ml_build_config", None)
+        st.session_state.pop("ml_training_result", None)
+        st.session_state.pop("ml_train_config", None)
+        st.session_state["_ml_dataset_identity"] = _dataset_identity
 
     # ── Phase 1: Local Data ───────────────────────────────────
     st.markdown("### Step 1: Local Data")
@@ -748,55 +888,134 @@ def render_ml_training_tab() -> None:
 
         if build_btn:
             from alpha_lab.agents.data_infra.ml.config import (
+                DashboardUtilityConfig,
                 FeatureConfig,
                 MLPipelineConfig,
             )
 
-            build_config = MLPipelineConfig(
-                features=FeatureConfig(include_signal_features=False),
-                tick_size=0.25,
-                instrument=ml_symbol,
-            )
-
-            progress = st.progress(0, text="Building dataset...")
-            dataset = build_training_dataset(
-                ml_symbol, dates_in_range, data_dir, build_config, progress,
-            )
-
-            if dataset.empty:
-                st.error("No extrema detected. Try a longer date range.")
+            if is_utility_mode:
+                build_config = MLPipelineConfig(
+                    training_mode="dashboard_utility",
+                    dashboard_utility=DashboardUtilityConfig(
+                        tp_points=float(ml_tp),
+                        sl_points=float(ml_sl),
+                        bar_type=ml_bar_type,
+                        interaction_window_minutes=ml_int_window,
+                        include_approach_features=ml_approach,
+                        approach_window_minutes=ml_approach_window,
+                    ),
+                    tick_size=0.25,
+                    instrument=ml_symbol,
+                )
+                from alpha_lab.agents.data_infra.ml.dashboard_utility_builder import (
+                    build_utility_dataset,
+                )
+                progress = st.progress(0, text="Building utility dataset...")
+                dataset = build_utility_dataset(
+                    dates_in_range, data_dir, build_config,
+                    progress_fn=lambda frac, text: progress.progress(frac, text=text),
+                )
+                if dataset.empty:
+                    st.error("No touch events detected. Try a longer date range.")
+                else:
+                    st.session_state["ml_dataset"] = dataset
+                    st.session_state["ml_build_config"] = build_config
+                    # Clear stale training results from previous dataset
+                    st.session_state.pop("ml_training_result", None)
+                    st.session_state.pop("ml_train_config", None)
             else:
-                st.session_state["ml_dataset"] = dataset
-                st.session_state["ml_build_config"] = build_config
+                build_config = MLPipelineConfig(
+                    training_mode="extrema_rebound_crossing",
+                    features=FeatureConfig(include_signal_features=False),
+                    tick_size=0.25,
+                    instrument=ml_symbol,
+                )
+
+                progress = st.progress(0, text="Building dataset...")
+                dataset = build_training_dataset(
+                    ml_symbol, dates_in_range, data_dir, build_config, progress,
+                )
+
+                if dataset.empty:
+                    st.error("No extrema detected. Try a longer date range.")
+                else:
+                    st.session_state["ml_dataset"] = dataset
+                    st.session_state["ml_build_config"] = build_config
+                    # Clear stale training results from previous dataset
+                    st.session_state.pop("ml_training_result", None)
+                    st.session_state.pop("ml_train_config", None)
 
         if "ml_dataset" in st.session_state:
             dataset = st.session_state["ml_dataset"]
-            n_valid = dataset[label_col].notna().sum() if label_col in dataset.columns else 0
-            n_rebound = int((dataset[label_col] == 1).sum()) if label_col in dataset.columns else 0
-            n_crossing = int((dataset[label_col] == 0).sum()) if label_col in dataset.columns else 0
 
-            c1, c2, c3, c4 = st.columns(4)
-            with c1:
-                st.metric("Total Extrema", len(dataset))
-            with c2:
-                st.metric("Labeled", int(n_valid))
-            with c3:
-                st.metric("Rebound (1)", n_rebound)
-            with c4:
-                st.metric("Crossing (0)", n_crossing)
-
-            feature_cols = [c for c in dataset.columns
-                            if c.startswith(("pl_", "ms_"))]
-            st.caption(f"{len(feature_cols)} features: {', '.join(feature_cols[:10])}...")
-
-            with st.expander("Preview dataset (first 20 rows)"):
-                display_cols = ["timestamp", "price", "extremum_type",
-                                label_col] + feature_cols[:5]
-                show_cols = [c for c in display_cols if c in dataset.columns]
-                st.dataframe(
-                    dataset[show_cols].head(20),
-                    use_container_width=True, hide_index=True,
+            if is_utility_mode:
+                # 3-class display
+                from alpha_lab.agents.data_infra.ml.dashboard_utility_labeling import (
+                    CLASS_NAMES as UTIL_CLASS_NAMES,
                 )
+                n_valid = dataset[label_col].notna().sum() if label_col in dataset.columns else 0
+                c1, c2, c3, c4 = st.columns(4)
+                with c1:
+                    st.metric("Touch Events", len(dataset))
+                with c2:
+                    n_rev = int((dataset[label_col] == 0).sum()) if label_col in dataset.columns else 0
+                    st.metric("Reversal (0)", n_rev)
+                with c3:
+                    n_trap = int((dataset[label_col] == 1).sum()) if label_col in dataset.columns else 0
+                    st.metric("Trap (1)", n_trap)
+                with c4:
+                    n_bt = int((dataset[label_col] == 2).sum()) if label_col in dataset.columns else 0
+                    st.metric("Blowthrough (2)", n_bt)
+
+                # Dynamic feature detection
+                feature_cols_display = [
+                    c for c in dataset.columns if c.startswith(("int_", "app_"))
+                ]
+                n_int = sum(1 for c in feature_cols_display if c.startswith("int_"))
+                n_app = sum(1 for c in feature_cols_display if c.startswith("app_"))
+                feat_desc = f"{n_int} interaction"
+                if n_app > 0:
+                    feat_desc += f" + {n_app} approach"
+                st.caption(f"{len(feature_cols_display)} features ({feat_desc})")
+
+                with st.expander("Preview dataset (first 20 rows)"):
+                    display_cols = [
+                        "timestamp", "direction", "representative_price",
+                        "label", label_col,
+                    ] + feature_cols_display[:6]
+                    show_cols = [c for c in display_cols if c in dataset.columns]
+                    st.dataframe(
+                        dataset[show_cols].head(20),
+                        use_container_width=True, hide_index=True,
+                    )
+            else:
+                # Binary extrema display
+                n_valid = dataset[label_col].notna().sum() if label_col in dataset.columns else 0
+                n_rebound = int((dataset[label_col] == 1).sum()) if label_col in dataset.columns else 0
+                n_crossing = int((dataset[label_col] == 0).sum()) if label_col in dataset.columns else 0
+
+                c1, c2, c3, c4 = st.columns(4)
+                with c1:
+                    st.metric("Total Extrema", len(dataset))
+                with c2:
+                    st.metric("Labeled", int(n_valid))
+                with c3:
+                    st.metric("Rebound (1)", n_rebound)
+                with c4:
+                    st.metric("Crossing (0)", n_crossing)
+
+                feature_cols = [c for c in dataset.columns
+                                if c.startswith(("pl_", "ms_"))]
+                st.caption(f"{len(feature_cols)} features: {', '.join(feature_cols[:10])}...")
+
+                with st.expander("Preview dataset (first 20 rows)"):
+                    display_cols = ["timestamp", "price", "extremum_type",
+                                    label_col] + feature_cols[:5]
+                    show_cols = [c for c in display_cols if c in dataset.columns]
+                    st.dataframe(
+                        dataset[show_cols].head(20),
+                        use_container_width=True, hide_index=True,
+                    )
 
     st.divider()
 
@@ -811,27 +1030,55 @@ def render_ml_training_tab() -> None:
 
         if train_btn:
             from alpha_lab.agents.data_infra.ml.config import (
+                DashboardUtilityConfig,
                 FeatureConfig,
                 MLPipelineConfig,
                 ModelConfig,
                 WalkForwardConfig,
             )
 
-            train_config = MLPipelineConfig(
-                features=FeatureConfig(include_signal_features=False),
-                walk_forward=WalkForwardConfig(
-                    train_days=ml_train_days,
-                    test_days=ml_test_days,
-                    gap_days=ml_gap_days,
-                ),
-                model=ModelConfig(
-                    iterations=ml_iterations,
-                    depth=ml_depth,
-                    rfecv_enabled=ml_rfecv,
-                ),
-                tick_size=0.25,
-                instrument=ml_symbol,
-            )
+            if is_utility_mode:
+                train_config = MLPipelineConfig(
+                    training_mode="dashboard_utility",
+                    dashboard_utility=DashboardUtilityConfig(
+                        tp_points=float(ml_tp),
+                        sl_points=float(ml_sl),
+                        bar_type=ml_bar_type,
+                        interaction_window_minutes=ml_int_window,
+                        include_approach_features=ml_approach,
+                        approach_window_minutes=ml_approach_window,
+                    ),
+                    walk_forward=WalkForwardConfig(
+                        train_days=ml_train_days,
+                        test_days=ml_test_days,
+                        gap_days=ml_gap_days,
+                    ),
+                    model=ModelConfig(
+                        iterations=ml_iterations,
+                        depth=ml_depth,
+                        rfecv_enabled=ml_approach,  # RFECV useful when approach features present
+                        loss_function="MultiClass",
+                    ),
+                    tick_size=0.25,
+                    instrument=ml_symbol,
+                )
+            else:
+                train_config = MLPipelineConfig(
+                    training_mode="extrema_rebound_crossing",
+                    features=FeatureConfig(include_signal_features=False),
+                    walk_forward=WalkForwardConfig(
+                        train_days=ml_train_days,
+                        test_days=ml_test_days,
+                        gap_days=ml_gap_days,
+                    ),
+                    model=ModelConfig(
+                        iterations=ml_iterations,
+                        depth=ml_depth,
+                        rfecv_enabled=ml_rfecv,
+                    ),
+                    tick_size=0.25,
+                    instrument=ml_symbol,
+                )
 
             with st.spinner("Training walk-forward model... this may take a few minutes."):
                 try:
@@ -933,10 +1180,18 @@ def render_ml_training_tab() -> None:
                         st.warning("Low feature stability — model may rely on non-stationary signals.")
 
             full_balance = result.get("full_dataset_class_balance", {})
-            st.caption(
-                "Reference only (refit population): full labeled dataset balance = "
-                f"{full_balance.get('rebound', 0)}R / {full_balance.get('crossing', 0)}C"
-            )
+            if is_utility_mode:
+                st.caption(
+                    "Reference only (refit population): full labeled dataset balance = "
+                    f"{full_balance.get('tradeable_reversal', 0)} Rev / "
+                    f"{full_balance.get('trap_reversal', 0)} Trap / "
+                    f"{full_balance.get('aggressive_blowthrough', 0)} BT"
+                )
+            else:
+                st.caption(
+                    "Reference only (refit population): full labeled dataset balance = "
+                    f"{full_balance.get('rebound', 0)}R / {full_balance.get('crossing', 0)}C"
+                )
 
             # Quality gates
             st.markdown("#### Quality Gates")
@@ -1049,6 +1304,8 @@ def render_ml_training_tab() -> None:
                     ev,
                     st.session_state.get("ml_train_config"),
                     output_dir,
+                    training_result=result,
+                    dates_used=dates_in_range if available else None,
                 )
                 st.session_state["ml_saved_path"] = str(saved_path)
                 st.success(f"Model saved to `{saved_path}`")

@@ -164,4 +164,77 @@ This prevents re-litigating settled questions across sessions.
 
 ---
 
+## D-020: Config-Keyed Feature Cache
+**Date**: 2026-04-03
+**Context**: Cached `ml_features.parquet` files were keyed only by symbol/date. Changing pipeline config (extrema thresholds, labeling params, feature settings) silently reused stale cached features.
+**Decision**: Cache files are now named `ml_features_{config_hash}.parquet` where hash = SHA256(training_mode + extrema + labeling + features + dashboard_utility + tick_size)[:8].
+**Rationale**: Any config change auto-invalidates stale cache. Zero risk of cross-config contamination.
+
+---
+
+## D-021: RFECV Runs Once Before Walk-Forward Loop
+**Date**: 2026-04-03
+**Context**: Per-fold models used all features while the final saved model used RFECV-selected subset. Quality gates described a different model than what was saved.
+**Decision**: RFECV runs once on preliminary CV splits before the walk-forward loop. The selected feature subset is used consistently for all fold models AND the final saved model.
+**Rationale**: Evaluation metrics now describe exactly the model that gets deployed.
+
+---
+
+## D-022: CatBoost NaN Handling Preserved
+**Date**: 2026-04-03
+**Context**: A blanket `fillna(0.0)` before training collapsed "missing data" into "zero signal", destroying CatBoost's native NaN split capability.
+**Decision**: Remove `fillna(0.0)` from the primary training flow. CatBoost handles NaN natively.
+**Rationale**: The model can now learn "data was missing" as a distinct signal rather than conflating it with zero.
+
+---
+
+## D-023: Cross-Repo Resolution Ordering Aligned (MAE-First)
+**Date**: 2026-04-03
+**Context**: Quant-Lab experiment labels checked MAE first (conservative); Trading-Dashboard OutcomeTracker checked MFE first (optimistic). This caused training labels and runtime accuracy to disagree on ambiguous events.
+**Decision**: Both repos now check MAE first (conservative). Dashboard OutcomeTracker explicitly documents this matches experiment/labeling.py.
+**Rationale**: Training labels and runtime correctness measurement must use identical resolution semantics.
+
+---
+
+## D-024: Block Bootstrap for Time-Series CIs
+**Date**: 2026-04-03
+**Context**: IID bootstrap on time-ordered predictions underestimated CI width by ignoring intraday autocorrelation.
+**Decision**: Bootstrap uses moving-block resampling (block_size=10) instead of IID row sampling.
+**Rationale**: More realistic confidence intervals for time-series predictions.
+
+---
+
+## D-025: Brier Score Quality Gate
+**Date**: 2026-04-03
+**Context**: Quality gates were all classification metrics. No check on probability calibration.
+**Decision**: Added Brier score to EvaluationResult and "Brier score < 0.25" as a quality gate. Minimum sample gate raised from 50 to 200.
+**Rationale**: Probability estimates must be meaningful for downstream decision-making, not just classification thresholds.
+
+---
+
+## D-026: Dashboard-Utility Training Mode
+**Date**: 2026-04-04
+**Context**: The primary Streamlit pipeline trained binary rebound/crossing at tick extrema — the wrong decision problem for Trading-Dashboard consumption. A mode-aligned training path was needed.
+**Decision**: Added `training_mode` field to MLPipelineConfig with "extrema_rebound_crossing" (default) and "dashboard_utility" modes. Dashboard-utility mode uses level-touch events, configurable TP/SL labeling, and the 3 canonical dashboard features.
+**Rationale**: The primary pipeline can now produce models strategically aligned to the real execution problem while preserving the research extrema mode unchanged.
+**Trade-off**: Utility mode requires `data/experiment/events.parquet` from the experiment Phase 1+2 pipeline.
+
+---
+
+## D-027: Label Purging in Primary Pipeline
+**Date**: 2026-04-04
+**Context**: The primary extrema pipeline labeled events before walk-forward splitting. Forward labeling windows (5000 ticks) could leak across train/test boundaries.
+**Decision**: Training rows whose timestamp + purge buffer extends into the test period are excluded from each fold's training set. Purge count is tracked and surfaced in the UI.
+**Rationale**: Prevents subtle label leakage. Follows the retained compatibility path's 2-day purge gap precedent.
+
+---
+
+## D-028: ml_extrema_classifier.py Marked as Experimental
+**Date**: 2026-04-04
+**Context**: The runtime detector approximates tick-level training features from bar-level OHLCV, filling missing features with 0.0 and using placeholder values. This is a severe domain mismatch.
+**Decision**: Marked with `_EXPERIMENTAL = True`, updated docstring, and runtime DeprecationWarning on load.
+**Rationale**: Prevents accidental production use of a path with known train/serve mismatch.
+
+---
+
 *Add new decisions below this line.*

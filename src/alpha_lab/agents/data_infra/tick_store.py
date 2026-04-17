@@ -448,6 +448,103 @@ class TickStore:
         df.index.name = "timestamp"
         return df
 
+    def build_tick_bars(
+        self,
+        symbol: str,
+        start: datetime,
+        end: datetime,
+        tick_count: int = 987,
+    ) -> pd.DataFrame:
+        """Aggregate ticks into count-based OHLCV bars.
+
+        Groups every ``tick_count`` ticks into one bar using
+        ROW_NUMBER-based bucketing in DuckDB.
+
+        Args:
+            symbol: Instrument symbol
+            start: Start time (inclusive)
+            end: End time (inclusive) — hard boundary
+            tick_count: Number of ticks per bar (e.g. 147, 987, 2000)
+
+        Returns:
+            DataFrame with [open, high, low, close, volume] and
+            DatetimeIndex.
+        """
+        views = self._get_views(symbol)
+        if not views:
+            return pd.DataFrame(
+                columns=["open", "high", "low", "close", "volume"]
+            )
+
+        union_sql = self._union_views_sql(views)
+
+        sample_sql = f"SELECT column_name FROM (DESCRIBE SELECT * FROM ({union_sql}) LIMIT 0)"
+        cols = {
+            r[0]
+            for r in self._conn.execute(sample_sql).fetchall()
+        }
+        has_book = "bid_px_00" in cols and "ask_px_00" in cols
+        has_symbol = "symbol" in cols
+
+        if has_symbol:
+            front = self._conn.execute(f"""
+                SELECT symbol, count(*) AS n
+                FROM ({union_sql}) AS t
+                WHERE symbol NOT LIKE '%-%'
+                GROUP BY symbol ORDER BY n DESC LIMIT 1
+            """).fetchone()
+            symbol_filter = (
+                f"AND symbol = '{front[0]}'"
+                if front else "AND symbol NOT LIKE '%-%'"
+            )
+        else:
+            symbol_filter = ""
+
+        if has_book:
+            price_expr = "(bid_px_00 + ask_px_00) / 2.0"
+            filter_expr = "AND bid_px_00 > 0 AND ask_px_00 > 0"
+        else:
+            price_expr = "price"
+            filter_expr = "AND price IS NOT NULL AND price > 0"
+
+        sql = f"""
+            WITH numbered AS (
+                SELECT
+                    ts_event,
+                    {price_expr} AS mid,
+                    size,
+                    CAST(ROW_NUMBER() OVER (ORDER BY ts_event) - 1 AS BIGINT) AS rn
+                FROM ({union_sql}) AS t
+                WHERE ts_event >= $1 AND ts_event <= $2
+                  {filter_expr}
+                  {symbol_filter}
+            )
+            SELECT
+                (rn // {tick_count}) AS bar_id,
+                LAST(ts_event ORDER BY ts_event) AS bar_time,
+                FIRST(mid ORDER BY ts_event) AS open,
+                MAX(mid) AS high,
+                MIN(mid) AS low,
+                LAST(mid ORDER BY ts_event) AS close,
+                SUM(size) AS volume
+            FROM numbered
+            GROUP BY bar_id
+            HAVING COUNT(*) = {tick_count}
+            ORDER BY bar_id ASC
+        """
+        df = self._conn.execute(
+            sql, [pd.Timestamp(start), pd.Timestamp(end)]
+        ).fetchdf()
+
+        if df.empty:
+            return pd.DataFrame(
+                columns=["open", "high", "low", "close", "volume"]
+            )
+
+        df = df.drop(columns=["bar_id"]).set_index("bar_time")
+        df.index.name = "timestamp"
+        return df
+
     # ── Replay iterator ───────────────────────────────────────────
 
     def replay(

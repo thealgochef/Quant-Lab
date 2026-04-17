@@ -2,79 +2,105 @@
 
 ## Start Here
 
-This repo is not scaffold-only.
+This repo is an ML training workbench for NQ futures with two training modes:
 
-The current repo has one primary workflow and one retained secondary path:
+1. **Extrema Rebound/Crossing** — binary tick-level classifier (research)
+2. **Dashboard Utility** — 3-class level-touch classifier aligned to Trading-Dashboard
 
-- Primary workflow: Streamlit extrema-model training and runtime model generation.
-- Secondary workflow: the older 3-class dashboard compatibility/export path kept for ML-Trading-Dashboard.
+Both modes share walk-forward evaluation, CatBoost training, and quality gate infrastructure.
 
 ## Primary Workflow
 
-Start here when you are reasoning about the repo's main purpose:
+The Streamlit UI has a mode selector at the top. Both modes go through the same training flow:
 
-- UI: `scripts/ml_training_tab.py`
-- Shared Streamlit host: `scripts/dashboard.py`
-- Data prep: `scripts/process_batch_download.py`
-- Core training modules: `src/alpha_lab/agents/data_infra/ml/`
-- Runtime consumer: `src/alpha_lab/agents/signal_eng/detectors/tier3/ml_extrema_classifier.py`
+- **UI**: `scripts/ml_training_tab.py` (mode selector, dataset build, train, evaluate, save)
+- **Host**: `scripts/dashboard.py`
+- **Data prep**: `scripts/process_batch_download.py` (with ingest quality checks)
+- **Core ML modules**: `src/alpha_lab/agents/data_infra/ml/`
+- **Config**: `src/alpha_lab/agents/data_infra/ml/config.py` (training_mode, DashboardUtilityConfig, ModelConfig)
 
-The primary workflow builds datasets from local Databento parquet files, evaluates true out-of-sample walk-forward folds, then refits and saves a runtime CatBoost bundle.
+### Extrema Mode Modules
+- `dataset_builder.py`, `extrema_detection.py`, `labeling.py`, `features_microstructure.py`, `features_momentum.py`
 
-## Secondary Compatibility / Export Path
+### Dashboard Utility Mode Modules
+- `dashboard_utility_builder.py`, `dashboard_utility_labeling.py`
+- Reuses `src/alpha_lab/experiment/event_detection.py` and `src/alpha_lab/experiment/labeling.py`
 
-Keep this path working, but do not treat it as the repo's competing main architecture:
+### Shared Modules
+- `walk_forward.py`, `model_trainer.py`, `model_evaluator.py`, `tick_store.py`, `config.py`
 
-- Research and diagnostics: `src/alpha_lab/experiment/`
-- Streamlit diagnostics tab: `scripts/experiment_tab.py`
-- Canonical downstream export: `scripts/train_dashboard_model.py`
-- Canonical artifact contract: `data/models/dashboard_3feature_v1.cbm`
+### Experimental Runtime Detector
+- `src/alpha_lab/agents/signal_eng/detectors/tier3/ml_extrema_classifier.py`
+- Marked `_EXPERIMENTAL = True` with runtime warning
+- Known train/serve domain mismatch — bar-level approximations with 0.0 fills
+- NOT for production use
 
-This path exists to feed ML-Trading-Dashboard.
+## Retained Compatibility / Export Path
+
+Keep this path working as a standalone exporter:
+
+- Research pipeline: `src/alpha_lab/experiment/`
+- Diagnostics tab: `scripts/experiment_tab.py`
+- Canonical exporter: `scripts/train_dashboard_model.py`
+- Artifact contract: `data/models/dashboard_3feature_v1.cbm`
+
+## Cross-Repo Contract (Trading-Dashboard)
+
+Trading-Dashboard at `C:\Users\gonza\Documents\Trade-Dashboard` consumes:
+- 3 features: `int_time_beyond_level`, `int_time_within_2pts`, `int_absorption_ratio`
+- 3 classes: tradeable_reversal (0), trap_reversal (1), aggressive_blowthrough (2)
+- Resolution ordering: MAE-first (conservative) — aligned in both repos
+- Dashboard validates model contract on upload (feature count, class count, feature names)
+- Dashboard PositionMonitor supports configurable slippage (default 0.50 pts in runners)
 
 ## Working Rules
 
-1. Treat `scripts/ml_training_tab.py` and `src/alpha_lab/agents/data_infra/ml/` as the main path.
-2. Treat `src/alpha_lab/experiment/` and `scripts/train_dashboard_model.py` as compatibility/export, not as a second primary workflow.
-3. Quality gates in the ML training tab must come from true out-of-sample fold predictions.
-4. The final extrema runtime model is refit on all labeled rows after evaluation.
-5. Preserve the `data/models/dashboard_3feature_v1.cbm` contract unless a user explicitly asks to change the downstream interface.
-6. Generated outputs are not source-of-truth code. `models/`, `catboost_info/`, `*.cbm`, cached parquet/csv files, and scratch chart HTML belong outside normal code review.
+1. Both training modes go through `scripts/ml_training_tab.py`
+2. Quality gates come from true out-of-sample fold predictions with label purging
+3. RFECV runs once before the walk-forward loop (same features for all folds + final model)
+4. Feature cache files are keyed to config hash (changing any parameter invalidates cache)
+5. The final model is refit on all labeled rows after evaluation
+6. Saved artifacts include `training_mode` in metadata
+7. Dashboard-utility mode output is directly compatible with Trading-Dashboard contract
+8. Preserve `data/models/dashboard_3feature_v1.cbm` contract for standalone export path
 
-## What Is Still True
+## Key Technical Details
 
-- The multi-agent architecture still exists in `src/alpha_lab/agents/`.
-- The validation, execution, and monitoring surfaces are still part of the repo.
-- FastAPI and React dashboard code still lives in `src/alpha_lab/dashboard/` and `dashboard-ui/`.
-
-What changed is priority: those surfaces no longer explain the repo better than the Streamlit extrema workflow does.
-
-## Recommended Reading Order
-
-1. `scripts/ml_training_tab.py`
-2. `src/alpha_lab/agents/data_infra/ml/config.py`
-3. `src/alpha_lab/agents/data_infra/ml/dataset_builder.py`
-4. `src/alpha_lab/agents/data_infra/ml/labeling.py`
-5. `src/alpha_lab/agents/data_infra/ml/model_trainer.py`
-6. `src/alpha_lab/agents/data_infra/ml/model_evaluator.py`
-7. `src/alpha_lab/agents/data_infra/ml/walk_forward.py`
-8. `src/alpha_lab/agents/signal_eng/detectors/tier3/ml_extrema_classifier.py`
-9. `scripts/train_dashboard_model.py`
-10. `src/alpha_lab/experiment/training.py`
-
-## State Tracking
-
-Use these files first when orienting:
-
-- `docs/pipeline_state.yaml`
-- `docs/DECISIONS.md`
-- `ARCHITECTURE.md`
+- **Bootstrap**: Block bootstrap (block_size=10) respecting time-series autocorrelation
+- **Brier score**: Computed and enforced as quality gate (< 0.25)
+- **Cohen's d**: Computed on predicted probabilities (not binary predictions)
+- **Permutation test**: Plus-one corrected, 500 permutations
+- **RTH coverage**: Fraction of OOS samples in NY RTH, warned if < 50%
+- **Feature stability**: Spearman rank-correlation of importance across folds
+- **Trade utility**: Expectancy and profit factor at configurable TP/SL geometries
+- **Label purging**: Forward-window leakage prevented via time-based purge buffer
+- **Ingest validation**: Timestamp monotonicity, price sanity, duplicate detection
 
 ## Verification Commands
 
-Use Python 3.13 on this machine:
-
 ```bash
+# Run all tests (669 tests expected)
+"/c/Users/gonza/AppData/Local/Programs/Python/Python313/python.exe" -m pytest tests/ -v
+
+# Run ML-specific tests
 "/c/Users/gonza/AppData/Local/Programs/Python/Python313/python.exe" -m pytest tests/agents/test_ml_pipeline.py tests/agents/test_ml_features.py tests/agents/test_ml_extrema.py -v
-ruff check src/ tests/
+
+# Run Streamlit UI
+streamlit run scripts/dashboard.py
 ```
+
+## State Tracking
+
+- `docs/pipeline_state.yaml` — current phase, module inventory, cross-repo alignment
+- `docs/DECISIONS.md` — all architectural decisions with rationale (D-001 through D-028)
+- `ARCHITECTURE.md` — full architecture with data flow diagram
+
+## Recommended Reading Order
+
+1. `scripts/ml_training_tab.py` (start here — mode selector, full flow)
+2. `src/alpha_lab/agents/data_infra/ml/config.py` (all config models)
+3. `src/alpha_lab/agents/data_infra/ml/dashboard_utility_builder.py` (utility mode)
+4. `src/alpha_lab/agents/data_infra/ml/model_evaluator.py` (evaluation)
+5. `src/alpha_lab/agents/data_infra/ml/model_trainer.py` (CatBoost training)
+6. `scripts/train_dashboard_model.py` (canonical export)
+7. `src/alpha_lab/experiment/` (experiment pipeline)

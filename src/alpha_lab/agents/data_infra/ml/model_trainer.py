@@ -114,11 +114,14 @@ class ExtremaModelTrainer:
             enable_early_stopping=False,
         )
 
+        # Use weighted precision for multiclass compatibility
+        scoring = "precision_weighted" if cfg.loss_function == "MultiClass" else "precision"
+
         rfecv = RFECV(
             estimator=estimator,
             step=1,
             cv=cv_splits,
-            scoring="precision",
+            scoring=scoring,
             min_features_to_select=cfg.rfecv_min_features,
             n_jobs=1,
         )
@@ -150,6 +153,7 @@ class ExtremaModelTrainer:
             "iterations": iterations or cfg.iterations,
             "depth": cfg.depth,
             "learning_rate": cfg.learning_rate,
+            "loss_function": cfg.loss_function,
             "auto_class_weights": cfg.auto_class_weights,
             "random_seed": 42,
             "verbose": 0,

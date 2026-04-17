@@ -9,6 +9,31 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+# ── Live-Computable Feature Sets ─────────────────────────────────
+# These features can be computed from MBP-1 (top-of-book) + trades,
+# which is what Databento live and Rithmic provide. Features requiring
+# deeper book levels (MBP-10) or cancel events are excluded.
+
+LIVE_APPROACH_FEATURES = [
+    "app_large_trade_vol_pct",   # large trades (size>=10) / total volume
+    "app_trade_count",           # number of trades in approach window
+    "app_volume_acceleration",   # late sub-window rate / early rate
+    "app_avg_trade_size",        # mean trade size
+    "app_avg_tob_imbalance",     # avg bid_sz / (bid_sz + ask_sz) at L0
+    "app_max_spread",            # max(ask - bid) at L0
+    "app_volatility_recent",     # std of 1-min returns in last sub-window
+    "app_volatility_ratio",      # recent volatility / full-window volatility
+]
+
+LIVE_INTERACTION_FEATURES = [
+    "int_time_beyond_level",
+    "int_time_within_2pts",
+    "int_absorption_ratio",
+]
+
+# All features available for live-aligned training and runtime
+LIVE_ALL_FEATURES = LIVE_INTERACTION_FEATURES + LIVE_APPROACH_FEATURES
+
 
 class ExtremaConfig(BaseModel):
     """Configuration for scipy peak-finding on tick prices."""
@@ -138,6 +163,10 @@ class ModelConfig(BaseModel):
         gt=0,
         description="Learning rate",
     )
+    loss_function: str = Field(
+        default="Logloss",
+        description="CatBoost loss function (Logloss for binary, MultiClass for 3-class)",
+    )
     auto_class_weights: str = Field(
         default="Balanced",
         description="Class weight balancing strategy",
@@ -158,14 +187,65 @@ class ModelConfig(BaseModel):
     )
 
 
+class DashboardUtilityConfig(BaseModel):
+    """Configuration for the dashboard-utility training mode."""
+
+    tp_points: float = Field(
+        default=15.0,
+        gt=0,
+        description="Take-profit threshold in NQ points for tradeable_reversal",
+    )
+    sl_points: float = Field(
+        default=30.0,
+        gt=0,
+        description="Stop-loss threshold in NQ points (MAE for trap/blowthrough)",
+    )
+    trap_mfe_min: float = Field(
+        default=5.0,
+        ge=0,
+        description="Minimum MFE to distinguish trap_reversal from aggressive_blowthrough",
+    )
+    interaction_window_minutes: int = Field(
+        default=5,
+        ge=1,
+        description="Minutes after touch for feature computation window",
+    )
+    level_proximity_pts: float = Field(
+        default=0.50,
+        gt=0,
+        description="Points proximity for absorption ratio at-level volume",
+    )
+    bar_type: str = Field(
+        default="987t",
+        description="Bar type for touch detection and MFE/MAE: '147t', '987t', '2000t', or '1m'",
+    )
+    include_approach_features: bool = Field(
+        default=False,
+        description="Include 27 approach-window order flow features alongside 3 interaction features",
+    )
+    approach_window_minutes: int = Field(
+        default=90,
+        ge=15,
+        description="Approach window duration in minutes before the touch event",
+    )
+
+
 class MLPipelineConfig(BaseModel):
     """Top-level configuration combining all pipeline stages."""
+
+    training_mode: str = Field(
+        default="extrema_rebound_crossing",
+        description="Training mode: 'extrema_rebound_crossing' or 'dashboard_utility'",
+    )
 
     extrema: ExtremaConfig = Field(default_factory=ExtremaConfig)
     labeling: LabelingConfig = Field(default_factory=LabelingConfig)
     features: FeatureConfig = Field(default_factory=FeatureConfig)
     walk_forward: WalkForwardConfig = Field(default_factory=WalkForwardConfig)
     model: ModelConfig = Field(default_factory=ModelConfig)
+    dashboard_utility: DashboardUtilityConfig = Field(
+        default_factory=DashboardUtilityConfig,
+    )
 
     tick_size: float = Field(
         default=0.25,
@@ -184,11 +264,14 @@ class MLPipelineConfig(BaseModel):
         and model configs do NOT affect the cached feature matrix.
         """
         import hashlib
+        import json
 
         payload = (
-            self.extrema.model_dump_json(sort_keys=True)
-            + self.labeling.model_dump_json(sort_keys=True)
-            + self.features.model_dump_json(sort_keys=True)
+            f"mode={self.training_mode}|"
+            + json.dumps(self.extrema.model_dump(), sort_keys=True)
+            + json.dumps(self.labeling.model_dump(), sort_keys=True)
+            + json.dumps(self.features.model_dump(), sort_keys=True)
+            + json.dumps(self.dashboard_utility.model_dump(), sort_keys=True)
             + f"|tick_size={self.tick_size}"
         )
         return hashlib.sha256(payload.encode()).hexdigest()[:8]

@@ -4,7 +4,12 @@
       "Bash(\"/c/Users/gonza/AppData/Local/Programs/Python/Python313/python.exe\" -c \"import polygon; print\\(polygon.__version__\\)\")",
       "Bash(C:/Users/gonza/AppData/Local/Programs/Python/Python313/python.exe -m ruff check src/alpha_lab/agents/execution/ tests/agents/test_execution.py)",
       "Bash(C:/Users/gonza/AppData/Local/Programs/Python/Python313/python.exe -m pytest:*)",
-      "Bash(C:/Users/gonza/AppData/Local/Programs/Python/Python313/python.exe -m ruff check:*)"
+      "Bash(C:/Users/gonza/AppData/Local/Programs/Python/Python313/python.exe -m ruff check:*)",
+      "Bash(find . -type f -name \"*.py\" -exec grep -l \"label_encoded\" {} \\\\;)",
+      "Bash(python:*)",
+      "Bash(grep:*)",
+      "Bash(python3 -m py_compile /c/Users/gonza/Documents/Claude-Quant-Lab/src/alpha_lab/experiment/training.py)",
+      "Bash(xargs wc:*)"
     ]
   }
 }

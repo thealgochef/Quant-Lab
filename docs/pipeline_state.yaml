@@ -1,6 +1,24 @@
-current_phase: "PRIMARY_EXTREMA_WORKFLOW"
-last_updated: "2026-03-31"
-repo_role: "primary_extrema_training_with_dashboard_compatibility_export"
+current_phase: "DUAL_MODE_TRAINING_WORKBENCH"
+last_updated: "2026-04-04"
+repo_role: "ml_training_workbench_with_dashboard_utility_mode"
+
+training_modes:
+  extrema_rebound_crossing:
+    status: "ACTIVE (research)"
+    description: "Binary tick-level extrema classifier"
+    target: "rebound vs crossing at detected price extrema"
+    features: "PL microstructure + MS momentum (~25 features)"
+    labels: "binary (0=crossing, 1=rebound)"
+    runtime_detector: "ml_extrema_classifier.py (EXPERIMENTAL — train/serve mismatch)"
+
+  dashboard_utility:
+    status: "ACTIVE (production-aligned)"
+    description: "3-class level-touch classifier for Trading-Dashboard"
+    target: "tradeable_reversal vs trap_reversal vs aggressive_blowthrough"
+    features: "int_time_beyond_level, int_time_within_2pts, int_absorption_ratio"
+    labels: "3-class (0=reversal, 1=trap, 2=blowthrough)"
+    labeling_config: "configurable TP/SL (default +15/-30), MAE-first ordering"
+    runtime_consumer: "Trading-Dashboard model contract"
 
 primary_workflow:
   status: "ACTIVE"
@@ -13,6 +31,8 @@ primary_workflow:
   training_modules:
     - "src/alpha_lab/agents/data_infra/ml/config.py"
     - "src/alpha_lab/agents/data_infra/ml/dataset_builder.py"
+    - "src/alpha_lab/agents/data_infra/ml/dashboard_utility_builder.py"
+    - "src/alpha_lab/agents/data_infra/ml/dashboard_utility_labeling.py"
     - "src/alpha_lab/agents/data_infra/ml/extrema_detection.py"
     - "src/alpha_lab/agents/data_infra/ml/labeling.py"
     - "src/alpha_lab/agents/data_infra/ml/features_microstructure.py"
@@ -21,20 +41,36 @@ primary_workflow:
     - "src/alpha_lab/agents/data_infra/ml/walk_forward.py"
     - "src/alpha_lab/agents/data_infra/ml/model_trainer.py"
     - "src/alpha_lab/agents/data_infra/ml/model_evaluator.py"
-  runtime_consumer:
-    - "src/alpha_lab/agents/signal_eng/detectors/tier3/ml_extrema_classifier.py"
   evaluation_policy:
     - "Quality gates are computed from concatenated out-of-sample fold predictions."
+    - "RFECV runs once before walk-forward loop; same features for all folds and final model."
+    - "Label purging removes training rows whose forward window crosses test boundary."
+    - "Block bootstrap for confidence intervals (block_size=10)."
+    - "Brier score quality gate enforced."
+    - "RTH coverage fraction reported."
+    - "Feature stability (Spearman rank-correlation) reported."
+    - "Trade utility metrics (expectancy, profit factor) surfaced."
+    - "Feature cache keyed to config hash (mode + all parameters)."
     - "The saved runtime model is refit on all labeled rows after evaluation."
 
 secondary_compatibility_path:
   status: "SUPPORTED"
-  purpose: "Feed ML-Trading-Dashboard with the retained 3-class model/export path"
+  purpose: "Feed Trading-Dashboard with the retained 3-class model/export path"
   entrypoints:
     - "scripts/experiment_tab.py"
     - "scripts/train_dashboard_model.py"
     - "src/alpha_lab/experiment/training.py"
   canonical_export_artifact: "data/models/dashboard_3feature_v1.cbm"
+
+cross_repo_alignment:
+  dashboard_repo: "C:\\Users\\gonza\\Documents\\Trade-Dashboard"
+  feature_contract: "ALIGNED (3 features, same names, same order, same proximity thresholds)"
+  class_contract: "ALIGNED (3 classes, same encoding)"
+  resolution_ordering: "ALIGNED (MAE-first in both repos)"
+  remaining_drift:
+    - "Entry price: labels use level_price, trades use market_price"
+    - "Execution population: training includes all sessions, dashboard executes only NY RTH"
+    - "Outcome tracker measures from level_price; trade P&L from entry_price"
 
 supporting_surfaces:
   - "src/alpha_lab/dashboard/"
@@ -48,14 +84,3 @@ generated_outputs:
     - "*.cbm"
     - "cached parquet/csv outputs under data/"
     - "scratch chart HTML files"
-
-cleanup_priorities:
-  P0:
-    - "Keep primary vs secondary workflow boundaries explicit in docs and UI."
-    - "Keep extrema quality gates tied to true out-of-sample fold predictions."
-    - "Keep generated model/log/chart artifacts out of source-of-truth code paths."
-  P1:
-    - "Consolidate duplicate dashboard compatibility training/export entrypoints where safe."
-    - "Keep stale scaffold-era documentation out of the main reading path."
-  P2:
-    - "Consider splitting the compatibility/export path only if its external contract remains stable."
