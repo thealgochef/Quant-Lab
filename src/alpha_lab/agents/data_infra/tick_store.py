@@ -34,6 +34,27 @@ _OHLCV_FILENAME_PATTERN = "ohlcv_{tf}.parquet"
 # Tick filenames to search for, in priority order
 _TICK_FILENAMES = ["mbp10.parquet", "mbp1.parquet", "trades.parquet"]
 
+# ── Shared tick-bar spec (phase 4c: parity-locked with strategy_core) ──────────
+# 18:00 ET (DST-aware) trading-day boundary as SQL. ts_event is a TIMESTAMPTZ (UTC);
+# AT TIME ZONE 'America/New_York' yields the DST-correct NY wall clock, +6h rolls the
+# date exactly at 18:00 ET, and CAST AS DATE labels the trading day. This matches
+# strategy_core.decisions.sessions.trading_day_for (local.time() >= 18:00 -> next day)
+# instant-for-instant. Replaces the prior bug where a NAIVE python datetime bound was
+# cast against ts_event using the DuckDB session TimeZone (America/Chicago) -> a 23:00
+# CT window artifact.
+_SQL_TRADING_DAY = "CAST((ts_event AT TIME ZONE 'America/New_York') + INTERVAL 6 HOUR AS DATE)"
+# Intrinsic, reader-independent total order. ts_event + `sequence` is NOT enough:
+# databento emits MULTIPLE records under one (ts_event, sequence) -- a trade ('T') plus
+# the book consequences ('C'/'A'/'M') it triggers -- and those records carry DIFFERENT
+# top-of-book mids (e.g. 22997.625 vs 22997.750), so whichever is "last" sets the bar
+# close. `ts_recv`/`ts_in_delta` are identical for them too, so they are not a total
+# order either. We therefore append the mid determinants (bid_px_00, ask_px_00) and size
+# to the key: every record whose mid differs is then deterministically ordered, and any
+# residual tie has an IDENTICAL (mid, size) -> bar-irrelevant. The whole key is composed
+# of fields IN the data, so it is identical across DuckDB and pandas readers regardless
+# of physical read order (the prior nondeterminism came from relying on read order). The
+# concrete order is built per-schema in ``_tick_event_selection`` (book vs trades-only).
+
 
 class TickStore:
     """DuckDB-backed query and replay layer over partitioned Parquet files.
@@ -470,19 +491,100 @@ class TickStore:
             DataFrame with [open, high, low, close, volume] and
             DatetimeIndex.
         """
+        sel = self._tick_event_selection(symbol)
+        if sel is None:
+            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+        union_sql, where_clause, price_expr, ev_extra, order_clause = sel
+
+        # Bars are bucketed PER 18:00-ET trading day (PARTITION BY trading_day) so
+        # bar_index restarts at each 18:00-ET open and Sunday-evening Globex groups
+        # into the correct (Monday) trading day. Ordering is the deterministic,
+        # reader-independent composite ``order_clause`` (ts_event, sequence + mid
+        # determinants + size); ROW_NUMBER and every FIRST/LAST use it, so the bucket
+        # boundaries and open/close are fully determined. The trailing <tick_count
+        # bucket of a day is KEPT (no HAVING) as an incomplete bar -- matching the
+        # streaming engine's END_OF_DAY partial, which is what makes the two builders
+        # byte-identical.
+        sql = f"""
+            WITH ev AS (
+                SELECT
+                    ts_event,
+                    "sequence",
+                    size,
+                    {ev_extra},
+                    {price_expr} AS mid,
+                    {_SQL_TRADING_DAY} AS trading_day
+                FROM ({union_sql}) AS t
+                {where_clause}
+            ),
+            numbered AS (
+                SELECT *,
+                    CAST(ROW_NUMBER() OVER (
+                        PARTITION BY trading_day ORDER BY {order_clause}
+                    ) - 1 AS BIGINT) AS rn
+                FROM ev
+            )
+            SELECT
+                trading_day,
+                (rn // {tick_count}) AS bar_index,
+                FIRST(ts_event ORDER BY {order_clause}) AS open_time,
+                LAST(ts_event ORDER BY {order_clause}) AS bar_time,
+                FIRST(mid ORDER BY {order_clause}) AS open,
+                MAX(mid) AS high,
+                MIN(mid) AS low,
+                LAST(mid ORDER BY {order_clause}) AS close,
+                SUM(size) AS volume,
+                COUNT(*) AS trade_count
+            FROM numbered
+            GROUP BY trading_day, bar_index
+            ORDER BY trading_day, bar_index
+        """
+        df = self._conn.execute(
+            sql, [pd.Timestamp(start), pd.Timestamp(end)]
+        ).fetchdf()
+
+        if df.empty:
+            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+
+        df["is_complete"] = df["trade_count"] == tick_count
+        df = df.set_index("bar_time")
+        df.index.name = "timestamp"
+        return df
+
+    def _tick_event_selection(
+        self, symbol: str
+    ) -> tuple[str, str, str, str, str] | None:
+        """Resolve the SQL fragments shared by ``build_tick_bars`` and
+        ``query_tick_events`` so both consume the IDENTICAL filtered, IDENTICALLY
+        ORDERED event set: ``(union_sql, where_clause, price_expr, ev_extra_cols,
+        order_clause)``.
+
+        * ``where_clause`` is half-open ``[start, end)`` on bound params ``$1``/``$2``
+          (pass tz-aware UTC 18:00-ET bounds).
+        * ``order_clause`` is the deterministic, reader-independent total order
+          (see ``_SQL_TICK_ORDER`` note): ``(ts_event, sequence, <mid determinants>,
+          size)`` -- enough that every record whose mid differs is deterministically
+          ordered, so the two builders agree byte-for-byte.
+        * ``ev_extra_cols`` are the extra raw columns the order needs carried into the
+          bucketing CTE.
+
+        Requires the intrinsic ``sequence`` column; raises if absent.
+        """
         views = self._get_views(symbol)
         if not views:
-            return pd.DataFrame(
-                columns=["open", "high", "low", "close", "volume"]
-            )
-
+            return None
         union_sql = self._union_views_sql(views)
-
-        sample_sql = f"SELECT column_name FROM (DESCRIBE SELECT * FROM ({union_sql}) LIMIT 0)"
         cols = {
             r[0]
-            for r in self._conn.execute(sample_sql).fetchall()
+            for r in self._conn.execute(
+                f"SELECT column_name FROM (DESCRIBE SELECT * FROM ({union_sql}) LIMIT 0)"
+            ).fetchall()
         }
+        if "sequence" not in cols:
+            raise ValueError(
+                "tick parquet lacks the intrinsic 'sequence' column required for "
+                "reader-independent deterministic tick bars"
+            )
         has_book = "bid_px_00" in cols and "ask_px_00" in cols
         has_symbol = "symbol" in cols
 
@@ -493,57 +595,48 @@ class TickStore:
                 WHERE symbol NOT LIKE '%-%'
                 GROUP BY symbol ORDER BY n DESC LIMIT 1
             """).fetchone()
-            symbol_filter = (
-                f"AND symbol = '{front[0]}'"
-                if front else "AND symbol NOT LIKE '%-%'"
-            )
+            sym_f = f"AND symbol = '{front[0]}'" if front else "AND symbol NOT LIKE '%-%'"
         else:
-            symbol_filter = ""
+            sym_f = ""
 
         if has_book:
             price_expr = "(bid_px_00 + ask_px_00) / 2.0"
-            filter_expr = "AND bid_px_00 > 0 AND ask_px_00 > 0"
+            filt = "AND bid_px_00 > 0 AND ask_px_00 > 0"
+            ev_extra = "bid_px_00, ask_px_00"
+            order_clause = 'ts_event, "sequence", bid_px_00, ask_px_00, size'
         else:
             price_expr = "price"
-            filter_expr = "AND price IS NOT NULL AND price > 0"
+            filt = "AND price IS NOT NULL AND price > 0"
+            ev_extra = "price"
+            order_clause = 'ts_event, "sequence", price, size'
 
-        sql = f"""
-            WITH numbered AS (
-                SELECT
-                    ts_event,
-                    {price_expr} AS mid,
-                    size,
-                    CAST(ROW_NUMBER() OVER (ORDER BY ts_event) - 1 AS BIGINT) AS rn
-                FROM ({union_sql}) AS t
-                WHERE ts_event >= $1 AND ts_event <= $2
-                  {filter_expr}
-                  {symbol_filter}
-            )
-            SELECT
-                (rn // {tick_count}) AS bar_id,
-                LAST(ts_event ORDER BY ts_event) AS bar_time,
-                FIRST(mid ORDER BY ts_event) AS open,
-                MAX(mid) AS high,
-                MIN(mid) AS low,
-                LAST(mid ORDER BY ts_event) AS close,
-                SUM(size) AS volume
-            FROM numbered
-            GROUP BY bar_id
-            HAVING COUNT(*) = {tick_count}
-            ORDER BY bar_id ASC
+        where_clause = f"WHERE ts_event >= $1 AND ts_event < $2 {filt} {sym_f}"
+        return union_sql, where_clause, price_expr, ev_extra, order_clause
+
+    def query_tick_events(
+        self, symbol: str, start: datetime, end: datetime
+    ) -> pd.DataFrame:
+        """Return the EXACT ordered event stream ``build_tick_bars`` buckets.
+
+        Columns ``[ts_event, mid, size]`` over ``[start, end)``, filtered identically
+        to ``build_tick_bars`` (front-month, book>0) and ordered by the SAME
+        deterministic composite ``order_clause``. Feeding these prints to the streaming
+        ``CandleEngine`` reproduces ``build_tick_bars``' bars byte-for-byte; this is
+        the hook the standing DuckDB<->streaming parity test uses.
         """
-        df = self._conn.execute(
+        sel = self._tick_event_selection(symbol)
+        if sel is None:
+            return pd.DataFrame(columns=["ts_event", "mid", "size"])
+        union_sql, where_clause, price_expr, _ev_extra, order_clause = sel
+        sql = f"""
+            SELECT ts_event, {price_expr} AS mid, size
+            FROM ({union_sql}) AS t
+            {where_clause}
+            ORDER BY {order_clause}
+        """
+        return self._conn.execute(
             sql, [pd.Timestamp(start), pd.Timestamp(end)]
         ).fetchdf()
-
-        if df.empty:
-            return pd.DataFrame(
-                columns=["open", "high", "low", "close", "volume"]
-            )
-
-        df = df.drop(columns=["bar_id"]).set_index("bar_time")
-        df.index.name = "timestamp"
-        return df
 
     # ── Replay iterator ───────────────────────────────────────────
 

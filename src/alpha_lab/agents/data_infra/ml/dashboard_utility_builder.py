@@ -273,10 +273,13 @@ def _build_bars_for_date(
     td = date.fromisoformat(date_str)
     prev_day = td - timedelta(days=1)
 
-    # Session spans 18:00 ET prev day to 18:00 ET current day
-    # In UTC: 23:00 prev day to 23:00 current day (EST)
-    start_utc = datetime(prev_day.year, prev_day.month, prev_day.day, 23, 0)
-    end_utc = datetime(td.year, td.month, td.day, 23, 0)
+    # Session spans 18:00 ET (prev day) to 18:00 ET (current day), DST-aware.
+    # Pass tz-aware UTC bounds so DuckDB compares them directly against the TIMESTAMPTZ
+    # ts_event column -- NOT a naive datetime that DuckDB reinterprets in its session
+    # timezone (the prior 23:00-CT window artifact). build_tick_bars partitions by the
+    # same 18:00-ET trading day, so [prev 18:00 ET, cur 18:00 ET) yields this date's bars.
+    start_utc = pd.Timestamp(f"{prev_day.isoformat()} 18:00:00", tz="America/New_York").tz_convert("UTC")
+    end_utc = pd.Timestamp(f"{td.isoformat()} 18:00:00", tz="America/New_York").tz_convert("UTC")
 
     store = TickStore(data_dir)
     try:
