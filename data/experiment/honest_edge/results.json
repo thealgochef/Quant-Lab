@@ -1,0 +1,206 @@
+{
+  "n_oos_touches": 541,
+  "n_oos_rth_touches": 51,
+  "n_gated": 22,
+  "n_gated_traded": 19,
+  "idealized": {
+    "expectancy_pts": 12.51,
+    "profit_factor": 8.54,
+    "n_simulated_trades": 452,
+    "confusion": {
+      "tp": 427,
+      "fp": 25,
+      "tn": 61,
+      "fn": 28
+    },
+    "precision": 0.9446902654867256
+  },
+  "honest_gated": {
+    "n": 19,
+    "hit_rate": 0.5789473684210527,
+    "avg_win_pts": 14.75,
+    "avg_loss_pts": -30.25,
+    "expectancy_gross_pts": -4.197368421052632,
+    "expectancy_net_pts": -4.461368421052631,
+    "expectancy_net_usd": -89.22736842105263,
+    "profit_factor_gross": 0.6704545454545454,
+    "profit_factor_net": 0.6527577505407353,
+    "total_gross_pnl_usd": -1595.0,
+    "total_net_pnl_usd": -1695.3199999999997,
+    "max_drawdown_usd": 2151.3999999999996,
+    "exit_reason_counts": {
+      "tp": 11,
+      "sl": 8
+    },
+    "commission_rt_usd": 5.28,
+    "commission_pts": 0.264
+  },
+  "baseline_all_rth": {
+    "n": 48,
+    "hit_rate": 0.6875,
+    "avg_win_pts": 14.75,
+    "avg_loss_pts": -30.25,
+    "expectancy_gross_pts": 0.6875,
+    "expectancy_net_pts": 0.4235000000000011,
+    "expectancy_net_usd": 8.470000000000022,
+    "profit_factor_gross": 1.0727272727272728,
+    "profit_factor_net": 1.0444124008651765,
+    "total_gross_pnl_usd": 660.0,
+    "total_net_pnl_usd": 406.5600000000011,
+    "max_drawdown_usd": 2502.7999999999993,
+    "exit_reason_counts": {
+      "tp": 33,
+      "sl": 15
+    },
+    "commission_rt_usd": 5.28,
+    "commission_pts": 0.264
+  },
+  "per_fold": [
+    {
+      "fold": 0,
+      "n_gated_traded": 1,
+      "hit_rate": 1.0,
+      "expectancy_gross_pts": 14.75,
+      "expectancy_net_pts": 14.486
+    },
+    {
+      "fold": 1,
+      "n_gated_traded": 1,
+      "hit_rate": 0.0,
+      "expectancy_gross_pts": -30.25,
+      "expectancy_net_pts": -30.514
+    },
+    {
+      "fold": 3,
+      "n_gated_traded": 1,
+      "hit_rate": 1.0,
+      "expectancy_gross_pts": 14.75,
+      "expectancy_net_pts": 14.486
+    },
+    {
+      "fold": 4,
+      "n_gated_traded": 1,
+      "hit_rate": 0.0,
+      "expectancy_gross_pts": -30.25,
+      "expectancy_net_pts": -30.514
+    },
+    {
+      "fold": 5,
+      "n_gated_traded": 1,
+      "hit_rate": 0.0,
+      "expectancy_gross_pts": -30.25,
+      "expectancy_net_pts": -30.514
+    },
+    {
+      "fold": 6,
+      "n_gated_traded": 1,
+      "hit_rate": 0.0,
+      "expectancy_gross_pts": -30.25,
+      "expectancy_net_pts": -30.514
+    },
+    {
+      "fold": 7,
+      "n_gated_traded": 1,
+      "hit_rate": 1.0,
+      "expectancy_gross_pts": 14.75,
+      "expectancy_net_pts": 14.486
+    },
+    {
+      "fold": 11,
+      "n_gated_traded": 0
+    },
+    {
+      "fold": 13,
+      "n_gated_traded": 1,
+      "hit_rate": 1.0,
+      "expectancy_gross_pts": 14.75,
+      "expectancy_net_pts": 14.486
+    },
+    {
+      "fold": 14,
+      "n_gated_traded": 1,
+      "hit_rate": 1.0,
+      "expectancy_gross_pts": 14.75,
+      "expectancy_net_pts": 14.486
+    },
+    {
+      "fold": 17,
+      "n_gated_traded": 1,
+      "hit_rate": 1.0,
+      "expectancy_gross_pts": 14.75,
+      "expectancy_net_pts": 14.486
+    },
+    {
+      "fold": 18,
+      "n_gated_traded": 2,
+      "hit_rate": 0.5,
+      "expectancy_gross_pts": -7.75,
+      "expectancy_net_pts": -8.014
+    },
+    {
+      "fold": 26,
+      "n_gated_traded": 1,
+      "hit_rate": 0.0,
+      "expectancy_gross_pts": -30.25,
+      "expectancy_net_pts": -30.514
+    },
+    {
+      "fold": 29,
+      "n_gated_traded": 3,
+      "hit_rate": 1.0,
+      "expectancy_gross_pts": 14.75,
+      "expectancy_net_pts": 14.485999999999999
+    },
+    {
+      "fold": 36,
+      "n_gated_traded": 1,
+      "hit_rate": 1.0,
+      "expectancy_gross_pts": 14.75,
+      "expectancy_net_pts": 14.486
+    },
+    {
+      "fold": 37,
+      "n_gated_traded": 1,
+      "hit_rate": 0.0,
+      "expectancy_gross_pts": -30.25,
+      "expectancy_net_pts": -30.514
+    },
+    {
+      "fold": 41,
+      "n_gated_traded": 1,
+      "hit_rate": 0.0,
+      "expectancy_gross_pts": -30.25,
+      "expectancy_net_pts": -30.514
+    }
+  ],
+  "range": {
+    "start": "2025-06-02",
+    "end": "2026-02-22"
+  },
+  "step1": null,
+  "cost_scheme": {
+    "slippage_ticks_per_side": 1.0,
+    "slippage_pts_round_turn": 0.5,
+    "slippage_usd_round_turn": 10.0,
+    "slippage_modeled_in_fills": true,
+    "commission_rt_usd": 5.28,
+    "commission_formula": "(exchange_nfa 2.14 + broker 0.50) * 2 sides = 5.28",
+    "point_value": 20.0,
+    "tick_size": 0.25,
+    "instruments_yaml_total_round_turn": 7.78,
+    "note": "slippage 1 tick/side in fills ($10 RT) + commission $5.28 = $15.28 adverse RT."
+  },
+  "assumptions": {
+    "entry_price_source": "front-month book-mid (bid_px_00+ask_px_00)/2 most-recent <= touch_close+5m",
+    "entry_slippage": "1 tick (0.25pt) adverse in entry fill",
+    "exit_slippage": "1 tick (0.25pt) adverse in exit fill",
+    "flatten_et": "15:55 (no new trades at/after)",
+    "cutoff_mark_et": "16:15 (forward-scan end; unresolved -> mark at last close)",
+    "interaction_window_minutes": 5,
+    "bars": "book-mid 147t (price_source=book_mid; UNCHANGED)",
+    "resolution": "MAE-first TP+15/SL-30 from REAL entry",
+    "idealized_gate": "argmax predicted class == tradeable_reversal (raw_pred==0); matches ml_training_tab OOS confusion matrix",
+    "production_serve_gate": "prob_reversal>=0.70 AND session==ny_rth AND eligible_class=tradeable_reversal",
+    "walk_forward": "train=40 test=5 gap=2 ROLLING (expanding=False); RFECV once; CatBoost 800/depth4/MultiClass/Balanced/seed42"
+  }
+}

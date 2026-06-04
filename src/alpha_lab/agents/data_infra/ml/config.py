@@ -262,9 +262,23 @@ class MLPipelineConfig(BaseModel):
 
         Covers extrema, labeling, features, and tick_size.  Walk-forward
         and model configs do NOT affect the cached feature matrix.
+
+        KEYED ON THE BAR PRICE SOURCE (trade-bar cutover, Part 1): the dashboard
+        bars + the 3 interaction features changed from book-mid (0.125 grid) to
+        TRADE PRINTS (0.25 grid), AND the canonical outcome re-anchored to the
+        decision-time entry. Folding ``strategy_core.constants.BAR_PRICE_SOURCE``
+        and the engine version into the payload changes ``cache_tag`` so the stale
+        book-mid ``ml_utility_*`` caches are INVALIDATED (a fresh tag is read/written)
+        rather than silently reused under the new bar/label definition.
         """
         import hashlib
         import json
+
+        # Single-source the bar/label cutover key off the engine so the cache tag
+        # tracks the engine version (v1 book-mid level-entry -> v2 trade-price
+        # decision-entry) without restating a literal here.
+        from strategy_core import ENGINE_VERSION
+        from strategy_core.constants import BAR_PRICE_SOURCE, LABEL_ENTRY_REFERENCE
 
         payload = (
             f"mode={self.training_mode}|"
@@ -273,5 +287,8 @@ class MLPipelineConfig(BaseModel):
             + json.dumps(self.features.model_dump(), sort_keys=True)
             + json.dumps(self.dashboard_utility.model_dump(), sort_keys=True)
             + f"|tick_size={self.tick_size}"
+            + f"|bar_price_source={BAR_PRICE_SOURCE}"
+            + f"|label_entry_reference={LABEL_ENTRY_REFERENCE}"
+            + f"|engine_version={ENGINE_VERSION}"
         )
         return hashlib.sha256(payload.encode()).hexdigest()[:8]

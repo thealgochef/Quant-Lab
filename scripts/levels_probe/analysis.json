@@ -1,0 +1,353 @@
+{
+  "detected_total": 910,
+  "detected_by_session": {
+    "asia": 600,
+    "london": 227,
+    "ny_rth": 64,
+    "premarket": 17,
+    "post": 2
+  },
+  "detected_by_session_x_level": {
+    "asia": {
+      "PDH": 53,
+      "PDL": 32,
+      "asia_high": 171,
+      "asia_low": 179,
+      "london_high": 75,
+      "london_low": 90
+    },
+    "london": {
+      "PDH": 20,
+      "PDL": 16,
+      "asia_high": 3,
+      "asia_low": 0,
+      "london_high": 97,
+      "london_low": 91
+    },
+    "ny_rth": {
+      "PDH": 27,
+      "PDL": 34,
+      "asia_high": 0,
+      "asia_low": 0,
+      "london_high": 3,
+      "london_low": 0
+    },
+    "post": {
+      "PDH": 1,
+      "PDL": 1,
+      "asia_high": 0,
+      "asia_low": 0,
+      "london_high": 0,
+      "london_low": 0
+    },
+    "premarket": {
+      "PDH": 9,
+      "PDL": 7,
+      "asia_high": 1,
+      "asia_low": 0,
+      "london_high": 0,
+      "london_low": 0
+    }
+  },
+  "kept_total": 384,
+  "kept_by_session": {
+    "london": 227,
+    "asia": 79,
+    "ny_rth": 61,
+    "premarket": 17
+  },
+  "perday_zone_stats_describe": {
+    "zones_formed": {
+      "count": 185.0,
+      "mean": 5.789189189189189,
+      "std": 0.4590773969650764,
+      "min": 4.0,
+      "25%": 6.0,
+      "50%": 6.0,
+      "75%": 6.0,
+      "max": 6.0
+    },
+    "zones_touched": {
+      "count": 185.0,
+      "mean": 4.918918918918919,
+      "std": 0.6907139649910139,
+      "min": 2.0,
+      "25%": 5.0,
+      "50%": 5.0,
+      "75%": 5.0,
+      "max": 6.0
+    },
+    "zones_untouched_to_rth": {
+      "count": 185.0,
+      "mean": 1.2162162162162162,
+      "std": 0.5384728372673366,
+      "min": 0.0,
+      "25%": 1.0,
+      "50%": 1.0,
+      "75%": 2.0,
+      "max": 2.0
+    },
+    "zones_first_touch_rth": {
+      "count": 185.0,
+      "mean": 0.34594594594594597,
+      "std": 0.5100056449999792,
+      "min": 0.0,
+      "25%": 0.0,
+      "50%": 0.0,
+      "75%": 1.0,
+      "max": 2.0
+    }
+  },
+  "perday_zones_formed_hist": {
+    "4": 4,
+    "5": 31,
+    "6": 150
+  },
+  "perday_first_touch_rth_hist": {
+    "0": 124,
+    "1": 58,
+    "2": 3
+  },
+  "zones_total": 1071,
+  "zones_with_any_rth_straddle": 617,
+  "zones_first_touch_in_rth (recorded RTH touches)": 64,
+  "zones_RTH_swept_but_consumed_overnight": 553,
+  "pct_RTH_sweeps_consumed": 0.8962722852512156,
+  "lookahead_touches_total": 713,
+  "lookahead_by_first_session": {
+    "asia": 519,
+    "london": 194
+  },
+  "self_touch_raw_extreme_zones": 1036,
+  "recorded_touch_is_raw_extreme_by_session": {
+    "asia": 581,
+    "london": 216,
+    "ny_rth": 61,
+    "post": 2,
+    "premarket": 16
+  },
+  "E1_travel": {
+    "net_disp30_pts": {
+      "RTH": {
+        "count": 61.0,
+        "mean": 34.635245901639344,
+        "50%": 30.75,
+        "std": 21.109416035390254
+      },
+      "overnight": {
+        "count": 323.0,
+        "mean": 41.0843653250774,
+        "50%": 37.0,
+        "std": 22.20209187621265
+      }
+    },
+    "approach_range30_pts": {
+      "RTH": {
+        "count": 61.0,
+        "mean": 43.68852459016394,
+        "50%": 37.75,
+        "std": 21.85418799193613
+      },
+      "overnight": {
+        "count": 323.0,
+        "mean": 54.34597523219814,
+        "50%": 50.25,
+        "std": 20.667981265460995
+      }
+    },
+    "dist_session_open_pts": {
+      "RTH": {
+        "count": 61.0,
+        "mean": 154.92418032786884,
+        "50%": 125.0,
+        "std": 107.9822113019097
+      },
+      "overnight": {
+        "count": 323.0,
+        "mean": 116.59404024767802,
+        "50%": 96.75,
+        "std": 81.94520252163662
+      }
+    },
+    "dist_rth_open_pts": {
+      "RTH": {
+        "count": 61.0,
+        "mean": 143.11680327868854,
+        "50%": 130.0,
+        "std": 95.21265636297514
+      },
+      "overnight": {
+        "count": 323.0,
+        "mean": 69.71787925696594,
+        "50%": 49.0,
+        "std": 63.689165222070024
+      }
+    }
+  },
+  "E2_vol": {
+    "vol_atr14_pts": {
+      "RTH": {
+        "count": 61.0,
+        "mean": 6.43764637002342,
+        "50%": 6.0,
+        "std": 2.512013276862547
+      },
+      "overnight": {
+        "count": 323.0,
+        "mean": 8.58077178239717,
+        "50%": 8.142857142857142,
+        "std": 2.4485909587630528
+      }
+    },
+    "ret_std30_pts": {
+      "RTH": {
+        "count": 61.0,
+        "mean": 4.2996983024742095,
+        "50%": 4.017472893440818,
+        "std": 1.7314495602048492
+      },
+      "overnight": {
+        "count": 323.0,
+        "mean": 5.571647275714659,
+        "50%": 5.257235735197942,
+        "std": 1.6780343163140934
+      }
+    }
+  },
+  "E4_volume": {
+    "vol_touch": {
+      "RTH": {
+        "count": 61.0,
+        "mean": 278.5245901639344,
+        "50%": 253.0,
+        "std": 64.7040973863266
+      },
+      "overnight": {
+        "count": 323.0,
+        "mean": 218.35913312693498,
+        "50%": 207.0,
+        "std": 40.61194713600758
+      }
+    },
+    "vol_mean30": {
+      "RTH": {
+        "count": 61.0,
+        "mean": 226.85628415300548,
+        "50%": 228.33333333333334,
+        "std": 13.97180035720576
+      },
+      "overnight": {
+        "count": 323.0,
+        "mean": 202.92765737874097,
+        "50%": 201.6,
+        "std": 11.404044364299995
+      }
+    }
+  },
+  "E3_rebound_by_session": {
+    "asia": {
+      "mean": 0.5822784810126582,
+      "count": 79
+    },
+    "london": {
+      "mean": 0.801762114537445,
+      "count": 227
+    },
+    "ny_rth": {
+      "mean": 0.5245901639344263,
+      "count": 61
+    },
+    "premarket": {
+      "mean": 0.47058823529411764,
+      "count": 17
+    }
+  },
+  "E3_rebound_by_volbucket": {
+    "lo": {
+      "mean": 0.6640625,
+      "count": 128
+    },
+    "mid": {
+      "mean": 0.7890625,
+      "count": 128
+    },
+    "hi": {
+      "mean": 0.640625,
+      "count": 128
+    }
+  },
+  "E3_rebound_by_session_x_volbucket": [
+    {
+      "grp": "RTH",
+      "volb": "lo",
+      "mean": 0.4878048780487805,
+      "count": 41
+    },
+    {
+      "grp": "RTH",
+      "volb": "mid",
+      "mean": 0.7857142857142857,
+      "count": 14
+    },
+    {
+      "grp": "RTH",
+      "volb": "hi",
+      "mean": 0.16666666666666666,
+      "count": 6
+    },
+    {
+      "grp": "overnight",
+      "volb": "lo",
+      "mean": 0.7471264367816092,
+      "count": 87
+    },
+    {
+      "grp": "overnight",
+      "volb": "mid",
+      "mean": 0.7894736842105263,
+      "count": 114
+    },
+    {
+      "grp": "overnight",
+      "volb": "hi",
+      "mean": 0.6639344262295082,
+      "count": 122
+    }
+  ],
+  "E3_rebound_by_level_type": {
+    "PDH": {
+      "mean": 0.5,
+      "count": 54
+    },
+    "PDL": {
+      "mean": 0.5263157894736842,
+      "count": 57
+    },
+    "asia_high": {
+      "mean": 0.5116279069767442,
+      "count": 43
+    },
+    "asia_low": {
+      "mean": 0.7,
+      "count": 30
+    },
+    "london_high": {
+      "mean": 0.8666666666666667,
+      "count": 105
+    },
+    "london_low": {
+      "mean": 0.8105263157894737,
+      "count": 95
+    }
+  },
+  "E3_rebound_raw_extreme_vs_not": {
+    "false": {
+      "mean": 0.7777777777777778,
+      "count": 18
+    },
+    "true": {
+      "mean": 0.6939890710382514,
+      "count": 366
+    }
+  }
+}

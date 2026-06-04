@@ -1,0 +1,51 @@
+{
+  "engine_version": "strategy_core_engine_v3",
+  "n_target_dates": 225,
+  "n_dates_with_touches": 185,
+  "total_gated_touches": 720,
+  "total_ungated_touches": 889,
+  "v3_lookahead_count": 0,
+  "pre_v3_lookahead_count": 714,
+  "counts_by_session_level": {
+    "asia|PDH": 23,
+    "asia|PDL": 18,
+    "london|PDH": 12,
+    "london|PDL": 8,
+    "london|asia_high": 75,
+    "london|asia_low": 60,
+    "none|PDH": 27,
+    "none|PDL": 18,
+    "none|asia_high": 32,
+    "none|asia_low": 24,
+    "none|london_high": 73,
+    "none|london_low": 40,
+    "ny|PDH": 39,
+    "ny|PDL": 31,
+    "ny|asia_high": 33,
+    "ny|asia_low": 46,
+    "ny|london_high": 70,
+    "ny|london_low": 91
+  },
+  "session_totals": {
+    "london": 155,
+    "none": 214,
+    "ny": 310,
+    "asia": 41
+  },
+  "leveltype_totals": {
+    "asia_low": 130,
+    "london_high": 143,
+    "asia_high": 140,
+    "PDH": 101,
+    "london_low": 131,
+    "PDL": 75
+  },
+  "lookahead_examples": [
+    "2025-06-02 asia_high: touched 2025-06-01 20:15:21.297192-04:00 < available 2025-06-02 02:45:00-04:00",
+    "2025-06-02 london_high: touched 2025-06-01 20:30:41.667948-04:00 < available 2025-06-02 08:00:00-04:00",
+    "2025-06-02 asia_low: touched 2025-06-02 02:15:35.837709-04:00 < available 2025-06-02 02:45:00-04:00",
+    "2025-06-02 london_low: touched 2025-06-02 03:29:20.354991-04:00 < available 2025-06-02 08:00:00-04:00",
+    "2025-06-03 asia_high: touched 2025-06-02 18:00:58.490784-04:00 < available 2025-06-03 02:45:00-04:00",
+    "2025-06-03 london_high: touched 2025-06-02 18:06:32.195094-04:00 < available 2025-06-03 08:00:00-04:00"
+  ]
+}

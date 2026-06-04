@@ -1,0 +1,172 @@
+{
+  "reproduction": {
+    "n_oos": 334,
+    "confusion": {
+      "tp": 172,
+      "fp": 57,
+      "tn": 42,
+      "fn": 63
+    },
+    "precision": 0.7510917030567685,
+    "recall": 0.7319148936170212,
+    "accuracy": 0.6407185628742516,
+    "n_purged_total": 0,
+    "target_confusion": {
+      "tp": 172,
+      "fp": 57,
+      "tn": 42,
+      "fn": 63
+    }
+  },
+  "threshold_table_reproduced": [
+    {
+      "threshold": 0.5,
+      "n": 214,
+      "coverage": 0.6407185628742516,
+      "precision": 0.7616822429906542,
+      "exp_15_15_pts": 7.850467289719627
+    },
+    {
+      "threshold": 0.6,
+      "n": 175,
+      "coverage": 0.5239520958083832,
+      "precision": 0.7942857142857143,
+      "exp_15_15_pts": 8.828571428571427
+    },
+    {
+      "threshold": 0.7,
+      "n": 133,
+      "coverage": 0.39820359281437123,
+      "precision": 0.8045112781954887,
+      "exp_15_15_pts": 9.135338345864662
+    },
+    {
+      "threshold": 0.8,
+      "n": 95,
+      "coverage": 0.2844311377245509,
+      "precision": 0.8210526315789474,
+      "exp_15_15_pts": 9.631578947368421
+    },
+    {
+      "threshold": 0.9,
+      "n": 49,
+      "coverage": 0.1467065868263473,
+      "precision": 0.8571428571428571,
+      "exp_15_15_pts": 10.714285714285714
+    }
+  ],
+  "feature_stability_reproduced": 0.15227272727272728,
+  "brier": {
+    "model": 0.24691344954011016,
+    "base_rate": 0.7035928143712575,
+    "baseline_constant_baserate": 0.20854996593639064
+  },
+  "fold_precision_repro": {
+    "mean": 0.7460864051773143,
+    "median": 0.75,
+    "std": 0.16132075986584446,
+    "below_0.5": 1,
+    "le_0.5": 4,
+    "n": 33
+  },
+  "enriched_dates": 227,
+  "drop_accounting": {
+    "flatten": 525,
+    "kept": 384,
+    "feature_drop": 1
+  },
+  "kept_total": 384,
+  "n_entered_in_test": 334,
+  "rth": {
+    "n_entered_rth": 57,
+    "rth_base_rate_resolved": 0.5087719298245614,
+    "n_gated_rth_0.70": 11,
+    "gated_rth_precision_resolved": 0.5454545454545454,
+    "n_gated_rth_no_resolution": 0
+  },
+  "F_headline": {
+    "per_trade_taken_RTH_gated": {
+      "label": "RTH gate0.70 per-trade-taken",
+      "n": 11,
+      "hit_rate": 0.5454545454545454,
+      "exit_reasons": {
+        "tp": 6,
+        "sl": 5
+      },
+      "expectancy_gross_pts": 1.1136363636363635,
+      "expectancy_net_pts": 0.8496363636363643,
+      "expectancy_net_usd": 16.992727272727286,
+      "net_ci95_pts": [
+        -7.332181818181817,
+        9.031454545454547
+      ],
+      "total_net_usd": 186.92000000000013,
+      "avg_win_pts": 14.75,
+      "avg_loss_pts": -15.25
+    },
+    "resolved_only_RTH_gated": {
+      "label": "RTH gate0.70 resolved-only",
+      "n": 11,
+      "hit_rate": 0.5454545454545454,
+      "exit_reasons": {
+        "tp": 6,
+        "sl": 5
+      },
+      "expectancy_gross_pts": 1.1136363636363635,
+      "expectancy_net_pts": 0.8496363636363643,
+      "expectancy_net_usd": 16.992727272727286,
+      "net_ci95_pts": [
+        -7.332181818181817,
+        9.031454545454547
+      ],
+      "total_net_usd": 186.92000000000013,
+      "avg_win_pts": 14.75,
+      "avg_loss_pts": -15.25
+    },
+    "baseline_all_RTH_entered_nogate": {
+      "label": "RTH all entered no-gate",
+      "n": 57,
+      "hit_rate": 0.5087719298245614,
+      "exit_reasons": {
+        "tp": 29,
+        "sl": 28
+      },
+      "expectancy_gross_pts": 0.013157894736842105,
+      "expectancy_net_pts": -0.2508421052631569,
+      "expectancy_net_usd": -5.016842105263138,
+      "net_ci95_pts": [
+        -3.9350526315789467,
+        3.4333684210526325
+      ],
+      "total_net_usd": -285.9599999999989,
+      "avg_win_pts": 14.75,
+      "avg_loss_pts": -15.25
+    },
+    "blended_gated_allsession": {
+      "label": "ALL-session gate0.70 per-trade-taken",
+      "n": 133,
+      "hit_rate": 0.8045112781954887,
+      "exit_reasons": {
+        "tp": 107,
+        "sl": 26
+      },
+      "expectancy_gross_pts": 8.885338345864662,
+      "expectancy_net_pts": 8.621338345864665,
+      "expectancy_net_usd": 172.4267669172933,
+      "net_ci95_pts": [
+        6.591263157894737,
+        10.651413533834585
+      ],
+      "total_net_usd": 22932.76000000001,
+      "avg_win_pts": 14.75,
+      "avg_loss_pts": -15.25
+    }
+  },
+  "cost_scheme": {
+    "slippage_ticks_per_side": 1.0,
+    "slippage_pts_rt": 0.5,
+    "commission_rt_usd": 5.28,
+    "commission_pts": 0.264,
+    "point_value": 20.0
+  }
+}

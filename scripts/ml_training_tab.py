@@ -599,6 +599,31 @@ def save_trained_model(
     with open(output_dir / "evaluation.json", "w") as f:
         json.dump(eval_dict, f, indent=2, default=str)
 
+    # ── Strategy contract for runtime (Trade-Lab) consumption ─────
+    # Emits strategy.json describing the full strategy semantics (sessions,
+    # touch rule, feature windows, label policy) so a runtime can be driven
+    # by the contract instead of hardcoding semantics. Never fail the save.
+    if config is not None:
+        try:
+            from alpha_lab.agents.data_infra.ml.strategy_contract import (
+                build_strategy_contract,
+            )
+
+            selected = None
+            if training_result is not None:
+                selected = training_result.get("selected_features")
+            if not selected:
+                selected = getattr(trained_model, "selected_features", None)
+
+            strategy = build_strategy_contract(
+                config, selected, strategy_id=output_dir.name
+            )
+            if strategy is not None:
+                with open(output_dir / "strategy.json", "w") as f:
+                    json.dump(strategy, f, indent=2, default=str)
+        except Exception as exc:  # noqa: BLE001 - emission must never break saves
+            logger.warning("Failed to emit strategy.json: %s", exc)
+
     return output_dir
 
 

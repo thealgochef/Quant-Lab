@@ -1,0 +1,104 @@
+{
+  "n_oos_touches": 69,
+  "n_oos_rth_touches": 8,
+  "n_gated": 2,
+  "n_gated_traded": 2,
+  "idealized": {
+    "expectancy_pts": 14.18,
+    "profit_factor": 27.0,
+    "n_simulated_trades": 55,
+    "confusion": {
+      "tp": 54,
+      "fp": 1,
+      "tn": 11,
+      "fn": 3
+    },
+    "precision": 0.9818181818181818
+  },
+  "honest_gated": {
+    "n": 2,
+    "hit_rate": 0.5,
+    "avg_win_pts": 14.75,
+    "avg_loss_pts": -30.25,
+    "expectancy_gross_pts": -7.75,
+    "expectancy_net_pts": -8.014,
+    "expectancy_net_usd": -160.27999999999997,
+    "profit_factor_gross": 0.48760330578512395,
+    "profit_factor_net": 0.47473290948417124,
+    "total_gross_pnl_usd": -310.0,
+    "total_net_pnl_usd": -320.55999999999995,
+    "max_drawdown_usd": 0.0,
+    "exit_reason_counts": {
+      "sl": 1,
+      "tp": 1
+    },
+    "commission_rt_usd": 5.28,
+    "commission_pts": 0.264
+  },
+  "baseline_all_rth": {
+    "n": 8,
+    "hit_rate": 0.875,
+    "avg_win_pts": 14.75,
+    "avg_loss_pts": -30.25,
+    "expectancy_gross_pts": 9.125,
+    "expectancy_net_pts": 8.861,
+    "expectancy_net_usd": 177.22000000000003,
+    "profit_factor_gross": 3.4132231404958677,
+    "profit_factor_net": 3.323130366389199,
+    "total_gross_pnl_usd": 1460.0,
+    "total_net_pnl_usd": 1417.7600000000002,
+    "max_drawdown_usd": 610.2800000000001,
+    "exit_reason_counts": {
+      "tp": 7,
+      "sl": 1
+    },
+    "commission_rt_usd": 5.28,
+    "commission_pts": 0.264
+  },
+  "per_fold": [
+    {
+      "fold": 2,
+      "n_gated_traded": 1,
+      "hit_rate": 0.0,
+      "expectancy_gross_pts": -30.25,
+      "expectancy_net_pts": -30.514
+    },
+    {
+      "fold": 4,
+      "n_gated_traded": 1,
+      "hit_rate": 1.0,
+      "expectancy_gross_pts": 14.75,
+      "expectancy_net_pts": 14.486
+    }
+  ],
+  "range": {
+    "start": "2025-12-15",
+    "end": "2026-02-20"
+  },
+  "step1": null,
+  "cost_scheme": {
+    "slippage_ticks_per_side": 1.0,
+    "slippage_pts_round_turn": 0.5,
+    "slippage_usd_round_turn": 10.0,
+    "slippage_modeled_in_fills": true,
+    "commission_rt_usd": 5.28,
+    "commission_formula": "(exchange_nfa 2.14 + broker 0.50) * 2 sides = 5.28",
+    "point_value": 20.0,
+    "tick_size": 0.25,
+    "instruments_yaml_total_round_turn": 7.78,
+    "note": "slippage 1 tick/side in fills ($10 RT) + commission $5.28 = $15.28 adverse RT."
+  },
+  "assumptions": {
+    "entry_price_source": "front-month book-mid (bid_px_00+ask_px_00)/2 most-recent <= touch_close+5m",
+    "entry_slippage": "1 tick (0.25pt) adverse in entry fill",
+    "exit_slippage": "1 tick (0.25pt) adverse in exit fill",
+    "flatten_et": "15:55 (no new trades at/after)",
+    "cutoff_mark_et": "16:15 (forward-scan end; unresolved -> mark at last close)",
+    "interaction_window_minutes": 5,
+    "bars": "book-mid 147t (price_source=book_mid; UNCHANGED)",
+    "resolution": "MAE-first TP+15/SL-30 from REAL entry",
+    "idealized_gate": "argmax predicted class == tradeable_reversal (raw_pred==0); matches ml_training_tab OOS confusion matrix",
+    "production_serve_gate": "prob_reversal>=0.70 AND session==ny_rth AND eligible_class=tradeable_reversal",
+    "walk_forward": "train=40 test=5 gap=2 ROLLING (expanding=False); RFECV once; CatBoost 800/depth4/MultiClass/Balanced/seed42"
+  }
+}

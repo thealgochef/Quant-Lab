@@ -1,0 +1,411 @@
+{
+  "precision": 0.9204545454545454,
+  "recall": 0.8350515463917526,
+  "f1": 0.8756756756756756,
+  "accuracy": 0.8067226890756303,
+  "roc_auc": 0.8588331771321464,
+  "pr_auc": 0.9597028971906211,
+  "confusion_matrix": {
+    "tp": 162,
+    "fp": 14,
+    "tn": 30,
+    "fn": 32
+  },
+  "precision_ci": [
+    0.8743169398907104,
+    0.9585859728506787
+  ],
+  "f1_ci": [
+    0.8469945355191256,
+    0.9021871327849588
+  ],
+  "permutation_p_value": 0.001996007984031936,
+  "cohens_d": 1.5858551852174436,
+  "brier_score": 0.13146521958739546,
+  "n_samples": 238,
+  "n_positive": 194,
+  "n_negative": 44,
+  "fold_metrics": [
+    {
+      "fold": 0,
+      "precision": 1.0,
+      "recall": 0.8333333333333334,
+      "f1": 0.9090909090909091,
+      "n_test": 13
+    },
+    {
+      "fold": 1,
+      "precision": 0.9166666666666666,
+      "recall": 0.7857142857142857,
+      "f1": 0.8461538461538461,
+      "n_test": 16
+    },
+    {
+      "fold": 2,
+      "precision": 0.875,
+      "recall": 0.8235294117647058,
+      "f1": 0.8484848484848485,
+      "n_test": 21
+    },
+    {
+      "fold": 3,
+      "precision": 0.8666666666666667,
+      "recall": 0.8125,
+      "f1": 0.8387096774193549,
+      "n_test": 21
+    },
+    {
+      "fold": 4,
+      "precision": 1.0,
+      "recall": 0.875,
+      "f1": 0.9333333333333333,
+      "n_test": 20
+    },
+    {
+      "fold": 5,
+      "precision": 0.9411764705882353,
+      "recall": 0.8888888888888888,
+      "f1": 0.9142857142857143,
+      "n_test": 19
+    },
+    {
+      "fold": 6,
+      "precision": 1.0,
+      "recall": 0.8461538461538461,
+      "f1": 0.9166666666666666,
+      "n_test": 20
+    },
+    {
+      "fold": 7,
+      "precision": 1.0,
+      "recall": 0.6666666666666666,
+      "f1": 0.8,
+      "n_test": 15
+    },
+    {
+      "fold": 8,
+      "precision": 0.8,
+      "recall": 0.8571428571428571,
+      "f1": 0.8275862068965518,
+      "n_test": 19
+    },
+    {
+      "fold": 9,
+      "precision": 0.7692307692307693,
+      "recall": 0.7692307692307693,
+      "f1": 0.7692307692307693,
+      "n_test": 17
+    },
+    {
+      "fold": 10,
+      "precision": 0.9375,
+      "recall": 0.9375,
+      "f1": 0.9375,
+      "n_test": 19
+    },
+    {
+      "fold": 11,
+      "precision": 1.0,
+      "recall": 0.8823529411764706,
+      "f1": 0.9375,
+      "n_test": 18
+    },
+    {
+      "fold": 12,
+      "precision": 0.9285714285714286,
+      "recall": 0.8125,
+      "f1": 0.8666666666666666,
+      "n_test": 20
+    }
+  ],
+  "specificity_tnr": 0.6818181818181818,
+  "false_positive_rate": 0.3181818181818182,
+  "predicted_positive_rate": 0.7394957983193278,
+  "trade_utility": {
+    "expectancy_15_15_pts": 12.61,
+    "expectancy_15_30_pts": 11.42,
+    "profit_factor_15_30": 5.786,
+    "n_simulated_trades": 176
+  },
+  "rth_fraction": 0.10504201680672269,
+  "feature_stability": 0.6025641025641026,
+  "n_purged_total": 0,
+  "n_total_folds": 13,
+  "n_valid_folds": 13,
+  "n_skipped_folds": 0,
+  "selected_features": [
+    "int_time_beyond_level",
+    "int_time_within_2pts",
+    "int_absorption_ratio",
+    "app_avg_trade_size",
+    "app_large_trade_vol_pct"
+  ],
+  "class_balance": {
+    "rebound": 194,
+    "crossing": 44
+  },
+  "full_dataset_class_balance": {
+    "tradeable_reversal": 259,
+    "trap_reversal": 32,
+    "aggressive_blowthrough": 37
+  },
+  "oos_summary": {
+    "n_samples": 238,
+    "class_balance_true": {
+      "rebound": 194,
+      "crossing": 44
+    },
+    "class_balance_pred": {
+      "rebound": 176,
+      "crossing": 62
+    },
+    "confusion_rates": {
+      "tpr_recall": 0.8350515463917526,
+      "tnr_specificity": 0.6818181818181818,
+      "fpr": 0.3181818181818182,
+      "fnr": 0.16494845360824742,
+      "predicted_positive_rate": 0.7394957983193278
+    },
+    "threshold_table": [
+      {
+        "threshold": 0.5,
+        "coverage": 0.7184873949579832,
+        "precision": 0.935672514619883
+      },
+      {
+        "threshold": 0.6,
+        "coverage": 0.6638655462184874,
+        "precision": 0.9430379746835443
+      },
+      {
+        "threshold": 0.7,
+        "coverage": 0.6428571428571429,
+        "precision": 0.954248366013072
+      },
+      {
+        "threshold": 0.8,
+        "coverage": 0.5714285714285714,
+        "precision": 0.9485294117647058
+      },
+      {
+        "threshold": 0.9,
+        "coverage": 0.42857142857142855,
+        "precision": 0.9705882352941176
+      }
+    ],
+    "calibration_table": [
+      {
+        "bucket_low": 0.0,
+        "bucket_high": 0.2,
+        "count": 30.0,
+        "mean_predicted_prob": 0.09049376973603053,
+        "observed_positive_rate": 0.36666666666666664
+      },
+      {
+        "bucket_low": 0.2,
+        "bucket_high": 0.4,
+        "count": 24.0,
+        "mean_predicted_prob": 0.30092881077672623,
+        "observed_positive_rate": 0.625
+      },
+      {
+        "bucket_low": 0.4,
+        "bucket_high": 0.6000000000000001,
+        "count": 26.0,
+        "mean_predicted_prob": 0.5000983598796265,
+        "observed_positive_rate": 0.7307692307692307
+      },
+      {
+        "bucket_low": 0.6000000000000001,
+        "bucket_high": 0.8,
+        "count": 22.0,
+        "mean_predicted_prob": 0.7244937093709342,
+        "observed_positive_rate": 0.9090909090909091
+      },
+      {
+        "bucket_low": 0.8,
+        "bucket_high": 1.0,
+        "count": 136.0,
+        "mean_predicted_prob": 0.9288402807476608,
+        "observed_positive_rate": 0.9485294117647058
+      }
+    ],
+    "has_probabilities": true
+  },
+  "training_mode": "dashboard_utility",
+  "full_config": {
+    "training_mode": "dashboard_utility",
+    "extrema": {
+      "window_size": 5000,
+      "min_peak_width": 200,
+      "max_peak_width": 5000,
+      "min_prominence_ticks": 10.0,
+      "dedup_window": 200
+    },
+    "labeling": {
+      "rebound_thresholds": [
+        20,
+        40,
+        60
+      ],
+      "crossing_threshold": 20,
+      "forward_window": 5000
+    },
+    "features": {
+      "pl_range_ticks": 10,
+      "ms_window": 237,
+      "rsi_periods": [
+        20,
+        40,
+        80,
+        120,
+        160,
+        200
+      ],
+      "include_signal_features": true,
+      "signal_bar_timeframe": "5m"
+    },
+    "walk_forward": {
+      "train_days": 30,
+      "test_days": 7,
+      "gap_days": 1,
+      "expanding": false
+    },
+    "model": {
+      "model_type": "catboost",
+      "iterations": 500,
+      "depth": 4,
+      "learning_rate": 0.03,
+      "loss_function": "MultiClass",
+      "auto_class_weights": "Balanced",
+      "rfecv_enabled": true,
+      "rfecv_min_features": 5,
+      "early_stopping_rounds": 50
+    },
+    "dashboard_utility": {
+      "tp_points": 15.0,
+      "sl_points": 15.0,
+      "trap_mfe_min": 5.0,
+      "interaction_window_minutes": 1,
+      "level_proximity_pts": 0.5,
+      "bar_type": "147t",
+      "include_approach_features": true,
+      "approach_window_minutes": 45
+    },
+    "tick_size": 0.25,
+    "instrument": "NQ"
+  },
+  "dates_used": [
+    "2025-06-02",
+    "2025-06-03",
+    "2025-06-04",
+    "2025-06-05",
+    "2025-06-06",
+    "2025-06-08",
+    "2025-06-09",
+    "2025-06-10",
+    "2025-06-11",
+    "2025-06-12",
+    "2025-06-13",
+    "2025-06-15",
+    "2025-06-16",
+    "2025-06-17",
+    "2025-06-18",
+    "2025-06-19",
+    "2025-06-20",
+    "2025-06-22",
+    "2025-06-23",
+    "2025-06-24",
+    "2025-06-25",
+    "2025-06-26",
+    "2025-06-27",
+    "2025-06-29",
+    "2025-06-30",
+    "2025-07-01",
+    "2025-07-02",
+    "2025-07-03",
+    "2025-07-04",
+    "2025-07-06",
+    "2025-07-07",
+    "2025-07-09",
+    "2025-07-10",
+    "2025-07-11",
+    "2025-07-13",
+    "2025-07-14",
+    "2025-07-15",
+    "2025-07-16",
+    "2025-07-17",
+    "2025-07-18",
+    "2025-07-20",
+    "2025-07-21",
+    "2025-07-22",
+    "2025-07-23",
+    "2025-07-24",
+    "2025-07-25",
+    "2025-07-27",
+    "2025-07-28",
+    "2025-07-29",
+    "2025-07-30",
+    "2025-07-31",
+    "2025-08-01",
+    "2025-08-03",
+    "2025-08-04",
+    "2025-08-05",
+    "2025-08-06",
+    "2025-08-07",
+    "2025-08-08",
+    "2025-08-10",
+    "2025-08-11",
+    "2025-08-12",
+    "2025-08-13",
+    "2025-08-14",
+    "2025-08-15",
+    "2025-08-17",
+    "2025-08-18",
+    "2025-08-19",
+    "2025-08-20",
+    "2025-08-21",
+    "2025-08-22",
+    "2025-08-24",
+    "2025-08-25",
+    "2025-08-26",
+    "2025-08-27",
+    "2025-08-28",
+    "2025-08-29",
+    "2025-08-31",
+    "2025-09-01",
+    "2025-09-02",
+    "2025-09-03",
+    "2025-09-04",
+    "2025-09-05",
+    "2025-09-07",
+    "2025-09-08",
+    "2025-09-09",
+    "2025-09-10",
+    "2025-09-11",
+    "2025-09-12",
+    "2025-09-14",
+    "2025-09-15",
+    "2025-09-16",
+    "2025-09-17",
+    "2025-09-18",
+    "2025-09-19",
+    "2025-09-21",
+    "2025-09-22",
+    "2025-09-23",
+    "2025-09-24",
+    "2025-09-25",
+    "2025-09-26",
+    "2025-09-28",
+    "2025-09-29",
+    "2025-09-30",
+    "2025-10-01",
+    "2025-10-02",
+    "2025-10-03"
+  ],
+  "date_range": {
+    "start": "2025-06-02",
+    "end": "2025-10-03",
+    "count": 106
+  }
+}

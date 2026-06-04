@@ -1,0 +1,32 @@
+{
+  "selected_features": [
+    "int_time_within_2pts",
+    "int_absorption_ratio",
+    "app_avg_trade_size",
+    "app_large_trade_vol_pct",
+    "app_max_spread"
+  ],
+  "feature_importances": {
+    "int_time_within_2pts": 18.41900964368197,
+    "int_absorption_ratio": 20.053049863756645,
+    "app_avg_trade_size": 23.44161101484079,
+    "app_large_trade_vol_pct": 23.13286233951654,
+    "app_max_spread": 14.953467138204049
+  },
+  "train_metrics": {
+    "train_accuracy": 0.6901840490797546,
+    "n_train_samples": 652.0,
+    "n_selected_features": 5.0
+  },
+  "config": {
+    "model_type": "catboost",
+    "iterations": 500,
+    "depth": 4,
+    "learning_rate": 0.03,
+    "loss_function": "MultiClass",
+    "auto_class_weights": "Balanced",
+    "rfecv_enabled": false,
+    "rfecv_min_features": 5,
+    "early_stopping_rounds": 50
+  }
+}
