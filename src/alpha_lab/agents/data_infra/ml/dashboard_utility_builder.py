@@ -41,17 +41,20 @@ DASHBOARD_FEATURES = [
     "int_absorption_ratio",
 ]
 
-# Session boundaries (Eastern Time)
-_ET = "US/Eastern"
-_ASIA_START = time(18, 0)
-_ASIA_END = time(1, 0)
-_LONDON_START = time(1, 0)
-_LONDON_END = time(8, 0)
-_NY_RTH_START = time(9, 30)
-_NY_RTH_END = time(16, 15)
+# Session boundaries (Eastern Time) — SINGLE-SOURCED from the shared engine scheme
+# (strategy_core.constants.RESEARCH_SESSION_SCHEME) so research slicing can never drift
+# from the engine's classify_session. Engine v3 re-clock: asia 19:00->02:45 (crosses
+# midnight), london 03:00->08:00, ny 09:00->17:00; 18:00 ET trading-day boundary.
+from strategy_core.constants import (
+    RESEARCH_SESSION_SCHEME as _SCHEME,
+    TRADING_DAY_BOUNDARY as _TRADING_DAY_BOUNDARY,
+    ZONE_PROXIMITY_PTS as _ZONE_PROXIMITY,
+)
 
-# Zone merge threshold (NQ points)
-_ZONE_PROXIMITY = 3.0
+_ET = _SCHEME.timezone  # "US/Eastern"
+_ASIA = _SCHEME.sessions["asia"]
+_LONDON = _SCHEME.sessions["london"]
+_NY = _SCHEME.sessions["ny"]
 
 
 def build_utility_dataset(
@@ -59,6 +62,8 @@ def build_utility_dataset(
     data_dir: Path,
     config: MLPipelineConfig,
     progress_fn=None,
+    *,
+    use_engine: bool = True,
 ) -> pd.DataFrame:
     """Build a labeled feature dataset for dashboard-utility training.
 
@@ -70,6 +75,14 @@ def build_utility_dataset(
         data_dir: Root databento data directory.
         config: Pipeline config (uses dashboard_utility sub-config).
         progress_fn: Optional callable(fraction, text) for progress.
+        use_engine: When True (default, phase-5 repoint), the DECISION LAYER
+            (zones -> touches -> labels -> 6 features) is single-sourced onto the
+            shared ``strategy_core`` engine via ``engine_decision``. When False,
+            the legacy duplicate CQL decision code runs. Bars and levels are
+            identical in both paths (book-mid, unchanged); only the decision layer
+            differs, so the two paths are parity-diffable. The engine path is
+            proven to reproduce the legacy/4a-canonical output EXACTLY (see
+            ``tests/agents/test_decision_repoint_parity.py``).
 
     Returns:
         DataFrame with one row per labeled touch event.
@@ -81,8 +94,9 @@ def build_utility_dataset(
     frames: list[pd.DataFrame] = []
     cached_count = 0
 
-    # Track prior-day session highs/lows for PDH/PDL computation
-    prev_ny_hl: tuple[float, float] | None = None
+    # Track the prior FULL trading day's high/low for PDH/PDL (engine v3); asia/london
+    # carry kept for signature stability (levels recompute them from the current day).
+    prev_full_hl: tuple[float, float] | None = None
     prev_asia_hl: tuple[float, float] | None = None
     prev_london_hl: tuple[float, float] | None = None
 
@@ -99,25 +113,26 @@ def build_utility_dataset(
                 frames.append(df)
             # Still need to compute session H/L for next day's levels
             _update_session_levels_from_cache(
-                df, prev_ny_hl, prev_asia_hl, prev_london_hl,
+                df, prev_full_hl, prev_asia_hl, prev_london_hl,
             )
             # Read session levels from bars if we need them for next day
-            prev_ny_hl, prev_asia_hl, prev_london_hl = _get_session_hl_for_date(
+            prev_full_hl, prev_asia_hl, prev_london_hl = _get_session_hl_for_date(
                 data_dir, symbol, date_str, util_cfg,
-                prev_ny_hl, prev_asia_hl, prev_london_hl,
+                prev_full_hl, prev_asia_hl, prev_london_hl,
             )
             continue
 
         # Build fresh for this date
         df = _process_single_date(
             date_str, data_dir, symbol, util_cfg,
-            prev_ny_hl, prev_asia_hl, prev_london_hl,
+            prev_full_hl, prev_asia_hl, prev_london_hl,
+            use_engine=use_engine,
         )
 
         # Update session levels for next day
-        prev_ny_hl, prev_asia_hl, prev_london_hl = _get_session_hl_for_date(
+        prev_full_hl, prev_asia_hl, prev_london_hl = _get_session_hl_for_date(
             data_dir, symbol, date_str, util_cfg,
-            prev_ny_hl, prev_asia_hl, prev_london_hl,
+            prev_full_hl, prev_asia_hl, prev_london_hl,
         )
 
         if not df.empty:
@@ -154,23 +169,30 @@ def _get_session_hl_for_date(
     symbol: str,
     date_str: str,
     util_cfg: DashboardUtilityConfig,
-    prev_ny_hl, prev_asia_hl, prev_london_hl,
+    prev_full_hl, prev_asia_hl, prev_london_hl,
 ):
-    """Compute session highs/lows for a date (for next day's levels)."""
+    """Compute this date's carry state for the NEXT day's levels.
+
+    Engine v3 PDH/PDL change: the FIRST element is now the FULL prior-trading-day H/L
+    (max-high / min-low over the entire [18:00, 18:00) ET window — the daily-candle
+    extremes), which becomes the next day's PDH/PDL. (Was the prior NY-RTH slice.) The
+    asia/london elements are retained for signature stability; ``_compute_levels_for_date``
+    recomputes asia/london from the CURRENT day's bars, so they are not consumed.
+    """
     bars = _build_bars_for_date(data_dir, symbol, date_str, util_cfg)
     if bars.empty:
-        return prev_ny_hl, prev_asia_hl, prev_london_hl
+        return prev_full_hl, prev_asia_hl, prev_london_hl
 
     bars_et = _ensure_et_index(bars)
-    ny = _slice_session(bars_et, "ny_rth")
+    # FULL trading-day high/low (the entire 18:00->18:00 ET window) -> next day PDH/PDL.
+    new_full = (float(bars_et["high"].max()), float(bars_et["low"].min()))
     asia = _slice_session(bars_et, "asia")
     london = _slice_session(bars_et, "london")
 
-    new_ny = _session_hl(ny) if not ny.empty else prev_ny_hl
     new_asia = _session_hl(asia) if not asia.empty else prev_asia_hl
     new_london = _session_hl(london) if not london.empty else prev_london_hl
 
-    return new_ny, new_asia, new_london
+    return new_full, new_asia, new_london
 
 
 def _update_session_levels_from_cache(df, prev_ny, prev_asia, prev_london):
@@ -183,26 +205,53 @@ def _process_single_date(
     data_dir: Path,
     symbol: str,
     util_cfg: DashboardUtilityConfig,
-    prev_ny_hl: tuple[float, float] | None,
+    prev_full_hl: tuple[float, float] | None,
     prev_asia_hl: tuple[float, float] | None,
     prev_london_hl: tuple[float, float] | None,
+    *,
+    use_engine: bool = True,
 ) -> pd.DataFrame:
-    """Process a single date: bars -> levels -> touches -> label -> features."""
+    """Process a single date: bars -> levels -> touches -> label -> features.
 
-    # 1. Build bars
+    The bars (TRADE-price after the Part-1 cutover) and the level set are computed
+    here regardless of ``use_engine``. When ``use_engine`` is True (default) the
+    decision/label/feature stage is single-sourced onto the shared ``strategy_core``
+    engine (``engine_decision.process_single_date_engine``) in its PRODUCTION mode
+    (trade-print interaction features at 0.25 + the decision-time honest outcome).
+    When False the legacy duplicate CQL decision code below runs (book-mid-era
+    level-entry labeling); the two are NO LONGER expected to match after the cutover
+    (the engine path is trade-print + honest-entry by design), but both remain
+    importable, and the book-mid-equivalence regression is exercised via
+    ``process_single_date_engine(price_source="book_mid", tick_size=0.125,
+    honest_entry=False)`` in the repoint-parity test.
+    """
+
+    # 1. Build bars (TRADE-price after the Part-1 cutover — identical input for both
+    # paths; the legacy path's book-mid-era labeler now sees trade bars).
     bars = _build_bars_for_date(data_dir, symbol, date_str, util_cfg)
     if bars.empty:
         return pd.DataFrame()
 
     bars_et = _ensure_et_index(bars)
 
-    # 2. Compute key levels available for this date
+    # 2. Compute key levels available for this date (identical for both paths)
     levels = _compute_levels_for_date(
-        bars_et, date_str, prev_ny_hl, prev_asia_hl, prev_london_hl,
+        bars_et, date_str, prev_full_hl, prev_asia_hl, prev_london_hl,
     )
     if not levels:
         return pd.DataFrame()
 
+    # 2b. Phase-5 repoint: run the engine decision layer on the SAME bars+levels.
+    if use_engine:
+        from alpha_lab.agents.data_infra.ml.engine_decision import (
+            process_single_date_engine,
+        )
+
+        return process_single_date_engine(
+            bars_et, levels, date_str, data_dir, symbol, util_cfg,
+        )
+
+    # ── Legacy CQL decision path (kept intact for the parity diff) ──────────
     # 3. Build zones and detect touches
     zones = _build_zones(levels)
     touches = _detect_touches(bars_et, zones)
@@ -302,12 +351,21 @@ def _build_bars_for_date(
             )
         elif bar_type.endswith("t"):
             tick_count = int(bar_type[:-1])
+            # TRADE-BAR CUTOVER (Part 1): the decision/dashboard pipeline now builds
+            # TRADE-PRICE tick bars (a tick is a trade print, action='T', OHLC on the
+            # 0.25 grid) — the ratified production bar definition
+            # (strategy_core.constants.BAR_PRICE_SOURCE="trade_price"). This supersedes
+            # the phase-4c book-mid bars. The engine decision path is threaded with
+            # tick_size=0.25 to match (engine_decision.process_single_date_engine).
+            # DuckDB<->streaming trade-bar parity is proven in strategy-core/validation.
             df = store.build_tick_bars(
-                symbol, start_utc, end_utc, tick_count=tick_count,
+                symbol, start_utc, end_utc, tick_count=tick_count, price_source="trade",
             )
         else:
             logger.warning("Unknown bar_type: %s, falling back to 987t", bar_type)
-            df = store.build_tick_bars(symbol, start_utc, end_utc, tick_count=987)
+            df = store.build_tick_bars(
+                symbol, start_utc, end_utc, tick_count=987, price_source="trade",
+            )
     finally:
         store.close()
 
@@ -337,11 +395,12 @@ def _slice_session(bars: pd.DataFrame, session: str) -> pd.DataFrame:
         return bars
     times = bars.index.time
     if session == "asia":
-        mask = (times >= _ASIA_START) | (times < _ASIA_END)
+        # crosses midnight: t >= 19:00 OR t < 02:45 (engine SessionWindow.contains)
+        mask = (times >= _ASIA.start) | (times < _ASIA.end)
     elif session == "london":
-        mask = (times >= _LONDON_START) & (times < _LONDON_END)
-    elif session == "ny_rth":
-        mask = (times >= _NY_RTH_START) & (times < _NY_RTH_END)
+        mask = (times >= _LONDON.start) & (times < _LONDON.end)
+    elif session == "ny":
+        mask = (times >= _NY.start) & (times < _NY.end)
     else:
         return pd.DataFrame(columns=bars.columns)
     return bars[mask]
@@ -350,31 +409,62 @@ def _slice_session(bars: pd.DataFrame, session: str) -> pd.DataFrame:
 def _compute_levels_for_date(
     bars_et: pd.DataFrame,
     date_str: str,
-    prev_ny_hl: tuple[float, float] | None,
+    prev_full_hl: tuple[float, float] | None,
     prev_asia_hl: tuple[float, float] | None,
     prev_london_hl: tuple[float, float] | None,
 ) -> list[dict]:
-    """Compute key levels available for this trading date."""
+    """Compute key levels available for this trading date.
+
+    Engine v3: each level carries ``available_from`` — the UTC instant at/after which
+    it may first be touched (its defining session's CLOSE) — so the engine's enforced
+    look-ahead guard can gate detect_touches. PDH/PDL are the FULL prior trading day's
+    high/low (``prev_full_hl``, the daily-candle extremes), available from the
+    trading-day start (prior 18:00 ET). asia/london H/L come from THIS day's session
+    slices and are available from the Asia close (02:45 ET) / London close (08:00 ET).
+    Availability instants are single-sourced from the engine session scheme.
+    """
+    td = date.fromisoformat(date_str)
+    prev_day = td - timedelta(days=1)
+
+    def _avail(d: date, t: time) -> datetime:
+        # ET wall-clock instant -> tz-aware UTC (DST-aware), matching how the engine
+        # bars' close_ts_utc are produced, so the detect_touches gate compares like
+        # for like. DST-safe: on a spring-forward day the 02:45 ET asia-close instant
+        # does not exist (clocks jump 02:00->03:00), so localize a NAIVE wall-clock with
+        # nonexistent="shift_forward" (the level becomes available at 03:00 ET that day —
+        # 15 min later, conservative, never earlier). The 18:00/02:45/08:00 anchors are
+        # never in the fall-back fold (01:00-02:00), so ambiguous is moot.
+        naive = pd.Timestamp(f"{d.isoformat()} {t.strftime('%H:%M:%S')}")
+        return (
+            naive.tz_localize(_ET, nonexistent="shift_forward", ambiguous=False)
+            .tz_convert("UTC")
+            .to_pydatetime()
+        )
+
+    pdh_pdl_avail = _avail(prev_day, _TRADING_DAY_BOUNDARY)  # prior 18:00 ET (day start)
+    asia_avail = _avail(td, _ASIA.end)                       # 02:45 ET (Asia close)
+    london_avail = _avail(td, _LONDON.end)                   # 08:00 ET (London close)
+
     levels = []
 
-    # PDH/PDL from prior day's NY RTH
-    if prev_ny_hl is not None:
-        levels.append({"name": "PDH", "price": prev_ny_hl[0], "side": "HIGH"})
-        levels.append({"name": "PDL", "price": prev_ny_hl[1], "side": "LOW"})
+    # PDH/PDL = FULL prior trading day's high/low; available from the trading-day start.
+    if prev_full_hl is not None:
+        levels.append({"name": "PDH", "price": prev_full_hl[0], "side": "HIGH", "available_from": pdh_pdl_avail})
+        levels.append({"name": "PDL", "price": prev_full_hl[1], "side": "LOW", "available_from": pdh_pdl_avail})
 
-    # Asia levels (available after 01:00 ET)
+    # Asia levels (available from the Asia close, 02:45 ET)
     asia = _slice_session(bars_et, "asia")
     if not asia.empty:
         hl = _session_hl(asia)
-        levels.append({"name": "asia_high", "price": hl[0], "side": "HIGH"})
-        levels.append({"name": "asia_low", "price": hl[1], "side": "LOW"})
+        levels.append({"name": "asia_high", "price": hl[0], "side": "HIGH", "available_from": asia_avail})
+        levels.append({"name": "asia_low", "price": hl[1], "side": "LOW", "available_from": asia_avail})
 
-    # London levels (available after 08:00 ET)
+    # London levels (available from the London close, 08:00 ET)
     london = _slice_session(bars_et, "london")
     if not london.empty:
         hl = _session_hl(london)
-        levels.append({"name": "london_high", "price": hl[0], "side": "HIGH"})
-        levels.append({"name": "london_low", "price": hl[1], "side": "LOW"})
+        levels.append({"name": "london_high", "price": hl[0], "side": "HIGH", "available_from": london_avail})
+        levels.append({"name": "london_low", "price": hl[1], "side": "LOW", "available_from": london_avail})
 
     return levels
 

@@ -1,0 +1,143 @@
+{
+  "engine": "strategy_core_engine_v3",
+  "dataset_hash": "d8e239c7",
+  "cost_model": {
+    "commission_rt_usd": 5.28,
+    "commission_pts": 0.264,
+    "slippage_pts_per_side": 0.25,
+    "point_value": 20.0,
+    "tp_points": 15.0,
+    "sl_points": 15.0
+  },
+  "n_dates": 161,
+  "block1_universe": {
+    "total_ny_touches": 310,
+    "lookahead_in_ny": 0,
+    "by_level_type": {
+      "london_low": 91,
+      "london_high": 70,
+      "asia_low": 46,
+      "PDH": 39,
+      "asia_high": 33,
+      "PDL": 31
+    },
+    "by_group": {
+      "session": 240,
+      "pdh_pdl": 70
+    },
+    "n_decision_eligible": 309,
+    "eligible_by_group": {
+      "session": 240,
+      "pdh_pdl": 69
+    },
+    "eligible_by_level_type": {
+      "london_low": 91,
+      "london_high": 70,
+      "asia_low": 46,
+      "PDH": 38,
+      "asia_high": 33,
+      "PDL": 31
+    },
+    "drop_reasons_full_ny": {
+      "kept": 309,
+      "flatten": 1
+    }
+  },
+  "block2_labels": {
+    "RTH_base_rate_to_beat": 0.525,
+    "overall": {
+      "labels": {
+        "tradeable_reversal": 159,
+        "trap_reversal": 79,
+        "aggressive_blowthrough": 71
+      },
+      "n_eligible": 309,
+      "n_resolved": 309,
+      "tradeable_base_rate_resolved": 0.5145631067961165,
+      "tradeable_share_incl_noresolution": 0.5145631067961165
+    },
+    "pdh_pdl": {
+      "labels": {
+        "tradeable_reversal": 34,
+        "trap_reversal": 22,
+        "aggressive_blowthrough": 13
+      },
+      "n_eligible": 69,
+      "n_resolved": 69,
+      "tradeable_base_rate_resolved": 0.4927536231884058,
+      "tradeable_share_incl_noresolution": 0.4927536231884058
+    },
+    "session": {
+      "labels": {
+        "tradeable_reversal": 125,
+        "aggressive_blowthrough": 58,
+        "trap_reversal": 57
+      },
+      "n_eligible": 240,
+      "n_resolved": 240,
+      "tradeable_base_rate_resolved": 0.5208333333333334,
+      "tradeable_share_incl_noresolution": 0.5208333333333334
+    }
+  },
+  "block3_baseline": {
+    "all_eligible_ny": {
+      "n": 309,
+      "hit_rate": 0.511326860841424,
+      "expectancy_gross_pts": 0.07362459546925566,
+      "expectancy_net_pts": -0.19037540453074323,
+      "expectancy_net_usd": -3.8075080906148644,
+      "net_ci95_pts": [
+        -1.840860841423947,
+        1.5410161812297745
+      ],
+      "ci_half_width_pts": 1.6909385113268607,
+      "total_net_usd": -1176.5199999999932
+    },
+    "pdh_pdl_only": {
+      "n": 69,
+      "hit_rate": 0.4927536231884058,
+      "expectancy_gross_pts": -0.4673913043478261,
+      "expectancy_net_pts": -0.731391304347825,
+      "expectancy_net_usd": -14.6278260869565,
+      "net_ci95_pts": [
+        -4.209652173913042,
+        2.746869565217392
+      ],
+      "ci_half_width_pts": 3.478260869565217,
+      "total_net_usd": -1009.3199999999985
+    },
+    "session_levels_only": {
+      "n": 240,
+      "hit_rate": 0.5166666666666667,
+      "expectancy_gross_pts": 0.22916666666666666,
+      "expectancy_net_pts": -0.034833333333332085,
+      "expectancy_net_usd": -0.6966666666666417,
+      "net_ci95_pts": [
+        -1.9306666666666652,
+        1.8198541666666614
+      ],
+      "ci_half_width_pts": 1.8752604166666633,
+      "total_net_usd": -167.19999999999402
+    },
+    "exit_reasons": {
+      "tp": 157,
+      "sl": 151,
+      "cutoff": 1
+    },
+    "n_eligible_no_fill_or_forward": 0
+  },
+  "block4_power": {
+    "n": 309,
+    "ci_half_width_pts": 1.6909385113268607,
+    "min_distinguishable_edge_pts": 1.6909385113268607,
+    "note": "An edge smaller than the CI half-width is indistinguishable from zero at this n; halving the half-width needs ~4x the trades."
+  },
+  "decision_frame": {
+    "signals": [
+      "eligible NY tradeable n = 309 (healthy >=60)",
+      "unconditional net CI95 straddles zero = True",
+      "session-level reversal rate = 0.5208333333333334 vs ~0.525 prior"
+    ],
+    "suggested_read": "MIXED \u2014 see numbers; the call is the user's (does not cleanly meet either rule)."
+  }
+}

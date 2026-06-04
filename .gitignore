@@ -22,7 +22,6 @@ env/
 htmlcov/
 # Generated ML artifacts
 catboost_info/
-models/
 *.cbm
 # Cached data exports
 *.csv
