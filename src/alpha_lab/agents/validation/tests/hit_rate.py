@@ -65,7 +65,7 @@ class HitRateTest(ValidationTest):
         str_masked = strength[mask]
 
         # Correct prediction: sign of direction matches sign of forward return
-        correct = (np.sign(dir_masked) == np.sign(fwd_masked))
+        correct = np.sign(dir_masked) == np.sign(fwd_masked)
         hit_rate_overall = float(correct.mean())
 
         # Long signals

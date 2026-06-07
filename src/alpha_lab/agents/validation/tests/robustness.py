@@ -46,7 +46,12 @@ class RobustnessTest(ValidationTest):
         subsample_ics: list[float] = []
 
         try:
-            quarters = close.index.to_period("Q")
+            index = close.index
+            if isinstance(index, pd.DatetimeIndex) and index.tz is not None:
+                # Match pandas' current local wall-clock quarter assignment while making
+                # the timezone drop explicit and warning-free.
+                index = index.tz_localize(None)
+            quarters = index.to_period("Q")
             unique_quarters = quarters.unique()
         except (AttributeError, TypeError):
             # Fallback to positional split if index isn't datetime
@@ -103,9 +108,7 @@ class RobustnessTest(ValidationTest):
         }
 
 
-def _compute_regime_ics(
-    sig: pd.Series, fwd: pd.Series, rolling_vol: pd.Series
-) -> dict[str, float]:
+def _compute_regime_ics(sig: pd.Series, fwd: pd.Series, rolling_vol: pd.Series) -> dict[str, float]:
     """Compute IC in different volatility regimes (terciles)."""
     result: dict[str, float] = {}
     valid = sig.notna() & fwd.notna() & rolling_vol.notna() & (sig != 0)

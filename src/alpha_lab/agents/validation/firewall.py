@@ -67,9 +67,7 @@ def strip_signal_metadata(signal: SignalVector) -> dict[str, Any]:
     }
 
 
-def compute_forward_returns(
-    close: pd.Series, horizon: int = 1
-) -> pd.Series:
+def compute_forward_returns(close: pd.Series, horizon: int = 1) -> pd.Series:
     """Compute forward returns at a given horizon.
 
     forward_return[i] = close[i + horizon] / close[i] - 1
@@ -148,52 +146,64 @@ def assemble_verdict(
     failed_metrics: list[dict[str, Any]] = []
 
     if ic_tstat < th.get("ic_tstat_min", 2.0):
-        failed_metrics.append({
-            "metric": "ic_tstat",
-            "value": ic_tstat,
-            "threshold": th["ic_tstat_min"],
-            "suggestion": "Increase signal-to-noise ratio",
-        })
+        failed_metrics.append(
+            {
+                "metric": "ic_tstat",
+                "value": ic_tstat,
+                "threshold": th["ic_tstat_min"],
+                "suggestion": "Increase signal-to-noise ratio",
+            }
+        )
 
     if hit_rate < th.get("hit_rate_min", 0.51):
-        failed_metrics.append({
-            "metric": "hit_rate",
-            "value": hit_rate,
-            "threshold": th["hit_rate_min"],
-            "suggestion": "Improve directional accuracy",
-        })
+        failed_metrics.append(
+            {
+                "metric": "hit_rate",
+                "value": hit_rate,
+                "threshold": th["hit_rate_min"],
+                "suggestion": "Improve directional accuracy",
+            }
+        )
 
     if sharpe < th.get("sharpe_min", 1.0):
-        failed_metrics.append({
-            "metric": "sharpe",
-            "value": sharpe,
-            "threshold": th["sharpe_min"],
-            "suggestion": "Reduce variance or increase mean return",
-        })
+        failed_metrics.append(
+            {
+                "metric": "sharpe",
+                "value": sharpe,
+                "threshold": th["sharpe_min"],
+                "suggestion": "Reduce variance or increase mean return",
+            }
+        )
 
     if max_drawdown > th.get("max_drawdown_max", 0.15):
-        failed_metrics.append({
-            "metric": "max_drawdown",
-            "value": max_drawdown,
-            "threshold": th["max_drawdown_max"],
-            "suggestion": "Add risk controls to limit drawdown",
-        })
+        failed_metrics.append(
+            {
+                "metric": "max_drawdown",
+                "value": max_drawdown,
+                "threshold": th["max_drawdown_max"],
+                "suggestion": "Add risk controls to limit drawdown",
+            }
+        )
 
     if profit_factor < th.get("profit_factor_min", 1.2):
-        failed_metrics.append({
-            "metric": "profit_factor",
-            "value": profit_factor,
-            "threshold": th["profit_factor_min"],
-            "suggestion": "Improve win/loss ratio",
-        })
+        failed_metrics.append(
+            {
+                "metric": "profit_factor",
+                "value": profit_factor,
+                "threshold": th["profit_factor_min"],
+                "suggestion": "Improve win/loss ratio",
+            }
+        )
 
     if max_factor_corr > th.get("max_factor_correlation", 0.30):
-        failed_metrics.append({
-            "metric": "max_factor_corr",
-            "value": max_factor_corr,
-            "threshold": th["max_factor_correlation"],
-            "suggestion": "Reduce exposure to known factors",
-        })
+        failed_metrics.append(
+            {
+                "metric": "max_factor_corr",
+                "value": max_factor_corr,
+                "threshold": th["max_factor_correlation"],
+                "suggestion": "Reduce exposure to known factors",
+            }
+        )
 
     # Determine verdict
     # REJECT: fundamental failure (very low IC, or suspected look-ahead)

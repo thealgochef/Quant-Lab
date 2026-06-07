@@ -32,9 +32,7 @@ class TestFirewallBoundary:
         assert sv.parameters is not None
         assert sv.category is not None
 
-    def test_validation_produces_verdicts_for_all_signals(
-        self, message_bus, synthetic_data_bundle
-    ):
+    def test_validation_produces_verdicts_for_all_signals(self, message_bus, synthetic_data_bundle):
         """VAL-001 returns one verdict per signal in the bundle."""
         sig = SignalEngineeringAgent(message_bus)
         val = ValidationAgent(message_bus)
@@ -48,9 +46,7 @@ class TestFirewallBoundary:
         expected_ids = {sv.signal_id for sv in signal_bundle.signals}
         assert signal_ids == expected_ids
 
-    def test_bonferroni_adjustment_applied(
-        self, message_bus, synthetic_data_bundle
-    ):
+    def test_bonferroni_adjustment_applied(self, message_bus, synthetic_data_bundle):
         """With 3+ signals, Bonferroni adjustment is applied."""
         sig = SignalEngineeringAgent(message_bus)
         val = ValidationAgent(message_bus)
@@ -62,9 +58,7 @@ class TestFirewallBoundary:
         report = val.validate_signal_bundle(signal_bundle, price_data)
         assert report.bonferroni_adjusted is True
 
-    def test_lookahead_bias_detection(
-        self, message_bus, synthetic_data_bundle
-    ):
+    def test_lookahead_bias_detection(self, message_bus, synthetic_data_bundle):
         """Synthetic data with regime trends triggers look-ahead bias warnings."""
         sig = SignalEngineeringAgent(message_bus)
         val = ValidationAgent(message_bus)
@@ -76,6 +70,4 @@ class TestFirewallBoundary:
         # Synthetic data typically produces high IC that triggers bias detection
         # At least some signals should be flagged
         high_ic_signals = [v for v in report.verdicts if abs(v.ic) > 0.20]
-        assert len(high_ic_signals) > 0, (
-            "Expected look-ahead bias detection on synthetic data"
-        )
+        assert len(high_ic_signals) > 0, "Expected look-ahead bias detection on synthetic data"

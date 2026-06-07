@@ -46,7 +46,10 @@ def _make_price_data(n: int = 300, seed: int = 42) -> pd.DataFrame:
     return pd.DataFrame(
         {
             "open": close + rng.normal(0, 1, n),
-            "high": high, "low": low, "close": close, "volume": volume,
+            "high": high,
+            "low": low,
+            "close": close,
+            "volume": volume,
         },
         index=idx,
     )
@@ -140,16 +143,20 @@ class TestAssembleVerdict:
         results = {
             "information_coefficient": {"ic_mean": 0.05, "ic_tstat": 3.0},
             "hit_rate": {
-                "hit_rate_overall": 0.55, "hit_rate_long": 0.56,
+                "hit_rate_overall": 0.55,
+                "hit_rate_long": 0.56,
                 "hit_rate_short": 0.54,
             },
             "risk_adjusted": {
-                "sharpe": 1.5, "sortino": 2.0,
-                "max_drawdown": 0.08, "profit_factor": 1.5,
+                "sharpe": 1.5,
+                "sortino": 2.0,
+                "max_drawdown": 0.08,
+                "profit_factor": 1.5,
             },
             "decay_analysis": {"half_life": 30.0, "decay_class": "medium"},
             "orthogonality": {
-                "max_factor_corr": 0.15, "incremental_r2": 0.01,
+                "max_factor_corr": 0.15,
+                "incremental_r2": 0.01,
                 "is_orthogonal": True,
             },
             "robustness": {"subsample_stable": True},
@@ -162,16 +169,20 @@ class TestAssembleVerdict:
         results = {
             "information_coefficient": {"ic_mean": 0.05, "ic_tstat": 2.5},
             "hit_rate": {
-                "hit_rate_overall": 0.53, "hit_rate_long": 0.53,
+                "hit_rate_overall": 0.53,
+                "hit_rate_long": 0.53,
                 "hit_rate_short": 0.53,
             },
             "risk_adjusted": {
-                "sharpe": 0.7, "sortino": 0.9,
-                "max_drawdown": 0.10, "profit_factor": 1.3,
+                "sharpe": 0.7,
+                "sortino": 0.9,
+                "max_drawdown": 0.10,
+                "profit_factor": 1.3,
             },
             "decay_analysis": {"half_life": 20.0, "decay_class": "medium"},
             "orthogonality": {
-                "max_factor_corr": 0.20, "incremental_r2": 0.01,
+                "max_factor_corr": 0.20,
+                "incremental_r2": 0.01,
                 "is_orthogonal": True,
             },
             "robustness": {"subsample_stable": True},
@@ -185,18 +196,23 @@ class TestAssembleVerdict:
         results = {
             "information_coefficient": {"ic_mean": 0.005, "ic_tstat": 0.3},
             "hit_rate": {
-                "hit_rate_overall": 0.50, "hit_rate_long": 0.50,
+                "hit_rate_overall": 0.50,
+                "hit_rate_long": 0.50,
                 "hit_rate_short": 0.50,
             },
             "risk_adjusted": {
-                "sharpe": 0.2, "sortino": 0.1,
-                "max_drawdown": 0.25, "profit_factor": 0.8,
+                "sharpe": 0.2,
+                "sortino": 0.1,
+                "max_drawdown": 0.25,
+                "profit_factor": 0.8,
             },
             "decay_analysis": {
-                "half_life": 2.0, "decay_class": "ultra-fast",
+                "half_life": 2.0,
+                "decay_class": "ultra-fast",
             },
             "orthogonality": {
-                "max_factor_corr": 0.60, "incremental_r2": 0.001,
+                "max_factor_corr": 0.60,
+                "incremental_r2": 0.001,
                 "is_orthogonal": False,
             },
             "robustness": {"subsample_stable": False},
@@ -343,9 +359,7 @@ class TestDecayAnalysisTest:
         sig = _make_good_signal(price)
         test = DecayAnalysisTest(horizons=[1, 5, 10, 30])
         result = test.evaluate(sig, price)
-        assert result["decay_class"] in [
-            "ultra-fast", "fast", "medium", "slow", "persistent"
-        ]
+        assert result["decay_class"] in ["ultra-fast", "fast", "medium", "slow", "persistent"]
 
     def test_half_life_positive(self):
         price = _make_price_data(300)

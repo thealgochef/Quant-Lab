@@ -98,9 +98,7 @@ class ICTest(ValidationTest):
         }
 
 
-def _rolling_spearman(
-    x: pd.Series, y: pd.Series, window: int = 252
-) -> pd.Series:
+def _rolling_spearman(x: pd.Series, y: pd.Series, window: int = 252) -> pd.Series:
     """Compute rolling Spearman correlation between two series."""
     result = pd.Series(np.nan, index=x.index)
     x_arr = x.values

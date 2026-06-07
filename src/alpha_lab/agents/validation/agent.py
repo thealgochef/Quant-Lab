@@ -174,9 +174,7 @@ class ValidationAgent(BaseAgent):
             reject_count=reject_count,
             bonferroni_adjusted=n_signals > 1,
             overall_assessment=_build_assessment(deploy_count, refine_count, reject_count),
-            recommended_composites=[
-                v.signal_id for v in verdicts if v.verdict == "DEPLOY"
-            ],
+            recommended_composites=[v.signal_id for v in verdicts if v.verdict == "DEPLOY"],
             correlation_matrix={},
             timestamp=datetime.now(UTC).isoformat(),
         )
@@ -190,9 +188,7 @@ class ValidationAgent(BaseAgent):
 
             adjusted_alpha = _BONFERRONI_ALPHA / n_signals
             adjusted_tstat = float(norm.ppf(1 - adjusted_alpha / 2))
-            thresholds["ic_tstat_min"] = max(
-                thresholds.get("ic_tstat_min", 2.0), adjusted_tstat
-            )
+            thresholds["ic_tstat_min"] = max(thresholds.get("ic_tstat_min", 2.0), adjusted_tstat)
         return thresholds
 
 

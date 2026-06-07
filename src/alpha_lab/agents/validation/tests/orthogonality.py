@@ -92,9 +92,7 @@ def _build_factor_proxies(close: pd.Series, volume: pd.Series) -> dict[str, pd.S
 
     # Calendar: hour of day (normalized 0-1) as proxy for time-of-day effect
     if hasattr(close.index, "hour"):
-        factors["calendar"] = pd.Series(
-            close.index.hour / 24.0, index=close.index
-        )
+        factors["calendar"] = pd.Series(close.index.hour / 24.0, index=close.index)
 
     return factors
 
