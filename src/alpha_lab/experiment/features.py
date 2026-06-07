@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """
 Phase 4 — Order Flow Feature Engineering for Key Level Classifier.
 
@@ -17,12 +18,10 @@ Output: data/experiment/feature_matrix.parquet
 
 from __future__ import annotations
 
-import json
 import logging
 import math
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 from alpha_lab.agents.data_infra.tick_store import TickStore
@@ -262,28 +261,65 @@ def _query_approach_features(
 
     # Unpack row into named values
     (
-        buy_vol, sell_vol, total_vol, trade_count,
-        large_count, large_vol,
-        avg_size, p90_size,
-        first_price, last_price, max_price, min_price,
-        early_buy, early_total, early_volume,
-        late_buy, late_total, late_volume,
-        late_first_price, late_last_price,
-        avg_tob_imb, avg_top5, avg_spread, max_spread,
-        cancel_rate, bid_depth_ratio, depth_conc,
-        early_imb, late_imb,
-        vol_full, vol_recent,
-        upticks, downticks,
+        buy_vol,
+        sell_vol,
+        total_vol,
+        trade_count,
+        large_count,
+        large_vol,
+        avg_size,
+        p90_size,
+        first_price,
+        last_price,
+        max_price,
+        min_price,
+        early_buy,
+        early_total,
+        early_volume,
+        late_buy,
+        late_total,
+        late_volume,
+        late_first_price,
+        late_last_price,
+        avg_tob_imb,
+        avg_top5,
+        avg_spread,
+        max_spread,
+        cancel_rate,
+        bid_depth_ratio,
+        depth_conc,
+        early_imb,
+        late_imb,
+        vol_full,
+        vol_recent,
+        upticks,
+        downticks,
     ) = row
 
     # Derived features
     buy_sell_total = _safe_float(buy_vol) + _safe_float(sell_vol)
     buy_sell_ratio = _safe_float(buy_vol) / buy_sell_total if buy_sell_total > 0 else float("nan")
-    large_vol_pct = _safe_float(large_vol) / _safe_float(total_vol) if _safe_float(total_vol) > 0 else float("nan")
+    large_vol_pct = (
+        _safe_float(large_vol) / _safe_float(total_vol)
+        if _safe_float(total_vol) > 0
+        else float("nan")
+    )
 
-    early_ratio = _safe_float(early_buy) / _safe_float(early_total) if _safe_float(early_total) > 0 else float("nan")
-    late_ratio = _safe_float(late_buy) / _safe_float(late_total) if _safe_float(late_total) > 0 else float("nan")
-    aggression_trend = (late_ratio - early_ratio) if not (math.isnan(late_ratio) or math.isnan(early_ratio)) else float("nan")
+    early_ratio = (
+        _safe_float(early_buy) / _safe_float(early_total)
+        if _safe_float(early_total) > 0
+        else float("nan")
+    )
+    late_ratio = (
+        _safe_float(late_buy) / _safe_float(late_total)
+        if _safe_float(late_total) > 0
+        else float("nan")
+    )
+    aggression_trend = (
+        (late_ratio - early_ratio)
+        if not (math.isnan(late_ratio) or math.isnan(early_ratio))
+        else float("nan")
+    )
 
     early_vol = _safe_float(early_volume)
     late_vol_val = _safe_float(late_volume)
@@ -295,7 +331,9 @@ def _query_approach_features(
     fp = _safe_float(first_price)
     lp = _safe_float(last_price)
     price_change = lp - fp if not (math.isnan(fp) or math.isnan(lp)) else float("nan")
-    price_change_pct = price_change / fp if fp != 0 and not math.isnan(price_change) else float("nan")
+    price_change_pct = (
+        price_change / fp if fp != 0 and not math.isnan(price_change) else float("nan")
+    )
 
     lfp = _safe_float(late_first_price)
     llp = _safe_float(late_last_price)
@@ -314,9 +352,11 @@ def _query_approach_features(
     vol_r = _safe_float(vol_recent)
     vol_ratio = vol_r / vol_f if vol_f > 0 and not math.isnan(vol_f) else float("nan")
 
-    imb_trend = _safe_float(late_imb) - _safe_float(early_imb) if not (
-        math.isnan(_safe_float(late_imb)) or math.isnan(_safe_float(early_imb))
-    ) else float("nan")
+    imb_trend = (
+        _safe_float(late_imb) - _safe_float(early_imb)
+        if not (math.isnan(_safe_float(late_imb)) or math.isnan(_safe_float(early_imb)))
+        else float("nan")
+    )
 
     return {
         "app_buy_volume": _safe_float(buy_vol),
@@ -352,16 +392,33 @@ def _query_approach_features(
 def _empty_approach_features() -> dict[str, float]:
     """Return NaN-filled approach features dict."""
     keys = [
-        "app_buy_volume", "app_sell_volume", "app_buy_sell_ratio",
-        "app_large_trade_count", "app_large_trade_vol_pct", "app_aggression_trend",
-        "app_total_trade_volume", "app_trade_count", "app_volume_acceleration",
-        "app_avg_trade_size", "app_p90_trade_size",
-        "app_avg_tob_imbalance", "app_avg_top5_depth", "app_avg_spread",
-        "app_max_spread", "app_cancel_rate", "app_book_imbalance_trend",
-        "app_avg_bid_depth_ratio", "app_depth_concentration",
-        "app_price_change", "app_price_change_pct", "app_tick_direction_bias",
-        "app_price_velocity_15m", "app_price_range",
-        "app_volatility_full", "app_volatility_recent", "app_volatility_ratio",
+        "app_buy_volume",
+        "app_sell_volume",
+        "app_buy_sell_ratio",
+        "app_large_trade_count",
+        "app_large_trade_vol_pct",
+        "app_aggression_trend",
+        "app_total_trade_volume",
+        "app_trade_count",
+        "app_volume_acceleration",
+        "app_avg_trade_size",
+        "app_p90_trade_size",
+        "app_avg_tob_imbalance",
+        "app_avg_top5_depth",
+        "app_avg_spread",
+        "app_max_spread",
+        "app_cancel_rate",
+        "app_book_imbalance_trend",
+        "app_avg_bid_depth_ratio",
+        "app_depth_concentration",
+        "app_price_change",
+        "app_price_change_pct",
+        "app_tick_direction_bias",
+        "app_price_velocity_15m",
+        "app_price_range",
+        "app_volatility_full",
+        "app_volatility_recent",
+        "app_volatility_ratio",
     ]
     return {k: float("nan") for k in keys}
 
@@ -458,7 +515,7 @@ def _query_interaction_features(
             mid,
             LEAD(ts_event) OVER (ORDER BY ts_event) AS next_ts,
             CASE WHEN ABS(mid - {representative_price}) <= 2.0 THEN 1 ELSE 0 END AS within_2pts,
-            CASE WHEN {'mid < ' + str(representative_price) if direction == 'LONG' else 'mid > ' + str(representative_price)}
+            CASE WHEN {"mid < " + str(representative_price) if direction == "LONG" else "mid > " + str(representative_price)}
                 THEN 1 ELSE 0 END AS beyond_level
         FROM base
     ),
@@ -492,14 +549,27 @@ def _query_interaction_features(
         return _empty_interaction_features()
 
     (
-        total_vol, trade_count, buy_vol, sell_vol,
-        large_count, large_vol, max_size,
-        avg_size, p90_size,
-        vol_at_level, vol_through, sweep_vol,
-        first_price, last_price,
-        avg_tob_imb, avg_spread, avg_depth,
-        cancel_burst, cancel_total,
-        time_within, time_beyond,
+        total_vol,
+        trade_count,
+        buy_vol,
+        sell_vol,
+        large_count,
+        large_vol,
+        max_size,
+        avg_size,
+        p90_size,
+        vol_at_level,
+        vol_through,
+        sweep_vol,
+        first_price,
+        last_price,
+        avg_tob_imb,
+        avg_spread,
+        avg_depth,
+        cancel_burst,
+        cancel_total,
+        time_within,
+        time_beyond,
     ) = row
 
     total_v = _safe_float(total_vol)
@@ -552,15 +622,27 @@ def _query_interaction_features(
 def _empty_interaction_features() -> dict[str, float]:
     """Return NaN-filled interaction features dict."""
     keys = [
-        "int_total_trade_volume", "int_trade_count",
-        "int_volume_at_level", "int_volume_through_level", "int_absorption_ratio",
+        "int_total_trade_volume",
+        "int_trade_count",
+        "int_volume_at_level",
+        "int_volume_through_level",
+        "int_absorption_ratio",
         "int_buy_sell_ratio",
-        "int_large_trade_count", "int_large_trade_pct",
-        "int_max_trade_size", "int_sweep_volume", "int_cancel_burst",
-        "int_avg_trade_size", "int_p90_trade_size",
-        "int_avg_tob_imbalance", "int_avg_spread", "int_avg_depth",
-        "int_time_within_2pts", "int_time_beyond_level",
-        "_int_displacement", "_int_first_price", "_int_last_price",
+        "int_large_trade_count",
+        "int_large_trade_pct",
+        "int_max_trade_size",
+        "int_sweep_volume",
+        "int_cancel_burst",
+        "int_avg_trade_size",
+        "int_p90_trade_size",
+        "int_avg_tob_imbalance",
+        "int_avg_spread",
+        "int_avg_depth",
+        "int_time_within_2pts",
+        "int_time_beyond_level",
+        "_int_displacement",
+        "_int_first_price",
+        "_int_last_price",
     ]
     return {k: float("nan") for k in keys}
 
@@ -601,7 +683,11 @@ def _compute_cross_window_features(
     # Deceleration ratio: approach displacement rate / interaction displacement rate
     app_price_change = approach.get("app_price_change", float("nan"))
     int_disp = interaction.get("_int_displacement", float("nan"))
-    app_rate = abs(app_price_change) / APPROACH_WINDOW_MINUTES if not math.isnan(app_price_change) else float("nan")
+    app_rate = (
+        abs(app_price_change) / APPROACH_WINDOW_MINUTES
+        if not math.isnan(app_price_change)
+        else float("nan")
+    )
     int_rate = int_disp / INTERACTION_WINDOW_MINUTES if not math.isnan(int_disp) else float("nan")
     decel = _safe_div(app_rate, int_rate)
 
@@ -676,8 +762,11 @@ class EventFeatureBuilder:
         # Filter out no_resolution
         resolved = labeled_events[labeled_events["label"] != NO_RESOLUTION].copy()
         n = len(resolved)
-        logger.info("Building features for %d resolved events (excluded %d no_resolution)",
-                     n, len(labeled_events) - n)
+        logger.info(
+            "Building features for %d resolved events (excluded %d no_resolution)",
+            n,
+            len(labeled_events) - n,
+        )
 
         feature_rows: list[dict] = []
         nan_event_indices: list[int] = []
@@ -698,11 +787,14 @@ class EventFeatureBuilder:
             if n_reg == 0:
                 logger.warning("No tick data for date group %s, all features NaN", date_str)
                 for _, event in group.iterrows():
-                    features = {**_extract_static_features(event),
-                                **_empty_approach_features(),
-                                **_empty_interaction_features(),
-                                **_compute_cross_window_features(
-                                    _empty_approach_features(), _empty_interaction_features())}
+                    features = {
+                        **_extract_static_features(event),
+                        **_empty_approach_features(),
+                        **_empty_interaction_features(),
+                        **_compute_cross_window_features(
+                            _empty_approach_features(), _empty_interaction_features()
+                        ),
+                    }
                     feature_rows.append(features)
                     nan_event_indices.append(processed)
                     processed += 1
@@ -719,13 +811,16 @@ class EventFeatureBuilder:
                 features = self._extract_event_features(event, conn, union_sql, sym_filter)
 
                 # Check for all-NaN numeric features
-                numeric_vals = [v for k, v in features.items()
-                               if isinstance(v, float) and not k.startswith("_")]
+                numeric_vals = [
+                    v for k, v in features.items() if isinstance(v, float) and not k.startswith("_")
+                ]
                 if numeric_vals and all(math.isnan(v) for v in numeric_vals):
                     nan_event_indices.append(processed)
                     logger.warning(
                         "All-NaN features for event %d: date=%s zone=%s",
-                        processed, event["date"], event["zone_id"],
+                        processed,
+                        event["date"],
+                        event["zone_id"],
                     )
 
                 feature_rows.append(features)
@@ -741,12 +836,14 @@ class EventFeatureBuilder:
         if len(nan_event_indices) > 0:
             logger.warning(
                 "%d/%d events (%.1f%%) have all-NaN features",
-                len(nan_event_indices), n, 100 * nan_pct,
+                len(nan_event_indices),
+                n,
+                100 * nan_pct,
             )
         if len(nan_event_indices) >= 28:
             raise RuntimeError(
                 f"Systematic data access problem: {len(nan_event_indices)}/{n} events "
-                f"({100*nan_pct:.1f}%) have all-NaN features. Check TickStore registration."
+                f"({100 * nan_pct:.1f}%) have all-NaN features. Check TickStore registration."
             )
 
         # Build DataFrame
@@ -783,7 +880,7 @@ class EventFeatureBuilder:
         For a group of events on one trading date, we need the trading date
         itself plus ±1 day to cover cross-midnight approach windows.
         """
-        from datetime import date as date_cls, timedelta as td
+        from datetime import timedelta as td
 
         dates_needed: set[str] = set()
         for _, event in group.iterrows():
@@ -814,10 +911,7 @@ class EventFeatureBuilder:
         union_sql = store._union_views_sql(views)
 
         # Detect symbol column and determine front-month filter
-        sample_sql = (
-            f"SELECT column_name FROM "
-            f"(DESCRIBE SELECT * FROM ({union_sql}) LIMIT 0)"
-        )
+        sample_sql = f"SELECT column_name FROM (DESCRIBE SELECT * FROM ({union_sql}) LIMIT 0)"
         cols = {r[0] for r in conn.execute(sample_sql).fetchall()}
         has_symbol = "symbol" in cols
 
@@ -853,14 +947,22 @@ class EventFeatureBuilder:
 
         # 2. Approach window
         approach = _query_approach_features(
-            conn, union_sql, sym_filter, approach_start, event_ts_utc,
+            conn,
+            union_sql,
+            sym_filter,
+            approach_start,
+            event_ts_utc,
         )
 
         # 3. Interaction window
         interaction = _query_interaction_features(
-            conn, union_sql, sym_filter,
-            event_ts_utc, interaction_end,
-            event["representative_price"], event["direction"],
+            conn,
+            union_sql,
+            sym_filter,
+            event_ts_utc,
+            interaction_end,
+            event["representative_price"],
+            event["direction"],
         )
 
         # 4. Cross-window
@@ -877,12 +979,12 @@ def _print_feature_summary(df: pd.DataFrame, feature_cols: list[str]) -> None:
     print(f"\n  Feature matrix shape: {df.shape}")
     print(f"  Features: {len(feature_cols)}")
 
-    print(f"\n  Label distribution:")
+    print("\n  Label distribution:")
     for label, cnt in df["label"].value_counts().sort_index().items():
-        print(f"    {label:30s}  {cnt:4d}  ({100*cnt/len(df):.1f}%)")
+        print(f"    {label:30s}  {cnt:4d}  ({100 * cnt / len(df):.1f}%)")
 
     # NaN counts
-    print(f"\n  NaN counts per feature (>0 only):")
+    print("\n  NaN counts per feature (>0 only):")
     for col in sorted(feature_cols):
         if col in df.columns:
             nan_count = df[col].isna().sum() if df[col].dtype != object else 0
@@ -898,7 +1000,7 @@ def _print_feature_summary(df: pd.DataFrame, feature_cols: list[str]) -> None:
             vals = df[col].unique()
             print(f"    {col}: {sorted(vals)}")
 
-    print(f"\n  Sample rows (first 3):")
+    print("\n  Sample rows (first 3):")
     sample_cols = ["label"] + feature_cols[:10]
     valid_cols = [c for c in sample_cols if c in df.columns]
     print(df[valid_cols].head(3).to_string())

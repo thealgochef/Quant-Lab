@@ -1,3 +1,4 @@
+# ruff: noqa: E501,N806
 """
 Phase 5 - Walk-Forward CatBoost 3-Class Compatibility Training.
 
@@ -20,13 +21,13 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from alpha_lab.experiment.features import CAT_FEATURES, LABEL_ENCODING
+from alpha_lab.experiment.features import CAT_FEATURES
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,8 @@ THRESHOLD_ACCURACY_VARIANCE = 0.10
 CLASS_REVERSAL = 0
 CLASS_TRAP = 1
 CLASS_BLOWTHROUGH = 2
+actual_predicted = "Actual \\ Predicted"
+
 CLASS_NAMES = {0: "tradeable_reversal", 1: "trap_reversal", 2: "aggressive_blowthrough"}
 
 # Dashboard model: the 3 features computable from real-time MBP-1 + trades
@@ -83,7 +86,7 @@ class FoldResult:
     n_train: int
     n_test: int
     train_dates_str: str  # "first -- last"
-    test_dates_str: str   # "first -- last"
+    test_dates_str: str  # "first -- last"
     accuracy: float
     reversal_precision: float
     blowthrough_recall: float
@@ -164,18 +167,21 @@ def create_walk_forward_folds(
         if len(train_idx) < min_train_events:
             logger.warning(
                 "Fold %d: only %d train events after expansion, skipping",
-                fold_idx, len(train_idx),
+                fold_idx,
+                len(train_idx),
             )
             original_start += step_days
             continue
 
-        folds.append(WalkForwardFold(
-            fold=fold_idx,
-            train_dates=fold_train_dates,
-            test_dates=fold_test_dates,
-            train_indices=train_idx,
-            test_indices=test_idx,
-        ))
+        folds.append(
+            WalkForwardFold(
+                fold=fold_idx,
+                train_dates=fold_train_dates,
+                test_dates=fold_test_dates,
+                train_indices=train_idx,
+                test_indices=test_idx,
+            )
+        )
         fold_idx += 1
         original_start += step_days
 
@@ -186,15 +192,14 @@ def create_walk_forward_folds(
 
 
 def _confusion_matrix_3class(
-    y_true: np.ndarray, y_pred: np.ndarray,
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
 ) -> np.ndarray:
     """Compute 3x3 confusion matrix. Rows = actual, columns = predicted."""
     cm = np.zeros((3, 3), dtype=int)
     for true_cls in range(3):
         for pred_cls in range(3):
-            cm[true_cls, pred_cls] = int(
-                np.sum((y_true == true_cls) & (y_pred == pred_cls))
-            )
+            cm[true_cls, pred_cls] = int(np.sum((y_true == true_cls) & (y_pred == pred_cls)))
     return cm
 
 
@@ -227,10 +232,7 @@ def train_fold(
     y_fit, y_eval = y_train.iloc[:split_idx], y_train.iloc[split_idx:]
 
     # Resolve cat_features to column indices
-    cat_indices = [
-        list(X_train.columns).index(c) for c in cat_features
-        if c in X_train.columns
-    ]
+    cat_indices = [list(X_train.columns).index(c) for c in cat_features if c in X_train.columns]
 
     model = CatBoostClassifier(
         iterations=1000,
@@ -264,14 +266,16 @@ def train_fold(
     rev_predicted = y_pred == CLASS_REVERSAL
     reversal_precision = (
         float(np.sum(y_true[rev_predicted] == CLASS_REVERSAL) / rev_predicted.sum())
-        if rev_predicted.sum() > 0 else 0.0
+        if rev_predicted.sum() > 0
+        else 0.0
     )
 
     # Blowthrough recall: TP_bt / actual_bt
     bt_actual = y_true == CLASS_BLOWTHROUGH
     blowthrough_recall = (
         float(np.sum(y_pred[bt_actual] == CLASS_BLOWTHROUGH) / bt_actual.sum())
-        if bt_actual.sum() > 0 else 0.0
+        if bt_actual.sum() > 0
+        else 0.0
     )
 
     # Feature importances
@@ -298,8 +302,12 @@ def train_fold(
 
     logger.info(
         "Fold %d: n_train=%d n_test=%d acc=%.3f rev_prec=%.3f bt_recall=%.3f",
-        fold.fold, n_train, len(y_test), accuracy,
-        reversal_precision, blowthrough_recall,
+        fold.fold,
+        n_train,
+        len(y_test),
+        accuracy,
+        reversal_precision,
+        blowthrough_recall,
     )
 
     return model, fold_result
@@ -324,7 +332,8 @@ def _compute_feature_stability(
     for fr in fold_results:
         sorted_feats = sorted(
             fr.feature_importances.items(),
-            key=lambda x: x[1], reverse=True,
+            key=lambda x: x[1],
+            reverse=True,
         )
         top_names = {name for name, _ in sorted_feats[:top_n]}
         per_fold_tops.append(top_names)
@@ -341,19 +350,17 @@ def _compute_feature_stability(
     for feat in all_top_features:
         imps = all_importances.get(feat, [])
         appearances = sum(1 for tops in per_fold_tops if feat in tops)
-        rows.append({
-            "feature": feat,
-            "mean_importance": float(np.mean(imps)),
-            "std_importance": float(np.std(imps)),
-            "folds_in_top_10": appearances,
-            "in_all_folds": appearances == n_folds,
-        })
+        rows.append(
+            {
+                "feature": feat,
+                "mean_importance": float(np.mean(imps)),
+                "std_importance": float(np.std(imps)),
+                "folds_in_top_10": appearances,
+                "in_all_folds": appearances == n_folds,
+            }
+        )
 
-    return (
-        pd.DataFrame(rows)
-        .sort_values("mean_importance", ascending=False)
-        .reset_index(drop=True)
-    )
+    return pd.DataFrame(rows).sort_values("mean_importance", ascending=False).reset_index(drop=True)
 
 
 # ── MAE Distribution ─────────────────────────────────────────
@@ -370,7 +377,7 @@ def _compute_mae_distribution(
         return None
 
     tp_mae_values: list[float] = []
-    for fold, fr in zip(folds, fold_results):
+    for fold, fr in zip(folds, fold_results, strict=False):
         # True positive reversals: predicted=0 AND actual=0
         tp_mask = (fr.y_true == CLASS_REVERSAL) & (fr.y_pred == CLASS_REVERSAL)
         tp_indices = fold.test_indices[tp_mask]
@@ -428,10 +435,14 @@ def print_results(result: TrainingResult) -> None:
     # Per-fold table
     n = len(result.fold_results)
     print(f"\n  --- Per-Fold Results ({n} folds) ---\n")
-    print(f"  {'Fold':>4}  {'N_train':>7}  {'N_test':>6}  "
-          f"{'Accuracy':>8}  {'Rev Prec':>8}  {'BT Recall':>9}  {'Test Dates'}")
-    print(f"  {'----':>4}  {'-------':>7}  {'------':>6}  "
-          f"{'--------':>8}  {'--------':>8}  {'---------':>9}  {'----------'}")
+    print(
+        f"  {'Fold':>4}  {'N_train':>7}  {'N_test':>6}  "
+        f"{'Accuracy':>8}  {'Rev Prec':>8}  {'BT Recall':>9}  {'Test Dates'}"
+    )
+    print(
+        f"  {'----':>4}  {'-------':>7}  {'------':>6}  "
+        f"{'--------':>8}  {'--------':>8}  {'---------':>9}  {'----------'}"
+    )
     for fr in result.fold_results:
         print(
             f"  {fr.fold:4d}  {fr.n_train:7d}  {fr.n_test:6d}  "
@@ -440,9 +451,8 @@ def print_results(result: TrainingResult) -> None:
         )
 
     # Aggregated confusion matrix
-    print(f"\n  --- Aggregated Confusion Matrix (pooled across all test folds) ---\n")
-    print(f"  {'Actual \\ Predicted':25s}  "
-          f"{'Pred Rev':>8}  {'Pred Trap':>9}  {'Pred BT':>7}")
+    print("\n  --- Aggregated Confusion Matrix (pooled across all test folds) ---\n")
+    print(f"  {actual_predicted:25s}  {'Pred Rev':>8}  {'Pred Trap':>9}  {'Pred BT':>7}")
     print(f"  {'':25s}  {'--------':>8}  {'---------':>9}  {'-------':>7}")
     for i, name in CLASS_NAMES.items():
         row = result.aggregated_confusion[i]
@@ -451,7 +461,7 @@ def print_results(result: TrainingResult) -> None:
     print(f"\n  Total test predictions: {total}")
 
     # Feature importance stability
-    print(f"\n  --- Feature Importance Stability (top 10 per fold) ---\n")
+    print("\n  --- Feature Importance Stability (top 10 per fold) ---\n")
     stable = result.top_features_stability
     in_all = stable[stable["in_all_folds"]]
     print(f"  Features in ALL folds' top 10: {len(in_all)}")
@@ -476,18 +486,15 @@ def print_results(result: TrainingResult) -> None:
         for pct in [25, 50, 75, 90]:
             print(f"    P{pct}:    {mae.quantile(pct / 100):.2f} pts")
     else:
-        print(f"\n  --- MAE Distribution: N/A (no true-positive reversals) ---")
+        print("\n  --- MAE Distribution: N/A (no true-positive reversals) ---")
 
     # Verdict
-    print(f"\n  --- VERDICT (based on pooled test predictions) ---\n")
+    print("\n  --- VERDICT (based on pooled test predictions) ---\n")
     all_passed = True
     for name, check in result.verdict.items():
         status = "PASS" if check["passed"] else "FAIL"
         all_passed = all_passed and check["passed"]
-        print(
-            f"    [{status}] {name}: "
-            f"{check['value']:.4f} (threshold: {check['threshold']:.2f})"
-        )
+        print(f"    [{status}] {name}: {check['value']:.4f} (threshold: {check['threshold']:.2f})")
 
     print()
     if all_passed:
@@ -504,16 +511,21 @@ def save_results(result: TrainingResult, output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Fold results table
-    fold_df = pd.DataFrame([{
-        "fold": fr.fold,
-        "n_train": fr.n_train,
-        "n_test": fr.n_test,
-        "train_dates": fr.train_dates_str,
-        "test_dates": fr.test_dates_str,
-        "accuracy": fr.accuracy,
-        "reversal_precision": fr.reversal_precision,
-        "blowthrough_recall": fr.blowthrough_recall,
-    } for fr in result.fold_results])
+    fold_df = pd.DataFrame(
+        [
+            {
+                "fold": fr.fold,
+                "n_train": fr.n_train,
+                "n_test": fr.n_test,
+                "train_dates": fr.train_dates_str,
+                "test_dates": fr.test_dates_str,
+                "accuracy": fr.accuracy,
+                "reversal_precision": fr.reversal_precision,
+                "blowthrough_recall": fr.blowthrough_recall,
+            }
+            for fr in result.fold_results
+        ]
+    )
     fold_df.to_csv(output_dir / "fold_results.csv", index=False)
 
     # Aggregated confusion matrix
@@ -526,13 +538,15 @@ def save_results(result: TrainingResult, output_dir: Path) -> None:
 
     # Feature stability
     result.top_features_stability.to_csv(
-        output_dir / "feature_stability.csv", index=False,
+        output_dir / "feature_stability.csv",
+        index=False,
     )
 
     # MAE distribution
     if result.mae_distribution is not None:
         result.mae_distribution.to_frame().to_csv(
-            output_dir / "mae_distribution.csv", index=False,
+            output_dir / "mae_distribution.csv",
+            index=False,
         )
 
     # Summary JSON
@@ -577,10 +591,7 @@ def _train_and_save_final_model(
     X = df[feature_cols].reset_index(drop=True)
     y = df["label_encoded"].reset_index(drop=True)
 
-    cat_indices = [
-        list(X.columns).index(c) for c in cat_feature_names
-        if c in X.columns
-    ]
+    cat_indices = [list(X.columns).index(c) for c in cat_feature_names if c in X.columns]
 
     # 80/20 chronological split for early stopping
     split_idx = int(len(X) * 0.8)
@@ -653,7 +664,8 @@ def run_experiment(
     else:
         logger.warning(
             "Cannot align max_mae: resolved=%d, feature_matrix=%d",
-            len(resolved), len(df),
+            len(resolved),
+            len(df),
         )
 
     # 2. Identify feature columns
@@ -668,7 +680,9 @@ def run_experiment(
         feature_cols = [c for c in df.columns if c not in exclude]
         cat_feature_names = [c for c in CAT_FEATURES if c in feature_cols]
     logger.info(
-        "Features: %d total (%d categorical)", len(feature_cols), len(cat_feature_names),
+        "Features: %d total (%d categorical)",
+        len(feature_cols),
+        len(cat_feature_names),
     )
 
     # 3. Sort chronologically (required by has_time=True)
@@ -676,7 +690,10 @@ def run_experiment(
 
     # 4. Create walk-forward folds
     folds = create_walk_forward_folds(
-        df, train_days, test_days, step_days,
+        df,
+        train_days,
+        test_days,
+        step_days,
     )
     logger.info("Created %d walk-forward folds", len(folds))
 
@@ -704,13 +721,15 @@ def run_experiment(
     rev_predicted = all_y_pred == CLASS_REVERSAL
     reversal_precision = (
         float(np.sum(all_y_true[rev_predicted] == CLASS_REVERSAL) / rev_predicted.sum())
-        if rev_predicted.sum() > 0 else 0.0
+        if rev_predicted.sum() > 0
+        else 0.0
     )
 
     bt_actual = all_y_true == CLASS_BLOWTHROUGH
     blowthrough_recall = (
         float(np.sum(all_y_pred[bt_actual] == CLASS_BLOWTHROUGH) / bt_actual.sum())
-        if bt_actual.sum() > 0 else 0.0
+        if bt_actual.sum() > 0
+        else 0.0
     )
 
     # Cross-fold accuracy variance (std dev of per-fold accuracies)
@@ -725,8 +744,10 @@ def run_experiment(
 
     # 9. Verdict (from POOLED metrics)
     verdict = _evaluate_verdict(
-        overall_accuracy, reversal_precision,
-        blowthrough_recall, accuracy_variance,
+        overall_accuracy,
+        reversal_precision,
+        blowthrough_recall,
+        accuracy_variance,
     )
 
     result = TrainingResult(

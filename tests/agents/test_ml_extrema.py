@@ -251,9 +251,7 @@ class TestExtremaDetection:
         """A perfectly flat price series should produce no extrema."""
         n = 1000
         prices = pd.Series(np.full(n, 22000.0))
-        timestamps = pd.Series(
-            pd.date_range("2026-02-20 09:30", periods=n, freq="100ms", tz="UTC")
-        )
+        timestamps = pd.Series(pd.date_range("2026-02-20 09:30", periods=n, freq="100ms", tz="UTC"))
         config = ExtremaConfig(
             window_size=500,
             min_peak_width=20,
@@ -342,9 +340,7 @@ class TestDetectInWindow:
         for i in range(100, 200):
             prices[i] = 22000.0 + (200 - i) * 0.25
 
-        timestamps = pd.Series(
-            pd.date_range("2026-02-20 09:30", periods=n, freq="100ms", tz="UTC")
-        )
+        timestamps = pd.Series(pd.date_range("2026-02-20 09:30", periods=n, freq="100ms", tz="UTC"))
         config = ExtremaConfig(
             window_size=200,
             min_peak_width=10,
@@ -689,10 +685,16 @@ class TestDetectLabelPipeline:
 
         prices, timestamps = _make_price_series_with_peaks(n=2000)
         extrema = detect_extrema(
-            prices, timestamps, config.extrema, config.tick_size,
+            prices,
+            timestamps,
+            config.extrema,
+            config.tick_size,
         )
         labeled = label_extrema(
-            extrema, prices, config.labeling, config.tick_size,
+            extrema,
+            prices,
+            config.labeling,
+            config.tick_size,
         )
         df = build_label_dataframe(labeled)
 

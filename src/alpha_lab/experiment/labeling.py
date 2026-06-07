@@ -134,10 +134,7 @@ def label_single_event(
 
         # Check adverse first (conservative: assume stop triggers first)
         if max_mae >= MAE_STOP:
-            if max_mfe >= TRAP_MFE_MIN:
-                label = TRAP_REVERSAL
-            else:
-                label = AGGRESSIVE_BLOWTHROUGH
+            label = TRAP_REVERSAL if max_mfe >= TRAP_MFE_MIN else AGGRESSIVE_BLOWTHROUGH
             resolution_ts = bar_ts
             bars_to_resolution = i
             break
@@ -209,7 +206,10 @@ def label_all_events(
             next_day_bars = _get_bars(trading_dates[date_idx + 1])
 
         fwd_bars, _ = _get_forward_bars(
-            event, bars, next_day_bars, trading_dates,
+            event,
+            bars,
+            next_day_bars,
+            trading_dates,
         )
 
         result = label_single_event(event, fwd_bars)
@@ -263,58 +263,62 @@ def print_distribution_summary(df: pd.DataFrame) -> None:
 
     # Overall counts
     print(f"\n  Total events:    {total}")
-    print(f"  Resolved:        {len(resolved)} ({100*len(resolved)/total:.1f}%)")
-    print(f"  No resolution:   {len(unresolved)} ({100*len(unresolved)/total:.1f}%)")
+    print(f"  Resolved:        {len(resolved)} ({100 * len(resolved) / total:.1f}%)")
+    print(f"  No resolution:   {len(unresolved)} ({100 * len(unresolved) / total:.1f}%)")
 
-    print(f"\n  --- Label Distribution (all events) ---")
+    print("\n  --- Label Distribution (all events) ---")
     for label, cnt in df["label"].value_counts().sort_index().items():
-        print(f"    {label:30s}  {cnt:4d}  ({100*cnt/total:.1f}%)")
+        print(f"    {label:30s}  {cnt:4d}  ({100 * cnt / total:.1f}%)")
 
     # By direction
-    print(f"\n  --- By Direction ---")
+    print("\n  --- By Direction ---")
     for direction in sorted(df["direction"].unique()):
         subset = df[df["direction"] == direction]
         print(f"\n    {direction} ({len(subset)} events):")
         for label, cnt in subset["label"].value_counts().sort_index().items():
-            print(f"      {label:30s}  {cnt:4d}  ({100*cnt/len(subset):.1f}%)")
+            print(f"      {label:30s}  {cnt:4d}  ({100 * cnt / len(subset):.1f}%)")
 
     # By session
-    print(f"\n  --- By Session ---")
+    print("\n  --- By Session ---")
     df = df.copy()
-    df["_session"] = df["event_ts"].apply(
-        lambda x: _classify_event_session(pd.Timestamp(x))
-    )
+    df["_session"] = df["event_ts"].apply(lambda x: _classify_event_session(pd.Timestamp(x)))
     for session in ["Asia", "London", "Pre-market", "NY RTH", "Post-market"]:
         subset = df[df["_session"] == session]
         if subset.empty:
             continue
         print(f"\n    {session} ({len(subset)} events):")
         for label, cnt in subset["label"].value_counts().sort_index().items():
-            print(f"      {label:30s}  {cnt:4d}  ({100*cnt/len(subset):.1f}%)")
+            print(f"      {label:30s}  {cnt:4d}  ({100 * cnt / len(subset):.1f}%)")
 
     # By level type
-    print(f"\n  --- By Level Type ---")
+    print("\n  --- By Level Type ---")
     df["_level"] = df["level_names"].apply(_primary_level_name)
     for level in sorted(df["_level"].unique()):
         subset = df[df["_level"] == level]
         print(f"\n    {level} ({len(subset)} events):")
         for label, cnt in subset["label"].value_counts().sort_index().items():
-            print(f"      {label:30s}  {cnt:4d}  ({100*cnt/len(subset):.1f}%)")
+            print(f"      {label:30s}  {cnt:4d}  ({100 * cnt / len(subset):.1f}%)")
 
     # MFE/MAE stats per resolved class
-    print(f"\n  --- MFE/MAE Statistics (resolved events only) ---")
+    print("\n  --- MFE/MAE Statistics (resolved events only) ---")
     for label in [TRADEABLE_REVERSAL, TRAP_REVERSAL, AGGRESSIVE_BLOWTHROUGH]:
         subset = resolved[resolved["label"] == label]
         if subset.empty:
             continue
         print(f"\n    {label} (n={len(subset)}):")
-        print(f"      MFE: mean={subset['max_mfe'].mean():.2f}  "
-              f"median={subset['max_mfe'].median():.2f}  "
-              f"std={subset['max_mfe'].std():.2f}")
-        print(f"      MAE: mean={subset['max_mae'].mean():.2f}  "
-              f"median={subset['max_mae'].median():.2f}  "
-              f"std={subset['max_mae'].std():.2f}")
-        print(f"      Bars to resolution: mean={subset['bars_to_resolution'].mean():.1f}  "
-              f"median={subset['bars_to_resolution'].median():.1f}")
+        print(
+            f"      MFE: mean={subset['max_mfe'].mean():.2f}  "
+            f"median={subset['max_mfe'].median():.2f}  "
+            f"std={subset['max_mfe'].std():.2f}"
+        )
+        print(
+            f"      MAE: mean={subset['max_mae'].mean():.2f}  "
+            f"median={subset['max_mae'].median():.2f}  "
+            f"std={subset['max_mae'].std():.2f}"
+        )
+        print(
+            f"      Bars to resolution: mean={subset['bars_to_resolution'].mean():.1f}  "
+            f"median={subset['bars_to_resolution'].median():.1f}"
+        )
 
     print()

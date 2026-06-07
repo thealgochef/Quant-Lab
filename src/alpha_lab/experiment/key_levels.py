@@ -31,8 +31,8 @@ _ET = "US/Eastern"
 _ROLL_DATE = date(2025, 12, 15)
 
 # Session boundaries (Eastern Time)
-_ASIA_START = time(18, 0)   # Previous calendar day
-_ASIA_END = time(1, 0)      # Current calendar day
+_ASIA_START = time(18, 0)  # Previous calendar day
+_ASIA_END = time(1, 0)  # Current calendar day
 _LONDON_START = time(1, 0)
 _LONDON_END = time(8, 0)
 _NY_RTH_START = time(9, 30)
@@ -117,9 +117,8 @@ def build_session_bars(
     if use_cache and cache_path.exists():
         df = pd.read_parquet(cache_path)
         if not df.empty:
-            if not isinstance(df.index, pd.DatetimeIndex):
-                if "timestamp" in df.columns:
-                    df = df.set_index("timestamp")
+            if not isinstance(df.index, pd.DatetimeIndex) and "timestamp" in df.columns:
+                df = df.set_index("timestamp")
             if df.index.tz is None:
                 df.index = df.index.tz_localize(_ET)
             elif str(df.index.tz) != _ET:
@@ -145,7 +144,8 @@ def build_session_bars(
     else:
         # Filter to dates that actually have data
         dates_to_register = [
-            d for d in dates_to_register
+            d
+            for d in dates_to_register
             if any((data_dir / symbol / str(d) / f).exists() for f in _TICK_FILENAMES)
         ]
 
@@ -158,7 +158,10 @@ def build_session_bars(
             store.register_symbol_date(symbol, d)
 
         df = store.build_bars_from_ticks(
-            symbol, start_utc, end_utc, bar_size="1 minute",
+            symbol,
+            start_utc,
+            end_utc,
+            bar_size="1 minute",
         )
     finally:
         store.close()
@@ -252,7 +255,9 @@ def compute_key_levels(
 
     logger.info(
         "Computing key levels for %d trading days (%s to %s)",
-        len(trading_dates), trading_dates[0], trading_dates[-1],
+        len(trading_dates),
+        trading_dates[0],
+        trading_dates[-1],
     )
 
     # Build session bars for all trading dates and store them
@@ -264,7 +269,9 @@ def compute_key_levels(
             progress_fn(i / n, f"Building bars for {td} ({i + 1}/{n})")
 
         bars = build_session_bars(
-            data_dir, symbol, td,
+            data_dir,
+            symbol,
+            td,
             all_calendar_dates=all_cal_dates,
             use_cache=use_cache,
         )
@@ -290,51 +297,63 @@ def compute_key_levels(
         asia_hl = _session_high_low(asia_bars)
         if asia_hl is not None:
             available = f"{date_str}T01:00:00-05:00"
-            rows.append({
-                "date": date_str,
-                "level_name": "asia_high",
-                "level_price": asia_hl[0],
-                "available_from": available,
-            })
-            rows.append({
-                "date": date_str,
-                "level_name": "asia_low",
-                "level_price": asia_hl[1],
-                "available_from": available,
-            })
+            rows.append(
+                {
+                    "date": date_str,
+                    "level_name": "asia_high",
+                    "level_price": asia_hl[0],
+                    "available_from": available,
+                }
+            )
+            rows.append(
+                {
+                    "date": date_str,
+                    "level_name": "asia_low",
+                    "level_price": asia_hl[1],
+                    "available_from": available,
+                }
+            )
 
         # London levels
         london_hl = _session_high_low(london_bars)
         if london_hl is not None:
             available = f"{date_str}T08:00:00-05:00"
-            rows.append({
-                "date": date_str,
-                "level_name": "london_high",
-                "level_price": london_hl[0],
-                "available_from": available,
-            })
-            rows.append({
-                "date": date_str,
-                "level_name": "london_low",
-                "level_price": london_hl[1],
-                "available_from": available,
-            })
+            rows.append(
+                {
+                    "date": date_str,
+                    "level_name": "london_high",
+                    "level_price": london_hl[0],
+                    "available_from": available,
+                }
+            )
+            rows.append(
+                {
+                    "date": date_str,
+                    "level_name": "london_low",
+                    "level_price": london_hl[1],
+                    "available_from": available,
+                }
+            )
 
         # PDH/PDL from PREVIOUS day's NY RTH
         if prev_ny_hl is not None:
             available = f"{date_str}T09:30:00-05:00"
-            rows.append({
-                "date": date_str,
-                "level_name": "PDH",
-                "level_price": prev_ny_hl[0],
-                "available_from": available,
-            })
-            rows.append({
-                "date": date_str,
-                "level_name": "PDL",
-                "level_price": prev_ny_hl[1],
-                "available_from": available,
-            })
+            rows.append(
+                {
+                    "date": date_str,
+                    "level_name": "PDH",
+                    "level_price": prev_ny_hl[0],
+                    "available_from": available,
+                }
+            )
+            rows.append(
+                {
+                    "date": date_str,
+                    "level_name": "PDL",
+                    "level_price": prev_ny_hl[1],
+                    "available_from": available,
+                }
+            )
 
         # Update prev_ny for next day
         ny_hl = _session_high_low(ny_bars)

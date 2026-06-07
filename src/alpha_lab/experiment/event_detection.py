@@ -1,3 +1,4 @@
+# ruff: noqa: N806
 """
 Phase 2 — Event Detection for Order Flow Hypothesis Test.
 
@@ -89,18 +90,17 @@ def build_zones(
         rep_price = rows["level_price"].mean()
         avail_from = max(pd.Timestamp(af) for af in rows["available_from"])
 
-        if len(names) == 1:
-            zid = f"{date_str}_{names[0]}"
-        else:
-            zid = f"{date_str}_{'+'.join(names)}"
+        zid = f"{date_str}_{names[0]}" if len(names) == 1 else f"{date_str}_{'+'.join(names)}"
 
-        zones.append(Zone(
-            zone_id=zid,
-            level_names=names,
-            level_prices=prices,
-            representative_price=rep_price,
-            available_from=avail_from,
-        ))
+        zones.append(
+            Zone(
+                zone_id=zid,
+                level_names=names,
+                level_prices=prices,
+                representative_price=rep_price,
+                available_from=avail_from,
+            )
+        )
 
     return zones
 
@@ -122,9 +122,8 @@ def load_session_bars(data_dir: Path, date_str: str) -> pd.DataFrame:
 
     df = pd.read_parquet(bar_path)
 
-    if not isinstance(df.index, pd.DatetimeIndex):
-        if "timestamp" in df.columns:
-            df = df.set_index("timestamp")
+    if not isinstance(df.index, pd.DatetimeIndex) and "timestamp" in df.columns:
+        df = df.set_index("timestamp")
 
     if df.index.tz is None:
         df.index = df.index.tz_localize(_ET)
@@ -144,10 +143,7 @@ def compute_approach_direction(
     Uses previous bar's close. If touch is at bar index 0, uses the
     touch bar's open instead.
     """
-    if touch_idx > 0:
-        ref_price = bars.iloc[touch_idx - 1]["close"]
-    else:
-        ref_price = bars.iloc[touch_idx]["open"]
+    ref_price = bars.iloc[touch_idx - 1]["close"] if touch_idx > 0 else bars.iloc[touch_idx]["open"]
 
     return "from_above" if ref_price > level_price else "from_below"
 
@@ -208,26 +204,30 @@ def detect_touches_single_day(
             if bar["low"] <= zone.representative_price <= bar["high"]:
                 zone.touched = True
                 approach = compute_approach_direction(
-                    bars, bar_pos, zone.representative_price,
+                    bars,
+                    bar_pos,
+                    zone.representative_price,
                 )
                 direction = _determine_direction(zone, approach)
 
-                events.append({
-                    "date": date_str,
-                    "event_ts": bar_ts,
-                    "level_names": json.dumps(zone.level_names),
-                    "level_prices": json.dumps(zone.level_prices),
-                    "representative_price": zone.representative_price,
-                    "touch_price": bar["close"],
-                    "approach_direction": approach,
-                    "direction": direction,
-                    "bar_open": bar["open"],
-                    "bar_high": bar["high"],
-                    "bar_low": bar["low"],
-                    "bar_close": bar["close"],
-                    "bar_volume": bar["volume"],
-                    "zone_id": zone.zone_id,
-                })
+                events.append(
+                    {
+                        "date": date_str,
+                        "event_ts": bar_ts,
+                        "level_names": json.dumps(zone.level_names),
+                        "level_prices": json.dumps(zone.level_prices),
+                        "representative_price": zone.representative_price,
+                        "touch_price": bar["close"],
+                        "approach_direction": approach,
+                        "direction": direction,
+                        "bar_open": bar["open"],
+                        "bar_high": bar["high"],
+                        "bar_low": bar["low"],
+                        "bar_close": bar["close"],
+                        "bar_volume": bar["volume"],
+                        "zone_id": zone.zone_id,
+                    }
+                )
 
         # Early termination
         if all(z.touched for z in zones):
@@ -288,10 +288,20 @@ def detect_all_events(
         progress_fn(1.0, "Done")
 
     _COLUMNS = [
-        "date", "event_ts", "level_names", "level_prices",
-        "representative_price", "touch_price", "approach_direction",
-        "direction", "bar_open", "bar_high", "bar_low", "bar_close",
-        "bar_volume", "zone_id",
+        "date",
+        "event_ts",
+        "level_names",
+        "level_prices",
+        "representative_price",
+        "touch_price",
+        "approach_direction",
+        "direction",
+        "bar_open",
+        "bar_high",
+        "bar_low",
+        "bar_close",
+        "bar_volume",
+        "zone_id",
     ]
 
     if not all_events:
@@ -306,9 +316,11 @@ def detect_all_events(
         logger.info("Wrote %d events to %s", len(df), output_path)
 
     logger.info(
-        "Event detection complete: %d days, %d levels, %d touch events, "
-        "%d merged zones",
-        stats["days"], stats["levels"], stats["touches"], stats["zones_merged"],
+        "Event detection complete: %d days, %d levels, %d touch events, %d merged zones",
+        stats["days"],
+        stats["levels"],
+        stats["touches"],
+        stats["zones_merged"],
     )
 
     return df

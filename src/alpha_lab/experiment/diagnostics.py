@@ -1,3 +1,4 @@
+# ruff: noqa: N806
 """
 Phase 6 — Diagnostic Analysis for Walk-Forward Experiment.
 
@@ -14,13 +15,12 @@ Output: data/experiment/training_results/diagnostics/
 from __future__ import annotations
 
 import logging
-from io import StringIO
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from alpha_lab.experiment.features import CAT_FEATURES, LABEL_ENCODING
+from alpha_lab.experiment.features import CAT_FEATURES
 from alpha_lab.experiment.training import (
     CLASS_BLOWTHROUGH,
     CLASS_NAMES,
@@ -33,6 +33,8 @@ from alpha_lab.experiment.training import (
     create_walk_forward_folds,
     train_fold,
 )
+
+actual_predicted = "Actual \\ Predicted"
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +105,7 @@ def _fold2_deep_dive(
     # Fold 2 confusion matrix
     w("")
     w("  --- Fold 2 Confusion Matrix ---")
-    w(f"  {'Actual \\ Predicted':25s}  {'Pred Rev':>8}  {'Pred Trap':>9}  {'Pred BT':>7}")
+    w(f"  {actual_predicted:25s}  {'Pred Rev':>8}  {'Pred Trap':>9}  {'Pred BT':>7}")
     for i, name in CLASS_NAMES.items():
         row = fr2.confusion_matrix[i]
         w(f"  {name:25s}  {row[0]:8d}  {row[1]:9d}  {row[2]:7d}")
@@ -136,9 +138,7 @@ def _fold2_deep_dive(
     # Feature comparison: Fold 2 test set vs other folds' test sets
     w("")
     w("  --- Top Feature Values: Fold 2 vs Other Folds ---")
-    other_test_indices = np.concatenate([
-        f.test_indices for i, f in enumerate(folds) if i != 2
-    ])
+    other_test_indices = np.concatenate([f.test_indices for i, f in enumerate(folds) if i != 2])
     other_df = df.iloc[other_test_indices]
 
     numeric_top = [f for f in TOP_FEATURES if f in df.columns and df[f].dtype != object]
@@ -147,8 +147,10 @@ def _fold2_deep_dive(
         f2_std = test_df[feat].std()
         other_mean = other_df[feat].mean()
         other_std = other_df[feat].std()
-        w(f"    {feat:35s}  Fold2: {f2_mean:8.2f} +/-{f2_std:6.2f}  "
-          f"Others: {other_mean:8.2f} +/-{other_std:6.2f}")
+        w(
+            f"    {feat:35s}  Fold2: {f2_mean:8.2f} +/-{f2_std:6.2f}  "
+            f"Others: {other_mean:8.2f} +/-{other_std:6.2f}"
+        )
 
     w("")
     text = "\n".join(lines)
@@ -179,10 +181,7 @@ def _train_fold_binary(
     X_fit, X_eval = X_train.iloc[:split_idx], X_train.iloc[split_idx:]
     y_fit, y_eval = y_train.iloc[:split_idx], y_train.iloc[split_idx:]
 
-    cat_indices = [
-        list(X_train.columns).index(c) for c in cat_features
-        if c in X_train.columns
-    ]
+    cat_indices = [list(X_train.columns).index(c) for c in cat_features if c in X_train.columns]
 
     model = CatBoostClassifier(
         iterations=1000,
@@ -212,12 +211,12 @@ def _train_fold_binary(
     rev_predicted = y_pred == 1
     reversal_precision = (
         float(np.sum(y_true[rev_predicted] == 1) / rev_predicted.sum())
-        if rev_predicted.sum() > 0 else 0.0
+        if rev_predicted.sum() > 0
+        else 0.0
     )
     rev_actual = y_true == 1
     reversal_recall = (
-        float(np.sum(y_pred[rev_actual] == 1) / rev_actual.sum())
-        if rev_actual.sum() > 0 else 0.0
+        float(np.sum(y_pred[rev_actual] == 1) / rev_actual.sum()) if rev_actual.sum() > 0 else 0.0
     )
 
     # 2x2 confusion matrix stored in 3x3 for compatibility (only rows/cols 0,1 used)
@@ -275,13 +274,13 @@ def _binary_classification_test(
         fold_results.append(fr)
 
     # Per-fold table
-    w(f"  {'Fold':>4}  {'N_test':>6}  {'Accuracy':>8}  "
-      f"{'Rev Prec':>8}  {'Rev Recall':>10}")
-    w(f"  {'----':>4}  {'------':>6}  {'--------':>8}  "
-      f"{'--------':>8}  {'----------':>10}")
+    w(f"  {'Fold':>4}  {'N_test':>6}  {'Accuracy':>8}  {'Rev Prec':>8}  {'Rev Recall':>10}")
+    w(f"  {'----':>4}  {'------':>6}  {'--------':>8}  {'--------':>8}  {'----------':>10}")
     for fr in fold_results:
-        w(f"  {fr.fold:4d}  {fr.n_test:6d}  {fr.accuracy:8.3f}  "
-          f"{fr.reversal_precision:8.3f}  {fr.blowthrough_recall:10.3f}")
+        w(
+            f"  {fr.fold:4d}  {fr.n_test:6d}  {fr.accuracy:8.3f}  "
+            f"{fr.reversal_precision:8.3f}  {fr.blowthrough_recall:10.3f}"
+        )
 
     # Pooled metrics
     all_y_true = np.concatenate([fr.y_true for fr in fold_results])
@@ -290,13 +289,13 @@ def _binary_classification_test(
     pooled_accuracy = float(np.mean(all_y_true == all_y_pred))
     rev_pred = all_y_pred == 1
     pooled_rev_precision = (
-        float(np.sum(all_y_true[rev_pred] == 1) / rev_pred.sum())
-        if rev_pred.sum() > 0 else 0.0
+        float(np.sum(all_y_true[rev_pred] == 1) / rev_pred.sum()) if rev_pred.sum() > 0 else 0.0
     )
     rev_actual = all_y_true == 1
     pooled_rev_recall = (
         float(np.sum(all_y_pred[rev_actual] == 1) / rev_actual.sum())
-        if rev_actual.sum() > 0 else 0.0
+        if rev_actual.sum() > 0
+        else 0.0
     )
 
     fold_accs = [fr.accuracy for fr in fold_results]
@@ -317,18 +316,18 @@ def _binary_classification_test(
             agg_cm[t, p] = int(np.sum((all_y_true == t) & (all_y_pred == p)))
 
     w("  --- Aggregated Binary Confusion Matrix ---")
-    w(f"  {'Actual \\ Predicted':25s}  {'Pred NoRev':>10}  {'Pred Rev':>8}")
+    w(f"  {actual_predicted:25s}  {'Pred NoRev':>10}  {'Pred Rev':>8}")
     w(f"  {'no_reversal':25s}  {agg_cm[0, 0]:10d}  {agg_cm[0, 1]:8d}")
     w(f"  {'reversal':25s}  {agg_cm[1, 0]:10d}  {agg_cm[1, 1]:8d}")
     w("")
 
     # Comparison with 3-class
     w("  --- Binary vs 3-Class Comparison ---")
-    w(f"    3-class pooled accuracy:   0.4854")
+    w("    3-class pooled accuracy:   0.4854")
     w(f"    Binary pooled accuracy:    {pooled_accuracy:.4f}")
-    w(f"    3-class rev precision:     0.7442")
+    w("    3-class rev precision:     0.7442")
     w(f"    Binary rev precision:      {pooled_rev_precision:.4f}")
-    w(f"    3-class cross-fold std:    0.1350")
+    w("    3-class cross-fold std:    0.1350")
     w(f"    Binary cross-fold std:     {cross_fold_std:.4f}")
     w("")
 
@@ -362,7 +361,7 @@ def _top3_feature_model(
     w("=" * 70)
     w("")
     w(f"  Features: {', '.join(TOP_3_FEATURES)}")
-    w(f"  No categorical features (all 3 are numeric)")
+    w("  No categorical features (all 3 are numeric)")
     w("")
 
     fold_results: list[FoldResult] = []
@@ -371,13 +370,13 @@ def _top3_feature_model(
         fold_results.append(fr)
 
     # Per-fold table
-    w(f"  {'Fold':>4}  {'N_test':>6}  {'Accuracy':>8}  "
-      f"{'Rev Prec':>8}  {'BT Recall':>9}")
-    w(f"  {'----':>4}  {'------':>6}  {'--------':>8}  "
-      f"{'--------':>8}  {'---------':>9}")
+    w(f"  {'Fold':>4}  {'N_test':>6}  {'Accuracy':>8}  {'Rev Prec':>8}  {'BT Recall':>9}")
+    w(f"  {'----':>4}  {'------':>6}  {'--------':>8}  {'--------':>8}  {'---------':>9}")
     for fr in fold_results:
-        w(f"  {fr.fold:4d}  {fr.n_test:6d}  {fr.accuracy:8.3f}  "
-          f"{fr.reversal_precision:8.3f}  {fr.blowthrough_recall:9.3f}")
+        w(
+            f"  {fr.fold:4d}  {fr.n_test:6d}  {fr.accuracy:8.3f}  "
+            f"{fr.reversal_precision:8.3f}  {fr.blowthrough_recall:9.3f}"
+        )
 
     # Pooled metrics
     all_y_true = np.concatenate([fr.y_true for fr in fold_results])
@@ -387,12 +386,14 @@ def _top3_feature_model(
     rev_pred = all_y_pred == CLASS_REVERSAL
     pooled_rev_precision = (
         float(np.sum(all_y_true[rev_pred] == CLASS_REVERSAL) / rev_pred.sum())
-        if rev_pred.sum() > 0 else 0.0
+        if rev_pred.sum() > 0
+        else 0.0
     )
     bt_actual = all_y_true == CLASS_BLOWTHROUGH
     pooled_bt_recall = (
         float(np.sum(all_y_pred[bt_actual] == CLASS_BLOWTHROUGH) / bt_actual.sum())
-        if bt_actual.sum() > 0 else 0.0
+        if bt_actual.sum() > 0
+        else 0.0
     )
 
     fold_accs = [fr.accuracy for fr in fold_results]
@@ -409,7 +410,7 @@ def _top3_feature_model(
     # Aggregated confusion matrix
     agg_cm = _confusion_matrix_3class(all_y_true, all_y_pred)
     w("  --- Aggregated Confusion Matrix (Top-3 Model) ---")
-    w(f"  {'Actual \\ Predicted':25s}  {'Pred Rev':>8}  {'Pred Trap':>9}  {'Pred BT':>7}")
+    w(f"  {actual_predicted:25s}  {'Pred Rev':>8}  {'Pred Trap':>9}  {'Pred BT':>7}")
     for i, name in CLASS_NAMES.items():
         row = agg_cm[i]
         w(f"  {name:25s}  {row[0]:8d}  {row[1]:9d}  {row[2]:7d}")
@@ -417,13 +418,13 @@ def _top3_feature_model(
 
     # Comparison with 58-feature model
     w("  --- Top-3 vs Full 58-Feature Comparison ---")
-    w(f"    58-feat pooled accuracy:   0.4854")
+    w("    58-feat pooled accuracy:   0.4854")
     w(f"    Top-3 pooled accuracy:     {pooled_accuracy:.4f}")
-    w(f"    58-feat rev precision:     0.7442")
+    w("    58-feat rev precision:     0.7442")
     w(f"    Top-3 rev precision:       {pooled_rev_precision:.4f}")
-    w(f"    58-feat BT recall:         0.6429")
+    w("    58-feat BT recall:         0.6429")
     w(f"    Top-3 BT recall:           {pooled_bt_recall:.4f}")
-    w(f"    58-feat cross-fold std:    0.1350")
+    w("    58-feat cross-fold std:    0.1350")
     w(f"    Top-3 cross-fold std:      {cross_fold_std:.4f}")
     w("")
 
@@ -433,16 +434,18 @@ def _top3_feature_model(
     # Save structured CSVs for dashboard consumption
     fold_rows = []
     for fr in fold_results:
-        fold_rows.append({
-            "fold": fr.fold,
-            "n_train": fr.n_train,
-            "n_test": fr.n_test,
-            "train_dates": fr.train_dates_str,
-            "test_dates": fr.test_dates_str,
-            "accuracy": fr.accuracy,
-            "reversal_precision": fr.reversal_precision,
-            "blowthrough_recall": fr.blowthrough_recall,
-        })
+        fold_rows.append(
+            {
+                "fold": fr.fold,
+                "n_train": fr.n_train,
+                "n_test": fr.n_test,
+                "train_dates": fr.train_dates_str,
+                "test_dates": fr.test_dates_str,
+                "accuracy": fr.accuracy,
+                "reversal_precision": fr.reversal_precision,
+                "blowthrough_recall": fr.blowthrough_recall,
+            }
+        )
     pd.DataFrame(fold_rows).to_csv(out_dir / "top3_fold_results.csv", index=False)
 
     cm_df = pd.DataFrame(
@@ -484,7 +487,7 @@ def _per_feature_distributions(
 
         if df[feat].dtype == object:
             # Categorical: value counts per class
-            w(f"  (Categorical)")
+            w("  (Categorical)")
             for cls_id, cls_name in CLASS_NAMES.items():
                 cls_mask = df["label_encoded"] == cls_id
                 vc = df.loc[cls_mask, feat].value_counts()
@@ -494,41 +497,51 @@ def _per_feature_distributions(
                     parts.append(f"{val}={count}({count / total:.0%})")
                 w(f"    {cls_name:25s} (n={total:3d}): {', '.join(parts)}")
                 for val, count in vc.items():
-                    rows_for_csv.append({
-                        "feature": feat,
-                        "class": cls_name,
-                        "metric": f"count_{val}",
-                        "value": count,
-                    })
+                    rows_for_csv.append(
+                        {
+                            "feature": feat,
+                            "class": cls_name,
+                            "metric": f"count_{val}",
+                            "value": count,
+                        }
+                    )
         else:
             # Numeric: mean and std per class
-            w(f"  (Numeric)")
+            w("  (Numeric)")
             w(f"    {'Class':25s}  {'Mean':>10}  {'Std':>10}  {'Median':>10}  {'N':>5}")
             for cls_id, cls_name in CLASS_NAMES.items():
                 cls_vals = df.loc[df["label_encoded"] == cls_id, feat]
                 mean_val = cls_vals.mean()
                 std_val = cls_vals.std()
                 med_val = cls_vals.median()
-                w(f"    {cls_name:25s}  {mean_val:10.3f}  {std_val:10.3f}  "
-                  f"{med_val:10.3f}  {len(cls_vals):5d}")
-                rows_for_csv.append({
-                    "feature": feat,
-                    "class": cls_name,
-                    "metric": "mean",
-                    "value": float(mean_val),
-                })
-                rows_for_csv.append({
-                    "feature": feat,
-                    "class": cls_name,
-                    "metric": "std",
-                    "value": float(std_val),
-                })
-                rows_for_csv.append({
-                    "feature": feat,
-                    "class": cls_name,
-                    "metric": "median",
-                    "value": float(med_val),
-                })
+                w(
+                    f"    {cls_name:25s}  {mean_val:10.3f}  {std_val:10.3f}  "
+                    f"{med_val:10.3f}  {len(cls_vals):5d}"
+                )
+                rows_for_csv.append(
+                    {
+                        "feature": feat,
+                        "class": cls_name,
+                        "metric": "mean",
+                        "value": float(mean_val),
+                    }
+                )
+                rows_for_csv.append(
+                    {
+                        "feature": feat,
+                        "class": cls_name,
+                        "metric": "std",
+                        "value": float(std_val),
+                    }
+                )
+                rows_for_csv.append(
+                    {
+                        "feature": feat,
+                        "class": cls_name,
+                        "metric": "median",
+                        "value": float(med_val),
+                    }
+                )
         w("")
 
     text = "\n".join(lines)
@@ -563,7 +576,7 @@ def _misclassification_patterns(
     all_y_true: list[int] = []
     all_y_pred: list[int] = []
 
-    for fold, fr in zip(folds, fold_results):
+    for fold, fr in zip(folds, fold_results, strict=False):
         all_test_indices.extend(fold.test_indices.tolist())
         all_y_true.extend(fr.y_true.tolist())
         all_y_pred.extend(fr.y_pred.tolist())
@@ -589,7 +602,7 @@ def _misclassification_patterns(
         misclassified_idx = all_test_indices[rev_as_trap]
         correct_idx = all_test_indices[rev_correct]
 
-        w(f"  Feature comparison (misclassified vs correctly classified reversals):")
+        w("  Feature comparison (misclassified vs correctly classified reversals):")
         w(f"    {'Feature':35s}  {'Misclass Mean':>13}  {'Correct Mean':>12}  {'Delta':>8}")
         w(f"    {'-------':35s}  {'-------------':>13}  {'------------':>12}  {'-----':>8}")
         for feat in compare_features:
@@ -628,7 +641,7 @@ def _misclassification_patterns(
         misclassified_idx = all_test_indices[trap_as_rev]
         correct_idx = all_test_indices[trap_correct]
 
-        w(f"  Feature comparison (traps misclassified as reversals vs correctly classified traps):")
+        w("  Feature comparison (traps misclassified as reversals vs correctly classified traps):")
         w(f"    {'Feature':35s}  {'Misclass Mean':>13}  {'Correct Mean':>12}  {'Delta':>8}")
         w(f"    {'-------':35s}  {'-------------':>13}  {'------------':>12}  {'-----':>8}")
         for feat in compare_features:
@@ -693,7 +706,7 @@ def _slow_reversal_analysis(
     w("=" * 70)
     w("")
     w(f"  Filter: int_time_beyond_level > {threshold:.0f} seconds")
-    w(f"  Total events matching: {len(slow)} / {len(df)} ({len(slow)/len(df):.1%})")
+    w(f"  Total events matching: {len(slow)} / {len(df)} ({len(slow) / len(df):.1%})")
     w("")
 
     # Class distribution
@@ -727,27 +740,35 @@ def _slow_reversal_analysis(
         trap_mean = float(trap_slow[feat].mean())
         bt_mean = float(slow.loc[slow["label_encoded"] == CLASS_BLOWTHROUGH, feat].mean())
         diff = rev_mean - trap_mean
-        rows.append({
-            "feature": feat,
-            "rev_mean": rev_mean,
-            "trap_mean": trap_mean,
-            "bt_mean": bt_mean,
-            "abs_diff": abs(diff),
-            "diff": diff,
-        })
+        rows.append(
+            {
+                "feature": feat,
+                "rev_mean": rev_mean,
+                "trap_mean": trap_mean,
+                "bt_mean": bt_mean,
+                "abs_diff": abs(diff),
+                "diff": diff,
+            }
+        )
 
     rows.sort(key=lambda r: r["abs_diff"], reverse=True)
 
     # Top 10 by absolute difference
     w("  --- Top 10 Features by |mean(reversal) - mean(trap)| in Slow Subset ---")
     w("")
-    w(f"    {'Rank':>4}  {'Feature':35s}  {'Rev Mean':>10}  "
-      f"{'Trap Mean':>10}  {'BT Mean':>10}  {'Delta':>8}")
-    w(f"    {'----':>4}  {'-------':35s}  {'--------':>10}  "
-      f"{'--------':>10}  {'-------':>10}  {'-----':>8}")
+    w(
+        f"    {'Rank':>4}  {'Feature':35s}  {'Rev Mean':>10}  "
+        f"{'Trap Mean':>10}  {'BT Mean':>10}  {'Delta':>8}"
+    )
+    w(
+        f"    {'----':>4}  {'-------':35s}  {'--------':>10}  "
+        f"{'--------':>10}  {'-------':>10}  {'-----':>8}"
+    )
     for i, r in enumerate(rows[:10]):
-        w(f"    {i+1:4d}  {r['feature']:35s}  {r['rev_mean']:10.3f}  "
-          f"{r['trap_mean']:10.3f}  {r['bt_mean']:10.3f}  {r['diff']:+8.3f}")
+        w(
+            f"    {i + 1:4d}  {r['feature']:35s}  {r['rev_mean']:10.3f}  "
+            f"{r['trap_mean']:10.3f}  {r['bt_mean']:10.3f}  {r['diff']:+8.3f}"
+        )
     w("")
 
     # Check specifically requested features
@@ -763,18 +784,24 @@ def _slow_reversal_analysis(
 
     w("  --- Requested Features (in top 10?) ---")
     w("")
-    w(f"    {'Feature':35s}  {'Rev Mean':>10}  {'Trap Mean':>10}  "
-      f"{'Delta':>8}  {'Rank':>5}  {'Top 10?'}")
-    w(f"    {'-------':35s}  {'--------':>10}  {'--------':>10}  "
-      f"{'-----':>8}  {'----':>5}  {'-------'}")
+    w(
+        f"    {'Feature':35s}  {'Rev Mean':>10}  {'Trap Mean':>10}  "
+        f"{'Delta':>8}  {'Rank':>5}  {'Top 10?'}"
+    )
+    w(
+        f"    {'-------':35s}  {'--------':>10}  {'--------':>10}  "
+        f"{'-----':>8}  {'----':>5}  {'-------'}"
+    )
     for feat in requested:
         match = [r for r in rows if r["feature"] == feat]
         if match:
             r = match[0]
             rank = rows.index(r) + 1
             in_top = "YES" if feat in top10_names else "no"
-            w(f"    {feat:35s}  {r['rev_mean']:10.3f}  {r['trap_mean']:10.3f}  "
-              f"{r['diff']:+8.3f}  {rank:5d}  {in_top}")
+            w(
+                f"    {feat:35s}  {r['rev_mean']:10.3f}  {r['trap_mean']:10.3f}  "
+                f"{r['diff']:+8.3f}  {rank:5d}  {in_top}"
+            )
         else:
             w(f"    {feat:35s}  (not found in numeric features)")
     w("")
@@ -811,7 +838,7 @@ def _session_accuracy_top3(
     all_y_true: list[int] = []
     all_y_pred: list[int] = []
 
-    for fold, fr in zip(folds, top3_fold_results):
+    for fold, fr in zip(folds, top3_fold_results, strict=False):
         all_test_indices.extend(fold.test_indices.tolist())
         all_y_true.extend(fr.y_true.tolist())
         all_y_pred.extend(fr.y_pred.tolist())
@@ -829,12 +856,16 @@ def _session_accuracy_top3(
     sessions = df.iloc[all_test_indices]["ctx_session"].values
 
     unique_sessions = sorted(set(sessions))
-    w(f"  {'Session':15s}  {'N':>5}  {'Accuracy':>8}  "
-      f"{'Rev Prec':>8}  {'Rev Recall':>10}  "
-      f"{'Rev N':>5}  {'Trap N':>6}  {'BT N':>4}")
-    w(f"  {'-------':15s}  {'---':>5}  {'--------':>8}  "
-      f"{'--------':>8}  {'----------':>10}  "
-      f"{'-----':>5}  {'------':>6}  {'----':>4}")
+    w(
+        f"  {'Session':15s}  {'N':>5}  {'Accuracy':>8}  "
+        f"{'Rev Prec':>8}  {'Rev Recall':>10}  "
+        f"{'Rev N':>5}  {'Trap N':>6}  {'BT N':>4}"
+    )
+    w(
+        f"  {'-------':15s}  {'---':>5}  {'--------':>8}  "
+        f"{'--------':>8}  {'----------':>10}  "
+        f"{'-----':>5}  {'------':>6}  {'----':>4}"
+    )
 
     session_rows: list[dict] = []
     for session in unique_sessions:
@@ -849,14 +880,16 @@ def _session_accuracy_top3(
         rev_pred = y_p == CLASS_REVERSAL
         rev_prec = (
             float(np.sum(y_t[rev_pred] == CLASS_REVERSAL) / rev_pred.sum())
-            if rev_pred.sum() > 0 else float("nan")
+            if rev_pred.sum() > 0
+            else float("nan")
         )
 
         # Reversal recall for this session
         rev_actual = y_t == CLASS_REVERSAL
         rev_recall = (
             float(np.sum(y_p[rev_actual] == CLASS_REVERSAL) / rev_actual.sum())
-            if rev_actual.sum() > 0 else float("nan")
+            if rev_actual.sum() > 0
+            else float("nan")
         )
 
         n_rev = int((y_t == CLASS_REVERSAL).sum())
@@ -866,20 +899,24 @@ def _session_accuracy_top3(
         rev_prec_str = f"{rev_prec:8.3f}" if not np.isnan(rev_prec) else "     N/A"
         rev_recall_str = f"{rev_recall:10.3f}" if not np.isnan(rev_recall) else "       N/A"
 
-        w(f"  {session:15s}  {n:5d}  {acc:8.3f}  "
-          f"{rev_prec_str}  {rev_recall_str}  "
-          f"{n_rev:5d}  {n_trap:6d}  {n_bt:4d}")
+        w(
+            f"  {session:15s}  {n:5d}  {acc:8.3f}  "
+            f"{rev_prec_str}  {rev_recall_str}  "
+            f"{n_rev:5d}  {n_trap:6d}  {n_bt:4d}"
+        )
 
-        session_rows.append({
-            "session": session,
-            "n": n,
-            "accuracy": acc,
-            "reversal_precision": rev_prec,
-            "reversal_recall": rev_recall,
-            "n_reversal": n_rev,
-            "n_trap": n_trap,
-            "n_blowthrough": n_bt,
-        })
+        session_rows.append(
+            {
+                "session": session,
+                "n": n,
+                "accuracy": acc,
+                "reversal_precision": rev_prec,
+                "reversal_recall": rev_recall,
+                "n_reversal": n_rev,
+                "n_trap": n_trap,
+                "n_blowthrough": n_bt,
+            }
+        )
 
     w("")
 
@@ -919,8 +956,10 @@ def _session_accuracy_top3(
         rev_trap_rate = rev_as_trap / n_rev if n_rev > 0 else 0
         trap_rev_rate = trap_as_rev / n_trap if n_trap > 0 else 0
 
-        w(f"    {session:15s}: rev->trap {rev_as_trap}/{n_rev} ({rev_trap_rate:.0%}), "
-          f"trap->rev {trap_as_rev}/{n_trap} ({trap_rev_rate:.0%})")
+        w(
+            f"    {session:15s}: rev->trap {rev_as_trap}/{n_rev} ({rev_trap_rate:.0%}), "
+            f"trap->rev {trap_as_rev}/{n_trap} ({trap_rev_rate:.0%})"
+        )
     w("")
 
     pd.DataFrame(session_rows).to_csv(out_dir / "session_accuracy.csv", index=False)
@@ -1067,22 +1106,24 @@ def _generate_top3_predictions(
             except (ValueError, TypeError, KeyError):
                 level_name = ""
 
-            rows.append({
-                "event_ts": le_row["event_ts"],
-                "date": le_row["date"],
-                "level_name": level_name,
-                "level_price": float(le_row["representative_price"]),
-                "direction": le_row["direction"],
-                "actual_label": le_row["label"],
-                "predicted_label": CLASS_NAMES[int(fr.y_pred[i])],
-                "prob_reversal": float(proba[i, CLASS_REVERSAL]),
-                "prob_trap": float(proba[i, CLASS_TRAP]),
-                "prob_blowthrough": float(proba[i, CLASS_BLOWTHROUGH]),
-                "mfe": float(le_row["max_mfe"]),
-                "mae": float(le_row["max_mae"]),
-                "fold": fold.fold,
-                "correct": bool(fr.y_true[i] == fr.y_pred[i]),
-            })
+            rows.append(
+                {
+                    "event_ts": le_row["event_ts"],
+                    "date": le_row["date"],
+                    "level_name": level_name,
+                    "level_price": float(le_row["representative_price"]),
+                    "direction": le_row["direction"],
+                    "actual_label": le_row["label"],
+                    "predicted_label": CLASS_NAMES[int(fr.y_pred[i])],
+                    "prob_reversal": float(proba[i, CLASS_REVERSAL]),
+                    "prob_trap": float(proba[i, CLASS_TRAP]),
+                    "prob_blowthrough": float(proba[i, CLASS_BLOWTHROUGH]),
+                    "mfe": float(le_row["max_mfe"]),
+                    "mae": float(le_row["max_mae"]),
+                    "fold": fold.fold,
+                    "correct": bool(fr.y_true[i] == fr.y_pred[i]),
+                }
+            )
 
     result = pd.DataFrame(rows)
     result.to_parquet(out_dir / "top3_predictions.parquet", index=False)

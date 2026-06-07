@@ -46,15 +46,20 @@ def _make_synthetic_ticks(
     """Create synthetic MBP-10 tick DataFrame (matches test_tick_store)."""
     rng = np.random.default_rng(seed)
     ts = pd.date_range(
-        f"{date_str} 09:30", periods=n, freq="100ms", tz="UTC",
+        f"{date_str} 09:30",
+        periods=n,
+        freq="100ms",
+        tz="UTC",
     )
     prices = base_price + rng.standard_normal(n).cumsum() * 0.25
 
-    df = pd.DataFrame({
-        "ts_event": ts,
-        "price": prices,
-        "size": rng.integers(1, 50, n),
-    })
+    df = pd.DataFrame(
+        {
+            "ts_event": ts,
+            "price": prices,
+            "size": rng.integers(1, 50, n),
+        }
+    )
 
     for i in range(10):
         spread = (i + 1) * 0.25
@@ -85,10 +90,12 @@ def _make_test_signal_bundle() -> SignalBundle:
     """Create a minimal SignalBundle with one signal for testing."""
     idx = pd.date_range("2026-02-20 09:30", periods=100, freq="5min", tz="UTC")
     direction = pd.Series(
-        np.random.default_rng(42).choice([-1, 0, 1], size=100), index=idx,
+        np.random.default_rng(42).choice([-1, 0, 1], size=100),
+        index=idx,
     )
     strength = pd.Series(
-        np.random.default_rng(42).random(100), index=idx,
+        np.random.default_rng(42).random(100),
+        index=idx,
     )
     formation_idx = pd.Series(range(100), index=idx)
 
@@ -383,26 +390,20 @@ class TestFindBarIndex:
     """Test the bar index lookup utility."""
 
     def test_exact_match(self):
-        idx = pd.DatetimeIndex(
-            pd.date_range("2026-02-20 09:30", periods=10, freq="5min", tz="UTC")
-        )
+        idx = pd.DatetimeIndex(pd.date_range("2026-02-20 09:30", periods=10, freq="5min", tz="UTC"))
         ts = pd.Timestamp("2026-02-20 09:35", tz="UTC")
         pos = _find_bar_index(idx, ts)
         assert pos == 1
 
     def test_between_bars(self):
         """Should return the bar just before the timestamp."""
-        idx = pd.DatetimeIndex(
-            pd.date_range("2026-02-20 09:30", periods=10, freq="5min", tz="UTC")
-        )
+        idx = pd.DatetimeIndex(pd.date_range("2026-02-20 09:30", periods=10, freq="5min", tz="UTC"))
         ts = pd.Timestamp("2026-02-20 09:37", tz="UTC")
         pos = _find_bar_index(idx, ts)
         assert pos == 1  # 09:35 is the latest bar before 09:37
 
     def test_before_first_bar(self):
-        idx = pd.DatetimeIndex(
-            pd.date_range("2026-02-20 09:30", periods=10, freq="5min", tz="UTC")
-        )
+        idx = pd.DatetimeIndex(pd.date_range("2026-02-20 09:30", periods=10, freq="5min", tz="UTC"))
         ts = pd.Timestamp("2026-02-20 09:00", tz="UTC")
         pos = _find_bar_index(idx, ts)
         assert pos is None
@@ -415,9 +416,7 @@ class TestFindBarIndex:
 
     def test_timezone_alignment(self):
         """Tz-naive timestamp against tz-aware index."""
-        idx = pd.DatetimeIndex(
-            pd.date_range("2026-02-20 09:30", periods=10, freq="5min", tz="UTC")
-        )
+        idx = pd.DatetimeIndex(pd.date_range("2026-02-20 09:30", periods=10, freq="5min", tz="UTC"))
         ts = pd.Timestamp("2026-02-20 09:35")  # No tz
         pos = _find_bar_index(idx, ts)
         assert pos == 1

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from alpha_lab.agents.data_infra.ml.config import (
     ModelConfig,
@@ -101,7 +102,10 @@ class TestWalkForwardSplitter:
         """Expanding window: train_start stays fixed, window grows."""
         _, _, timestamps = _make_classification_data(n=500)
         config = WalkForwardConfig(
-            train_days=30, test_days=10, gap_days=1, expanding=True,
+            train_days=30,
+            test_days=10,
+            gap_days=1,
+            expanding=True,
         )
         splitter = WalkForwardSplitter(config)
         splits = splitter.split(timestamps)
@@ -341,10 +345,12 @@ class TestModelEvaluator:
         """ROC-AUC should be computed when probabilities are provided."""
         rng = np.random.default_rng(42)
         y_true = np.array([1] * 50 + [0] * 50)
-        y_prob = np.concatenate([
-            rng.uniform(0.6, 1.0, 50),
-            rng.uniform(0.0, 0.4, 50),
-        ])
+        y_prob = np.concatenate(
+            [
+                rng.uniform(0.6, 1.0, 50),
+                rng.uniform(0.0, 0.4, 50),
+            ]
+        )
         y_pred = (y_prob > 0.5).astype(int)
 
         evaluator = ModelEvaluator(n_bootstrap=50, n_permutations=50)
@@ -380,9 +386,14 @@ class TestModelEvaluator:
         cv = splitter.as_sklearn_cv(timestamps)
 
         evaluator = ModelEvaluator(n_bootstrap=50, n_permutations=50)
-        result = evaluator.evaluate_walk_forward(
-            trained.model, feats, y, cv, trained.selected_features,
-        )
+        with pytest.warns(DeprecationWarning, match="evaluate_walk_forward"):
+            result = evaluator.evaluate_walk_forward(
+                trained.model,
+                feats,
+                y,
+                cv,
+                trained.selected_features,
+            )
 
         assert isinstance(result, EvaluationResult)
         assert len(result.fold_metrics) == len(cv)
@@ -463,7 +474,9 @@ class TestFullPipeline:
     def test_train_evaluate_pipeline(self):
         """Full pipeline: generate data, train, evaluate."""
         feats, y, timestamps = _make_classification_data(
-            n=400, n_features=8, seed=42,
+            n=400,
+            n_features=8,
+            seed=42,
         )
 
         # Walk-forward splits
@@ -474,7 +487,9 @@ class TestFullPipeline:
 
         # Train
         model_config = ModelConfig(
-            iterations=50, depth=4, rfecv_enabled=False,
+            iterations=50,
+            depth=4,
+            rfecv_enabled=False,
         )
         trainer = ExtremaModelTrainer(model_config)
         trained = trainer.train(feats, y, cv_splits=cv)
@@ -482,9 +497,14 @@ class TestFullPipeline:
 
         # Evaluate
         evaluator = ModelEvaluator(n_bootstrap=100, n_permutations=100)
-        result = evaluator.evaluate_walk_forward(
-            trained.model, feats, y, cv, trained.selected_features,
-        )
+        with pytest.warns(DeprecationWarning, match="evaluate_walk_forward"):
+            result = evaluator.evaluate_walk_forward(
+                trained.model,
+                feats,
+                y,
+                cv,
+                trained.selected_features,
+            )
 
         assert result.precision >= 0.0
         assert result.recall >= 0.0
