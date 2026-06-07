@@ -110,9 +110,7 @@ class ObservationManager:
         if self._active.event.level_zone.representative_price == level_price:
             self._discard_window(ObservationStatus.DISCARDED_LEVEL_DELETED)
 
-    def on_observation_complete(
-        self, callback: Callable[[ObservationWindow], None]
-    ) -> None:
+    def on_observation_complete(self, callback: Callable[[ObservationWindow], None]) -> None:
         """Register a callback for when an observation completes or is discarded."""
         self._callbacks.append(callback)
 

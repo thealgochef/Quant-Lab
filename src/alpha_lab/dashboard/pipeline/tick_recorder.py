@@ -32,18 +32,20 @@ ET = ZoneInfo("America/New_York")
 # CME Globex day boundary: 6:00 PM ET
 _CME_DAY_BOUNDARY_HOUR = 18
 
-_SCHEMA = pa.schema([
-    ("timestamp", pa.timestamp("ns", tz="UTC")),
-    ("record_type", pa.string()),
-    ("price", pa.float64()),
-    ("bid_price", pa.float64()),
-    ("ask_price", pa.float64()),
-    ("bid_size", pa.int32()),
-    ("ask_size", pa.int32()),
-    ("trade_size", pa.int32()),
-    ("aggressor_side", pa.string()),
-    ("symbol", pa.string()),
-])
+_SCHEMA = pa.schema(
+    [
+        ("timestamp", pa.timestamp("ns", tz="UTC")),
+        ("record_type", pa.string()),
+        ("price", pa.float64()),
+        ("bid_price", pa.float64()),
+        ("ask_price", pa.float64()),
+        ("bid_size", pa.int32()),
+        ("ask_size", pa.int32()),
+        ("trade_size", pa.int32()),
+        ("aggressor_side", pa.string()),
+        ("symbol", pa.string()),
+    ]
+)
 
 
 def _cme_trading_date(ts_utc: datetime) -> date:

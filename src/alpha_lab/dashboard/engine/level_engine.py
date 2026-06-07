@@ -30,8 +30,8 @@ from alpha_lab.dashboard.pipeline.price_buffer import PriceBuffer
 ET = ZoneInfo("America/New_York")
 
 # Session boundaries in ET
-_ASIA_START = time(18, 0)   # Previous calendar day
-_ASIA_END = time(1, 0)      # Current calendar day
+_ASIA_START = time(18, 0)  # Previous calendar day
+_ASIA_END = time(1, 0)  # Current calendar day
 _LONDON_START = time(1, 0)
 _LONDON_END = time(8, 0)
 _NY_RTH_START = time(9, 30)
@@ -77,15 +77,19 @@ class LevelEngine:
 
         # Asia session levels
         self._compute_session_levels(
-            trading_date, "asia",
-            LevelType.ASIA_HIGH, LevelType.ASIA_LOW,
+            trading_date,
+            "asia",
+            LevelType.ASIA_HIGH,
+            LevelType.ASIA_LOW,
             current_time,
         )
 
         # London session levels
         self._compute_session_levels(
-            trading_date, "london",
-            LevelType.LONDON_HIGH, LevelType.LONDON_LOW,
+            trading_date,
+            "london",
+            LevelType.LONDON_HIGH,
+            LevelType.LONDON_LOW,
             current_time,
         )
 
@@ -172,20 +176,24 @@ class LevelEngine:
         # PDH/PDL available from start of the new day
         avail = datetime.combine(trading_date, time(0, 0), tzinfo=ET).astimezone(UTC)
 
-        self._levels.append(KeyLevel(
-            level_type=LevelType.PDH,
-            price=high,
-            side=LevelSide.HIGH,
-            available_from=avail,
-            source_session_date=prev_day,
-        ))
-        self._levels.append(KeyLevel(
-            level_type=LevelType.PDL,
-            price=low,
-            side=LevelSide.LOW,
-            available_from=avail,
-            source_session_date=prev_day,
-        ))
+        self._levels.append(
+            KeyLevel(
+                level_type=LevelType.PDH,
+                price=high,
+                side=LevelSide.HIGH,
+                available_from=avail,
+                source_session_date=prev_day,
+            )
+        )
+        self._levels.append(
+            KeyLevel(
+                level_type=LevelType.PDL,
+                price=low,
+                side=LevelSide.LOW,
+                available_from=avail,
+                source_session_date=prev_day,
+            )
+        )
 
     def _compute_session_levels(
         self,
@@ -208,20 +216,24 @@ class LevelEngine:
 
         high, low = result
 
-        self._levels.append(KeyLevel(
-            level_type=high_type,
-            price=high,
-            side=LevelSide.HIGH,
-            available_from=end_utc,
-            source_session_date=trading_date,
-        ))
-        self._levels.append(KeyLevel(
-            level_type=low_type,
-            price=low,
-            side=LevelSide.LOW,
-            available_from=end_utc,
-            source_session_date=trading_date,
-        ))
+        self._levels.append(
+            KeyLevel(
+                level_type=high_type,
+                price=high,
+                side=LevelSide.HIGH,
+                available_from=end_utc,
+                source_session_date=trading_date,
+            )
+        )
+        self._levels.append(
+            KeyLevel(
+                level_type=low_type,
+                price=low,
+                side=LevelSide.LOW,
+                available_from=end_utc,
+                source_session_date=trading_date,
+            )
+        )
 
     def _session_boundaries_utc(
         self,

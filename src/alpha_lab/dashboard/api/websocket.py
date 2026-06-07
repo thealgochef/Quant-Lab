@@ -153,20 +153,22 @@ class WebSocketManager:
         active_levels = []
         if state.level_engine is not None:
             for zone in state.level_engine.get_active_zones():
-                active_levels.append({
-                    "zone_id": zone.zone_id,
-                    "price": float(zone.representative_price),
-                    "side": zone.side.value,
-                    "is_touched": zone.is_touched,
-                    "levels": [
-                        {
-                            "type": lv.level_type.value,
-                            "price": float(lv.price),
-                            "is_manual": lv.is_manual,
-                        }
-                        for lv in zone.levels
-                    ],
-                })
+                active_levels.append(
+                    {
+                        "zone_id": zone.zone_id,
+                        "price": float(zone.representative_price),
+                        "side": zone.side.value,
+                        "is_touched": zone.is_touched,
+                        "levels": [
+                            {
+                                "type": lv.level_type.value,
+                                "price": float(lv.price),
+                                "is_manual": lv.is_manual,
+                            }
+                            for lv in zone.levels
+                        ],
+                    }
+                )
 
         # Active observation
         active_obs = None
@@ -197,30 +199,34 @@ class WebSocketManager:
                 else:
                     tp_price = float(entry - tp_points)
                     sl_price = float(entry + sl_points)
-                open_positions.append({
-                    "account_id": pos.account_id,
-                    "direction": pos.direction.value,
-                    "entry_price": float(pos.entry_price),
-                    "contracts": pos.contracts,
-                    "entry_time": pos.entry_time.isoformat(),
-                    "unrealized_pnl": float(pos.unrealized_pnl),
-                    "tp_price": tp_price,
-                    "sl_price": sl_price,
-                })
+                open_positions.append(
+                    {
+                        "account_id": pos.account_id,
+                        "direction": pos.direction.value,
+                        "entry_price": float(pos.entry_price),
+                        "contracts": pos.contracts,
+                        "entry_time": pos.entry_time.isoformat(),
+                        "unrealized_pnl": float(pos.unrealized_pnl),
+                        "tp_price": tp_price,
+                        "sl_price": sl_price,
+                    }
+                )
 
         # Account states
         accounts = []
         for acct in state.account_manager.get_all_accounts():
-            accounts.append({
-                "account_id": acct.account_id,
-                "label": acct.label,
-                "group": acct.group,
-                "balance": float(acct.balance),
-                "status": acct.status.value,
-                "tier": acct.tier,
-                "has_position": acct.has_position,
-                "daily_pnl": float(acct.daily_pnl),
-            })
+            accounts.append(
+                {
+                    "account_id": acct.account_id,
+                    "label": acct.label,
+                    "group": acct.group,
+                    "balance": float(acct.balance),
+                    "status": acct.status.value,
+                    "tier": acct.tier,
+                    "has_position": acct.has_position,
+                    "daily_pnl": float(acct.daily_pnl),
+                }
+            )
 
         # Config
         monitor = state.position_monitor
@@ -236,7 +242,8 @@ class WebSocketManager:
         # Session stats
         wins = sum(1 for p in state.todays_predictions if p.get("prediction_correct"))
         losses = sum(
-            1 for p in state.todays_predictions
+            1
+            for p in state.todays_predictions
             if p.get("prediction_correct") is not None and not p.get("prediction_correct")
         )
         total = wins + losses

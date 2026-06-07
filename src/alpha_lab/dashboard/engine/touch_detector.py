@@ -80,8 +80,9 @@ class TouchDetector:
         a level touch, otherwise None."""
         # Time cutoff: no new touches after 3:49 PM ET
         ts_et = trade.timestamp.astimezone(ET)
-        if (ts_et.hour > _CUTOFF_HOUR or
-                (ts_et.hour == _CUTOFF_HOUR and ts_et.minute > _CUTOFF_MINUTE)):
+        if ts_et.hour > _CUTOFF_HOUR or (
+            ts_et.hour == _CUTOFF_HOUR and ts_et.minute > _CUTOFF_MINUTE
+        ):
             return None
 
         session = _classify_session(trade.timestamp)

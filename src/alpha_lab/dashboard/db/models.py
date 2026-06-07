@@ -99,9 +99,7 @@ class ModelVersion(Base):
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),
     )
-    activated_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class ActiveLevel(Base):
@@ -116,12 +114,8 @@ class ActiveLevel(Base):
     zone_id: Mapped[str | None] = mapped_column(String, nullable=True)
     is_manual: Mapped[bool] = mapped_column(Boolean, default=False)
     is_touched: Mapped[bool] = mapped_column(Boolean, default=False)
-    touched_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    available_from: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    touched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    available_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),
@@ -136,9 +130,7 @@ class ObservationEvent(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     event_id: Mapped[str] = mapped_column(String, unique=True, nullable=False)
-    timestamp: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     level_type: Mapped[str] = mapped_column(String, nullable=False)
     level_price: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
     zone_id: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -180,13 +172,19 @@ class ApexAccountRecord(Base):
     eval_cost: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     activation_cost: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     balance: Mapped[float] = mapped_column(
-        Numeric(12, 2), nullable=False, default=50000.00,
+        Numeric(12, 2),
+        nullable=False,
+        default=50000.00,
     )
     peak_balance: Mapped[float] = mapped_column(
-        Numeric(12, 2), nullable=False, default=50000.00,
+        Numeric(12, 2),
+        nullable=False,
+        default=50000.00,
     )
     liquidation_threshold: Mapped[float] = mapped_column(
-        Numeric(12, 2), nullable=False, default=48000.00,
+        Numeric(12, 2),
+        nullable=False,
+        default=48000.00,
     )
     safety_net_reached: Mapped[bool] = mapped_column(Boolean, default=False)
     status: Mapped[str] = mapped_column(String, nullable=False, default="active")
@@ -194,16 +192,21 @@ class ApexAccountRecord(Base):
     payout_number: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     qualifying_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     total_payouts: Mapped[float] = mapped_column(
-        Numeric(12, 2), nullable=False, default=0.00,
+        Numeric(12, 2),
+        nullable=False,
+        default=0.00,
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC),
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
     )
     blown_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True,
+        DateTime(timezone=True),
+        nullable=True,
     )
     retired_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True,
+        DateTime(timezone=True),
+        nullable=True,
     )
 
 
@@ -220,10 +223,12 @@ class TradeRecord(Base):
     exit_price: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     contracts: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     entry_time: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False,
+        DateTime(timezone=True),
+        nullable=False,
     )
     exit_time: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True,
+        DateTime(timezone=True),
+        nullable=True,
     )
     pnl: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     pnl_points: Mapped[float | None] = mapped_column(Numeric(8, 2), nullable=True)
@@ -239,22 +244,22 @@ class DailySnapshot(Base):
     """Daily account snapshots for equity curves."""
 
     __tablename__ = "daily_account_snapshots"
-    __table_args__ = (
-        UniqueConstraint("account_id", "trading_date", name="uq_account_date"),
-    )
+    __table_args__ = (UniqueConstraint("account_id", "trading_date", name="uq_account_date"),)
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     account_id: Mapped[str] = mapped_column(String, nullable=False)
     trading_date: Mapped[date] = mapped_column(Date, nullable=False)
     opening_balance: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
     closing_balance: Mapped[float | None] = mapped_column(
-        Numeric(12, 2), nullable=True,
+        Numeric(12, 2),
+        nullable=True,
     )
     daily_pnl: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     trades_count: Mapped[int] = mapped_column(Integer, default=0)
     tier: Mapped[int] = mapped_column(Integer, nullable=False)
     liquidation_threshold: Mapped[float] = mapped_column(
-        Numeric(12, 2), nullable=False,
+        Numeric(12, 2),
+        nullable=False,
     )
 
 
@@ -270,5 +275,6 @@ class PayoutRecord(Base):
     balance_before: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
     balance_after: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
     requested_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC),
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
     )

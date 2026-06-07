@@ -8,7 +8,10 @@ const mockAddCandlestickSeries = vi.fn(() => ({
   applyOptions: mockApplyOptions,
 }));
 const mockRemove = vi.fn();
-const mockTimeScale = vi.fn(() => ({ scrollToRealTime: vi.fn() }));
+const mockTimeScale = vi.fn(() => ({
+  fitContent: vi.fn(),
+  scrollToRealTime: vi.fn(),
+}));
 const mockPriceScale = vi.fn(() => ({ applyOptions: vi.fn() }));
 
 vi.mock("lightweight-charts", () => ({

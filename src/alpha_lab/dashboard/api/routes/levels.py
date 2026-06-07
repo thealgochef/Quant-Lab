@@ -27,20 +27,22 @@ async def get_levels(request: Request) -> dict:
 
     zones = []
     for zone in state.level_engine.get_active_zones():
-        zones.append({
-            "zone_id": zone.zone_id,
-            "price": float(zone.representative_price),
-            "side": zone.side.value,
-            "is_touched": zone.is_touched,
-            "levels": [
-                {
-                    "type": lv.level_type.value,
-                    "price": float(lv.price),
-                    "is_manual": lv.is_manual,
-                }
-                for lv in zone.levels
-            ],
-        })
+        zones.append(
+            {
+                "zone_id": zone.zone_id,
+                "price": float(zone.representative_price),
+                "side": zone.side.value,
+                "is_touched": zone.is_touched,
+                "levels": [
+                    {
+                        "type": lv.level_type.value,
+                        "price": float(lv.price),
+                        "is_manual": lv.is_manual,
+                    }
+                    for lv in zone.levels
+                ],
+            }
+        )
 
     manual = [
         {"price": float(lv.price), "type": lv.level_type.value}
@@ -56,7 +58,8 @@ async def add_manual_level(body: AddManualLevelRequest, request: Request) -> dic
     state = request.app.state.dashboard
     if state.level_engine is None:
         return JSONResponse(
-            status_code=503, content={"error": "Level engine not available"},
+            status_code=503,
+            content={"error": "Level engine not available"},
         )
     today = datetime.now(UTC).date() if not isinstance(date.today(), date) else date.today()
     level = state.level_engine.add_manual_level(Decimal(str(body.price)), today)
@@ -75,11 +78,13 @@ async def delete_manual_level(price: float, request: Request) -> dict:
     state = request.app.state.dashboard
     if state.level_engine is None:
         return JSONResponse(
-            status_code=503, content={"error": "Level engine not available"},
+            status_code=503,
+            content={"error": "Level engine not available"},
         )
     removed = state.level_engine.remove_manual_level(Decimal(str(price)))
     if not removed:
         return JSONResponse(
-            status_code=404, content={"error": f"Manual level at {price} not found"},
+            status_code=404,
+            content={"error": f"Manual level at {price} not found"},
         )
     return {"deleted": True}

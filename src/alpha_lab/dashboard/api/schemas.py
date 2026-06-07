@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 # ── Trading ───────────────────────────────────────────────────────
 
+
 class CloseAllRequest(BaseModel):
     reason: str = "manual"
 
@@ -26,6 +27,7 @@ class ManualEntryRequest(BaseModel):
 
 # ── Accounts ──────────────────────────────────────────────────────
 
+
 class AddAccountRequest(BaseModel):
     label: str
     eval_cost: float
@@ -38,6 +40,7 @@ class PayoutRequest(BaseModel):
 
 
 # ── Config ────────────────────────────────────────────────────────
+
 
 class ConfigUpdateRequest(BaseModel):
     group_a_tp: float | None = None
@@ -52,6 +55,7 @@ class OverlayUpdateRequest(BaseModel):
 
 
 # ── Levels ────────────────────────────────────────────────────────
+
 
 class AddManualLevelRequest(BaseModel):
     price: float

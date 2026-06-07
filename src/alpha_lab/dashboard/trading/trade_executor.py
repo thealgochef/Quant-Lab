@@ -55,14 +55,16 @@ class TradeExecutor:
 
         # No new trades at or after flatten time
         ts_et = timestamp.astimezone(ET)
-        if (ts_et.hour > _FLATTEN_HOUR_ET
-                or (ts_et.hour == _FLATTEN_HOUR_ET
-                    and ts_et.minute >= _FLATTEN_MINUTE)):
+        if ts_et.hour > _FLATTEN_HOUR_ET or (
+            ts_et.hour == _FLATTEN_HOUR_ET and ts_et.minute >= _FLATTEN_MINUTE
+        ):
             return []
 
         direction: TradeDirection = prediction["trade_direction"]
         # Use current market price for entry, not the level price
-        entry_price: Decimal = current_price if current_price is not None else prediction["level_price"]
+        entry_price: Decimal = (
+            current_price if current_price is not None else prediction["level_price"]
+        )
 
         # No-hedging check: if any account has a position in opposite direction
         if self._has_conflicting_position(direction):

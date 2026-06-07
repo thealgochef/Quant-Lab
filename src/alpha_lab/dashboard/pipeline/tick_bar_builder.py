@@ -13,7 +13,7 @@ ObservationManager.on_observation.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from decimal import Decimal
 
 from alpha_lab.dashboard.pipeline.price_buffer import OHLCVBar
@@ -62,9 +62,7 @@ class TickBarBuilder:
         }
         self._callbacks: list[Callable[[str, OHLCVBar], None]] = []
         # Persistent storage of completed bars per timeframe
-        self._completed_bars: dict[str, list[OHLCVBar]] = {
-            f"{tc}t": [] for tc in tick_counts
-        }
+        self._completed_bars: dict[str, list[OHLCVBar]] = {f"{tc}t": [] for tc in tick_counts}
 
     def on_bar_complete(self, callback: Callable[[str, OHLCVBar], None]) -> None:
         """Register a callback fired when any tick bar completes.
@@ -84,14 +82,16 @@ class TickBarBuilder:
         if include_partial:
             acc = self._accumulators.get(timeframe)
             if acc and acc.count > 0 and acc.last_ts is not None:
-                bars.append(OHLCVBar(
-                    timestamp=acc.last_ts,
-                    open=acc.open,
-                    high=acc.high,
-                    low=acc.low,
-                    close=acc.close,
-                    volume=acc.volume,
-                ))
+                bars.append(
+                    OHLCVBar(
+                        timestamp=acc.last_ts,
+                        open=acc.open,
+                        high=acc.high,
+                        low=acc.low,
+                        close=acc.close,
+                        volume=acc.volume,
+                    )
+                )
         return bars
 
     def on_trade(self, trade: TradeUpdate) -> None:

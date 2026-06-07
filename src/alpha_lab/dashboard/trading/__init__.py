@@ -65,10 +65,10 @@ SAFETY_NET_LIQUIDATION = Decimal("50100")
 
 # Tier thresholds: (min_profit, max_profit, max_contracts, dll)
 TIER_THRESHOLDS = [
-    (Decimal("0"), Decimal("1500"), 2, Decimal("1000")),       # Tier 1
-    (Decimal("1500"), Decimal("3000"), 3, Decimal("1000")),    # Tier 2
-    (Decimal("3000"), Decimal("6000"), 4, Decimal("2000")),    # Tier 3
-    (Decimal("6000"), None, 4, Decimal("3000")),               # Tier 4
+    (Decimal("0"), Decimal("1500"), 2, Decimal("1000")),  # Tier 1
+    (Decimal("1500"), Decimal("3000"), 3, Decimal("1000")),  # Tier 2
+    (Decimal("3000"), Decimal("6000"), 4, Decimal("2000")),  # Tier 3
+    (Decimal("6000"), None, 4, Decimal("3000")),  # Tier 4
 ]
 
 # Payout caps by payout number (1-indexed)

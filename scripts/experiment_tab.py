@@ -1,3 +1,4 @@
+# ruff: noqa: E501,E741
 """
 Dashboard compatibility/export tab for the retained 3-class workflow.
 
@@ -13,6 +14,7 @@ training workflow.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -27,7 +29,9 @@ from plotly.subplots import make_subplots
 
 _RESULTS_DIR = Path(__file__).resolve().parents[1] / "data" / "experiment" / "training_results"
 _DIAG_DIR = _RESULTS_DIR / "diagnostics"
-_FEATURE_MATRIX = Path(__file__).resolve().parents[1] / "data" / "experiment" / "feature_matrix.parquet"
+_FEATURE_MATRIX = (
+    Path(__file__).resolve().parents[1] / "data" / "experiment" / "feature_matrix.parquet"
+)
 _BAR_DATA_DIR = Path(__file__).resolve().parents[1] / "data" / "databento" / "NQ"
 
 CLASS_NAMES = {0: "tradeable_reversal", 1: "trap_reversal", 2: "aggressive_blowthrough"}
@@ -138,7 +142,7 @@ def _load_fold_1m_bars(dates_key: str) -> pd.DataFrame | None:
     dates_key is a comma-separated string of YYYY-MM-DD dates
     (string key for Streamlit cache hashability).
     """
-    from datetime import datetime, timedelta
+    from datetime import timedelta
 
     dates = [d.strip() for d in dates_key.split(",") if d.strip()]
     if not dates:
@@ -193,43 +197,59 @@ def _chart_walkforward_performance(
     fig = go.Figure()
 
     # 58-feature model bars
-    fig.add_trace(go.Bar(
-        x=x_labels,
-        y=fold_58["accuracy"].values,
-        name="58-Feature Model",
-        marker_color="#7E57C2",
-        opacity=0.85,
-        hovertemplate="Fold %{x}<br>Accuracy: %{y:.1%}<extra>58-feat</extra>",
-    ))
+    fig.add_trace(
+        go.Bar(
+            x=x_labels,
+            y=fold_58["accuracy"].values,
+            name="58-Feature Model",
+            marker_color="#7E57C2",
+            opacity=0.85,
+            hovertemplate="Fold %{x}<br>Accuracy: %{y:.1%}<extra>58-feat</extra>",
+        )
+    )
 
     # Top-3 model bars
-    fig.add_trace(go.Bar(
-        x=x_labels,
-        y=fold_t3["accuracy"].values,
-        name="Top-3 Feature Model",
-        marker_color="#26a69a",
-        opacity=0.85,
-        hovertemplate="Fold %{x}<br>Accuracy: %{y:.1%}<extra>Top-3</extra>",
-    ))
+    fig.add_trace(
+        go.Bar(
+            x=x_labels,
+            y=fold_t3["accuracy"].values,
+            name="Top-3 Feature Model",
+            marker_color="#26a69a",
+            opacity=0.85,
+            hovertemplate="Fold %{x}<br>Accuracy: %{y:.1%}<extra>Top-3</extra>",
+        )
+    )
 
     # Threshold lines
-    fig.add_hline(y=0.40, line_dash="dash", line_color="#FFD700",
-                  annotation_text="Accuracy Threshold (40%)",
-                  annotation_position="top left")
+    fig.add_hline(
+        y=0.40,
+        line_dash="dash",
+        line_color="#FFD700",
+        annotation_text="Accuracy Threshold (40%)",
+        annotation_position="top left",
+    )
 
     # Pooled accuracy annotations
     acc_58 = summary["overall_accuracy"]
-    fig.add_hline(y=acc_58, line_dash="dot", line_color="#7E57C2",
-                  annotation_text=f"58-feat pooled: {acc_58:.1%}",
-                  annotation_position="bottom right")
+    fig.add_hline(
+        y=acc_58,
+        line_dash="dot",
+        line_color="#7E57C2",
+        annotation_text=f"58-feat pooled: {acc_58:.1%}",
+        annotation_position="bottom right",
+    )
 
     # Compute top-3 pooled from folds
     total_correct_t3 = (fold_t3["accuracy"] * fold_t3["n_test"]).sum()
     total_n_t3 = fold_t3["n_test"].sum()
     acc_t3 = total_correct_t3 / total_n_t3 if total_n_t3 > 0 else 0
-    fig.add_hline(y=acc_t3, line_dash="dot", line_color="#26a69a",
-                  annotation_text=f"Top-3 pooled: {acc_t3:.1%}",
-                  annotation_position="top right")
+    fig.add_hline(
+        y=acc_t3,
+        line_dash="dot",
+        line_color="#26a69a",
+        annotation_text=f"Top-3 pooled: {acc_t3:.1%}",
+        annotation_position="top right",
+    )
 
     fig.update_layout(
         title="Walk-Forward Per-Fold Accuracy",
@@ -259,17 +279,19 @@ def _chart_confusion_matrix(cm_df: pd.DataFrame, title: str) -> go.Figure:
 
     text = [[f"{z[i][j]}<br>({pct[i][j]:.0f}%)" for j in range(3)] for i in range(3)]
 
-    fig = go.Figure(go.Heatmap(
-        z=z,
-        x=[f"Pred {l}" for l in labels],
-        y=[f"Actual {l}" for l in labels],
-        text=text,
-        texttemplate="%{text}",
-        textfont=dict(size=14),
-        colorscale="Tealgrn",
-        showscale=False,
-        hovertemplate="Actual: %{y}<br>Predicted: %{x}<br>Count: %{z}<extra></extra>",
-    ))
+    fig = go.Figure(
+        go.Heatmap(
+            z=z,
+            x=[f"Pred {l}" for l in labels],
+            y=[f"Actual {l}" for l in labels],
+            text=text,
+            texttemplate="%{text}",
+            textfont=dict(size=14),
+            colorscale="Tealgrn",
+            showscale=False,
+            hovertemplate="Actual: %{y}<br>Predicted: %{x}<br>Count: %{z}<extra></extra>",
+        )
+    )
 
     fig.update_layout(
         title=title,
@@ -291,36 +313,37 @@ def _chart_feature_importance(stability: pd.DataFrame) -> go.Figure:
     top10 = stability.head(10).copy()
     top10 = top10.iloc[::-1]  # Horizontal bar: reverse for top at top
 
-    colors = [
-        "#26a69a" if row["in_all_folds"] else "#7E57C2"
-        for _, row in top10.iterrows()
-    ]
+    colors = ["#26a69a" if row["in_all_folds"] else "#7E57C2" for _, row in top10.iterrows()]
 
     fig = go.Figure()
 
-    fig.add_trace(go.Bar(
-        y=top10["feature"],
-        x=top10["mean_importance"],
-        orientation="h",
-        marker_color=colors,
-        error_x=dict(
-            type="data",
-            array=top10["std_importance"].values,
-            color="rgba(255,255,255,0.4)",
-        ),
-        hovertemplate=(
-            "%{y}<br>"
-            "Mean importance: %{x:.1f}<br>"
-            "In top 10 of %{customdata[0]}/5 folds<br>"
-            "Stable across all folds: %{customdata[1]}"
-            "<extra></extra>"
-        ),
-        customdata=list(zip(
-            top10["folds_in_top_10"].values,
-            ["Yes" if v else "No" for v in top10["in_all_folds"].values],
-            strict=True,
-        )),
-    ))
+    fig.add_trace(
+        go.Bar(
+            y=top10["feature"],
+            x=top10["mean_importance"],
+            orientation="h",
+            marker_color=colors,
+            error_x=dict(
+                type="data",
+                array=top10["std_importance"].values,
+                color="rgba(255,255,255,0.4)",
+            ),
+            hovertemplate=(
+                "%{y}<br>"
+                "Mean importance: %{x:.1f}<br>"
+                "In top 10 of %{customdata[0]}/5 folds<br>"
+                "Stable across all folds: %{customdata[1]}"
+                "<extra></extra>"
+            ),
+            customdata=list(
+                zip(
+                    top10["folds_in_top_10"].values,
+                    ["Yes" if v else "No" for v in top10["in_all_folds"].values],
+                    strict=True,
+                )
+            ),
+        )
+    )
 
     fig.update_layout(
         title="Top 10 Features by Mean Importance",
@@ -328,11 +351,17 @@ def _chart_feature_importance(stability: pd.DataFrame) -> go.Figure:
         template="plotly_dark",
         xaxis=dict(title="Mean Importance (CatBoost)"),
         margin=dict(l=200, r=20, t=50, b=40),
-        annotations=[dict(
-            text="Green = stable across all 5 folds | Purple = appears in fewer folds",
-            xref="paper", yref="paper", x=0.5, y=-0.12,
-            showarrow=False, font=dict(size=11, color="gray"),
-        )],
+        annotations=[
+            dict(
+                text="Green = stable across all 5 folds | Purple = appears in fewer folds",
+                xref="paper",
+                yref="paper",
+                x=0.5,
+                y=-0.12,
+                showarrow=False,
+                font=dict(size=11, color="gray"),
+            )
+        ],
     )
     return fig
 
@@ -350,12 +379,13 @@ def _chart_feature_distributions(feat_dist: pd.DataFrame) -> go.Figure:
     """
     top3 = ["int_time_beyond_level", "int_time_within_2pts", "int_absorption_ratio"]
     classes = ["tradeable_reversal", "trap_reversal", "aggressive_blowthrough"]
-    class_short = {"tradeable_reversal": "Reversal", "trap_reversal": "Trap",
-                   "aggressive_blowthrough": "Blowthrough"}
+    class_short = {
+        "tradeable_reversal": "Reversal",
+        "trap_reversal": "Trap",
+        "aggressive_blowthrough": "Blowthrough",
+    }
 
-    fig = make_subplots(rows=1, cols=3, subplot_titles=[
-        f.replace("int_", "") for f in top3
-    ])
+    fig = make_subplots(rows=1, cols=3, subplot_titles=[f.replace("int_", "") for f in top3])
 
     for col_idx, feat in enumerate(top3, 1):
         feat_data = feat_dist[feat_dist["feature"] == feat]
@@ -376,23 +406,27 @@ def _chart_feature_distributions(feat_dist: pd.DataFrame) -> go.Figure:
             color = CLASS_COLORS[cls]
 
             # Show as error bars around mean
-            fig.add_trace(go.Bar(
-                x=[class_short[cls]],
-                y=[mean_val],
-                name=class_short[cls] if col_idx == 1 else None,
-                marker_color=color,
-                opacity=0.8,
-                error_y=dict(type="data", array=[std_val], color="rgba(255,255,255,0.5)"),
-                showlegend=(col_idx == 1),
-                legendgroup=cls,
-                hovertemplate=(
-                    f"{class_short[cls]}<br>"
-                    f"Mean: {mean_val:.2f}<br>"
-                    f"Std: {std_val:.2f}<br>"
-                    f"Median: {median_val:.2f}"
-                    "<extra></extra>"
+            fig.add_trace(
+                go.Bar(
+                    x=[class_short[cls]],
+                    y=[mean_val],
+                    name=class_short[cls] if col_idx == 1 else None,
+                    marker_color=color,
+                    opacity=0.8,
+                    error_y=dict(type="data", array=[std_val], color="rgba(255,255,255,0.5)"),
+                    showlegend=(col_idx == 1),
+                    legendgroup=cls,
+                    hovertemplate=(
+                        f"{class_short[cls]}<br>"
+                        f"Mean: {mean_val:.2f}<br>"
+                        f"Std: {std_val:.2f}<br>"
+                        f"Median: {median_val:.2f}"
+                        "<extra></extra>"
+                    ),
                 ),
-            ), row=1, col=col_idx)
+                row=1,
+                col=col_idx,
+            )
 
     fig.update_layout(
         title="Top-3 Feature Distributions by Class (Mean +/- Std)",
@@ -414,40 +448,48 @@ def _chart_session_accuracy(session_df: pd.DataFrame) -> go.Figure:
     sessions = session_df["session"].values
     fig = go.Figure()
 
-    fig.add_trace(go.Bar(
-        x=sessions,
-        y=session_df["accuracy"].values,
-        name="Accuracy",
-        marker_color="#26a69a",
-        opacity=0.85,
-        hovertemplate="%{x}<br>Accuracy: %{y:.1%}<br>N=%{customdata}<extra></extra>",
-        customdata=session_df["n"].values,
-    ))
+    fig.add_trace(
+        go.Bar(
+            x=sessions,
+            y=session_df["accuracy"].values,
+            name="Accuracy",
+            marker_color="#26a69a",
+            opacity=0.85,
+            hovertemplate="%{x}<br>Accuracy: %{y:.1%}<br>N=%{customdata}<extra></extra>",
+            customdata=session_df["n"].values,
+        )
+    )
 
-    fig.add_trace(go.Bar(
-        x=sessions,
-        y=session_df["reversal_precision"].values,
-        name="Reversal Precision",
-        marker_color="#7E57C2",
-        opacity=0.85,
-        hovertemplate="%{x}<br>Rev Precision: %{y:.1%}<extra></extra>",
-    ))
+    fig.add_trace(
+        go.Bar(
+            x=sessions,
+            y=session_df["reversal_precision"].values,
+            name="Reversal Precision",
+            marker_color="#7E57C2",
+            opacity=0.85,
+            hovertemplate="%{x}<br>Rev Precision: %{y:.1%}<extra></extra>",
+        )
+    )
 
-    fig.add_trace(go.Bar(
-        x=sessions,
-        y=session_df["reversal_recall"].values,
-        name="Reversal Recall",
-        marker_color="#FFA726",
-        opacity=0.85,
-        hovertemplate="%{x}<br>Rev Recall: %{y:.1%}<extra></extra>",
-    ))
+    fig.add_trace(
+        go.Bar(
+            x=sessions,
+            y=session_df["reversal_recall"].values,
+            name="Reversal Recall",
+            marker_color="#FFA726",
+            opacity=0.85,
+            hovertemplate="%{x}<br>Rev Recall: %{y:.1%}<extra></extra>",
+        )
+    )
 
     # Event counts as text above
-    for i, row in session_df.iterrows():
+    for _i, row in session_df.iterrows():
         fig.add_annotation(
-            x=row["session"], y=max(row["accuracy"], row["reversal_precision"]) + 0.05,
+            x=row["session"],
+            y=max(row["accuracy"], row["reversal_precision"]) + 0.05,
             text=f"n={int(row['n'])}",
-            showarrow=False, font=dict(size=10, color="gray"),
+            showarrow=False,
+            font=dict(size=10, color="gray"),
         )
 
     fig.update_layout(
@@ -472,18 +514,22 @@ def _chart_mae_distribution(mae_df: pd.DataFrame) -> go.Figure:
     values = mae_df["mae_pts"].values
 
     fig = go.Figure()
-    fig.add_trace(go.Histogram(
-        x=values,
-        nbinsx=20,
-        name="MAE (pts)",
-        marker_color="#26a69a",
-        opacity=0.8,
-        hovertemplate="MAE: %{x:.1f} pts<br>Count: %{y}<extra></extra>",
-    ))
+    fig.add_trace(
+        go.Histogram(
+            x=values,
+            nbinsx=20,
+            name="MAE (pts)",
+            marker_color="#26a69a",
+            opacity=0.8,
+            hovertemplate="MAE: %{x:.1f} pts<br>Count: %{y}<extra></extra>",
+        )
+    )
 
     # 37.5pt stop reference
     fig.add_vline(
-        x=37.5, line_dash="dash", line_color="#ef5350",
+        x=37.5,
+        line_dash="dash",
+        line_color="#ef5350",
         annotation_text="37.5pt Stop",
         annotation_position="top right",
         annotation_font=dict(color="#ef5350"),
@@ -492,7 +538,9 @@ def _chart_mae_distribution(mae_df: pd.DataFrame) -> go.Figure:
     # Median line
     median_mae = float(np.median(values))
     fig.add_vline(
-        x=median_mae, line_dash="dot", line_color="#FFD700",
+        x=median_mae,
+        line_dash="dot",
+        line_color="#FFD700",
         annotation_text=f"Median: {median_mae:.1f}pt",
         annotation_position="top left",
         annotation_font=dict(color="#FFD700"),
@@ -528,22 +576,22 @@ def _chart_event_timeline(
     for cls_id, cls_name in CLASS_NAMES.items():
         mask = events["label_encoded"] == cls_id
         cls_events = events[mask]
-        fig.add_trace(go.Scatter(
-            x=cls_events["event_ts"],
-            y=[cls_name.replace("_", " ").title()] * len(cls_events),
-            mode="markers",
-            marker=dict(
-                size=8,
-                color=CLASS_COLORS[cls_name],
-                opacity=0.7,
-            ),
-            name=cls_name.replace("_", " ").title(),
-            hovertemplate=(
-                "%{x|%Y-%m-%d %H:%M}<br>"
-                f"{cls_name.replace('_', ' ').title()}"
-                "<extra></extra>"
-            ),
-        ))
+        fig.add_trace(
+            go.Scatter(
+                x=cls_events["event_ts"],
+                y=[cls_name.replace("_", " ").title()] * len(cls_events),
+                mode="markers",
+                marker=dict(
+                    size=8,
+                    color=CLASS_COLORS[cls_name],
+                    opacity=0.7,
+                ),
+                name=cls_name.replace("_", " ").title(),
+                hovertemplate=(
+                    f"%{{x|%Y-%m-%d %H:%M}}<br>{cls_name.replace('_', ' ').title()}<extra></extra>"
+                ),
+            )
+        )
 
     # Fold boundary lines from test_dates column
     for _, row in fold_results.iterrows():
@@ -554,19 +602,25 @@ def _chart_event_timeline(
         # Shaded fold test window
         fig.add_shape(
             type="rect",
-            x0=test_start, x1=test_end,
-            y0=0, y1=1, yref="paper",
+            x0=test_start,
+            x1=test_end,
+            y0=0,
+            y1=1,
+            yref="paper",
             fillcolor="rgba(126, 87, 194, 0.1)",
             line_width=0,
         )
         # Fold label at midpoint
-        mid_date = pd.Timestamp(test_start) + (
-            pd.Timestamp(test_end) - pd.Timestamp(test_start)
-        ) / 2
+        mid_date = (
+            pd.Timestamp(test_start) + (pd.Timestamp(test_end) - pd.Timestamp(test_start)) / 2
+        )
         fig.add_annotation(
-            x=mid_date, y=1.05, yref="paper",
+            x=mid_date,
+            y=1.05,
+            yref="paper",
             text=f"Fold {fold_num}",
-            showarrow=False, font=dict(size=10, color="gray"),
+            showarrow=False,
+            font=dict(size=10, color="gray"),
         )
 
     fig.update_layout(
@@ -623,37 +677,53 @@ def render_experiment_tab() -> None:
         v = verdict.get("Overall Accuracy > 40%", {})
         val = v.get("value", 0)
         passed = v.get("passed", False)
-        st.metric("Overall Accuracy", f"{val:.1%}",
-                  delta="PASS" if passed else "FAIL",
-                  delta_color="normal" if passed else "inverse")
+        st.metric(
+            "Overall Accuracy",
+            f"{val:.1%}",
+            delta="PASS" if passed else "FAIL",
+            delta_color="normal" if passed else "inverse",
+        )
     with c2:
         v = verdict.get("Tradeable Reversal Precision > 50%", {})
         val = v.get("value", 0)
         passed = v.get("passed", False)
-        st.metric("Rev. Precision", f"{val:.1%}",
-                  delta="PASS" if passed else "FAIL",
-                  delta_color="normal" if passed else "inverse")
+        st.metric(
+            "Rev. Precision",
+            f"{val:.1%}",
+            delta="PASS" if passed else "FAIL",
+            delta_color="normal" if passed else "inverse",
+        )
     with c3:
         v = verdict.get("Blow-through Recall > 60%", {})
         val = v.get("value", 0)
         passed = v.get("passed", False)
-        st.metric("BT Recall", f"{val:.1%}",
-                  delta="PASS" if passed else "FAIL",
-                  delta_color="normal" if passed else "inverse")
+        st.metric(
+            "BT Recall",
+            f"{val:.1%}",
+            delta="PASS" if passed else "FAIL",
+            delta_color="normal" if passed else "inverse",
+        )
     with c4:
         v = verdict.get("Cross-fold Accuracy StdDev < 10%", {})
         val = v.get("value", 0)
         passed = v.get("passed", False)
-        st.metric("Cross-fold Std", f"{val:.1%}",
-                  delta="PASS" if passed else "FAIL",
-                  delta_color="normal" if passed else "inverse")
+        st.metric(
+            "Cross-fold Std",
+            f"{val:.1%}",
+            delta="PASS" if passed else "FAIL",
+            delta_color="normal" if passed else "inverse",
+        )
 
     passed_count = sum(1 for v in verdict.values() if v.get("passed", False))
     total_checks = len(verdict)
     if passed_count == total_checks:
-        st.success(f"Hypothesis SUPPORTED — {passed_count}/{total_checks} thresholds met (58-feature model)")
+        st.success(
+            f"Hypothesis SUPPORTED — {passed_count}/{total_checks} thresholds met (58-feature model)"
+        )
     else:
-        st.warning(f"Hypothesis PARTIALLY SUPPORTED — {passed_count}/{total_checks} thresholds met (58-feature model)")
+        st.warning(
+            f"Hypothesis PARTIALLY SUPPORTED — {passed_count}/{total_checks} thresholds met (58-feature model)"
+        )
 
     st.divider()
 
@@ -833,7 +903,9 @@ def _chart_fold_trades(
         ts_to_pos[ts] = i
 
     fig = make_subplots(
-        rows=2, cols=1, shared_xaxes=True,
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
         vertical_spacing=0.03,
         row_heights=[0.8, 0.2],
         subplot_titles=(
@@ -843,26 +915,38 @@ def _chart_fold_trades(
     )
 
     # Candlestick
-    fig.add_trace(go.Candlestick(
-        x=x_int,
-        open=bars["open"].values,
-        high=bars["high"].values,
-        low=bars["low"].values,
-        close=bars["close"].values,
-        name="OHLC",
-        increasing_line_color="#26a69a",
-        decreasing_line_color="#ef5350",
-    ), row=1, col=1)
+    fig.add_trace(
+        go.Candlestick(
+            x=x_int,
+            open=bars["open"].values,
+            high=bars["high"].values,
+            low=bars["low"].values,
+            close=bars["close"].values,
+            name="OHLC",
+            increasing_line_color="#26a69a",
+            decreasing_line_color="#ef5350",
+        ),
+        row=1,
+        col=1,
+    )
 
     # Volume
     vol_colors = [
         "#26a69a" if c >= o else "#ef5350"
         for c, o in zip(bars["close"], bars["open"], strict=False)
     ]
-    fig.add_trace(go.Bar(
-        x=x_int, y=bars["volume"].values, name="Volume",
-        marker_color=vol_colors, opacity=0.5, showlegend=False,
-    ), row=2, col=1)
+    fig.add_trace(
+        go.Bar(
+            x=x_int,
+            y=bars["volume"].values,
+            name="Volume",
+            marker_color=vol_colors,
+            opacity=0.5,
+            showlegend=False,
+        ),
+        row=2,
+        col=1,
+    )
 
     # Event markers
     for pred_label in ["tradeable_reversal", "trap_reversal", "aggressive_blowthrough"]:
@@ -918,21 +1002,25 @@ def _chart_fold_trades(
                 )
 
             if x_positions:
-                fig.add_trace(go.Scatter(
-                    x=x_positions,
-                    y=y_positions,
-                    mode="markers",
-                    marker=dict(
-                        symbol=symbol,
-                        size=14 if symbol == "circle" else 12,
-                        color=color,
-                        line=dict(width=2, color="white"),
-                        opacity=0.9,
+                fig.add_trace(
+                    go.Scatter(
+                        x=x_positions,
+                        y=y_positions,
+                        mode="markers",
+                        marker=dict(
+                            symbol=symbol,
+                            size=14 if symbol == "circle" else 12,
+                            color=color,
+                            line=dict(width=2, color="white"),
+                            opacity=0.9,
+                        ),
+                        name=f"{short_name} ({suffix})",
+                        hovertext=hover_texts,
+                        hoverinfo="text",
                     ),
-                    name=f"{short_name} ({suffix})",
-                    hovertext=hover_texts,
-                    hoverinfo="text",
-                ), row=1, col=1)
+                    row=1,
+                    col=1,
+                )
 
     # Level price horizontal lines
     for _, row in preds.iterrows():
@@ -953,11 +1041,14 @@ def _chart_fold_trades(
         color = PRED_COLORS[row["predicted_label"]]
         fig.add_shape(
             type="line",
-            x0=x0, x1=x1,
-            y0=row["level_price"], y1=row["level_price"],
+            x0=x0,
+            x1=x1,
+            y0=row["level_price"],
+            y1=row["level_price"],
             line=dict(color=color, width=1, dash="dot"),
             opacity=0.5,
-            row=1, col=1,
+            row=1,
+            col=1,
         )
 
     # Layout
@@ -993,7 +1084,8 @@ def _render_trade_visualization(
         fold_options = sorted(predictions["fold"].unique())
         fold_labels = [f"Fold {f}" for f in fold_options]
         selected_fold_idx = st.selectbox(
-            "Select Fold", range(len(fold_options)),
+            "Select Fold",
+            range(len(fold_options)),
             format_func=lambda i: fold_labels[i],
             key="trade_viz_fold",
         )
@@ -1072,7 +1164,9 @@ def _render_trade_visualization(
     with c1:
         st.metric("Events", n_total)
     with c2:
-        st.metric("Correct", f"{n_correct}/{n_total} ({n_correct/n_total:.0%})" if n_total > 0 else "0")
+        st.metric(
+            "Correct", f"{n_correct}/{n_total} ({n_correct / n_total:.0%})" if n_total > 0 else "0"
+        )
     with c3:
         st.metric("Pred Reversal", n_rev)
     with c4:
@@ -1086,18 +1180,36 @@ def _render_trade_visualization(
 
     # Detail table
     with st.expander("Event Detail Table", expanded=False):
-        display_df = fold_preds[[
-            "event_ts", "level_name", "level_price", "direction",
-            "predicted_label", "actual_label", "correct",
-            "prob_reversal", "prob_trap", "prob_blowthrough",
-            "mfe", "mae",
-        ]].copy()
+        display_df = fold_preds[
+            [
+                "event_ts",
+                "level_name",
+                "level_price",
+                "direction",
+                "predicted_label",
+                "actual_label",
+                "correct",
+                "prob_reversal",
+                "prob_trap",
+                "prob_blowthrough",
+                "mfe",
+                "mae",
+            ]
+        ].copy()
         display_df["event_ts"] = display_df["event_ts"].dt.strftime("%Y-%m-%d %H:%M")
         display_df.columns = [
-            "Time", "Level", "Price", "Dir",
-            "Predicted", "Actual", "Correct",
-            "P(Rev)", "P(Trap)", "P(BT)",
-            "MFE", "MAE",
+            "Time",
+            "Level",
+            "Price",
+            "Dir",
+            "Predicted",
+            "Actual",
+            "Correct",
+            "P(Rev)",
+            "P(Trap)",
+            "P(BT)",
+            "MFE",
+            "MAE",
         ]
         # Format probabilities
         for col in ["P(Rev)", "P(Trap)", "P(BT)"]:

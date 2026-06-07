@@ -12,6 +12,7 @@ observation engine, paper trading engine) through this service.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Callable
 from datetime import timedelta
@@ -37,9 +38,7 @@ class PipelineService:
     Routes tick data from the client to all consumers.
     """
 
-    def __init__(
-        self, settings: DashboardSettings, client: Any | None = None
-    ) -> None:
+    def __init__(self, settings: DashboardSettings, client: Any | None = None) -> None:
         self._settings = settings
         self._running = False
         self._connection_status = ConnectionStatus.DISCONNECTED
@@ -57,9 +56,7 @@ class PipelineService:
             self._client = _create_client(settings)
 
         self._recorder = TickRecorder(settings.tick_recording_dir)
-        self._buffer = PriceBuffer(
-            max_duration=timedelta(hours=settings.price_buffer_hours)
-        )
+        self._buffer = PriceBuffer(max_duration=timedelta(hours=settings.price_buffer_hours))
         self._engine = create_db_engine(settings.database_url)
 
     # ── Public interface ──────────────────────────────────────────
@@ -73,8 +70,7 @@ class PipelineService:
             await init_db(self._engine)
         except Exception:
             logger.warning(
-                "Database init failed (PostgreSQL not running?) — "
-                "continuing without persistence"
+                "Database init failed (PostgreSQL not running?) — continuing without persistence"
             )
 
         # Wire callbacks before connecting
@@ -103,10 +99,8 @@ class PipelineService:
 
         self._recorder.close()
         await self._client.disconnect()
-        try:
+        with contextlib.suppress(Exception):
             await self._engine.dispose()
-        except Exception:
-            pass
 
         self._running = False
         logger.info("Pipeline service stopped")
@@ -127,9 +121,7 @@ class PipelineService:
         """Register an additional BBO consumer (for later phases)."""
         self._bbo_handlers.append(handler)
 
-    def register_connection_handler(
-        self, handler: Callable[[ConnectionStatus], None]
-    ) -> None:
+    def register_connection_handler(self, handler: Callable[[ConnectionStatus], None]) -> None:
         """Register a connection status consumer (for Phase 2 observation manager)."""
         self._connection_handlers.append(handler)
 

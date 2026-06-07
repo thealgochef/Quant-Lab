@@ -49,9 +49,7 @@ async def list_accounts(request: Request) -> dict:
     accounts = []
     for a in state.account_manager.get_all_accounts():
         d = _account_to_dict(a)
-        d["trade_count"] = sum(
-            1 for t in trades if t.get("account_id") == a.account_id
-        )
+        d["trade_count"] = sum(1 for t in trades if t.get("account_id") == a.account_id)
         accounts.append(d)
     summary = state.account_manager.get_portfolio_summary()
     # Convert Decimals in summary to float for JSON
@@ -77,29 +75,32 @@ async def get_account(account_id: str, request: Request) -> dict:
     acct = state.account_manager.get_account(account_id)
     if acct is None:
         return JSONResponse(
-            status_code=404, content={"error": f"Account {account_id} not found"},
+            status_code=404,
+            content={"error": f"Account {account_id} not found"},
         )
     # Filter trades for this account
-    trade_history = [
-        t for t in state.todays_trades if t.get("account_id") == account_id
-    ]
+    trade_history = [t for t in state.todays_trades if t.get("account_id") == account_id]
     return {"account": _account_to_dict(acct), "trade_history": trade_history}
 
 
 @router.post("/{account_id}/payout")
 async def request_payout(
-    account_id: str, body: PayoutRequest, request: Request,
+    account_id: str,
+    body: PayoutRequest,
+    request: Request,
 ) -> dict:
     state = request.app.state.dashboard
     acct = state.account_manager.get_account(account_id)
     if acct is None:
         return JSONResponse(
-            status_code=404, content={"error": f"Account {account_id} not found"},
+            status_code=404,
+            content={"error": f"Account {account_id} not found"},
         )
     result = acct.request_payout(Decimal(str(body.amount)))
     if not result:
         return JSONResponse(
-            status_code=400, content={"error": "Payout rejected — eligibility not met"},
+            status_code=400,
+            content={"error": "Payout rejected — eligibility not met"},
         )
     return {
         "payout": {

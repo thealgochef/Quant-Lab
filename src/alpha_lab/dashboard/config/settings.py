@@ -31,9 +31,7 @@ class DashboardSettings(BaseSettings):
     databento_api_key: SecretStr | None = None
 
     # PostgreSQL
-    database_url: str = (
-        "postgresql+asyncpg://postgres:alphalab2026@localhost:5432/alpha_lab"
-    )
+    database_url: str = "postgresql+asyncpg://postgres:alphalab2026@localhost:5432/alpha_lab"
 
     # Tick recording
     tick_recording_dir: Path = Path("data/rithmic/NQ")

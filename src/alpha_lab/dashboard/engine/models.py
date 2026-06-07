@@ -26,8 +26,8 @@ class LevelType(Enum):
 
 
 class LevelSide(Enum):
-    HIGH = "high"   # PDH, asia_high, london_high — SHORT reversal
-    LOW = "low"     # PDL, asia_low, london_low — LONG reversal
+    HIGH = "high"  # PDH, asia_high, london_high — SHORT reversal
+    LOW = "low"  # PDL, asia_low, london_low — LONG reversal
 
 
 class TradeDirection(Enum):
@@ -63,16 +63,16 @@ class KeyLevel:
     level_type: LevelType
     price: Decimal
     side: LevelSide
-    available_from: datetime         # UTC — when this level becomes active
-    source_session_date: date        # Which session produced this level
+    available_from: datetime  # UTC — when this level becomes active
+    source_session_date: date  # Which session produced this level
     is_manual: bool = False
-    zone_id: str | None = None       # Set when merged with other levels
+    zone_id: str | None = None  # Set when merged with other levels
 
 
 @dataclass
 class LevelZone:
     zone_id: str
-    representative_price: Decimal    # Average price of constituent levels
+    representative_price: Decimal  # Average price of constituent levels
     levels: list[KeyLevel] = field(default_factory=list)
     side: LevelSide = LevelSide.HIGH
     is_touched: bool = False
@@ -86,7 +86,7 @@ class TouchEvent:
     level_zone: LevelZone = field(default_factory=lambda: LevelZone("", Decimal(0)))
     trade_direction: TradeDirection = TradeDirection.LONG
     price_at_touch: Decimal = Decimal(0)
-    session: str = ""                # "asia", "london", "ny_rth", etc.
+    session: str = ""  # "asia", "london", "ny_rth", etc.
 
 
 @dataclass

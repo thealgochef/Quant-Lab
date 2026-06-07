@@ -12,7 +12,6 @@ PDH/PDL data before the visible replay range begins.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import threading
 import time as time_mod
@@ -95,7 +94,8 @@ class ReplayClient:
         self._bbo_callbacks.append(callback)
 
     def on_connection_status(
-        self, callback: Callable[[ConnectionStatus], None],
+        self,
+        callback: Callable[[ConnectionStatus], None],
     ) -> None:
         self._status_callbacks.append(callback)
 
@@ -107,35 +107,27 @@ class ReplayClient:
         """Discover available dates and compute preload/visible ranges."""
         self._all_dates = self._discover_dates()
         if len(self._all_dates) < 3:
-            raise ValueError(
-                f"Need >= 3 dates for replay (have {len(self._all_dates)})"
-            )
+            raise ValueError(f"Need >= 3 dates for replay (have {len(self._all_dates)})")
 
         # Compute visible date range
         if self._start_date:
             try:
-                start_idx = next(
-                    i for i, d in enumerate(self._all_dates)
-                    if d >= self._start_date
-                )
+                start_idx = next(i for i, d in enumerate(self._all_dates) if d >= self._start_date)
             except StopIteration:
-                raise ValueError(
-                    f"No dates on or after {self._start_date}"
-                ) from None
+                raise ValueError(f"No dates on or after {self._start_date}") from None
         else:
             start_idx = _PRELOAD_DATES
 
         if self._end_date:
             try:
                 end_idx = next(
-                    i for i in range(len(self._all_dates) - 1, -1, -1)
+                    i
+                    for i in range(len(self._all_dates) - 1, -1, -1)
                     if self._all_dates[i] <= self._end_date
                 )
             except StopIteration:
-                raise ValueError(
-                    f"No dates on or before {self._end_date}"
-                ) from None
-            self._visible_dates = self._all_dates[start_idx:end_idx + 1]
+                raise ValueError(f"No dates on or before {self._end_date}") from None
+            self._visible_dates = self._all_dates[start_idx : end_idx + 1]
         else:
             self._visible_dates = self._all_dates[start_idx:]
 
@@ -173,7 +165,9 @@ class ReplayClient:
 
         # Do NOT set _pause_event here — replay starts paused
         self._thread = threading.Thread(
-            target=self._replay_loop, daemon=True, name="replay-worker",
+            target=self._replay_loop,
+            daemon=True,
+            name="replay-worker",
         )
         self._thread.start()
 
@@ -215,7 +209,9 @@ class ReplayClient:
         return dates
 
     def _detect_front_month(
-        self, conn: duckdb.DuckDBPyConnection, mbp_path: str,
+        self,
+        conn: duckdb.DuckDBPyConnection,
+        mbp_path: str,
     ) -> str:
         """Detect front-month symbol (highest trade count, no spreads)."""
         rows = conn.execute(f"""
@@ -260,7 +256,9 @@ class ReplayClient:
             conn.close()
 
     def _replay_one_date(
-        self, conn: duckdb.DuckDBPyConnection, date_str: str,
+        self,
+        conn: duckdb.DuckDBPyConnection,
+        date_str: str,
     ) -> None:
         """Replay one day's ticks through callbacks."""
         self.current_date = date_str
@@ -351,11 +349,7 @@ class ReplayClient:
             # Step mode: when a bar completes, the TickBarBuilder callback
             # sets _bar_complete_event synchronously (same thread). We
             # check it here and re-pause so the user can inspect the bar.
-            if (
-                not self._preloading
-                and self._step_mode
-                and self._bar_complete_event.is_set()
-            ):
+            if not self._preloading and self._step_mode and self._bar_complete_event.is_set():
                 self._bar_complete_event.clear()
                 self._pause_event.clear()  # re-pause
 

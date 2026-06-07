@@ -179,9 +179,7 @@ class PriceBuffer:
         # 5. Aggregate 1m bars into the requested timeframe
         return _aggregate_bars(merged_1m, td)
 
-    def _build_bars_from_trades(
-        self, td: timedelta, since: datetime
-    ) -> list[OHLCVBar]:
+    def _build_bars_from_trades(self, td: timedelta, since: datetime) -> list[OHLCVBar]:
         """Build OHLCV bars from raw trade data at the given resolution."""
         with self._lock:
             trades = [t for t in self._trades if t.timestamp >= since]
@@ -194,9 +192,7 @@ class PriceBuffer:
         for trade in trades:
             epoch = trade.timestamp.timestamp()
             bar_start_epoch = (epoch // td_seconds) * td_seconds
-            bar_start = datetime.fromtimestamp(
-                bar_start_epoch, tz=trade.timestamp.tzinfo
-            )
+            bar_start = datetime.fromtimestamp(bar_start_epoch, tz=trade.timestamp.tzinfo)
             if bar_start not in buckets:
                 buckets[bar_start] = []
             buckets[bar_start].append(trade)
@@ -206,14 +202,16 @@ class PriceBuffer:
             bucket_trades = buckets[bar_ts]
             prices = [t.price for t in bucket_trades]
             volume = sum(t.size for t in bucket_trades)
-            bars.append(OHLCVBar(
-                timestamp=bar_ts,
-                open=prices[0],
-                high=max(prices),
-                low=min(prices),
-                close=prices[-1],
-                volume=volume,
-            ))
+            bars.append(
+                OHLCVBar(
+                    timestamp=bar_ts,
+                    open=prices[0],
+                    high=max(prices),
+                    low=min(prices),
+                    close=prices[-1],
+                    volume=volume,
+                )
+            )
         return bars
 
     def _build_tick_bars(self, tick_count: int, since: datetime) -> list[OHLCVBar]:
@@ -240,14 +238,16 @@ class PriceBuffer:
             end = start + tick_count
             chunk = trades[start:end]
             prices = [t.price for t in chunk]
-            bars.append(OHLCVBar(
-                timestamp=chunk[-1].timestamp,
-                open=prices[0],
-                high=max(prices),
-                low=min(prices),
-                close=prices[-1],
-                volume=sum(t.size for t in chunk),
-            ))
+            bars.append(
+                OHLCVBar(
+                    timestamp=chunk[-1].timestamp,
+                    open=prices[0],
+                    high=max(prices),
+                    low=min(prices),
+                    close=prices[-1],
+                    volume=sum(t.size for t in chunk),
+                )
+            )
 
         # Always include the in-progress partial bar so the chart
         # shows current price action even before tick_count is reached.
@@ -255,14 +255,16 @@ class PriceBuffer:
             start = full_bars * tick_count
             chunk = trades[start:]
             prices = [t.price for t in chunk]
-            bars.append(OHLCVBar(
-                timestamp=chunk[-1].timestamp,
-                open=prices[0],
-                high=max(prices),
-                low=min(prices),
-                close=prices[-1],
-                volume=sum(t.size for t in chunk),
-            ))
+            bars.append(
+                OHLCVBar(
+                    timestamp=chunk[-1].timestamp,
+                    open=prices[0],
+                    high=max(prices),
+                    low=min(prices),
+                    close=prices[-1],
+                    volume=sum(t.size for t in chunk),
+                )
+            )
 
         return bars
 
@@ -297,12 +299,14 @@ def _aggregate_bars(bars_1m: list[OHLCVBar], td: timedelta) -> list[OHLCVBar]:
     result: list[OHLCVBar] = []
     for bar_ts in sorted(buckets):
         group = buckets[bar_ts]
-        result.append(OHLCVBar(
-            timestamp=bar_ts,
-            open=group[0].open,
-            high=max(b.high for b in group),
-            low=min(b.low for b in group),
-            close=group[-1].close,
-            volume=sum(b.volume for b in group),
-        ))
+        result.append(
+            OHLCVBar(
+                timestamp=bar_ts,
+                open=group[0].open,
+                high=max(b.high for b in group),
+                low=min(b.low for b in group),
+                close=group[-1].close,
+                volume=sum(b.volume for b in group),
+            )
+        )
     return result

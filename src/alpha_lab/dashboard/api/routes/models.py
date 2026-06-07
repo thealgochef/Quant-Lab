@@ -51,7 +51,8 @@ async def upload_model(request: Request, file: UploadFile) -> dict:
     state = request.app.state.dashboard
     if state.model_manager is None:
         return JSONResponse(
-            status_code=503, content={"error": "Model manager not available"},
+            status_code=503,
+            content={"error": "Model manager not available"},
         )
 
     # Save uploaded file to temp location, then hand to model manager
@@ -71,7 +72,8 @@ async def activate_model(version_id: int, request: Request) -> dict:
     state = request.app.state.dashboard
     if state.model_manager is None:
         return JSONResponse(
-            status_code=503, content={"error": "Model manager not available"},
+            status_code=503,
+            content={"error": "Model manager not available"},
         )
     try:
         state.model_manager.activate_model(version_id)
@@ -85,7 +87,8 @@ async def rollback_model(version_id: int, request: Request) -> dict:
     state = request.app.state.dashboard
     if state.model_manager is None:
         return JSONResponse(
-            status_code=503, content={"error": "Model manager not available"},
+            status_code=503,
+            content={"error": "Model manager not available"},
         )
     try:
         state.model_manager.rollback(version_id)
@@ -129,10 +132,7 @@ async def model_diagnostic(request: Request) -> dict:
     prediction_info = {
         "total_today": len(preds),
         "executable": sum(1 for p in preds if p.get("is_executable")),
-        "resolved": sum(
-            1 for p in preds
-            if p.get("prediction_correct") is not None
-        ),
+        "resolved": sum(1 for p in preds if p.get("prediction_correct") is not None),
         "correct": sum(1 for p in preds if p.get("prediction_correct")),
         "last_prediction": state.last_prediction,
     }
@@ -149,8 +149,7 @@ async def model_diagnostic(request: Request) -> dict:
         "total_pnl": sum(float(t.get("pnl", 0)) for t in trades),
         "by_reason": by_reason,
         "open_positions": sum(
-            1 for a in state.account_manager.get_all_accounts()
-            if a.has_position
+            1 for a in state.account_manager.get_all_accounts() if a.has_position
         ),
     }
 
@@ -177,10 +176,7 @@ async def model_diagnostic(request: Request) -> dict:
                 "tier": a.tier,
                 "has_position": a.has_position,
                 "daily_pnl": float(a.daily_pnl),
-                "trade_count": sum(
-                    1 for t in trades
-                    if t.get("account_id") == a.account_id
-                ),
+                "trade_count": sum(1 for t in trades if t.get("account_id") == a.account_id),
             }
             for a in all_accts
         ],

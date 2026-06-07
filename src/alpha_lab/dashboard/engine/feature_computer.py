@@ -48,13 +48,19 @@ class FeatureComputer:
         """
         # Tempo features: merge all events, use mid-price
         time_beyond, time_within = self._compute_tempo_features(
-            trades, bbo_updates, level_price, direction,
-            window_start, window_end,
+            trades,
+            bbo_updates,
+            level_price,
+            direction,
+            window_start,
+            window_end,
         )
 
         # Absorption: trade volumes only
         absorption = self._compute_absorption(
-            trades, level_price, direction,
+            trades,
+            level_price,
+            direction,
         )
 
         return {

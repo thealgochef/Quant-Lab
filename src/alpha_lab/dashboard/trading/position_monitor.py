@@ -78,7 +78,10 @@ class PositionMonitor:
             if acct.status == AccountStatus.BLOWN:
                 if acct.has_position:
                     trade_result = self._executor.close_account_position(
-                        acct.account_id, trade_price, "blown", trade_ts,
+                        acct.account_id,
+                        trade_price,
+                        "blown",
+                        trade_ts,
                     )
                     if trade_result is not None:
                         closed.append(trade_result)
@@ -88,7 +91,10 @@ class PositionMonitor:
             if acct.status == AccountStatus.DLL_LOCKED:
                 if acct.has_position:
                     trade_result = self._executor.close_account_position(
-                        acct.account_id, trade_price, "dll", trade_ts,
+                        acct.account_id,
+                        trade_price,
+                        "dll",
+                        trade_ts,
                     )
                     if trade_result is not None:
                         closed.append(trade_result)
@@ -109,7 +115,10 @@ class PositionMonitor:
                 else:
                     tp_exit = pos.entry_price - tp_points
                 trade_result = self._executor.close_account_position(
-                    acct.account_id, tp_exit, "tp", trade_ts,
+                    acct.account_id,
+                    tp_exit,
+                    "tp",
+                    trade_ts,
                 )
                 if trade_result is not None:
                     closed.append(trade_result)
@@ -120,7 +129,10 @@ class PositionMonitor:
                 else:
                     sl_exit = pos.entry_price + sl_points
                 trade_result = self._executor.close_account_position(
-                    acct.account_id, sl_exit, "sl", trade_ts,
+                    acct.account_id,
+                    sl_exit,
+                    "sl",
+                    trade_ts,
                 )
                 if trade_result is not None:
                     closed.append(trade_result)
@@ -138,12 +150,8 @@ class PositionMonitor:
         so EST/EDT is handled automatically.
         """
         ts_et = current_time.astimezone(ET)
-        if (
-            ts_et.hour > FLATTEN_HOUR_ET
-            or (
-                ts_et.hour == FLATTEN_HOUR_ET
-                and ts_et.minute >= FLATTEN_MINUTE
-            )
+        if ts_et.hour > FLATTEN_HOUR_ET or (
+            ts_et.hour == FLATTEN_HOUR_ET and ts_et.minute >= FLATTEN_MINUTE
         ):
             return self._executor.hard_flatten(current_price, current_time)
         return []

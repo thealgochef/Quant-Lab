@@ -105,7 +105,8 @@ class OutcomeTracker:
         return resolved
 
     def on_outcome_resolved(
-        self, callback: Callable[[ResolvedOutcome], None],
+        self,
+        callback: Callable[[ResolvedOutcome], None],
     ) -> None:
         """Register callback for resolved outcomes."""
         self._callbacks.append(callback)
@@ -116,7 +117,9 @@ class OutcomeTracker:
         return len(self._trackers)
 
     def _check_resolution(
-        self, tracker: _ActiveTracker, timestamp: datetime,
+        self,
+        tracker: _ActiveTracker,
+        timestamp: datetime,
     ) -> ResolvedOutcome | None:
         """Check if MFE/MAE thresholds resolve this prediction.
 
@@ -126,7 +129,10 @@ class OutcomeTracker:
         # TP hit (MFE >= 25)
         if tracker.mfe >= MFE_TARGET:
             return self._resolve(
-                tracker, timestamp, "tp_hit", "tradeable_reversal",
+                tracker,
+                timestamp,
+                "tp_hit",
+                "tradeable_reversal",
             )
 
         # SL hit (MAE >= 37.5)
@@ -150,9 +156,7 @@ class OutcomeTracker:
             mfe_points=tracker.mfe,
             mae_points=tracker.mae,
             resolution_type=resolution_type,
-            prediction_correct=(
-                tracker.prediction.predicted_class == actual_class
-            ),
+            prediction_correct=(tracker.prediction.predicted_class == actual_class),
             actual_class=actual_class,
             resolved_at=timestamp,
         )
@@ -176,11 +180,7 @@ class OutcomeTracker:
         if tracker.mfe >= MFE_TARGET:
             actual = "tradeable_reversal"
         elif tracker.mae >= MAE_STOP:
-            actual = (
-                "trap_reversal"
-                if tracker.mfe >= TRAP_MFE_MIN
-                else "aggressive_blowthrough"
-            )
+            actual = "trap_reversal" if tracker.mfe >= TRAP_MFE_MIN else "aggressive_blowthrough"
         elif tracker.mfe >= TRAP_MFE_MIN:
             actual = "trap_reversal"
         else:

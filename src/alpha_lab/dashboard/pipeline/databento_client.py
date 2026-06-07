@@ -9,12 +9,14 @@ doesn't need to know which provider is active.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import databento as db
+import pandas as pd
 
 from alpha_lab.dashboard.config.settings import DashboardSettings
 from alpha_lab.dashboard.pipeline.price_buffer import OHLCVBar
@@ -28,8 +30,8 @@ logger = logging.getLogger(__name__)
 
 # Databento Side → aggressor label
 _SIDE_MAP = {
-    "A": "BUY",   # trade hit the ask → buyer aggressed
-    "B": "SELL",   # trade hit the bid → seller aggressed
+    "A": "BUY",  # trade hit the ask → buyer aggressed
+    "B": "SELL",  # trade hit the bid → seller aggressed
 }
 
 
@@ -73,16 +75,12 @@ class DatabentoClient:
         """Stop streaming and clean up."""
         if self._worker_task and not self._worker_task.done():
             self._worker_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._worker_task
-            except asyncio.CancelledError:
-                pass
 
         if self._live is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._live.stop()
-            except Exception:
-                pass
 
         self._set_status(ConnectionStatus.DISCONNECTED)
 
@@ -134,9 +132,7 @@ class DatabentoClient:
 
     # ── Historical backfill ──────────────────────────────────
 
-    async def fetch_historical_ohlcv(
-        self, symbol: str, days: int = 7
-    ) -> list[OHLCVBar]:
+    async def fetch_historical_ohlcv(self, symbol: str, days: int = 7) -> list[OHLCVBar]:
         """Fetch historical 1m OHLCV bars using the Databento Historical API.
 
         Runs the sync Historical client in a background thread.
@@ -161,11 +157,9 @@ class DatabentoClient:
             return []
 
     @staticmethod
-    def _fetch_historical_sync(
-        api_key: str, symbol: str, days: int
-    ) -> list[OHLCVBar]:
+    def _fetch_historical_sync(api_key: str, symbol: str, days: int) -> list[OHLCVBar]:
         """Sync helper that calls db.Historical (runs in a thread)."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         # Databento historical data has an availability lag and a midnight-UTC
         # boundary. Use a 2-hour buffer to safely avoid the
         # data_end_after_available_end error.
@@ -193,24 +187,24 @@ class DatabentoClient:
             if hasattr(ts, "to_pydatetime"):
                 ts = ts.to_pydatetime()
             if ts.tzinfo is None:
-                ts = ts.replace(tzinfo=timezone.utc)
+                ts = ts.replace(tzinfo=UTC)
 
-            bars.append(OHLCVBar(
-                timestamp=ts,
-                open=Decimal(str(row["open"])),
-                high=Decimal(str(row["high"])),
-                low=Decimal(str(row["low"])),
-                close=Decimal(str(row["close"])),
-                volume=int(row["volume"]),
-            ))
+            bars.append(
+                OHLCVBar(
+                    timestamp=ts,
+                    open=Decimal(str(row["open"])),
+                    high=Decimal(str(row["high"])),
+                    low=Decimal(str(row["low"])),
+                    close=Decimal(str(row["close"])),
+                    volume=int(row["volume"]),
+                )
+            )
 
         return bars
 
     # ── Historical trades (for tick bar preload) ──────────────
 
-    async def fetch_historical_trades(
-        self, symbol: str, days: int = 4
-    ) -> "pd.DataFrame":
+    async def fetch_historical_trades(self, symbol: str, days: int = 4) -> pd.DataFrame:
         """Fetch historical raw trades for tick-bar construction.
 
         Returns a DataFrame with columns: ts_event, price, size.
@@ -232,7 +226,8 @@ class DatabentoClient:
             )
             logger.info(
                 "Fetched %d historical trades (%d days) for tick bar preload",
-                len(df), days,
+                len(df),
+                days,
             )
             return df
         except Exception:
@@ -240,13 +235,11 @@ class DatabentoClient:
             return pd.DataFrame()
 
     @staticmethod
-    def _fetch_trades_sync(
-        api_key: str, symbol: str, days: int
-    ) -> "pd.DataFrame":
+    def _fetch_trades_sync(api_key: str, symbol: str, days: int) -> pd.DataFrame:
         """Sync helper — fetch raw trades from Databento Historical API."""
         import pandas as pd
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         end = now - timedelta(hours=2)
         start = now - timedelta(days=days)
 
@@ -264,11 +257,13 @@ class DatabentoClient:
             return pd.DataFrame(columns=["ts_event", "price", "size"])
 
         # Normalize: keep just what we need for tick bar construction
-        result = pd.DataFrame({
-            "ts_event": df["ts_event"] if "ts_event" in df.columns else df.index,
-            "price": df["price"].astype(float),
-            "size": df["size"].astype(int),
-        })
+        result = pd.DataFrame(
+            {
+                "ts_event": df["ts_event"] if "ts_event" in df.columns else df.index,
+                "price": df["price"].astype(float),
+                "size": df["size"].astype(int),
+            }
+        )
         return result.sort_values("ts_event").reset_index(drop=True)
 
     # ── Internal ──────────────────────────────────────────────
@@ -308,7 +303,7 @@ class DatabentoClient:
             if isinstance(record, db.TradeMsg):
                 ts = record.pretty_ts_event
                 if ts.tzinfo is None:
-                    ts = ts.replace(tzinfo=timezone.utc)
+                    ts = ts.replace(tzinfo=UTC)
 
                 side_str = str(record.side) if record.side else ""
                 trade = TradeUpdate(
@@ -329,7 +324,7 @@ class DatabentoClient:
 
                 ts = record.pretty_ts_event
                 if ts.tzinfo is None:
-                    ts = ts.replace(tzinfo=timezone.utc)
+                    ts = ts.replace(tzinfo=UTC)
 
                 bbo = BBOUpdate(
                     timestamp=ts,

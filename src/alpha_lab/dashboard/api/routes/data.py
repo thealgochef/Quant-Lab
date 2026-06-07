@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+from datetime import UTC
 
 from fastapi import APIRouter, Request
 
@@ -47,10 +48,7 @@ async def get_performance(request: Request) -> dict:
 
     predictions = state.todays_predictions
     pred_correct = sum(1 for p in predictions if p.get("prediction_correct"))
-    pred_total = sum(
-        1 for p in predictions
-        if p.get("prediction_correct") is not None
-    )
+    pred_total = sum(1 for p in predictions if p.get("prediction_correct") is not None)
 
     return {
         "total_trades": total_trades,
@@ -75,15 +73,17 @@ async def get_equity_curve(request: Request, account_id: str | None = None) -> d
     for acct in state.account_manager.get_all_accounts():
         if account_id and acct.account_id != account_id:
             continue
-        snapshots.append({
-            "timestamp": "now",
-            "account_id": acct.account_id,
-            "balance": float(acct.balance),
-            "profit": float(acct.profit),
-            "group": acct.group,
-            "tier": acct.tier,
-            "status": acct.status.value,
-        })
+        snapshots.append(
+            {
+                "timestamp": "now",
+                "account_id": acct.account_id,
+                "balance": float(acct.balance),
+                "profit": float(acct.profit),
+                "group": acct.group,
+                "tier": acct.tier,
+                "status": acct.status.value,
+            }
+        )
 
     return {"snapshots": snapshots}
 
@@ -98,32 +98,28 @@ async def get_ohlcv(
 
     # If pipeline is wired, pull OHLCV from the price buffer
     if state.pipeline is not None:
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timedelta
 
         if since:
             since_dt = datetime.fromisoformat(since)
             if since_dt.tzinfo is None:
-                since_dt = since_dt.replace(tzinfo=timezone.utc)
+                since_dt = since_dt.replace(tzinfo=UTC)
         elif getattr(state, "replay_mode", False):
             # Replay mode: data is historical, wall clock is irrelevant.
             # Return all available bars.
-            since_dt = datetime.min.replace(tzinfo=timezone.utc)
+            since_dt = datetime.min.replace(tzinfo=UTC)
         else:
             # Live mode: last 7 days (includes historical backfill)
-            since_dt = datetime.now(timezone.utc) - timedelta(days=7)
+            since_dt = datetime.now(UTC) - timedelta(days=7)
 
         # Prefer TickBarBuilder's stored bars (survives regardless of
         # client connection timing) over PriceBuffer's deque-based rebuild.
         builder = getattr(state, "tick_bar_builder", None)
         if builder is not None and timeframe in ("987t", "2000t"):
             stored = builder.get_bars(timeframe, include_partial=True)
-            if since:
-                # Explicit since: filter as requested
-                bars = [b for b in stored if b.timestamp >= since_dt]
-            else:
-                # No explicit since: return ALL stored bars (includes
-                # preloaded historical data that may be older than 7d).
-                bars = stored
+            # Explicit since: filter as requested. No explicit since: return ALL
+            # stored bars (includes preloaded historical data older than 7d).
+            bars = [b for b in stored if b.timestamp >= since_dt] if since else stored
         else:
             bars = state.pipeline._buffer.get_ohlcv(timeframe, since_dt)
 
@@ -166,8 +162,7 @@ async def debug_pipeline(request: Request) -> dict:
         }
         if hasattr(tick_bar_builder, "_completed_bars"):
             result["completed_bars"] = {
-                tf: len(bars)
-                for tf, bars in tick_bar_builder._completed_bars.items()
+                tf: len(bars) for tf, bars in tick_bar_builder._completed_bars.items()
             }
             # Show first and last bar of 987t if any
             bars_987 = tick_bar_builder._completed_bars.get("987t", [])
@@ -268,16 +263,24 @@ async def replay_start(request: Request) -> dict:
         [
             sys.executable,
             "scripts/run_replay.py",
-            "--start", str(start_date),
-            "--end", str(end_date),
-            "--speed", str(speed),
-            "--port", str(port),
+            "--start",
+            str(start_date),
+            "--end",
+            str(end_date),
+            "--speed",
+            str(speed),
+            "--port",
+            str(port),
         ],
     )
 
     logger.info(
         "Started replay server PID %d on port %d (%s to %s, speed %sx)",
-        _replay_process.pid, port, start_date, end_date, speed,
+        _replay_process.pid,
+        port,
+        start_date,
+        end_date,
+        speed,
     )
 
     return {

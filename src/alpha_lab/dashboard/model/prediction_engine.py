@@ -48,9 +48,7 @@ class PredictionEngine:
             return None
 
         # Extract feature vector in canonical order
-        features = np.array([[
-            observation.features[col] for col in FEATURE_COLUMNS
-        ]])
+        features = np.array([[observation.features[col] for col in FEATURE_COLUMNS]])
 
         # Run inference
         predicted_idx = int(model.predict(features).flat[0])
@@ -61,8 +59,7 @@ class PredictionEngine:
 
         # Execution eligibility: only reversals during NY RTH
         is_executable = (
-            predicted_class == "tradeable_reversal"
-            and observation.event.session == "ny_rth"
+            predicted_class == "tradeable_reversal" and observation.event.session == "ny_rth"
         )
 
         active_version = self._mm.get_active_version()

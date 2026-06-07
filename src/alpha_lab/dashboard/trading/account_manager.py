@@ -50,7 +50,8 @@ class AccountManager:
     def get_active_accounts(self) -> list[ApexAccount]:
         """Return accounts with ACTIVE or DLL_LOCKED status."""
         return [
-            a for a in self._accounts.values()
+            a
+            for a in self._accounts.values()
             if a.status in (AccountStatus.ACTIVE, AccountStatus.DLL_LOCKED)
         ]
 
@@ -60,16 +61,14 @@ class AccountManager:
         Must be ACTIVE (not DLL_LOCKED), and have no open position.
         """
         return [
-            a for a in self._accounts.values()
+            a
+            for a in self._accounts.values()
             if a.status == AccountStatus.ACTIVE and not a.has_position
         ]
 
     def get_accounts_by_group(self, group: str) -> list[ApexAccount]:
         """Return all accounts in a group (any status)."""
-        return [
-            a for a in self._accounts.values()
-            if a.group == group
-        ]
+        return [a for a in self._accounts.values() if a.group == group]
 
     def get_all_accounts(self) -> list[ApexAccount]:
         """Return all accounts including blown and retired."""
@@ -83,15 +82,12 @@ class AccountManager:
         """Aggregate portfolio stats."""
         all_accts = list(self._accounts.values())
 
-        total_invested = sum(
-            a.eval_cost + a.activation_cost for a in all_accts
-        )
+        total_invested = sum(a.eval_cost + a.activation_cost for a in all_accts)
         total_balance = sum(a.balance for a in all_accts)
         total_profit = sum(a.profit for a in all_accts)
         total_payouts = sum(a._total_payouts for a in all_accts)
         active_count = sum(
-            1 for a in all_accts
-            if a.status in (AccountStatus.ACTIVE, AccountStatus.DLL_LOCKED)
+            1 for a in all_accts if a.status in (AccountStatus.ACTIVE, AccountStatus.DLL_LOCKED)
         )
 
         return {
@@ -101,12 +97,8 @@ class AccountManager:
             "total_payouts": total_payouts,
             "active_count": active_count,
             "total_accounts": len(all_accts),
-            "blown_count": sum(
-                1 for a in all_accts if a.status == AccountStatus.BLOWN
-            ),
-            "retired_count": sum(
-                1 for a in all_accts if a.status == AccountStatus.RETIRED
-            ),
+            "blown_count": sum(1 for a in all_accts if a.status == AccountStatus.BLOWN),
+            "retired_count": sum(1 for a in all_accts if a.status == AccountStatus.RETIRED),
         }
 
     def start_new_day(self) -> None:
@@ -139,9 +131,7 @@ class AccountManager:
             acct._payout_number = record["payout_number"]
             acct._qualifying_days = record["qualifying_days"]
             acct._total_payouts = Decimal(record["total_payouts"])
-            acct._daily_profits = [
-                Decimal(d) for d in record.get("daily_profits", [])
-            ]
+            acct._daily_profits = [Decimal(d) for d in record.get("daily_profits", [])]
 
             self._accounts[acct.account_id] = acct
 

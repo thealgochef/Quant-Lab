@@ -30,12 +30,12 @@ from alpha_lab.dashboard.model.model_manager import ModelManager
 from alpha_lab.dashboard.model.outcome_tracker import OutcomeTracker
 from alpha_lab.dashboard.model.prediction_engine import PredictionEngine
 from alpha_lab.dashboard.pipeline.pipeline_service import PipelineService
-from alpha_lab.dashboard.pipeline.tick_bar_builder import TickBarBuilder
 from alpha_lab.dashboard.pipeline.rithmic_client import (
     BBOUpdate,
     ConnectionStatus,
     TradeUpdate,
 )
+from alpha_lab.dashboard.pipeline.tick_bar_builder import TickBarBuilder
 from alpha_lab.dashboard.trading.account_manager import AccountManager
 from alpha_lab.dashboard.trading.position_monitor import PositionMonitor
 from alpha_lab.dashboard.trading.trade_executor import TradeExecutor
@@ -73,7 +73,8 @@ class DashboardState:
     # Event loop reference for thread-safe WS broadcasting from
     # Databento's background consumer thread. Set during lifespan.
     event_loop: asyncio.AbstractEventLoop | None = field(
-        default=None, repr=False,
+        default=None,
+        repr=False,
     )
 
     # In-memory event logs (today's session)
@@ -88,13 +89,15 @@ class DashboardState:
     connection_status: str = "disconnected"
 
     # Overlay config
-    overlay_config: dict[str, bool] = field(default_factory=lambda: {
-        "ema_13": True,
-        "ema_48": True,
-        "ema_200": True,
-        "vwap": False,
-        "levels": True,
-    })
+    overlay_config: dict[str, bool] = field(
+        default_factory=lambda: {
+            "ema_13": True,
+            "ema_48": True,
+            "ema_200": True,
+            "vwap": False,
+            "levels": True,
+        }
+    )
 
     # Equity curve tracking (snapshots after each trade close)
     equity_snapshots: list[dict] = field(default_factory=list)
@@ -107,7 +110,8 @@ class DashboardState:
             self.trade_executor = TradeExecutor(self.account_manager)
         if self.position_monitor is None:
             self.position_monitor = PositionMonitor(
-                self.account_manager, self.trade_executor,
+                self.account_manager,
+                self.trade_executor,
             )
 
 
@@ -122,7 +126,6 @@ async def _preload_tick_bars_from_api(
     validated.  Uses DuckDB to efficiently group trades into tick bars.
     """
     import duckdb
-    import pandas as pd
 
     from alpha_lab.dashboard.pipeline.databento_client import DatabentoClient
     from alpha_lab.dashboard.pipeline.price_buffer import OHLCVBar
@@ -135,7 +138,9 @@ async def _preload_tick_bars_from_api(
     trades_df = await client.fetch_historical_trades("NQ.c.0", days=days)
 
     if trades_df.empty:
-        logger.warning("No historical trades returned — tick bars will be empty until live data flows")
+        logger.warning(
+            "No historical trades returned — tick bars will be empty until live data flows"
+        )
         return
 
     logger.info("Building tick bars from %d trades...", len(trades_df))
@@ -170,18 +175,25 @@ async def _preload_tick_bars_from_api(
                 ts = row["ts"]
                 if hasattr(ts, "to_pydatetime"):
                     ts = ts.to_pydatetime()
-                bars.append(OHLCVBar(
-                    timestamp=ts,
-                    open=Decimal(str(round(float(row["open"]), 2))),
-                    high=Decimal(str(round(float(row["high"]), 2))),
-                    low=Decimal(str(round(float(row["low"]), 2))),
-                    close=Decimal(str(round(float(row["close"]), 2))),
-                    volume=int(row["volume"]),
-                ))
+                bars.append(
+                    OHLCVBar(
+                        timestamp=ts,
+                        open=Decimal(str(round(float(row["open"]), 2))),
+                        high=Decimal(str(round(float(row["high"]), 2))),
+                        low=Decimal(str(round(float(row["low"]), 2))),
+                        close=Decimal(str(round(float(row["close"]), 2))),
+                        volume=int(row["volume"]),
+                    )
+                )
 
             if bars:
                 tick_bar_builder.preload_historical(tick_count_str, bars)
-                logger.info("Preloaded %d %s bars from %d days of live data", len(bars), tick_count_str, days)
+                logger.info(
+                    "Preloaded %d %s bars from %d days of live data",
+                    len(bars),
+                    tick_count_str,
+                    days,
+                )
     except Exception:
         logger.exception("Tick bar preload failed — continuing without history")
     finally:
@@ -263,13 +275,15 @@ def _create_live_state() -> DashboardState:
     # Record initial equity snapshots
     now_iso = datetime.now(UTC).isoformat()
     for acct in state.account_manager.get_all_accounts():
-        state.equity_snapshots.append({
-            "timestamp": now_iso,
-            "account_id": acct.account_id,
-            "balance": float(acct.balance),
-            "profit": float(acct.profit),
-            "group": acct.group,
-        })
+        state.equity_snapshots.append(
+            {
+                "timestamp": now_iso,
+                "account_id": acct.account_id,
+                "balance": float(acct.balance),
+                "profit": float(acct.profit),
+                "group": acct.group,
+            }
+        )
 
     # ── Thread-safe broadcast helper ────────────────────────────
     # Trade/BBO callbacks are called from Databento's background
@@ -312,20 +326,22 @@ def _create_live_state() -> DashboardState:
     def _on_touch(event) -> None:
         window = observation_manager.start_observation(event)
         if window is not None:
-            _schedule_broadcast({
-                "type": "observation_started",
-                "data": {
-                    "event_id": event.event_id,
-                    "direction": event.trade_direction.value,
-                    "level_price": float(
-                        event.level_zone.representative_price,
-                    ),
-                    "start_time": window.start_time.isoformat(),
-                    "end_time": window.end_time.isoformat(),
-                    "status": window.status.value,
-                    "trades_accumulated": 0,
-                },
-            })
+            _schedule_broadcast(
+                {
+                    "type": "observation_started",
+                    "data": {
+                        "event_id": event.event_id,
+                        "direction": event.trade_direction.value,
+                        "level_price": float(
+                            event.level_zone.representative_price,
+                        ),
+                        "start_time": window.start_time.isoformat(),
+                        "end_time": window.end_time.isoformat(),
+                        "status": window.status.value,
+                        "trades_accumulated": 0,
+                    },
+                }
+            )
 
     touch_detector.on_touch(_on_touch)
 
@@ -340,29 +356,26 @@ def _create_live_state() -> DashboardState:
 
     # ── Session stats broadcast helper ──────────────────────────
     def _broadcast_session_stats() -> None:
-        wins = sum(
-            1 for p in state.todays_predictions
-            if p.get("prediction_correct")
-        )
+        wins = sum(1 for p in state.todays_predictions if p.get("prediction_correct"))
         losses = sum(
-            1 for p in state.todays_predictions
-            if p.get("prediction_correct") is not None
-            and not p.get("prediction_correct")
+            1
+            for p in state.todays_predictions
+            if p.get("prediction_correct") is not None and not p.get("prediction_correct")
         )
         total = wins + losses
-        _schedule_broadcast({
-            "type": "session_stats",
-            "data": {
-                "signals_fired": len(state.todays_predictions),
-                "wins": wins,
-                "losses": losses,
-                "accuracy": round(wins / total, 4) if total > 0 else 0,
-                "total_trades": len(state.todays_trades),
-                "total_pnl": sum(
-                    float(t.get("pnl", 0)) for t in state.todays_trades
-                ),
-            },
-        })
+        _schedule_broadcast(
+            {
+                "type": "session_stats",
+                "data": {
+                    "signals_fired": len(state.todays_predictions),
+                    "wins": wins,
+                    "losses": losses,
+                    "accuracy": round(wins / total, 4) if total > 0 else 0,
+                    "total_trades": len(state.todays_trades),
+                    "total_pnl": sum(float(t.get("pnl", 0)) for t in state.todays_trades),
+                },
+            }
+        )
 
     # 3. Prediction → TradeExecutor + OutcomeTracker + state + WS
     def _on_prediction(prediction) -> None:
@@ -400,7 +413,9 @@ def _create_live_state() -> DashboardState:
                 "level_price": prediction.level_price,
             }
             # Entry at current market price, not the level/touch price
-            market_price = Decimal(str(state.latest_price)) if state.latest_price else prediction.level_price
+            market_price = (
+                Decimal(str(state.latest_price)) if state.latest_price else prediction.level_price
+            )
             state.trade_executor.on_prediction(
                 prediction=executor_dict,
                 timestamp=prediction.timestamp,
@@ -423,18 +438,20 @@ def _create_live_state() -> DashboardState:
             tp_price = float(entry - tp_points)
             sl_price = float(entry + sl_points)
 
-        _schedule_broadcast({
-            "type": "trade_opened",
-            "data": {
-                "account_id": pos.account_id,
-                "direction": pos.direction.value,
-                "entry_price": float(pos.entry_price),
-                "contracts": pos.contracts,
-                "entry_time": pos.entry_time.isoformat(),
-                "tp_price": tp_price,
-                "sl_price": sl_price,
-            },
-        })
+        _schedule_broadcast(
+            {
+                "type": "trade_opened",
+                "data": {
+                    "account_id": pos.account_id,
+                    "direction": pos.direction.value,
+                    "entry_price": float(pos.entry_price),
+                    "contracts": pos.contracts,
+                    "entry_time": pos.entry_time.isoformat(),
+                    "tp_price": tp_price,
+                    "sl_price": sl_price,
+                },
+            }
+        )
 
     state.trade_executor.on_trade_opened(_on_trade_opened)
 
@@ -459,26 +476,30 @@ def _create_live_state() -> DashboardState:
         # Record equity snapshot for this account
         acct = state.account_manager.get_account(trade.account_id)
         if acct is not None:
-            state.equity_snapshots.append({
-                "timestamp": trade_data["exit_time"],
-                "account_id": trade.account_id,
-                "balance": float(acct.balance),
-                "profit": float(acct.profit),
-                "group": trade.group,
-            })
-            # Broadcast account update with new balance
-            _schedule_broadcast({
-                "type": "account_update",
-                "data": {
-                    "account_id": acct.account_id,
+            state.equity_snapshots.append(
+                {
+                    "timestamp": trade_data["exit_time"],
+                    "account_id": trade.account_id,
                     "balance": float(acct.balance),
                     "profit": float(acct.profit),
-                    "daily_pnl": float(acct.daily_pnl),
-                    "group": acct.group,
-                    "status": acct.status.value,
-                    "has_position": acct.has_position,
-                },
-            })
+                    "group": trade.group,
+                }
+            )
+            # Broadcast account update with new balance
+            _schedule_broadcast(
+                {
+                    "type": "account_update",
+                    "data": {
+                        "account_id": acct.account_id,
+                        "balance": float(acct.balance),
+                        "profit": float(acct.profit),
+                        "daily_pnl": float(acct.daily_pnl),
+                        "group": acct.group,
+                        "status": acct.status.value,
+                        "has_position": acct.has_position,
+                    },
+                }
+            )
 
         # Broadcast updated session stats
         _broadcast_session_stats()
@@ -494,18 +515,20 @@ def _create_live_state() -> DashboardState:
                 pred["actual_class"] = outcome.actual_class
                 break
 
-        _schedule_broadcast({
-            "type": "outcome_resolved",
-            "data": {
-                "event_id": outcome.event_id,
-                "predicted_class": outcome.prediction.predicted_class,
-                "actual_class": outcome.actual_class,
-                "prediction_correct": outcome.prediction_correct,
-                "mfe_points": outcome.mfe_points,
-                "mae_points": outcome.mae_points,
-                "resolution_type": outcome.resolution_type,
-            },
-        })
+        _schedule_broadcast(
+            {
+                "type": "outcome_resolved",
+                "data": {
+                    "event_id": outcome.event_id,
+                    "predicted_class": outcome.prediction.predicted_class,
+                    "actual_class": outcome.actual_class,
+                    "prediction_correct": outcome.prediction_correct,
+                    "mfe_points": outcome.mfe_points,
+                    "mae_points": outcome.mae_points,
+                    "resolution_type": outcome.resolution_type,
+                },
+            }
+        )
 
         # Broadcast updated session stats
         _broadcast_session_stats()
@@ -534,7 +557,8 @@ def _create_live_state() -> DashboardState:
         # touches/observations/predictions can open new ones.
         try:
             state.position_monitor.check_flatten_time(
-                trade.timestamp, trade.price,
+                trade.timestamp,
+                trade.price,
             )
         except Exception:
             logger.exception("Bridge _on_trade: flatten check failed")
@@ -543,11 +567,9 @@ def _create_live_state() -> DashboardState:
         try:
             if not state.session_ended:
                 from zoneinfo import ZoneInfo
+
                 ts_et = trade.timestamp.astimezone(ZoneInfo("America/New_York"))
-                past_flatten = (
-                    ts_et.hour > 15
-                    or (ts_et.hour == 15 and ts_et.minute >= 55)
-                )
+                past_flatten = ts_et.hour > 15 or (ts_et.hour == 15 and ts_et.minute >= 55)
                 if past_flatten:
                     state.session_ended = True
                     outcome_tracker.on_session_end()
@@ -598,10 +620,12 @@ def _create_live_state() -> DashboardState:
     def _on_connection_status(status: ConnectionStatus) -> None:
         state.connection_status = status.value
         logger.info("Data connection: %s", status.value)
-        _schedule_broadcast({
-            "type": "connection_status",
-            "data": {"status": status.value},
-        })
+        _schedule_broadcast(
+            {
+                "type": "connection_status",
+                "data": {"status": status.value},
+            }
+        )
         # Observation may need to discard on disconnect
         observation_manager.on_connection_status(status)
 
@@ -615,30 +639,35 @@ def _create_live_state() -> DashboardState:
         today = now.date()
         levels = level_engine.compute_levels(today, current_time=now)
         logger.info(
-            "Computed %d key levels (PDH/PDL, session H/L)", len(levels),
+            "Computed %d key levels (PDH/PDL, session H/L)",
+            len(levels),
         )
 
         zones_data = []
         for zone in level_engine.get_active_zones():
-            zones_data.append({
-                "zone_id": zone.zone_id,
-                "price": float(zone.representative_price),
-                "side": zone.side.value,
-                "is_touched": zone.is_touched,
-                "levels": [
-                    {
-                        "type": lv.level_type.value,
-                        "price": float(lv.price),
-                        "is_manual": lv.is_manual,
-                    }
-                    for lv in zone.levels
-                ],
-            })
+            zones_data.append(
+                {
+                    "zone_id": zone.zone_id,
+                    "price": float(zone.representative_price),
+                    "side": zone.side.value,
+                    "is_touched": zone.is_touched,
+                    "levels": [
+                        {
+                            "type": lv.level_type.value,
+                            "price": float(lv.price),
+                            "is_manual": lv.is_manual,
+                        }
+                        for lv in zone.levels
+                    ],
+                }
+            )
         if zones_data:
-            _schedule_broadcast({
-                "type": "level_update",
-                "data": {"action": "full_refresh", "levels": zones_data},
-            })
+            _schedule_broadcast(
+                {
+                    "type": "level_update",
+                    "data": {"action": "full_refresh", "levels": zones_data},
+                }
+            )
 
     pipeline.register_backfill_callback(_on_backfill_complete)
 
@@ -687,7 +716,9 @@ def create_app(state: DashboardState | None = None) -> FastAPI:
                             days=4,
                         )
                     except Exception:
-                        logger.exception("Tick bar preload failed — chart will populate from live ticks")
+                        logger.exception(
+                            "Tick bar preload failed — chart will populate from live ticks"
+                        )
 
             except Exception:
                 logger.exception("Pipeline failed to start — running without live data")
@@ -744,11 +775,10 @@ def create_app(state: DashboardState | None = None) -> FastAPI:
 
         # Auto-play on first WebSocket connect in replay mode
         if state.replay_mode:
-            from alpha_lab.dashboard.pipeline.replay_client import (
-                ReplayClient as _RC,
-            )
+            from alpha_lab.dashboard.pipeline.replay_client import ReplayClient
+
             _client = getattr(state.pipeline, "_client", None)
-            if isinstance(_client, _RC) and not _client.replay_complete:
+            if isinstance(_client, ReplayClient) and not _client.replay_complete:
                 _client.play()
                 logger.info("Replay auto-play triggered on WebSocket connect")
 
@@ -766,6 +796,7 @@ def create_app(state: DashboardState | None = None) -> FastAPI:
                     from alpha_lab.dashboard.pipeline.replay_client import (
                         ReplayClient,
                     )
+
                     client = getattr(state.pipeline, "_client", None)
                     if isinstance(client, ReplayClient):
                         payload = data.get("data", {})
@@ -781,17 +812,19 @@ def create_app(state: DashboardState | None = None) -> FastAPI:
                         elif action == "set_step_mode":
                             client.set_step_mode(bool(payload.get("enabled")))
                         # Send state back so UI can sync
-                        await ws.send_json({
-                            "type": "replay_state",
-                            "data": {
-                                "action": action,
-                                "paused": not client._pause_event.is_set(),
-                                "step_mode": client._step_mode,
-                                "speed": client._speed,
-                                "replay_complete": client.replay_complete,
-                                "current_date": client.current_date,
-                            },
-                        })
+                        await ws.send_json(
+                            {
+                                "type": "replay_state",
+                                "data": {
+                                    "action": action,
+                                    "paused": not client._pause_event.is_set(),
+                                    "step_mode": client._step_mode,
+                                    "speed": client._speed,
+                                    "replay_complete": client.replay_complete,
+                                    "current_date": client.current_date,
+                                },
+                            }
+                        )
         except WebSocketDisconnect:
             state.ws_manager.disconnect(ws)
         except Exception:

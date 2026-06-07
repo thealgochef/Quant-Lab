@@ -51,13 +51,18 @@ async def close_all_positions(body: CloseAllRequest, request: Request) -> dict:
 
 @router.post("/close/{account_id}")
 async def close_account_position(
-    account_id: str, body: CloseAccountRequest, request: Request,
+    account_id: str,
+    body: CloseAccountRequest,
+    request: Request,
 ) -> dict:
     state = request.app.state.dashboard
     now = datetime.now(UTC)
     price = Decimal(str(state.latest_price)) if state.latest_price else Decimal("0")
     trade = state.trade_executor.close_account_position(
-        account_id, price, body.reason, now,
+        account_id,
+        price,
+        body.reason,
+        now,
     )
     if trade is None:
         return JSONResponse(
@@ -92,15 +97,20 @@ async def manual_entry(body: ManualEntryRequest, request: Request) -> dict:
     opened = []
     for acct in eligible:
         pos = state.trade_executor.manual_entry(
-            acct.account_id, direction, price, now,
+            acct.account_id,
+            direction,
+            price,
+            now,
         )
         if pos is not None:
-            opened.append({
-                "account_id": pos.account_id,
-                "direction": pos.direction.value,
-                "entry_price": float(pos.entry_price),
-                "contracts": pos.contracts,
-                "entry_time": pos.entry_time.isoformat(),
-            })
+            opened.append(
+                {
+                    "account_id": pos.account_id,
+                    "direction": pos.direction.value,
+                    "entry_price": float(pos.entry_price),
+                    "contracts": pos.contracts,
+                    "entry_time": pos.entry_time.isoformat(),
+                }
+            )
 
     return {"positions": opened, "count": len(opened)}
