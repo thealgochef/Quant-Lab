@@ -7,7 +7,7 @@ specific pipeline stage (detection → labeling → features → training → ev
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # ── Live-Computable Feature Sets ─────────────────────────────────
 # These features can be computed from MBP-1 (top-of-book) + trades,
@@ -15,14 +15,14 @@ from pydantic import BaseModel, Field
 # deeper book levels (MBP-10) or cancel events are excluded.
 
 LIVE_APPROACH_FEATURES = [
-    "app_large_trade_vol_pct",   # large trades (size>=10) / total volume
-    "app_trade_count",           # number of trades in approach window
-    "app_volume_acceleration",   # late sub-window rate / early rate
-    "app_avg_trade_size",        # mean trade size
-    "app_avg_tob_imbalance",     # avg bid_sz / (bid_sz + ask_sz) at L0
-    "app_max_spread",            # max(ask - bid) at L0
-    "app_volatility_recent",     # std of 1-min returns in last sub-window
-    "app_volatility_ratio",      # recent volatility / full-window volatility
+    "app_large_trade_vol_pct",  # large trades (size>=10) / total volume
+    "app_trade_count",  # number of trades in approach window
+    "app_volume_acceleration",  # late sub-window rate / early rate
+    "app_avg_trade_size",  # mean trade size
+    "app_avg_tob_imbalance",  # avg bid_sz / (bid_sz + ask_sz) at L0
+    "app_max_spread",  # max(ask - bid) at L0
+    "app_volatility_recent",  # std of 1-min returns in last sub-window
+    "app_volatility_ratio",  # recent volatility / full-window volatility
 ]
 
 LIVE_INTERACTION_FEATURES = [
@@ -33,6 +33,29 @@ LIVE_INTERACTION_FEATURES = [
 
 # All features available for live-aligned training and runtime
 LIVE_ALL_FEATURES = LIVE_INTERACTION_FEATURES + LIVE_APPROACH_FEATURES
+
+ALLOWED_STRATEGY_SESSIONS = ("asia", "london", "ny")
+
+
+def _normalize_session_list(value) -> list[str]:
+    """Normalize a user-provided session list with validation/deduplication."""
+    if value is None:
+        return []
+    raw_values = [value] if isinstance(value, str) else list(value)
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_values:
+        session = str(raw).strip().lower()
+        if not session:
+            continue
+        if session not in ALLOWED_STRATEGY_SESSIONS:
+            allowed = ", ".join(ALLOWED_STRATEGY_SESSIONS)
+            msg = f"Unsupported session {session!r}. Allowed sessions: {allowed}"
+            raise ValueError(msg)
+        if session not in seen:
+            normalized.append(session)
+            seen.add(session)
+    return normalized
 
 
 class ExtremaConfig(BaseModel):
@@ -187,6 +210,98 @@ class ModelConfig(BaseModel):
     )
 
 
+class SessionExperimentConfig(BaseModel):
+    """Configuration for isolating Strategy-Core sessions in experiments.
+
+    These fields intentionally live outside ``DashboardUtilityConfig`` because
+    they do not change per-date feature generation. Changing session scope should
+    not invalidate expensive ``ml_utility_*`` caches; it only changes training,
+    OOS reporting, and research gate calculations.
+    """
+
+    training_sessions: list[str] = Field(
+        default_factory=lambda: list(ALLOWED_STRATEGY_SESSIONS),
+        description="Strategy-Core sessions whose rows may train/refit the model",
+    )
+    evaluation_sessions: list[str] = Field(
+        default_factory=lambda: list(ALLOWED_STRATEGY_SESSIONS),
+        description="Strategy-Core sessions whose OOS rows are included in reported stats",
+    )
+    production_gate_sessions: list[str] = Field(
+        default_factory=lambda: ["ny"],
+        description="Strategy-Core sessions eligible for the confidence-gated research report",
+    )
+    report_session_breakdowns: bool = Field(
+        default=True,
+        description="Report per-session OOS threshold metrics alongside aggregate metrics",
+    )
+
+    @field_validator(
+        "training_sessions",
+        "evaluation_sessions",
+        "production_gate_sessions",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_sessions(cls, value):
+        sessions = _normalize_session_list(value)
+        if not sessions:
+            msg = "At least one session must be enabled"
+            raise ValueError(msg)
+        return sessions
+
+
+SESSION_EXPERIMENT_PRESETS: dict[str, dict] = {
+    "all_to_ny": {
+        "training_sessions": ["asia", "london", "ny"],
+        "evaluation_sessions": ["asia", "london", "ny"],
+        "production_gate_sessions": ["ny"],
+        "report_session_breakdowns": True,
+    },
+    "ny_only": {
+        "training_sessions": ["ny"],
+        "evaluation_sessions": ["ny"],
+        "production_gate_sessions": ["ny"],
+        "report_session_breakdowns": True,
+    },
+    "asia_only": {
+        "training_sessions": ["asia"],
+        "evaluation_sessions": ["asia"],
+        "production_gate_sessions": ["asia"],
+        "report_session_breakdowns": True,
+    },
+    "london_only": {
+        "training_sessions": ["london"],
+        "evaluation_sessions": ["london"],
+        "production_gate_sessions": ["london"],
+        "report_session_breakdowns": True,
+    },
+    "asia_london_only": {
+        "training_sessions": ["asia", "london"],
+        "evaluation_sessions": ["asia", "london"],
+        "production_gate_sessions": ["asia", "london"],
+        "report_session_breakdowns": True,
+    },
+    "all_sessions_all_gates": {
+        "training_sessions": ["asia", "london", "ny"],
+        "evaluation_sessions": ["asia", "london", "ny"],
+        "production_gate_sessions": ["asia", "london", "ny"],
+        "report_session_breakdowns": True,
+    },
+}
+
+
+def session_experiment_from_preset(name: str) -> SessionExperimentConfig:
+    """Return a typed session-experiment config for a named preset."""
+    try:
+        payload = SESSION_EXPERIMENT_PRESETS[str(name)]
+    except KeyError as exc:
+        known = ", ".join(sorted(SESSION_EXPERIMENT_PRESETS))
+        msg = f"Unknown session experiment preset {name!r}. Known presets: {known}"
+        raise ValueError(msg) from exc
+    return SessionExperimentConfig(**payload)
+
+
 class DashboardUtilityConfig(BaseModel):
     """Configuration for the dashboard-utility training mode."""
 
@@ -216,12 +331,14 @@ class DashboardUtilityConfig(BaseModel):
         description="Points proximity for absorption ratio at-level volume",
     )
     bar_type: str = Field(
-        default="987t",
+        default="147t",
         description="Bar type for touch detection and MFE/MAE: '147t', '987t', '2000t', or '1m'",
     )
     include_approach_features: bool = Field(
         default=False,
-        description="Include 27 approach-window order flow features alongside 3 interaction features",
+        description=(
+            "Include 27 approach-window order flow features alongside 3 interaction features"
+        ),
     )
     approach_window_minutes: int = Field(
         default=90,
@@ -245,6 +362,13 @@ class MLPipelineConfig(BaseModel):
     model: ModelConfig = Field(default_factory=ModelConfig)
     dashboard_utility: DashboardUtilityConfig = Field(
         default_factory=DashboardUtilityConfig,
+    )
+    session_experiment: SessionExperimentConfig = Field(
+        default_factory=SessionExperimentConfig,
+        description=(
+            "Research-only session scope for training/evaluation/gate experiments; "
+            "does not affect cached feature generation"
+        ),
     )
 
     tick_size: float = Field(

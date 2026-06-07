@@ -47,9 +47,9 @@ def extract_ms_features(
     # Extract lookback window — numpy slicing is much faster than pandas .iloc
     lookback_start = max(0, idx - config.ms_window)
     if isinstance(tick_prices, np.ndarray):
-        prices_window = tick_prices[lookback_start: idx + 1]
+        prices_window = tick_prices[lookback_start : idx + 1]
     else:
-        prices_window = tick_prices.iloc[lookback_start: idx + 1].values.astype(float)
+        prices_window = tick_prices.iloc[lookback_start : idx + 1].values.astype(float)
 
     n = len(prices_window)
     if n < 10:
@@ -76,16 +76,14 @@ def extract_ms_features(
             start_price = prices_window[-(lookback + 1)]
             end_price = prices_window[-1]
             if start_price > 0:
-                features[f"ms_price_velocity_{lookback}"] = (
-                    (end_price - start_price) / start_price
-                )
+                features[f"ms_price_velocity_{lookback}"] = (end_price - start_price) / start_price
 
     # Volume momentum
     if tick_volumes is not None:
         if isinstance(tick_volumes, np.ndarray):
-            vol_window = tick_volumes[lookback_start: idx + 1]
+            vol_window = tick_volumes[lookback_start : idx + 1]
         else:
-            vol_window = tick_volumes.iloc[lookback_start: idx + 1].values.astype(float)
+            vol_window = tick_volumes.iloc[lookback_start : idx + 1].values.astype(float)
         if len(vol_window) >= 20:
             recent_vol = np.nanmean(vol_window[-20:])
             overall_vol = np.nanmean(vol_window)
@@ -145,7 +143,9 @@ def _compute_tick_rsi(prices: np.ndarray, period: int) -> float:
 
 
 def _compute_tick_macd(
-    prices: np.ndarray, fast_period: int, slow_period: int,
+    prices: np.ndarray,
+    fast_period: int,
+    slow_period: int,
 ) -> float:
     """Compute MACD histogram value at the last tick.
 

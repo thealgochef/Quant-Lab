@@ -20,7 +20,7 @@ the decision-time honest outcome:
   * The canonical OUTCOME re-anchors to the REALISTIC price at the DECISION instant
     (touch + decision_offset = interaction window), matching the Trade-Lab executor,
     with the forward window starting AFTER the decision (look-ahead closure). Touches
-    whose decision_time is at/after the flatten (~15:55 ET) get NO tradeable outcome.
+    whose decision_time is at/after the Strategy-Core flatten gate get NO tradeable outcome.
 
 BOOK-MID MODE STAYS REACHABLE (regression): every adapter entry point is
 parameterized by ``price_source`` / ``tick_size``. ``price_source="book_mid"`` +
@@ -38,17 +38,15 @@ touch the executor would never trade has no honest outcome.
 
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
-
 import strategy_core as sc
 from strategy_core import (
     Bar,
     CloseReason,
-    Direction,
+    HonestEntryDrop,
     Level,
     Quote,
     Side,
@@ -66,10 +64,9 @@ from strategy_core import (
     resolve_honest_outcome,
     resolve_outcome,
 )
-from strategy_core import HonestEntryDrop
 from strategy_core.constants import (
-    DECISION_OFFSET_MINUTES,
     DEFAULT_TICK_SIZE,
+    RTH_END,
 )
 
 from alpha_lab.agents.data_infra.ml.config import (
@@ -86,6 +83,7 @@ BOOK_MID_TICK = 0.125
 # Real NQ trade-price grid: the production decision grid (trade bars + trade-print
 # interaction features) AND the approach trades/quotes. == strategy_core DEFAULT_TICK_SIZE.
 TRADE_TICK = 0.25
+DECISION_OFFSET_MINUTES = sc.constants.DECISION_OFFSET_MINUTES
 assert TRADE_TICK == DEFAULT_TICK_SIZE  # the contract/constant the trade path threads
 
 _ET = "US/Eastern"
@@ -142,9 +140,7 @@ def bars_et_to_engine(
     return out
 
 
-def levels_to_engine(
-    levels: list[dict], *, with_availability: bool = False
-) -> list[Level]:
+def levels_to_engine(levels: list[dict], *, with_availability: bool = False) -> list[Level]:
     """CQL level dicts -> engine ``Level``s (parity_harness_v2._canon_levels_to_engine).
 
     ``with_availability`` (engine v3): when True, carry each level's ``available_from``
@@ -156,16 +152,16 @@ def levels_to_engine(
     """
     return [
         Level(
-            name=l["name"],
-            price=float(l["price"]),
-            side=Side(l["side"]),
+            name=level["name"],
+            price=float(level["price"]),
+            side=Side(level["side"]),
             available_from=(
-                _to_utc_dt(l["available_from"])
-                if (with_availability and l.get("available_from") is not None)
+                _to_utc_dt(level["available_from"])
+                if (with_availability and level.get("available_from") is not None)
                 else None
             ),
         )
-        for l in levels
+        for level in levels
     ]
 
 
@@ -224,7 +220,8 @@ def process_single_date_engine(
     # config; ``DECISION_OFFSET_MINUTES`` is the canonical default (== the constant
     # DEFAULT_INTERACTION_WINDOW_MINUTES) that config defaults to. The feature window
     # uses the SAME value, so feature window [touch, touch+offset] and label window
-    # (touch+offset, 16:15] never overlap regardless of the configured window.
+    # (touch+offset, Strategy-Core RTH_END] never overlap regardless of the
+    # configured window.
     window_minutes = config.interaction_window_minutes
     decision_offset = window_minutes
 
@@ -251,9 +248,9 @@ def process_single_date_engine(
             if honest_entry:
                 # The honest decision-time outcome is the ONE engine orchestration
                 # (strategy_core.resolve_honest_outcome): decision_ts = touch close +
-                # decision_offset; DROP at/after flatten (~15:55 ET) or the RTH cutoff;
+                # decision_offset; DROP at/after the Strategy-Core flatten gate or cutoff;
                 # entry = the injected realistic TRADE price at the decision instant;
-                # forward = bars whose close is in (decision, 16:15 ET); then the pure
+                # forward = bars whose close is in (decision, Strategy-Core RTH_END); then the pure
                 # resolve_outcome. A drop -> no tradeable outcome (skip the touch).
                 result = resolve_honest_outcome(
                     touch,
@@ -272,9 +269,7 @@ def process_single_date_engine(
                 # Legacy / book-mid regression: entry = level price; forward bars
                 # strictly AFTER the touch bar, truncated at 16:15 ET.
                 entry_price = float(touch.representative_price)
-                forward = bars_et[
-                    (bars_et.index > bar_ts_et) & (bars_et.index < rth_cutoff)
-                ]
+                forward = bars_et[(bars_et.index > bar_ts_et) & (bars_et.index < rth_cutoff)]
                 if forward.empty:
                     continue
                 outcome = resolve_outcome(
@@ -291,17 +286,33 @@ def process_single_date_engine(
                 continue
 
             features = compute_interaction_features_engine(
-                touch, data_dir, symbol, config,
-                price_source=price_source, tick_size=tick_size,
+                touch,
+                data_dir,
+                symbol,
+                config,
+                price_source=price_source,
+                tick_size=tick_size,
                 window_minutes=window_minutes,
             )
             if features is None:
                 continue
 
+            session_info = classify_session(touch.bar_ts_utc)
+            decision_time_et = pd.Timestamp(
+                touch.bar_ts_utc + timedelta(minutes=decision_offset),
+            ).tz_convert(_ET)
+            label_window_end = (
+                pd.Timestamp(f"{date_str} {RTH_END.strftime('%H:%M:%S')}", tz=_ET)
+                if honest_entry
+                else rth_cutoff
+            )
             row = {
                 "event_ts": bar_ts_et,
                 "date": date_str,
                 "timestamp": bar_ts_et,
+                "session": session_info.session,
+                "decision_time": decision_time_et,
+                "label_window_end": label_window_end,
                 "direction": touch.direction.value,
                 "representative_price": touch.representative_price,
                 "level_type": touch.level_type,
@@ -313,9 +324,7 @@ def process_single_date_engine(
             row.update(features)
 
             if config.include_approach_features:
-                approach = compute_approach_features_engine(
-                    touch, data_dir, symbol, config
-                )
+                approach = compute_approach_features_engine(touch, data_dir, symbol, config)
                 if approach:
                     row.update(approach)
 
@@ -418,9 +427,7 @@ def compute_interaction_features_engine(
     start = event_ts_utc
     end = start + timedelta(minutes=window_minutes)
     try:
-        ticks = store.query_tick_feature_rows(
-            symbol, start, end, price_source=price_source
-        )
+        ticks = store.query_tick_feature_rows(symbol, start, end, price_source=price_source)
     finally:
         store.close()
 

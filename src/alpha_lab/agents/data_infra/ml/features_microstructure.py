@@ -60,7 +60,9 @@ def extract_pl_features(
 
 
 def _book_volume_features(
-    ticks: pd.DataFrame, extremum_price: float, tick_size: float,
+    ticks: pd.DataFrame,
+    extremum_price: float,
+    tick_size: float,
 ) -> dict[str, float]:
     """Volume aggregates around the extremum price."""
     features: dict[str, float] = {}
@@ -256,7 +258,7 @@ def _depth_dynamics_features(ticks: pd.DataFrame) -> dict[str, float]:
     imbalances: list[float] = []
     spreads: list[float] = []
 
-    for _, row in ticks.iloc[::max(1, len(ticks) // 20)].iterrows():
+    for _, row in ticks.iloc[:: max(1, len(ticks) // 20)].iterrows():
         bid_sum = 0.0
         ask_sum = 0.0
         for i in range(10):
@@ -273,8 +275,8 @@ def _depth_dynamics_features(ticks: pd.DataFrame) -> dict[str, float]:
         total = bid_sum + ask_sum
         imbalances.append(bid_sum / total if total > 0 else 0.5)
 
-        bid_px = f"bid_px_00"
-        ask_px = f"ask_px_00"
+        bid_px = "bid_px_00"
+        ask_px = "ask_px_00"
         if bid_px in row.index and ask_px in row.index:
             bp = float(row[bid_px]) if not pd.isna(row[bid_px]) else 0.0
             ap = float(row[ask_px]) if not pd.isna(row[ask_px]) else 0.0

@@ -66,29 +66,36 @@ def label_extrema(
             continue
 
         fw_end = min(ext.index + config.forward_window + 1, n)
-        fw_prices = prices[ext.index + 1: fw_end]
+        fw_prices = prices[ext.index + 1 : fw_end]
 
         if len(fw_prices) == 0:
-            results.append(LabeledExtremum(
-                extremum=ext,
-                labels={f"label_{t}t": None for t in config.rebound_thresholds},
-                reversal_ticks=0.0,
-                continuation_ticks=0.0,
-            ))
+            results.append(
+                LabeledExtremum(
+                    extremum=ext,
+                    labels={f"label_{t}t": None for t in config.rebound_thresholds},
+                    reversal_ticks=0.0,
+                    continuation_ticks=0.0,
+                )
+            )
             continue
 
         labels, rev_ticks, cont_ticks = _classify_forward(
-            ext.price, ext.extremum_type, fw_prices,
-            config.rebound_thresholds, config.crossing_threshold,
+            ext.price,
+            ext.extremum_type,
+            fw_prices,
+            config.rebound_thresholds,
+            config.crossing_threshold,
             tick_size,
         )
 
-        results.append(LabeledExtremum(
-            extremum=ext,
-            labels=labels,
-            reversal_ticks=rev_ticks,
-            continuation_ticks=cont_ticks,
-        ))
+        results.append(
+            LabeledExtremum(
+                extremum=ext,
+                labels=labels,
+                reversal_ticks=rev_ticks,
+                continuation_ticks=cont_ticks,
+            )
+        )
 
     return results
 
@@ -134,8 +141,10 @@ def _classify_forward(
     labels: dict[str, int | None] = {}
     for threshold in rebound_thresholds:
         label = _label_at_threshold(
-            reversal_in_ticks, continuation_in_ticks,
-            threshold, crossing_level,
+            reversal_in_ticks,
+            continuation_in_ticks,
+            threshold,
+            crossing_level,
         )
         labels[f"label_{threshold}t"] = label
 

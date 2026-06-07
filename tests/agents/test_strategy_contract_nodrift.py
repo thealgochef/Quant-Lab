@@ -22,7 +22,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from strategy_core import CONTRACT_VERSION, ENGINE_VERSION
 from strategy_core import constants as k
 from strategy_core.contract.loader import load_strategy_contract
@@ -44,7 +43,7 @@ MODEL_FEATURES = [
 
 @pytest.fixture
 def config() -> MLPipelineConfig:
-    """The representative production config: dashboard_utility, NQ, 147t, 5m/30m, tp15/sl30/trap5."""
+    """Representative production config: dashboard utility, NQ, 147t, 5m/30m."""
     return MLPipelineConfig(
         training_mode="dashboard_utility",
         instrument="NQ",
@@ -120,10 +119,11 @@ def _structural_constant_map(config: MLPipelineConfig) -> dict[str, Any]:
         "feature_windows.within_band_pts": k.WITHIN_BAND_PTS,
         "feature_windows.large_trade_threshold": k.LARGE_TRADE_THRESHOLD,
         "feature_windows.mid_price_source": k.MID_PRICE_SOURCE,
-        # label policy (engine v2: honest-entry re-anchor is constant-sourced)
+        # label policy (engine v2/v3: structural semantics are constant-sourced;
+        # decision_offset_minutes is intentionally per-run config because the
+        # engine uses dashboard_utility.interaction_window_minutes as the offset.)
         "label_policy.resolution": k.LABEL_RESOLUTION,
         "label_policy.entry_reference": k.LABEL_ENTRY_REFERENCE,
-        "label_policy.decision_offset_minutes": k.DECISION_OFFSET_MINUTES,
         "label_policy.forward_cutoff": k.LABEL_FORWARD_CUTOFF,
         "label_policy.no_resolution_dropped": k.LABEL_NO_RESOLUTION_DROPPED,
         # inference
@@ -162,9 +162,11 @@ _CONFIG_INPUT_ALLOWLIST: frozenset[str] = frozenset(
         "label_policy.tp_points",
         "label_policy.sl_points",
         "label_policy.trap_mfe_min",
+        "label_policy.decision_offset_minutes",
         "label_policy.forward_bar_type",
         "provenance.dataset_config_hash",
         "provenance.catboost",
+        "research_session_experiment",
     }
 )
 
@@ -219,19 +221,27 @@ def test_engine_version_is_v3(contract: dict) -> None:
     assert contract["engine_version"] == ENGINE_VERSION
 
 
-def test_label_policy_honest_entry_reanchor_is_constant_sourced(contract: dict) -> None:
-    """Engine v2 honest-entry re-anchor: entry_reference + decision_offset == constants.
+def test_label_policy_honest_entry_reanchor_tracks_config_window(
+    contract: dict, config: MLPipelineConfig
+) -> None:
+    """Engine v2/v3 honest-entry re-anchor: entry_reference constant, offset config-sourced.
 
-    These are the two label-policy fields that the v1 -> v2 cutover moved (the entry
-    anchor + the decision offset that starts the forward window); both are
-    single-sourced from strategy_core.constants so the emitter cannot restate them.
+    ``entry_reference`` is a structural engine semantic. ``decision_offset_minutes``
+    is a per-run field because engine_decision uses the configured interaction
+    window as the offset that starts the forward label window.
     """
     label = contract["label_policy"]
     assert label["entry_reference"] == k.LABEL_ENTRY_REFERENCE == "realistic_at_decision"
+    assert label["decision_offset_minutes"] == config.dashboard_utility.interaction_window_minutes
+    assert (
+        label["decision_offset_minutes"]
+        == contract["feature_windows"]["interaction_window_minutes"]
+    )
+    # The representative production fixture uses the Strategy-Core default offset/window.
     assert label["decision_offset_minutes"] == k.DECISION_OFFSET_MINUTES
-    # decision_offset single-sources off the interaction window so the feature window
-    # [touch, touch+offset] and the label window never overlap (look-ahead closure).
-    assert k.DECISION_OFFSET_MINUTES == k.DEFAULT_INTERACTION_WINDOW_MINUTES
+    assert (
+        config.dashboard_utility.interaction_window_minutes == k.DEFAULT_INTERACTION_WINDOW_MINUTES
+    )
     # tp/sl/trap and the MAE-first ladder are UNCHANGED by the re-anchor.
     assert label["resolution"] == k.LABEL_RESOLUTION == "mae_first"
 
@@ -288,7 +298,9 @@ def test_coverage_guard_no_structural_field_without_a_source(
 
     # Structural map and config allow-list must be disjoint (a field is one or the other).
     overlap = structural & _CONFIG_INPUT_ALLOWLIST
-    assert not overlap, f"field(s) claimed by BOTH structural-map and config allow-list: {sorted(overlap)}"
+    assert not overlap, (
+        f"field(s) claimed by BOTH structural-map and config allow-list: {sorted(overlap)}"
+    )
 
 
 def test_contract_loads_through_engine_loader_with_version_binding(
@@ -311,9 +323,7 @@ def test_contract_loads_through_engine_loader_with_version_binding(
     )
 
 
-def test_loader_fails_closed_on_engine_version_mismatch(
-    contract: dict, tmp_path: Path
-) -> None:
+def test_loader_fails_closed_on_engine_version_mismatch(contract: dict, tmp_path: Path) -> None:
     from strategy_core.contract.schema import ContractError
 
     path = tmp_path / "strategy.json"
@@ -324,7 +334,7 @@ def test_loader_fails_closed_on_engine_version_mismatch(
 
 
 def test_v3_bundle_loads_against_v3_and_rejects_v2(
-    contract: dict, tmp_path: Path
+    contract: dict, config: MLPipelineConfig, tmp_path: Path
 ) -> None:
     """The v2 -> v3 binding: a v3 bundle LOADS against v3 and is REJECTED against v2.
 
@@ -342,7 +352,10 @@ def test_v3_bundle_loads_against_v3_and_rejects_v2(
     loaded = load_strategy_contract(path, expected_engine_version="strategy_core_engine_v3")
     assert loaded.engine_version == "strategy_core_engine_v3" == ENGINE_VERSION
     assert loaded.label_policy.entry_reference == k.LABEL_ENTRY_REFERENCE
-    assert loaded.label_policy.decision_offset_minutes == k.DECISION_OFFSET_MINUTES
+    assert (
+        loaded.label_policy.decision_offset_minutes
+        == config.dashboard_utility.interaction_window_minutes
+    )
     assert loaded.level_scheme.pdh_pdl_source == k.PDH_PDL_SOURCE == "prior_day_full"
     assert loaded.inference.eligible_session == k.INFERENCE_ELIGIBLE_SESSION == "ny"
 

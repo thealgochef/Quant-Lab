@@ -83,10 +83,7 @@ class ModelEvaluator:
 
         precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
         recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-        f1 = (
-            2 * precision * recall / (precision + recall)
-            if (precision + recall) > 0 else 0.0
-        )
+        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
         accuracy = (tp + tn) / len(y_t) if len(y_t) > 0 else 0.0
 
         # ROC-AUC and PR-AUC
@@ -106,7 +103,9 @@ class ModelEvaluator:
 
         # Cohen's d effect size (prefer probabilities when available)
         cohens_d = self._compute_cohens_d(
-            y_t, y_p, y_proba if y_prob is not None else None,
+            y_t,
+            y_p,
+            y_proba if y_prob is not None else None,
         )
 
         # Brier score (mean squared error of probability estimates)
@@ -158,13 +157,15 @@ class ModelEvaluator:
             y_prob = None if y_prob_raw is None else np.asarray(y_prob_raw).flatten()
 
             fold_result = self.evaluate(y_true, y_pred, y_prob)
-            fold_metrics.append({
-                "fold": int(fold_data.get("fold", idx)),
-                "precision": fold_result.precision,
-                "recall": fold_result.recall,
-                "f1": fold_result.f1,
-                "n_test": int(len(y_true)),
-            })
+            fold_metrics.append(
+                {
+                    "fold": int(fold_data.get("fold", idx)),
+                    "precision": fold_result.precision,
+                    "recall": fold_result.recall,
+                    "f1": fold_result.f1,
+                    "n_test": int(len(y_true)),
+                }
+            )
 
             all_true.append(y_true)
             all_pred.append(y_pred)
@@ -198,12 +199,12 @@ class ModelEvaluator:
             msg = "fold_predictions must contain at least one evaluated fold"
             raise ValueError(msg)
 
-        all_true = np.concatenate([
-            np.asarray(fold_data["y_true"]).flatten() for fold_data in fold_predictions
-        ])
-        all_pred = np.concatenate([
-            np.asarray(fold_data["y_pred"]).flatten() for fold_data in fold_predictions
-        ])
+        all_true = np.concatenate(
+            [np.asarray(fold_data["y_true"]).flatten() for fold_data in fold_predictions]
+        )
+        all_pred = np.concatenate(
+            [np.asarray(fold_data["y_pred"]).flatten() for fold_data in fold_predictions]
+        )
 
         all_prob_list: list[np.ndarray] = []
         has_probabilities = True
@@ -246,11 +247,13 @@ class ModelEvaluator:
                     precision_t = float(np.mean(all_true[pred_t == 1] == 1))
                 else:
                     precision_t = 0.0
-                threshold_rows.append({
-                    "threshold": float(t),
-                    "coverage": coverage,
-                    "precision": precision_t,
-                })
+                threshold_rows.append(
+                    {
+                        "threshold": float(t),
+                        "coverage": coverage,
+                        "precision": precision_t,
+                    }
+                )
 
             # Equal-width calibration buckets on [0, 1]
             n_b = max(2, int(n_calibration_buckets))
@@ -267,13 +270,15 @@ class ModelEvaluator:
                     continue
                 mean_prob = float(np.mean(all_prob[mask]))
                 observed_rate = float(np.mean(all_true[mask] == 1))
-                calibration_rows.append({
-                    "bucket_low": float(left),
-                    "bucket_high": float(right),
-                    "count": float(count),
-                    "mean_predicted_prob": mean_prob,
-                    "observed_positive_rate": observed_rate,
-                })
+                calibration_rows.append(
+                    {
+                        "bucket_low": float(left),
+                        "bucket_high": float(right),
+                        "count": float(count),
+                        "mean_predicted_prob": mean_prob,
+                        "observed_positive_rate": observed_rate,
+                    }
+                )
 
         return {
             "n_samples": n_total,
@@ -319,6 +324,7 @@ class ModelEvaluator:
             EvaluationResult with fold-level and aggregate metrics.
         """
         import warnings
+
         warnings.warn(
             "evaluate_walk_forward() produces in-sample metrics because it "
             "replays a single model across all folds. Use "
@@ -355,13 +361,15 @@ class ModelEvaluator:
             rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
             f1 = 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
 
-            fold_metrics.append({
-                "fold": fold_idx,
-                "precision": prec,
-                "recall": rec,
-                "f1": f1,
-                "n_test": len(y_test),
-            })
+            fold_metrics.append(
+                {
+                    "fold": fold_idx,
+                    "precision": prec,
+                    "recall": rec,
+                    "f1": f1,
+                    "n_test": len(y_test),
+                }
+            )
 
         # Aggregate
         y_true_all = np.concatenate(all_true)
@@ -412,10 +420,7 @@ class ModelEvaluator:
             elif metric == "f1":
                 prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
                 rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-                score = (
-                    2 * prec * rec / (prec + rec)
-                    if (prec + rec) > 0 else 0.0
-                )
+                score = 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
             else:
                 score = 0.0
 
@@ -444,9 +449,7 @@ class ModelEvaluator:
             y_perm = self._rng.permutation(y_true)
             tp_perm = np.sum((y_perm == 1) & (y_pred == 1))
             fp_perm = np.sum((y_perm == 0) & (y_pred == 1))
-            perm_prec = (
-                tp_perm / (tp_perm + fp_perm) if (tp_perm + fp_perm) > 0 else 0.0
-            )
+            perm_prec = tp_perm / (tp_perm + fp_perm) if (tp_perm + fp_perm) > 0 else 0.0
             if perm_prec >= obs_precision:
                 count_ge += 1
 
@@ -475,9 +478,7 @@ class ModelEvaluator:
             return None
 
         mean_diff = float(np.mean(pos_scores) - np.mean(neg_scores))
-        pooled_std = float(np.sqrt(
-            (np.var(pos_scores, ddof=1) + np.var(neg_scores, ddof=1)) / 2
-        ))
+        pooled_std = float(np.sqrt((np.var(pos_scores, ddof=1) + np.var(neg_scores, ddof=1)) / 2))
 
         if pooled_std == 0:
             return 0.0
@@ -486,11 +487,13 @@ class ModelEvaluator:
 
     @staticmethod
     def _compute_roc_auc(
-        y_true: np.ndarray, y_prob: np.ndarray,
+        y_true: np.ndarray,
+        y_prob: np.ndarray,
     ) -> float | None:
         """Compute ROC-AUC without sklearn dependency at call site."""
         try:
             from sklearn.metrics import roc_auc_score
+
             if len(np.unique(y_true)) < 2:
                 return None
             return float(roc_auc_score(y_true, y_prob))
@@ -499,11 +502,13 @@ class ModelEvaluator:
 
     @staticmethod
     def _compute_pr_auc(
-        y_true: np.ndarray, y_prob: np.ndarray,
+        y_true: np.ndarray,
+        y_prob: np.ndarray,
     ) -> float | None:
         """Compute Precision-Recall AUC."""
         try:
             from sklearn.metrics import average_precision_score
+
             if len(np.unique(y_true)) < 2:
                 return None
             return float(average_precision_score(y_true, y_prob))

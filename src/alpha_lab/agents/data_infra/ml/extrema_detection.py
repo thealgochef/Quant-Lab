@@ -63,7 +63,12 @@ def detect_extrema(
     if n < config.window_size:
         # Not enough data for even one window — run on entire series
         return _detect_in_window(
-            prices, tick_timestamps, 0, n, config, tick_size,
+            prices,
+            tick_timestamps,
+            0,
+            n,
+            config,
+            tick_size,
         )
 
     # Sliding window with 50% overlap
@@ -73,7 +78,12 @@ def detect_extrema(
     for start in range(0, n - config.window_size + 1, step):
         end = min(start + config.window_size, n)
         window_extrema = _detect_in_window(
-            prices, tick_timestamps, start, end, config, tick_size,
+            prices,
+            tick_timestamps,
+            start,
+            end,
+            config,
+            tick_size,
         )
         raw_extrema.extend(window_extrema)
 
@@ -82,8 +92,12 @@ def detect_extrema(
     last_end = last_start + config.window_size
     if last_end < n:
         tail_extrema = _detect_in_window(
-            prices, tick_timestamps, last_end - config.window_size, n,
-            config, tick_size,
+            prices,
+            tick_timestamps,
+            last_end - config.window_size,
+            n,
+            config,
+            tick_size,
         )
         raw_extrema.extend(tail_extrema)
 
@@ -120,14 +134,16 @@ def _detect_in_window(
     )
     for i, idx in enumerate(peak_idx):
         abs_idx = start + idx
-        results.append(Extremum(
-            index=abs_idx,
-            timestamp=pd.Timestamp(timestamps.iloc[abs_idx]),
-            price=float(prices[abs_idx]),
-            extremum_type="peak",
-            prominence=float(peak_props["prominences"][i]),
-            width=float(peak_props["widths"][i]),
-        ))
+        results.append(
+            Extremum(
+                index=abs_idx,
+                timestamp=pd.Timestamp(timestamps.iloc[abs_idx]),
+                price=float(prices[abs_idx]),
+                extremum_type="peak",
+                prominence=float(peak_props["prominences"][i]),
+                width=float(peak_props["widths"][i]),
+            )
+        )
 
     # Detect troughs (local minima) by negating prices
     trough_idx, trough_props = find_peaks(
@@ -137,20 +153,23 @@ def _detect_in_window(
     )
     for i, idx in enumerate(trough_idx):
         abs_idx = start + idx
-        results.append(Extremum(
-            index=abs_idx,
-            timestamp=pd.Timestamp(timestamps.iloc[abs_idx]),
-            price=float(prices[abs_idx]),
-            extremum_type="trough",
-            prominence=float(trough_props["prominences"][i]),
-            width=float(trough_props["widths"][i]),
-        ))
+        results.append(
+            Extremum(
+                index=abs_idx,
+                timestamp=pd.Timestamp(timestamps.iloc[abs_idx]),
+                price=float(prices[abs_idx]),
+                extremum_type="trough",
+                prominence=float(trough_props["prominences"][i]),
+                width=float(trough_props["widths"][i]),
+            )
+        )
 
     return results
 
 
 def _deduplicate(
-    extrema: list[Extremum], dedup_window: int,
+    extrema: list[Extremum],
+    dedup_window: int,
 ) -> list[Extremum]:
     """Deduplicate overlapping detections by keeping highest prominence.
 

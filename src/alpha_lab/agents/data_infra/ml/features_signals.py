@@ -90,9 +90,14 @@ def extract_signal_features_batch(
         strength = sv.strength
 
         if isinstance(direction, pd.Series) and isinstance(strength, pd.Series):
-            sv_indices.append((
-                prefix, direction.index, direction.values, strength.values,
-            ))
+            sv_indices.append(
+                (
+                    prefix,
+                    direction.index,
+                    direction.values,
+                    strength.values,
+                )
+            )
 
     results: list[dict[str, float]] = []
     for ext in extrema:
@@ -115,7 +120,8 @@ def extract_signal_features_batch(
 
 
 def _lookup_signal_at_time(
-    sv: SignalVector, ts: pd.Timestamp,
+    sv: SignalVector,
+    ts: pd.Timestamp,
 ) -> tuple[float, float]:
     """Look up direction and strength at a given timestamp.
 
@@ -140,7 +146,8 @@ def _lookup_signal_at_time(
 
 
 def _find_bar_index(
-    bar_index: pd.Index, timestamp: pd.Timestamp,
+    bar_index: pd.Index,
+    timestamp: pd.Timestamp,
 ) -> int | None:
     """Find the index of the latest bar at or before timestamp.
 

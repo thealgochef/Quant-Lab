@@ -49,7 +49,8 @@ class WalkForwardSplitter:
         self._config = config or _DEFAULT_CONFIG
 
     def split(
-        self, timestamps: pd.Series,
+        self,
+        timestamps: pd.Series,
     ) -> list[WalkForwardSplit]:
         """Generate walk-forward splits from timestamps.
 
@@ -92,15 +93,17 @@ class WalkForwardSplitter:
                 test_idx = np.where(test_mask)[0]
 
                 if len(train_idx) > 0 and len(test_idx) > 0:
-                    splits.append(WalkForwardSplit(
-                        fold=fold,
-                        train_start=pd.Timestamp(train_start),
-                        train_end=pd.Timestamp(train_end),
-                        test_start=pd.Timestamp(test_start),
-                        test_end=pd.Timestamp(test_end),
-                        train_indices=train_idx,
-                        test_indices=test_idx,
-                    ))
+                    splits.append(
+                        WalkForwardSplit(
+                            fold=fold,
+                            train_start=pd.Timestamp(train_start),
+                            train_end=pd.Timestamp(train_end),
+                            test_start=pd.Timestamp(test_start),
+                            test_end=pd.Timestamp(test_end),
+                            train_indices=train_idx,
+                            test_indices=test_idx,
+                        )
+                    )
                     fold += 1
 
                 test_start += test_delta
@@ -123,15 +126,17 @@ class WalkForwardSplitter:
                 test_idx = np.where(test_mask)[0]
 
                 if len(train_idx) > 0 and len(test_idx) > 0:
-                    splits.append(WalkForwardSplit(
-                        fold=fold,
-                        train_start=pd.Timestamp(train_start),
-                        train_end=pd.Timestamp(train_end),
-                        test_start=pd.Timestamp(test_start),
-                        test_end=pd.Timestamp(test_end),
-                        train_indices=train_idx,
-                        test_indices=test_idx,
-                    ))
+                    splits.append(
+                        WalkForwardSplit(
+                            fold=fold,
+                            train_start=pd.Timestamp(train_start),
+                            train_end=pd.Timestamp(train_end),
+                            test_start=pd.Timestamp(test_start),
+                            test_end=pd.Timestamp(test_end),
+                            train_indices=train_idx,
+                            test_indices=test_idx,
+                        )
+                    )
                     fold += 1
 
                 train_start += test_delta
@@ -139,7 +144,8 @@ class WalkForwardSplitter:
         return splits
 
     def as_sklearn_cv(
-        self, timestamps: pd.Series,
+        self,
+        timestamps: pd.Series,
     ) -> list[tuple[np.ndarray, np.ndarray]]:
         """Return sklearn-compatible (train_indices, test_indices) tuples.
 

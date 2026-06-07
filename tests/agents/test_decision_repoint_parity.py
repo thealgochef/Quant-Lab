@@ -1,3 +1,4 @@
+# ruff: noqa: N803, N812
 """Standing BOOK-MID parity regression: engine decision layer == legacy CQL.
 
 Proves the ``strategy_core`` repoint of the dashboard-utility decision layer
@@ -34,6 +35,7 @@ Skips cleanly when the Databento NQ store is absent (CI without the data mount).
 
 from __future__ import annotations
 
+import os
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -41,7 +43,19 @@ import numpy as np
 import pandas as pd
 import pytest
 
-DATA_DIR = Path(r"C:/Users/gonza/Documents/Trade-Dashboard/data/databento")
+ENV_DATABENTO_DIR = "QUANT_LAB_DATABENTO_DIR"
+_DEFAULT_DATABENTO_DIR = Path(__file__).resolve().parents[2] / "data" / "databento"
+
+
+def _resolve_databento_dir() -> Path:
+    """Return the Databento root used by the real-data parity tests."""
+    override = os.environ.get(ENV_DATABENTO_DIR)
+    if override:
+        return Path(override).expanduser()
+    return _DEFAULT_DATABENTO_DIR
+
+
+DATA_DIR = _resolve_databento_dir()
 SYMBOL = "NQ"
 _ET = "US/Eastern"
 
@@ -70,10 +84,26 @@ def _store_available() -> bool:
     return True
 
 
-pytestmark = pytest.mark.skipif(
+requires_databento_store = pytest.mark.skipif(
     not _store_available(),
-    reason="Databento NQ store not available; decision-repoint parity needs real data",
+    reason=(
+        f"Databento NQ store not available at {DATA_DIR}; "
+        f"decision-repoint parity needs real data (set {ENV_DATABENTO_DIR} to override)"
+    ),
 )
+
+
+def test_resolve_databento_dir_defaults_to_repo_data(monkeypatch):
+    monkeypatch.delenv(ENV_DATABENTO_DIR, raising=False)
+
+    assert _resolve_databento_dir() == _DEFAULT_DATABENTO_DIR
+
+
+def test_resolve_databento_dir_honors_env_override(monkeypatch, tmp_path):
+    override = tmp_path / "custom-databento"
+    monkeypatch.setenv(ENV_DATABENTO_DIR, str(override))
+
+    assert _resolve_databento_dir() == override
 
 
 @pytest.fixture(scope="module")
@@ -135,7 +165,9 @@ def _bookmid_bars(date_str, cfg):
 
     td = _date.fromisoformat(date_str)
     prev_day = td - timedelta(days=1)
-    start_utc = pd.Timestamp(f"{prev_day.isoformat()} 18:00:00", tz="America/New_York").tz_convert("UTC")
+    start_utc = pd.Timestamp(f"{prev_day.isoformat()} 18:00:00", tz="America/New_York").tz_convert(
+        "UTC"
+    )
     end_utc = pd.Timestamp(f"{td.isoformat()} 18:00:00", tz="America/New_York").tz_convert("UTC")
     tick_count = int(cfg.bar_type[:-1])
     store = TickStore(DATA_DIR)
@@ -143,7 +175,11 @@ def _bookmid_bars(date_str, cfg):
         for d in (prev_day, td):
             store.register_symbol_date(SYMBOL, d)
         return store.build_tick_bars(
-            SYMBOL, start_utc, end_utc, tick_count=tick_count, price_source="book_mid",
+            SYMBOL,
+            start_utc,
+            end_utc,
+            tick_count=tick_count,
+            price_source="book_mid",
         )
     finally:
         store.close()
@@ -197,6 +233,7 @@ def _legacy_decision_rows(B, bars_et, levels, date_str, cfg):
     return pd.DataFrame(rows) if rows else pd.DataFrame()
 
 
+@requires_databento_store
 @pytest.mark.parametrize("date_str", SAMPLE_DAYS)
 def test_engine_decision_matches_legacy(date_str, cfg, carry):
     """zones + touches + labels + 6 features: engine == legacy, EXACTLY."""
@@ -214,17 +251,15 @@ def test_engine_decision_matches_legacy(date_str, cfg, carry):
     bars = _bookmid_bars(date_str, cfg)
     assert not bars.empty, f"{date_str}: no bars"
     bars_et = B._ensure_et_index(bars.copy())
-    levels = B._compute_levels_for_date(
-        bars_et, date_str, prev_ny, prev_asia, prev_london
-    )
+    levels = B._compute_levels_for_date(bars_et, date_str, prev_ny, prev_asia, prev_london)
     assert levels, f"{date_str}: no levels"
 
     # ── zones ───────────────────────────────────────────────────────────────
     legacy_zones = B._build_zones(levels)
     eng_zones = E.build_zones(E.levels_to_engine(levels))
-    assert sorted(_zone_key(z) for z in legacy_zones) == sorted(
-        _zone_key(z) for z in eng_zones
-    ), f"{date_str}: zone set diverged"
+    assert sorted(_zone_key(z) for z in legacy_zones) == sorted(_zone_key(z) for z in eng_zones), (
+        f"{date_str}: zone set diverged"
+    )
 
     # ── touches (fresh zones each side; detection mutates 'touched') ────────
     legacy_touches = B._detect_touches(bars_et, B._build_zones(levels))
@@ -237,7 +272,7 @@ def test_engine_decision_matches_legacy(date_str, cfg, carry):
     assert len(legacy_touches) == len(eng_touches), (
         f"{date_str}: touch count {len(legacy_touches)} != {len(eng_touches)}"
     )
-    for lt, et in zip(legacy_touches, eng_touches):
+    for lt, et in zip(legacy_touches, eng_touches, strict=False):
         assert E._to_utc_dt(pd.Timestamp(lt["bar_ts"])) == et.bar_ts_utc
         assert lt["direction"] == et.direction.value
         assert lt["level_type"] == et.level_type
@@ -245,7 +280,7 @@ def test_engine_decision_matches_legacy(date_str, cfg, carry):
 
     # ── labels ──────────────────────────────────────────────────────────────
     rth_cutoff = pd.Timestamp(f"{date_str} 16:15:00", tz=_ET)
-    for lt, et in zip(legacy_touches, eng_touches):
+    for lt, et in zip(legacy_touches, eng_touches, strict=False):
         forward = bars_et[(bars_et.index > lt["bar_ts"]) & (bars_et.index < rth_cutoff)]
         if forward.empty:
             continue
@@ -265,13 +300,17 @@ def test_engine_decision_matches_legacy(date_str, cfg, carry):
         assert abs(round(float(legacy_lab["max_mae"]), 4) - eng_out.max_mae) < 1e-9
 
     # ── 6 features ──────────────────────────────────────────────────────────
-    for lt, et in zip(legacy_touches, eng_touches):
+    for lt, et in zip(legacy_touches, eng_touches, strict=False):
         legacy_int = B._compute_interaction_features(lt, DATA_DIR, SYMBOL, cfg)
         # Pin the engine to its book-mid regression feed (price=(bid+ask)/2 @0.125)
         # to match the legacy book-mid path; the production default is trade-print.
         eng_int = E.compute_interaction_features_engine(
-            et, DATA_DIR, SYMBOL, cfg,
-            price_source="book_mid", tick_size=E.BOOK_MID_TICK,
+            et,
+            DATA_DIR,
+            SYMBOL,
+            cfg,
+            price_source="book_mid",
+            tick_size=E.BOOK_MID_TICK,
         )
         # The < 5-row drop must agree, so both keep or both drop the touch.
         assert (legacy_int is None) == (eng_int is None), (
@@ -293,6 +332,7 @@ def test_engine_decision_matches_legacy(date_str, cfg, carry):
             )
 
 
+@requires_databento_store
 @pytest.mark.parametrize("date_str", SAMPLE_DAYS)
 def test_integrated_dataset_rows_match(date_str, cfg, carry):
     """End-to-end book-mid regression: engine(book-mid mode) == legacy CQL.
@@ -316,19 +356,22 @@ def test_integrated_dataset_rows_match(date_str, cfg, carry):
     bm_bars = _bookmid_bars(date_str, cfg)
     assert not bm_bars.empty, f"{date_str}: no book-mid bars"
     bars_et = B._ensure_et_index(bm_bars.copy())
-    levels = B._compute_levels_for_date(
-        bars_et, date_str, prev_ny, prev_asia, prev_london
-    )
+    levels = B._compute_levels_for_date(bars_et, date_str, prev_ny, prev_asia, prev_london)
 
     eng_df = E.process_single_date_engine(
-        bars_et, levels, date_str, DATA_DIR, SYMBOL, cfg,
-        price_source="book_mid", tick_size=E.BOOK_MID_TICK, honest_entry=False,
+        bars_et,
+        levels,
+        date_str,
+        DATA_DIR,
+        SYMBOL,
+        cfg,
+        price_source="book_mid",
+        tick_size=E.BOOK_MID_TICK,
+        honest_entry=False,
     )
     legacy_df = _legacy_decision_rows(B, bars_et, levels, date_str, cfg)
 
-    assert len(eng_df) == len(legacy_df), (
-        f"{date_str}: row count {len(eng_df)} != {len(legacy_df)}"
-    )
+    assert len(eng_df) == len(legacy_df), f"{date_str}: row count {len(eng_df)} != {len(legacy_df)}"
     if eng_df.empty:
         return
 
@@ -347,11 +390,10 @@ def test_integrated_dataset_rows_match(date_str, cfg, carry):
         lv = legacy_df[col].to_numpy(dtype=float)
         both_nan = np.isnan(ev) & np.isnan(lv)
         diff = np.where(both_nan, 0.0, np.abs(ev - lv))
-        assert np.nanmax(diff) < 1e-9, (
-            f"{date_str}: column {col} max abs diff {np.nanmax(diff)}"
-        )
+        assert np.nanmax(diff) < 1e-9, f"{date_str}: column {col} max abs diff {np.nanmax(diff)}"
 
 
+@requires_databento_store
 @pytest.mark.parametrize("date_str", SAMPLE_DAYS)
 def test_engine_trade_path_cutover(date_str, cfg, carry):
     """NEW trade-path behavior (Parts 1+2): production engine on TRADE bars.
@@ -367,8 +409,6 @@ def test_engine_trade_path_cutover(date_str, cfg, carry):
         (no kept touch could have a decision at/after the flatten).
       * Classes/thresholds unchanged: labels are within the canonical 3-class set.
     """
-    import datetime as _dt
-
     from alpha_lab.agents.data_infra.ml import dashboard_utility_builder as B
     from alpha_lab.agents.data_infra.ml import engine_decision as E
 
@@ -378,12 +418,15 @@ def test_engine_trade_path_cutover(date_str, cfg, carry):
     bars = B._build_bars_for_date(DATA_DIR, SYMBOL, date_str, cfg)
     assert not bars.empty, f"{date_str}: no trade bars"
     bars_et = B._ensure_et_index(bars.copy())
-    levels = B._compute_levels_for_date(
-        bars_et, date_str, prev_ny, prev_asia, prev_london
-    )
+    levels = B._compute_levels_for_date(bars_et, date_str, prev_ny, prev_asia, prev_london)
 
     df = E.process_single_date_engine(
-        bars_et, levels, date_str, DATA_DIR, SYMBOL, cfg,
+        bars_et,
+        levels,
+        date_str,
+        DATA_DIR,
+        SYMBOL,
+        cfg,
     )  # production defaults: trade / 0.25 / honest_entry=True
     if df.empty:
         pytest.skip(f"{date_str}: no tradeable touches under the honest path")

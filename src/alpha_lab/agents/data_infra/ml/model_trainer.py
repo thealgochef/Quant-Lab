@@ -70,7 +70,8 @@ class ExtremaModelTrainer:
                 selected_features = feature_names
                 logger.warning(
                     "RFECV selected too few features (%d), using all %d",
-                    len(selected_features), len(feature_names),
+                    len(selected_features),
+                    len(feature_names),
                 )
 
         x_train = features[selected_features]
@@ -79,9 +80,7 @@ class ExtremaModelTrainer:
 
         # Feature importances
         importances = model.get_feature_importance()
-        importance_dict = dict(
-            zip(selected_features, importances, strict=True)
-        )
+        importance_dict = dict(zip(selected_features, importances, strict=True))
 
         # Train metrics
         train_preds = model.predict(x_train)
@@ -128,14 +127,12 @@ class ExtremaModelTrainer:
 
         rfecv.fit(features, y)
         mask = rfecv.support_
-        selected = [
-            col for col, keep in zip(features.columns, mask, strict=True)
-            if keep
-        ]
+        selected = [col for col, keep in zip(features.columns, mask, strict=True) if keep]
 
         logger.info(
             "RFECV selected %d/%d features",
-            len(selected), len(features.columns),
+            len(selected),
+            len(features.columns),
         )
         return selected
 

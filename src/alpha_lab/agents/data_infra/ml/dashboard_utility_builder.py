@@ -25,6 +25,20 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+# Session boundaries (Eastern Time) — SINGLE-SOURCED from the shared engine scheme
+# (strategy_core.constants.RESEARCH_SESSION_SCHEME) so research slicing can never drift
+# from the engine's classify_session. Engine v3 re-clock: asia 19:00->02:45 (crosses
+# midnight), london 03:00->08:00, ny 09:00->17:00; 18:00 ET trading-day boundary.
+from strategy_core.constants import (
+    RESEARCH_SESSION_SCHEME as _SCHEME,
+)
+from strategy_core.constants import (
+    TRADING_DAY_BOUNDARY as _TRADING_DAY_BOUNDARY,
+)
+from strategy_core.constants import (
+    ZONE_PROXIMITY_PTS as _ZONE_PROXIMITY,
+)
+
 from alpha_lab.agents.data_infra.ml.config import DashboardUtilityConfig, MLPipelineConfig
 from alpha_lab.agents.data_infra.ml.dashboard_utility_labeling import (
     NO_RESOLUTION,
@@ -40,16 +54,6 @@ DASHBOARD_FEATURES = [
     "int_time_within_2pts",
     "int_absorption_ratio",
 ]
-
-# Session boundaries (Eastern Time) — SINGLE-SOURCED from the shared engine scheme
-# (strategy_core.constants.RESEARCH_SESSION_SCHEME) so research slicing can never drift
-# from the engine's classify_session. Engine v3 re-clock: asia 19:00->02:45 (crosses
-# midnight), london 03:00->08:00, ny 09:00->17:00; 18:00 ET trading-day boundary.
-from strategy_core.constants import (
-    RESEARCH_SESSION_SCHEME as _SCHEME,
-    TRADING_DAY_BOUNDARY as _TRADING_DAY_BOUNDARY,
-    ZONE_PROXIMITY_PTS as _ZONE_PROXIMITY,
-)
 
 _ET = _SCHEME.timezone  # "US/Eastern"
 _ASIA = _SCHEME.sessions["asia"]
@@ -113,26 +117,44 @@ def build_utility_dataset(
                 frames.append(df)
             # Still need to compute session H/L for next day's levels
             _update_session_levels_from_cache(
-                df, prev_full_hl, prev_asia_hl, prev_london_hl,
+                df,
+                prev_full_hl,
+                prev_asia_hl,
+                prev_london_hl,
             )
             # Read session levels from bars if we need them for next day
             prev_full_hl, prev_asia_hl, prev_london_hl = _get_session_hl_for_date(
-                data_dir, symbol, date_str, util_cfg,
-                prev_full_hl, prev_asia_hl, prev_london_hl,
+                data_dir,
+                symbol,
+                date_str,
+                util_cfg,
+                prev_full_hl,
+                prev_asia_hl,
+                prev_london_hl,
             )
             continue
 
         # Build fresh for this date
         df = _process_single_date(
-            date_str, data_dir, symbol, util_cfg,
-            prev_full_hl, prev_asia_hl, prev_london_hl,
+            date_str,
+            data_dir,
+            symbol,
+            util_cfg,
+            prev_full_hl,
+            prev_asia_hl,
+            prev_london_hl,
             use_engine=use_engine,
         )
 
         # Update session levels for next day
         prev_full_hl, prev_asia_hl, prev_london_hl = _get_session_hl_for_date(
-            data_dir, symbol, date_str, util_cfg,
-            prev_full_hl, prev_asia_hl, prev_london_hl,
+            data_dir,
+            symbol,
+            date_str,
+            util_cfg,
+            prev_full_hl,
+            prev_asia_hl,
+            prev_london_hl,
         )
 
         if not df.empty:
@@ -149,17 +171,25 @@ def build_utility_dataset(
     result = pd.concat(frames, ignore_index=True)
 
     # Strip any non-live-computable approach features (may exist in old caches)
-    from alpha_lab.agents.data_infra.ml.config import LIVE_APPROACH_FEATURES, LIVE_INTERACTION_FEATURES
+    from alpha_lab.agents.data_infra.ml.config import (
+        LIVE_APPROACH_FEATURES,
+        LIVE_INTERACTION_FEATURES,
+    )
+
     live_features = set(LIVE_INTERACTION_FEATURES + LIVE_APPROACH_FEATURES)
-    drop_cols = [c for c in result.columns
-                 if (c.startswith("app_") or c.startswith("int_"))
-                 and c not in live_features]
+    drop_cols = [
+        c
+        for c in result.columns
+        if (c.startswith("app_") or c.startswith("int_")) and c not in live_features
+    ]
     if drop_cols:
         result = result.drop(columns=drop_cols)
 
     logger.info(
         "Utility dataset: %d labeled events from %d dates (%d cached)",
-        len(result), len(dates), cached_count,
+        len(result),
+        len(dates),
+        cached_count,
     )
     return result
 
@@ -169,7 +199,9 @@ def _get_session_hl_for_date(
     symbol: str,
     date_str: str,
     util_cfg: DashboardUtilityConfig,
-    prev_full_hl, prev_asia_hl, prev_london_hl,
+    prev_full_hl,
+    prev_asia_hl,
+    prev_london_hl,
 ):
     """Compute this date's carry state for the NEXT day's levels.
 
@@ -236,7 +268,11 @@ def _process_single_date(
 
     # 2. Compute key levels available for this date (identical for both paths)
     levels = _compute_levels_for_date(
-        bars_et, date_str, prev_full_hl, prev_asia_hl, prev_london_hl,
+        bars_et,
+        date_str,
+        prev_full_hl,
+        prev_asia_hl,
+        prev_london_hl,
     )
     if not levels:
         return pd.DataFrame()
@@ -248,7 +284,12 @@ def _process_single_date(
         )
 
         return process_single_date_engine(
-            bars_et, levels, date_str, data_dir, symbol, util_cfg,
+            bars_et,
+            levels,
+            date_str,
+            data_dir,
+            symbol,
+            util_cfg,
         )
 
     # ── Legacy CQL decision path (kept intact for the parity diff) ──────────
@@ -276,7 +317,10 @@ def _process_single_date(
 
         # Compute interaction features from raw ticks
         features = _compute_interaction_features(
-            touch, data_dir, symbol, util_cfg,
+            touch,
+            data_dir,
+            symbol,
+            util_cfg,
         )
         if features is None:
             continue
@@ -298,7 +342,10 @@ def _process_single_date(
         # Optionally compute approach features
         if util_cfg.include_approach_features:
             approach = _compute_approach_features(
-                touch, data_dir, symbol, util_cfg,
+                touch,
+                data_dir,
+                symbol,
+                util_cfg,
             )
             if approach:
                 row.update(approach)
@@ -315,7 +362,9 @@ def _process_single_date(
 
 
 def _build_bars_for_date(
-    data_dir: Path, symbol: str, date_str: str,
+    data_dir: Path,
+    symbol: str,
+    date_str: str,
     util_cfg: DashboardUtilityConfig,
 ) -> pd.DataFrame:
     """Build bars for a single date using the configured bar_type."""
@@ -327,7 +376,9 @@ def _build_bars_for_date(
     # ts_event column -- NOT a naive datetime that DuckDB reinterprets in its session
     # timezone (the prior 23:00-CT window artifact). build_tick_bars partitions by the
     # same 18:00-ET trading day, so [prev 18:00 ET, cur 18:00 ET) yields this date's bars.
-    start_utc = pd.Timestamp(f"{prev_day.isoformat()} 18:00:00", tz="America/New_York").tz_convert("UTC")
+    start_utc = pd.Timestamp(f"{prev_day.isoformat()} 18:00:00", tz="America/New_York").tz_convert(
+        "UTC"
+    )
     end_utc = pd.Timestamp(f"{td.isoformat()} 18:00:00", tz="America/New_York").tz_convert("UTC")
 
     store = TickStore(data_dir)
@@ -342,12 +393,14 @@ def _build_bars_for_date(
             cached = data_dir / symbol / date_str / "ohlcv_1m_session.parquet"
             if cached.exists():
                 df = pd.read_parquet(cached)
-                if not isinstance(df.index, pd.DatetimeIndex):
-                    if "timestamp" in df.columns:
-                        df = df.set_index("timestamp")
+                if not isinstance(df.index, pd.DatetimeIndex) and "timestamp" in df.columns:
+                    df = df.set_index("timestamp")
                 return df
             df = store.build_bars_from_ticks(
-                symbol, start_utc, end_utc, bar_size="1 minute",
+                symbol,
+                start_utc,
+                end_utc,
+                bar_size="1 minute",
             )
         elif bar_type.endswith("t"):
             tick_count = int(bar_type[:-1])
@@ -359,12 +412,20 @@ def _build_bars_for_date(
             # tick_size=0.25 to match (engine_decision.process_single_date_engine).
             # DuckDB<->streaming trade-bar parity is proven in strategy-core/validation.
             df = store.build_tick_bars(
-                symbol, start_utc, end_utc, tick_count=tick_count, price_source="trade",
+                symbol,
+                start_utc,
+                end_utc,
+                tick_count=tick_count,
+                price_source="trade",
             )
         else:
             logger.warning("Unknown bar_type: %s, falling back to 987t", bar_type)
             df = store.build_tick_bars(
-                symbol, start_utc, end_utc, tick_count=987, price_source="trade",
+                symbol,
+                start_utc,
+                end_utc,
+                tick_count=987,
+                price_source="trade",
             )
     finally:
         store.close()
@@ -442,29 +503,51 @@ def _compute_levels_for_date(
         )
 
     pdh_pdl_avail = _avail(prev_day, _TRADING_DAY_BOUNDARY)  # prior 18:00 ET (day start)
-    asia_avail = _avail(td, _ASIA.end)                       # 02:45 ET (Asia close)
-    london_avail = _avail(td, _LONDON.end)                   # 08:00 ET (London close)
+    asia_avail = _avail(td, _ASIA.end)  # 02:45 ET (Asia close)
+    london_avail = _avail(td, _LONDON.end)  # 08:00 ET (London close)
 
     levels = []
 
     # PDH/PDL = FULL prior trading day's high/low; available from the trading-day start.
     if prev_full_hl is not None:
-        levels.append({"name": "PDH", "price": prev_full_hl[0], "side": "HIGH", "available_from": pdh_pdl_avail})
-        levels.append({"name": "PDL", "price": prev_full_hl[1], "side": "LOW", "available_from": pdh_pdl_avail})
+        levels.append(
+            {
+                "name": "PDH",
+                "price": prev_full_hl[0],
+                "side": "HIGH",
+                "available_from": pdh_pdl_avail,
+            }
+        )
+        levels.append(
+            {
+                "name": "PDL",
+                "price": prev_full_hl[1],
+                "side": "LOW",
+                "available_from": pdh_pdl_avail,
+            }
+        )
 
     # Asia levels (available from the Asia close, 02:45 ET)
     asia = _slice_session(bars_et, "asia")
     if not asia.empty:
         hl = _session_hl(asia)
-        levels.append({"name": "asia_high", "price": hl[0], "side": "HIGH", "available_from": asia_avail})
-        levels.append({"name": "asia_low", "price": hl[1], "side": "LOW", "available_from": asia_avail})
+        levels.append(
+            {"name": "asia_high", "price": hl[0], "side": "HIGH", "available_from": asia_avail}
+        )
+        levels.append(
+            {"name": "asia_low", "price": hl[1], "side": "LOW", "available_from": asia_avail}
+        )
 
     # London levels (available from the London close, 08:00 ET)
     london = _slice_session(bars_et, "london")
     if not london.empty:
         hl = _session_hl(london)
-        levels.append({"name": "london_high", "price": hl[0], "side": "HIGH", "available_from": london_avail})
-        levels.append({"name": "london_low", "price": hl[1], "side": "LOW", "available_from": london_avail})
+        levels.append(
+            {"name": "london_high", "price": hl[0], "side": "HIGH", "available_from": london_avail}
+        )
+        levels.append(
+            {"name": "london_low", "price": hl[1], "side": "LOW", "available_from": london_avail}
+        )
 
     return levels
 
@@ -477,7 +560,7 @@ def _build_zones(levels: list[dict]) -> list[dict]:
     if not levels:
         return []
 
-    sorted_levels = sorted(levels, key=lambda l: l["price"])
+    sorted_levels = sorted(levels, key=lambda level: level["price"])
     groups: list[list[dict]] = [[sorted_levels[0]]]
 
     for lvl in sorted_levels[1:]:
@@ -488,24 +571,27 @@ def _build_zones(levels: list[dict]) -> list[dict]:
 
     zones = []
     for group in groups:
-        prices = [l["price"] for l in group]
+        prices = [level["price"] for level in group]
         rep_price = sum(prices) / len(prices)
-        names = [l["name"] for l in group]
+        names = [level["name"] for level in group]
         # Side by majority
-        high_count = sum(1 for l in group if l["side"] == "HIGH")
+        high_count = sum(1 for level in group if level["side"] == "HIGH")
         side = "HIGH" if high_count > len(group) / 2 else "LOW"
-        zones.append({
-            "representative_price": rep_price,
-            "names": names,
-            "side": side,
-            "touched": False,
-        })
+        zones.append(
+            {
+                "representative_price": rep_price,
+                "names": names,
+                "side": side,
+                "touched": False,
+            }
+        )
 
     return zones
 
 
 def _detect_touches(
-    bars_et: pd.DataFrame, zones: list[dict],
+    bars_et: pd.DataFrame,
+    zones: list[dict],
 ) -> list[dict]:
     """Detect first-touch events: bar range intersects level price."""
     touches = []
@@ -522,13 +608,15 @@ def _detect_touches(
             if bar_low <= rep <= bar_high:
                 zone["touched"] = True
                 direction = "LONG" if zone["side"] == "LOW" else "SHORT"
-                touches.append({
-                    "bar_ts": bar_ts,
-                    "representative_price": rep,
-                    "direction": direction,
-                    "level_type": zone["names"][0],
-                    "date": str(bar_ts.date()) if hasattr(bar_ts, "date") else "",
-                })
+                touches.append(
+                    {
+                        "bar_ts": bar_ts,
+                        "representative_price": rep,
+                        "direction": direction,
+                        "level_type": zone["names"][0],
+                        "date": str(bar_ts.date()) if hasattr(bar_ts, "date") else "",
+                    }
+                )
 
     return touches
 
@@ -595,9 +683,7 @@ def _compute_interaction_features(
         if abs(m - rep_price) <= 2.0:
             time_within += dt_sec
 
-        if direction == "LONG" and m < rep_price:
-            time_beyond += dt_sec
-        elif direction == "SHORT" and m > rep_price:
+        if direction == "LONG" and m < rep_price or direction == "SHORT" and m > rep_price:
             time_beyond += dt_sec
 
     # Absorption ratio
@@ -614,9 +700,7 @@ def _compute_interaction_features(
             s = float(sizes[j])
             if level_low <= p <= level_high:
                 vol_at_level += s
-            elif direction == "LONG" and p < rep_price:
-                vol_through += s
-            elif direction == "SHORT" and p > rep_price:
+            elif direction == "LONG" and p < rep_price or direction == "SHORT" and p > rep_price:
                 vol_through += s
 
         total = vol_at_level + vol_through
@@ -670,10 +754,7 @@ def _compute_approach_features(
         union_sql = store._union_views_sql(views)
 
         # Detect symbol filter
-        sample_sql = (
-            f"SELECT column_name FROM "
-            f"(DESCRIBE SELECT * FROM ({union_sql}) LIMIT 0)"
-        )
+        sample_sql = f"SELECT column_name FROM (DESCRIBE SELECT * FROM ({union_sql}) LIMIT 0)"
         cols = {r[0] for r in store._conn.execute(sample_sql).fetchall()}
         has_symbol = "symbol" in cols
 
@@ -689,11 +770,15 @@ def _compute_approach_features(
             sym_f = ""
 
         # Import and call the experiment approach feature query
-        from alpha_lab.experiment.features import _query_approach_features
         from alpha_lab.agents.data_infra.ml.config import LIVE_APPROACH_FEATURES
+        from alpha_lab.experiment.features import _query_approach_features
+
         all_features = _query_approach_features(
-            store._conn, union_sql, sym_f,
-            approach_start, event_ts_utc,
+            store._conn,
+            union_sql,
+            sym_f,
+            approach_start,
+            event_ts_utc,
         )
         # Keep only features computable from MBP-1 (top-of-book) in live trading
         return {k: v for k, v in all_features.items() if k in LIVE_APPROACH_FEATURES}

@@ -1,5 +1,5 @@
 """
-Strategy contract emission for runtime (Trade-Lab) consumption.
+Strategy contract emission for Strategy-Core v3 research/runtime parity.
 
 A trained model bundle (model.cbm + metadata.json + evaluation.json) describes
 *what was trained*. It does NOT, on its own, fully describe the *strategy
@@ -8,10 +8,9 @@ scheme, touch rule, level scheme, feature windows, and label policy are only
 implicit in how the dashboard-utility builder computed the dataset.
 
 `strategy.json` makes those semantics explicit and versioned so a downstream
-runtime (Trade-Lab) can be driven by the contract instead of hardcoding one
-strategy. When research changes the strategy (sessions, touch rule, windows,
-thresholds, feature set), it ships a new bundle with a new strategy.json and
-the runtime adapts via config rather than a code rewrite.
+runtime can eventually be driven by the contract instead of hardcoding one
+strategy. Current Trade-Lab activation is deliberately blocked until that runtime
+is repointed to Strategy-Core v3 and end-to-end parity is proven.
 
 Contract version + engine version are imported from ``strategy_core`` (not
 restated here).
@@ -67,13 +66,13 @@ def build_strategy_contract(
     *,
     strategy_id: str,
 ) -> dict | None:
-    """Build a versioned strategy contract dict for runtime consumption.
+    """Build a versioned strategy contract dict for v3 parity/runtime handoff.
 
     Every STRUCTURAL field is sourced from ``strategy_core.constants`` (or the
     engine package); only per-training-run scalars (tp/sl/trap, the interaction/
-    approach windows, bar_type, tick_size, instrument, model.*, provenance hash,
-    strategy_id, selected feature names) come from ``config`` -- those are inputs,
-    not engine semantics.
+    approach windows, decision offset derived from the interaction window, bar_type,
+    tick_size, instrument, model.*, provenance hash, strategy_id, selected feature
+    names) come from ``config`` -- those are inputs, not engine semantics.
 
     Args:
         config: The full pipeline config used for this training run.
@@ -88,7 +87,9 @@ def build_strategy_contract(
     """
     mode = getattr(config, "training_mode", "unknown")
 
-    feature_names = list(selected_features) if selected_features else list(LIVE_INTERACTION_FEATURES)
+    feature_names = (
+        list(selected_features) if selected_features else list(LIVE_INTERACTION_FEATURES)
+    )
 
     if mode != "dashboard_utility":
         # Minimal record only; the runtime is not expected to serve non
@@ -119,7 +120,9 @@ def build_strategy_contract(
         "engine_version": ENGINE_VERSION,
         "strategy_id": strategy_id,
         "training_mode": mode,
-        "supported_by_runtime": True,
+        # Full v3 contract is emitted, but current Trade-Lab activation is blocked
+        # until Trade-Lab is repointed to Strategy-Core v3 and parity-tested.
+        "supported_by_runtime": False,
         "instrument": config.instrument,
         "tick_size": config.tick_size,
         "point_value": k.POINT_VALUE.get(config.instrument),
@@ -180,11 +183,12 @@ def build_strategy_contract(
         },
         "label_policy": {
             "resolution": k.LABEL_RESOLUTION,
-            # Engine-single-sourced honest-entry re-anchor (engine v2): the label is
-            # measured from the realistic price at the DECISION INSTANT
-            # (touch + decision_offset_minutes), matching the Trade-Lab executor.
+            # Engine-single-sourced honest-entry re-anchor (engine v2/v3): the label
+            # is measured from the realistic price at the DECISION INSTANT. The
+            # decision offset is the configured interaction window because the
+            # engine cannot decide until those post-touch features are available.
             "entry_reference": k.LABEL_ENTRY_REFERENCE,
-            "decision_offset_minutes": k.DECISION_OFFSET_MINUTES,
+            "decision_offset_minutes": du.interaction_window_minutes,
             "tp_points": du.tp_points,
             "sl_points": du.sl_points,
             "trap_mfe_min": du.trap_mfe_min,
@@ -197,6 +201,7 @@ def build_strategy_contract(
             "eligible_session": k.INFERENCE_ELIGIBLE_SESSION,
             "confidence_gate": k.DEFAULT_CONFIDENCE_GATE,
         },
+        "research_session_experiment": config.session_experiment.model_dump(),
         "data_requirements": {
             "min_book_level": k.MIN_BOOK_LEVEL,
             "live_schemas": list(k.LIVE_SCHEMAS),

@@ -1,37 +1,61 @@
 # Streamlit ML Training Workbench
 
-The ML Training Workbench is the primary in-repo UI for building local ML datasets, running walk-forward CatBoost evaluation, and saving runtime model bundles. It is mounted by `scripts/dashboard.py` in the `🧠 ML Training` tab and rendered by `render_ml_training_tab()` in `scripts/ml_training_tab.py`.
+Updated: 2026-06-05.
 
-The workbench is local-data only: it discovers and reads Databento Parquet files from disk through `TickStore`. It does not call the Databento API.
+The ML Training Workbench is the primary Quant-Lab UI for building local ML datasets, running walk-forward CatBoost evaluation, and saving runtime model bundles. It is mounted by `scripts/dashboard.py` and implemented in `scripts/ml_training_tab.py`.
 
-## Code map
+The workbench is local-data only: it discovers and reads Databento-derived Parquet files from disk through `TickStore`. It does not call the Databento API.
 
-- `scripts/dashboard.py` - creates the Streamlit tab and calls `render_ml_training_tab()`.
-- `scripts/ml_training_tab.py` - UI state, configuration assembly, dataset build orchestration, walk-forward training, metrics display, and model save.
-- `src/alpha_lab/agents/data_infra/tick_store.py` - DuckDB-backed reader over `data/databento/{symbol}/{date}/` Parquet files.
-- `src/alpha_lab/agents/data_infra/ml/config.py` - shared Pydantic config objects (`MLPipelineConfig` and sub-configs).
-- `src/alpha_lab/agents/data_infra/ml/dataset_builder.py` - binary extrema dataset builder.
-- `src/alpha_lab/agents/data_infra/ml/dashboard_utility_builder.py` - 3-class dashboard-utility dataset builder.
-- `src/alpha_lab/agents/data_infra/ml/dashboard_utility_labeling.py` - dashboard-utility label semantics.
-- `src/alpha_lab/agents/data_infra/ml/walk_forward.py` - rolling/expanding time-series split generation.
-- `src/alpha_lab/agents/data_infra/ml/model_trainer.py` - CatBoost training, optional RFECV, model save/load.
-- `src/alpha_lab/agents/data_infra/ml/model_evaluator.py` - OOS aggregate metrics, confidence intervals, permutation tests, threshold and calibration summaries.
-- `src/alpha_lab/experiment/` - retained compatibility source used only where needed by the utility approach-feature query and older dashboard exporter.
+---
+
+## Current code map
+
+| Path | Role |
+|---|---|
+| `scripts/dashboard.py` | Streamlit host. |
+| `scripts/ml_training_tab.py` | UI state, configuration assembly, dataset build orchestration, walk-forward training, metrics display, save. |
+| `src/alpha_lab/agents/data_infra/tick_store.py` | DuckDB-backed reader/query layer over local Databento parquet. |
+| `src/alpha_lab/agents/data_infra/ml/config.py` | Pydantic configs; dataset cache hash includes Strategy-Core engine/version semantics. |
+| `src/alpha_lab/agents/data_infra/ml/dataset_builder.py` | Extrema-mode binary dataset builder. |
+| `src/alpha_lab/agents/data_infra/ml/dashboard_utility_builder.py` | Dashboard-utility dataset loop; bars, levels, cache writes. |
+| `src/alpha_lab/agents/data_infra/ml/engine_decision.py` | Strategy-Core v3 adapter for zones, touches, features, and honest outcomes. |
+| `src/alpha_lab/agents/data_infra/ml/strategy_contract.py` | Emits `strategy.json` from Strategy-Core constants and `ENGINE_VERSION`. |
+| `src/alpha_lab/agents/data_infra/ml/walk_forward.py` | Rolling/expanding time-series split generation. |
+| `src/alpha_lab/agents/data_infra/ml/model_trainer.py` | CatBoost training and optional RFECV. |
+| `src/alpha_lab/agents/data_infra/ml/model_evaluator.py` | OOS metrics, bootstrap CIs, permutation tests, calibration summaries. |
+| `scripts/run_dashboard_session_experiment.py` | CLI runner for Databento-backed dashboard-utility session experiments. |
+
+---
 
 ## Configuration flow
 
 All major UI selections are copied into `MLPipelineConfig` before dataset build or training:
 
 - `training_mode`: `extrema_rebound_crossing` or `dashboard_utility`.
-- `instrument` / `tick_size`: selected symbol (`NQ` or `ES`) and tick size (`0.25`).
+- `instrument` / `tick_size`: selected symbol and tick size; NQ trade grid is 0.25.
 - `walk_forward`: train window, test window, gap.
 - `model`: CatBoost iterations, depth, loss, and RFECV setting.
 - `dashboard_utility`: TP/SL, bar type, interaction window, approach-feature settings.
-- `features`: extrema feature settings; the UI currently disables signal-detector features for extrema builds.
+- `session_experiment`: research-only training/evaluation/gate session scope.
+- `features`: extrema feature settings.
 
-`MLPipelineConfig.dataset_config_hash()` hashes settings that affect dataset generation. Build caches are keyed by this hash so mode/config changes create separate cached Parquet files instead of reusing stale features. Walk-forward and CatBoost settings do not affect dataset cache identity.
+`MLPipelineConfig.dataset_config_hash()` hashes settings that affect dataset generation. For dashboard-utility, the hash also includes Strategy-Core's engine version and price/label source semantics, so v1/v2/v3 caches cannot be silently reused across structural engine changes.
 
-The Streamlit tab also stores a UI-level dataset identity in session state. When mode, dates, label, walk-forward windows, or utility-specific settings change, it clears stale `ml_dataset`, `ml_build_config`, `ml_training_result`, and `ml_train_config` values.
+Dashboard-utility's default bar type is `147t`. The Streamlit dropdown is intentionally ordered with `147t` first so the UI default matches `DashboardUtilityConfig` and the emitted Strategy-Core v3 contract.
+
+Dashboard-utility session experiments are typed config, not loose UI toggles:
+
+```yaml
+session_experiment:
+  training_sessions: [asia, london, ny]
+  evaluation_sessions: [asia, london, ny]
+  production_gate_sessions: [ny]
+  report_session_breakdowns: true
+```
+
+Presets are available in the UI and CLI: `all_to_ny`, `ny_only`, `asia_only`, `london_only`, `asia_london_only`, and `all_sessions_all_gates`. Dataset generation remains broad/cacheable; the session scope is applied during fold training, OOS evaluation, final refit, and gate reporting.
+
+---
 
 ## Training modes
 
@@ -39,56 +63,42 @@ The Streamlit tab also stores a UI-level dataset identity in session state. When
 
 Purpose: binary research classifier over tick-level extrema.
 
-- Data source: local tick Parquet under `data/databento/{symbol}/{YYYY-MM-DD}/`.
+- Data source: local parquet under `data/databento/{symbol}/{YYYY-MM-DD}/`.
 - Builder: `ExtremaDatasetBuilder` via `build_training_dataset()`.
 - Candidate events: extrema detected from tick prices using `ExtremaConfig`.
-- Labels: rebound/crossing labels from `labeling.py` with UI-selected threshold:
-  - `label_20t`: 20 ticks / 5 points
-  - `label_40t`: 40 ticks / 10 points
-  - `label_60t`: 60 ticks / 15 points
-- Features: `pl_*` price-level microstructure and `ms_*` momentum columns; `sig_*` is supported by the lower-level builder but disabled by this UI path.
-- Training loss: CatBoost binary `Logloss`.
-- Positive class for evaluation: rebound (`1`).
+- Labels: rebound/crossing labels from `labeling.py` with UI-selected thresholds.
+- Features: `pl_*` price-level microstructure and `ms_*` momentum columns; `sig_*` support exists lower-level but is not the UI's primary path.
+- Loss: CatBoost binary `Logloss`.
+- Runtime caveat: `ml_extrema_classifier.py` is experimental and not execution-faithful.
 
-### Dashboard Utility (3-class)
+### Dashboard Utility — Strategy-Core v3 path
 
-Purpose: level-touch model aligned to Trading-Dashboard execution semantics.
+Purpose: 3-class level-touch classifier for the execution problem that Trade-Lab must eventually reproduce.
 
-- Data source: same local tick Parquet layout. This builder is self-contained and does not require prebuilt `data/experiment/events.parquet` for the workbench path.
-- Builder: `build_utility_dataset()`.
-- Candidate events: first touches of merged key-level zones from prior/current session levels (`PDH`, `PDL`, Asia high/low, London high/low).
-- Bars: configured as `987t`, `2000t`, `147t`, or `1m`; tick bars are preferred for touch detection fidelity.
-- Labels: `label_encoded` from `dashboard_utility_labeling.py`:
-  - `0`: `tradeable_reversal`
-  - `1`: `trap_reversal`
-  - `2`: `aggressive_blowthrough`
-- Resolution ordering: MAE is checked before MFE on each forward bar, matching the dashboard contract.
-- Features: canonical live interaction features `int_time_beyond_level`, `int_time_within_2pts`, `int_absorption_ratio`; optionally live-computable `app_*` approach features.
-- Training loss: CatBoost `MultiClass`.
-- Positive class for binary quality metrics: `tradeable_reversal` (`0`), converted to positive during OOS evaluation.
+Current production-aligned behavior:
 
-The retained compatibility/export path (`src/alpha_lab/experiment/`, `scripts/experiment_tab.py`, `scripts/train_dashboard_model.py`) still exists for the canonical downstream dashboard artifact. The workbench utility builder is the newer self-contained training path inside the ML tab.
+- Data source: local tick parquet. The workbench path is self-contained and does **not** require prebuilt `data/experiment/events.parquet`.
+- Builder: `build_utility_dataset(..., use_engine=True)`.
+- Engine: Strategy-Core v3 via `engine_decision.process_single_date_engine()`.
+- Bars: trade-price tick bars on the 0.25 grid; `147t` is the default decision/touch bar.
+- Sessions: ET `asia` 19:00→02:45, `london` 03:00→08:00, `ny` 09:00→17:00; 18:00 ET trading-day boundary.
+- Levels: PDH/PDL from the full prior trading day; Asia/London session high/low from the current trading day.
+- Availability: each level carries `available_from`; touches before the level is knowable are skipped and do not consume first-touch.
+- Touches: merged zones within 3.0 points; first bar-range intersection per zone/trading day.
+- Labels: `tradeable_reversal`, `trap_reversal`, `aggressive_blowthrough`; MAE-first; default TP 15 / SL 30 / trap MFE min 5.
+- Honest entry: label/outcome entry is the realistic trade price at `touch_close + 5m`, not the level price at touch time.
+- Cutoffs: no new decision at/after 16:40 ET; forward cutoff 17:00 ET.
+- Features: 3 trade-print interaction features plus optional live-computable `app_*` approach subset.
+- Loss: CatBoost `MultiClass`.
+- Positive class for binary quality metrics: `tradeable_reversal` (`0`).
 
-## UI sections
+---
 
-### Data/config section
-
-The top of the tab controls:
-
-- Symbol and data directory. Default data root is `data/databento`.
-- Date range. Available dates are auto-detected from local folders containing `mbp10.parquet`, `mbp1.parquet`, or `trades.parquet`.
-- Walk-forward windows: train days, test days, and gap days. The UI estimates fold count from the detected data span.
-- CatBoost settings: iterations and tree depth.
-- RFECV:
-  - Extrema mode uses the explicit `RFECV feature selection` checkbox.
-  - Utility mode enables RFECV when approach features are included; the generic checkbox is not used for that mode.
-- Mode-specific settings:
-  - Extrema: label threshold.
-  - Utility: TP, SL, bar type, interaction window, approach-feature toggle/window.
+## UI steps
 
 ### Step 1: Local Data
 
-Step 1 scans the selected data directory for local Databento-derived Parquet files:
+Scans the selected data directory for:
 
 ```text
 data/databento/{symbol}/{YYYY-MM-DD}/mbp10.parquet
@@ -96,70 +106,70 @@ data/databento/{symbol}/{YYYY-MM-DD}/mbp1.parquet
 data/databento/{symbol}/{YYYY-MM-DD}/trades.parquet
 ```
 
-`TickStore` resolves files in priority order: `mbp10` > `mbp1` > `trades`. If no local data is found, the UI points the user to Databento batch download processing via `scripts/process_batch_download.py`.
-
-This step never downloads data. It only checks the filesystem.
+`TickStore` resolves available local files and registers dates. If no local data is found, import a Databento batch zip first with `scripts/process_batch_download.py`.
 
 ### Step 2: Build Dataset
 
-Step 2 builds one labeled row per model event and keeps the result in Streamlit session state as `ml_dataset` with its build config as `ml_build_config`.
-
 Extrema mode:
 
-1. For each selected date, register that date in a fresh `TickStore`.
-2. Query tick feature rows with `query_tick_feature_rows()`.
+1. Register each selected date in a fresh `TickStore`.
+2. Query tick feature rows.
 3. Detect extrema, label them, and extract `pl_*` / `ms_*` features.
-4. Cache the date result as `ml_features_{config_hash}.parquet`.
+4. Cache per-date results as `ml_features_{config_hash}.parquet`.
 
-Utility mode:
+Dashboard-utility mode:
 
-1. For each selected date, build the configured tick/time bars from local ticks.
-2. Compute key levels and merge nearby levels into zones.
-3. Detect first touches and label each touch with TP/SL utility semantics.
-4. Compute the three `int_*` interaction features and optional live `app_*` approach features.
-5. Cache the date result as `ml_utility_{config_hash}.parquet`.
+1. Build trade-price bars for each selected trading date.
+2. Compute current/prior levels and attach v3 availability timestamps.
+3. Convert bars/levels/ticks into Strategy-Core neutral types.
+4. Build zones, detect touches, and resolve honest decision-time outcomes through Strategy-Core.
+5. Compute trade-print interaction features and optional live `app_*` features.
+6. Cache per-date results as `ml_utility_{config_hash}.parquet`.
 
-The `Clear Cache` button deletes `ml_features_*.parquet` files for selected dates. It is primarily aimed at extrema caches; utility caches use the `ml_utility_*.parquet` prefix and are separated by config hash.
-
-The dataset preview and counters are mode-specific:
-
-- Extrema: total extrema, labeled rows, rebound/crossing counts, feature preview.
-- Utility: touch events, three class counts, interaction/approach feature counts, feature preview.
+The `Clear Cache` UI is safest for stale extrema caches; utility caches are separated by `ml_utility_*` and config/engine hash.
 
 ### Step 3: Train Model
 
-Training is coordinated by `run_walk_forward_training()`:
+`run_walk_forward_training()`:
 
 1. Select feature columns by mode (`pl_`/`ms_`/`sig_` for extrema, `int_`/`app_` for utility).
-2. Drop rows without the selected label column.
-3. Build chronological walk-forward splits using `WalkForwardSplitter`.
-4. Require at least two folds; otherwise the UI reports the date-span/window mismatch.
-5. Run RFECV once before the fold loop when enabled and there are at least two valid preliminary CV folds.
-6. Reuse the selected feature subset for every fold model and the final saved model.
-7. Purge training rows whose forward labeling window could cross into the test period.
-8. Fit one CatBoost model per valid fold and collect true OOS predictions.
-9. Evaluate by concatenating OOS fold predictions, not by scoring the final refit model.
-10. Refit the final runtime CatBoost model on all labeled rows using the same selected features.
+2. Drop rows missing the selected label.
+3. Build chronological walk-forward splits.
+4. Require at least two valid folds.
+5. Run RFECV once before the fold loop when enabled and valid.
+6. Use the same selected feature subset for every fold model and the final refit model.
+7. Purge training rows whose forward label window could cross into test.
+8. Restrict fold training rows to `session_experiment.training_sessions`.
+9. Restrict OOS fold metrics to `session_experiment.evaluation_sessions`.
+10. Fit one CatBoost model per valid fold and collect true OOS predictions.
+11. Evaluate by concatenating OOS fold predictions, not by scoring the final refit model.
+12. Refit the final runtime CatBoost model on the configured training sessions only.
 
-CatBoost is allowed to handle missing values natively. Do not add blanket `fillna(0.0)` in this training path unless intentionally matching a separate runtime approximation path.
+CatBoost native NaN handling is part of the training contract. Do not add blanket `fillna(0.0)` unless intentionally matching a separate runtime approximation path.
 
-## Metrics and outputs shown in the UI
+For dashboard-utility, purge metadata is exact when possible: if rows contain `label_window_end`, training rows are purged by `label_window_end < test_start`; old utility caches that lack the column derive the v3 label horizon from the trading day and Strategy-Core cutoff before falling back to heuristic timestamp purging. Old caches with null/unknown `session` values are also repaired from Strategy-Core timestamp classification before production-gate OOS reporting.
 
-The UI reports metrics from the concatenated OOS fold population:
+---
+
+## Metrics and quality gates
+
+The UI reports metrics from concatenated OOS fold predictions:
 
 - Precision, recall, F1, ROC-AUC, sample count.
 - Bootstrap confidence intervals for precision/F1.
 - Permutation p-value and Cohen's d.
 - Fold counts, skipped single-class folds, and per-fold metrics.
-- Confusion matrix, specificity, false-positive rate, and predicted positive rate.
-- RTH coverage for OOS samples (NY 09:30-16:15 ET).
+- Confusion matrix, specificity, false-positive rate, predicted positive rate.
 - Label-purged row count.
 - Feature stability from cross-fold feature-importance rank correlation.
-- Feature importance from the final refit runtime model; this is not an OOS metric.
+- Feature importance from the final refit model (not an OOS metric).
 - Threshold/coverage and calibration tables when probabilities are available.
-- Simulated trade utility from OOS predictions at 15/15 and 15/30 TP/SL assumptions.
+- Utility summaries for OOS predictions; interpret these as model diagnostics, not production PnL proof.
+- Dashboard-utility production-gate OOS diagnostics: configured gate sessions, defaulting to `session == ny`, and `P(tradeable_reversal) >= 0.70` trade count, precision, coverage, eligible-session coverage, and idealized 15/30 expectancy.
+- Session-filtered OOS diagnostics so the NY execution population can be separated from aggregate all-session metrics.
+- Optional `oos_predictions.parquet` with fold, timestamp, session, raw class, prediction, probabilities, a configured runtime-session gate flag, and the `0.70/ny` gate flag for offline error analysis.
 
-Quality gates are also based on OOS predictions:
+Quality gates:
 
 - Precision >= 0.55
 - Permutation p < 0.05
@@ -170,6 +180,10 @@ Quality gates are also based on OOS predictions:
 
 For utility mode, aggregate quality metrics are binary views of the 3-class model where `tradeable_reversal` is treated as the positive/executable class.
 
+Failed quality gates block `save_trained_model()` by default. A saved bundle with failed gates requires an explicit override (`allow_failed_gates=True`), and that override is recorded in `evaluation.json`; such bundles are smoke/research artifacts unless later evidence justifies promotion.
+
+---
+
 ## Saved artifacts
 
 Saving from the workbench writes a model bundle under `models/{model_name}/`:
@@ -178,32 +192,48 @@ Saving from the workbench writes a model bundle under `models/{model_name}/`:
 models/{model_name}/model.cbm
 models/{model_name}/metadata.json
 models/{model_name}/evaluation.json
+models/{model_name}/strategy.json
+models/{model_name}/oos_predictions.parquet  # when OOS rows are available
 ```
 
 - `model.cbm`: final CatBoost model refit on all labeled rows.
 - `metadata.json`: selected features, feature importances, train metrics, model config.
-- `evaluation.json`: all UI evaluation metrics plus full pipeline config and date range.
+- `evaluation.json`: UI evaluation metrics, full pipeline config, date range, `session_experiment`, and `session_filter` metadata.
+- `strategy.json`: runtime strategy semantics stamped with `contract_version` and `engine_version`; also records `research_session_experiment` for audit.
+- `oos_predictions.parquet`: OOS fold-level prediction rows for post-training diagnostics and gate/error slicing.
 
-For the Trading-Dashboard compatibility contract, the canonical downstream artifact remains:
+The CLI path for repeatable experiments is:
+
+```bash
+python scripts/run_dashboard_session_experiment.py --preset ny_only --dry-run
+python scripts/run_dashboard_session_experiment.py \
+  --preset all_to_ny \
+  --include-approach-features \
+  --approach-window 90 \
+  --start 2025-07-09 \
+  --end 2025-07-15
+```
+
+Run a dry run first to prove date discovery and session scope, then a bounded smoke train before full-range training. Use `--save` only when an artifact is needed; weak models still require `--allow-failed-gates` and remain research-only.
+
+The old retained exporter still writes:
 
 ```text
 data/models/dashboard_3feature_v1.cbm
 ```
 
-The downstream dashboard consumes exactly these three features, in this order:
+That file is not automatically a Strategy-Core v3 bundle. The deferred bundle task is to identify the canonical v3 bundle location and verify file presence/checksums once the incoming data/model archive is available.
 
-1. `int_time_beyond_level`
-2. `int_time_within_2pts`
-3. `int_absorption_ratio`
-
-If training a dashboard-utility model for that runtime, preserve this feature contract. The retained exporter `scripts/train_dashboard_model.py` and compatibility path still exist for producing/promoting the canonical artifact expected by the FastAPI dashboard and external Trading-Dashboard.
+---
 
 ## Gotchas
 
-- The ML tab is local-Parquet only; missing data must be imported before opening the workbench.
-- Dataset caches are config-hashed. If behavior changes without config changes, clear relevant caches manually.
-- Quality gates must stay tied to concatenated OOS fold predictions, never final-refit predictions.
-- RFECV must run once before the walk-forward loop; do not select different features per fold.
-- Label purging is required to prevent forward-window leakage into test periods.
-- CatBoost native NaN handling is part of the training contract.
-- `src/alpha_lab/agents/signal_eng/detectors/tier3/ml_extrema_classifier.py` is experimental and has a known train/serve domain mismatch; do not treat it as production-ready for dashboard-utility deployment.
+- Trade-Lab is not v3-compatible yet. Do not claim runtime readiness just because Quant-Lab can train/emit v3 contracts.
+- Historical docs and reports may mention `strategy_core_engine_v1/v2`, `ny_rth`, 09:30→16:15, 15:55 flatten, or book-mid features. Those are superseded for v3 unless a historical audit is explicitly being discussed.
+- Utility mode defaults must remain contract-aligned: `147t`, trade-price bars, 5-minute decision offset, `ny` eligible session, and `0.70` confidence gate.
+- Session experiment defaults must remain fail-safe: train/evaluate all sessions but production-gate NY only; persist scope into `evaluation.json`, `metadata.json`, and `strategy.json`.
+- Utility dataset caches are engine/config-keyed; behavior changes without a cache-key change require manual cache clearing.
+- Quality gates must stay tied to OOS fold predictions.
+- RFECV must run once before walk-forward, not per fold.
+- Label purging remains required for walk-forward leakage control.
+- No model profitability, robustness, or live readiness claim is valid without a current v3 backtest/paper-trading evidence chain.

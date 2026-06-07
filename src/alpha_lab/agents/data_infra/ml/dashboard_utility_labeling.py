@@ -81,10 +81,7 @@ def label_touch_event(
 
         # Check adverse FIRST (conservative, matches experiment/labeling.py)
         if max_mae >= config.sl_points:
-            if max_mfe >= config.trap_mfe_min:
-                label = TRAP_REVERSAL
-            else:
-                label = AGGRESSIVE_BLOWTHROUGH
+            label = TRAP_REVERSAL if max_mfe >= config.trap_mfe_min else AGGRESSIVE_BLOWTHROUGH
             resolution_ts = bar_ts
             bars_to_resolution = i
             break

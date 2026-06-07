@@ -118,7 +118,9 @@ class ExtremaDatasetBuilder:
         return pd.concat(frames, ignore_index=True)
 
     def export_dataset(
-        self, df: pd.DataFrame, output_path: str | Path,
+        self,
+        df: pd.DataFrame,
+        output_path: str | Path,
     ) -> None:
         """Write the feature matrix to Parquet.
 
@@ -132,7 +134,9 @@ class ExtremaDatasetBuilder:
         logger.info("Exported %d rows to %s", len(df), output)
 
     def _process_ticks(
-        self, ticks: pd.DataFrame, symbol: str,
+        self,
+        ticks: pd.DataFrame,
+        symbol: str,
     ) -> pd.DataFrame:
         """Core pipeline: ticks → extrema → labels → features → DataFrame."""
         cfg = self._config
@@ -144,15 +148,14 @@ class ExtremaDatasetBuilder:
 
         tick_prices = ticks["price"].reset_index(drop=True)
         tick_timestamps = ticks["ts_event"].reset_index(drop=True)
-        tick_volumes = (
-            ticks["size"].reset_index(drop=True)
-            if "size" in ticks.columns else None
-        )
+        tick_volumes = ticks["size"].reset_index(drop=True) if "size" in ticks.columns else None
 
         # 1. Detect extrema
         extrema = detect_extrema(
-            tick_prices, tick_timestamps,
-            cfg.extrema, cfg.tick_size,
+            tick_prices,
+            tick_timestamps,
+            cfg.extrema,
+            cfg.tick_size,
         )
         if not extrema:
             logger.debug("No extrema detected for %s", symbol)
@@ -169,30 +172,36 @@ class ExtremaDatasetBuilder:
         ob_lookback = 100
         for ext in extrema:
             start_idx = max(0, ext.index - ob_lookback)
-            ticks_slice = ticks.iloc[start_idx: ext.index + 1]
+            ticks_slice = ticks.iloc[start_idx : ext.index + 1]
             pl_feats = extract_pl_features(
-                ext, ticks_slice, cfg.features, cfg.tick_size,
+                ext,
+                ticks_slice,
+                cfg.features,
+                cfg.tick_size,
             )
             pl_rows.append(pl_feats)
 
         # 4. Extract MS features (pre-convert to numpy for faster slicing)
         import numpy as _np
+
         prices_np = tick_prices.values.astype(_np.float64)
-        volumes_np = (
-            tick_volumes.values.astype(_np.float64) if tick_volumes is not None
-            else None
-        )
+        volumes_np = tick_volumes.values.astype(_np.float64) if tick_volumes is not None else None
         ms_rows: list[dict[str, float]] = []
         for ext in extrema:
             ms_feats = extract_ms_features(
-                ext, prices_np, volumes_np, cfg.features,
+                ext,
+                prices_np,
+                volumes_np,
+                cfg.features,
             )
             ms_rows.append(ms_feats)
 
         # 5. Extract signal features (hybrid)
         if cfg.features.include_signal_features and self._signal_bundle:
             sig_rows = extract_signal_features_batch(
-                extrema, self._signal_bundle, cfg.features,
+                extrema,
+                self._signal_bundle,
+                cfg.features,
             )
         else:
             sig_rows = [{} for _ in extrema]
@@ -203,10 +212,12 @@ class ExtremaDatasetBuilder:
         sig_df = pd.DataFrame(sig_rows)
 
         result = pd.concat(
-            [label_df.reset_index(drop=True),
-             pl_df.reset_index(drop=True),
-             ms_df.reset_index(drop=True),
-             sig_df.reset_index(drop=True)],
+            [
+                label_df.reset_index(drop=True),
+                pl_df.reset_index(drop=True),
+                ms_df.reset_index(drop=True),
+                sig_df.reset_index(drop=True),
+            ],
             axis=1,
         )
 
