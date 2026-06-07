@@ -133,9 +133,7 @@ def load_settings(config_dir: Path | None = None) -> Settings:
     prop_firms_data = _read_yaml(config_dir / "prop_firms.yaml")
     validation_data = _read_yaml(config_dir / "validation_thresholds.yaml")
 
-    instruments = {
-        symbol: InstrumentSpec(**spec) for symbol, spec in instruments_data.items()
-    }
+    instruments = {symbol: InstrumentSpec(**spec) for symbol, spec in instruments_data.items()}
 
     prop_firms = {
         profile_id: PropFirmProfile(**profile)
@@ -143,19 +141,12 @@ def load_settings(config_dir: Path | None = None) -> Settings:
     }
 
     killzones = {
-        name: KillzoneConfig(**kz)
-        for name, kz in settings_data.get("killzones", {}).items()
+        name: KillzoneConfig(**kz) for name, kz in settings_data.get("killzones", {}).items()
     }
 
-    signal_thresholds = SignalThresholds(
-        **validation_data.get("signal_thresholds", {})
-    )
-    execution_thresholds = ExecutionThresholds(
-        **validation_data.get("execution_thresholds", {})
-    )
-    portfolio_thresholds = PortfolioThresholds(
-        **validation_data.get("portfolio_thresholds", {})
-    )
+    signal_thresholds = SignalThresholds(**validation_data.get("signal_thresholds", {}))
+    execution_thresholds = ExecutionThresholds(**validation_data.get("execution_thresholds", {}))
+    portfolio_thresholds = PortfolioThresholds(**validation_data.get("portfolio_thresholds", {}))
 
     return Settings(
         instruments=instruments,
@@ -169,7 +160,5 @@ def load_settings(config_dir: Path | None = None) -> Settings:
         default_timeframes=settings_data.get("data", {}).get("default_timeframes", []),
         log_level=settings_data.get("system", {}).get("log_level", "INFO"),
         run_mode=settings_data.get("pipeline", {}).get("run_mode", "research"),
-        max_refine_iterations=settings_data.get("pipeline", {}).get(
-            "max_refine_iterations", 3
-        ),
+        max_refine_iterations=settings_data.get("pipeline", {}).get("max_refine_iterations", 3),
     )

@@ -1,6 +1,5 @@
 """Tests for configuration loading."""
 
-
 from alpha_lab.core.config import Settings, load_settings
 
 

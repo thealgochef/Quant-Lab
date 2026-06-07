@@ -27,11 +27,22 @@ class TestAgentID:
 class TestMessageType:
     def test_all_message_types_defined(self):
         expected = {
-            "DATA_REQUEST", "DATA_BUNDLE", "SIGNAL_BUNDLE",
-            "VALIDATION_REPORT", "REFINE_REQUEST", "EXECUTION_REQUEST",
-            "EXECUTION_REPORT", "DEPLOY_COMMAND", "ALERT",
-            "REGIME_SHIFT", "RISK_VETO", "DAILY_REPORT",
-            "HALT_COMMAND", "RESUME_COMMAND", "ACK", "NACK",
+            "DATA_REQUEST",
+            "DATA_BUNDLE",
+            "SIGNAL_BUNDLE",
+            "VALIDATION_REPORT",
+            "REFINE_REQUEST",
+            "EXECUTION_REQUEST",
+            "EXECUTION_REPORT",
+            "DEPLOY_COMMAND",
+            "ALERT",
+            "REGIME_SHIFT",
+            "RISK_VETO",
+            "DAILY_REPORT",
+            "HALT_COMMAND",
+            "RESUME_COMMAND",
+            "ACK",
+            "NACK",
         }
         actual = {mt.value for mt in MessageType}
         assert actual == expected
@@ -54,8 +65,14 @@ class TestSignalTier:
 class TestPipelineState:
     def test_all_states_defined(self):
         expected = {
-            "INIT", "PHASE_1_2", "PHASE_3_4", "PHASE_5_6",
-            "PHASE_7", "PHASE_8_9", "DEPLOYED", "HALT",
+            "INIT",
+            "PHASE_1_2",
+            "PHASE_3_4",
+            "PHASE_5_6",
+            "PHASE_7",
+            "PHASE_8_9",
+            "DEPLOYED",
+            "HALT",
         }
         actual = {ps.value for ps in PipelineState}
         assert actual == expected

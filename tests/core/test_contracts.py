@@ -122,8 +122,10 @@ class TestSignalVerdict:
             subsample_stable=False,
             failed_metrics=[
                 {
-                    "metric": "ic_tstat", "value": 1.7,
-                    "threshold": 2.0, "suggestion": "add confluence",
+                    "metric": "ic_tstat",
+                    "value": 1.7,
+                    "threshold": 2.0,
+                    "suggestion": "add confluence",
                 },
             ],
         )
