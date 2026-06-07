@@ -80,9 +80,7 @@ def simulate_ruin_probability(
     return results
 
 
-def compute_expected_value(
-    win_rate: float, avg_win: float, avg_loss: float
-) -> float:
+def compute_expected_value(win_rate: float, avg_win: float, avg_loss: float) -> float:
     """Compute expected value per trade.
 
     Args:

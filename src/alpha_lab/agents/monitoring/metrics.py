@@ -83,17 +83,13 @@ def compute_rolling_hit_rate(
             results.append(float("nan"))
             continue
 
-        correct = ((p_win[mask] > 0) & (a_win[mask] > 0)) | (
-            (p_win[mask] < 0) & (a_win[mask] < 0)
-        )
+        correct = ((p_win[mask] > 0) & (a_win[mask] > 0)) | ((p_win[mask] < 0) & (a_win[mask] < 0))
         results.append(float(correct.sum() / n_active))
 
     return results
 
 
-def compute_rolling_sharpe(
-    daily_returns: list[float], window: int = 20
-) -> list[float]:
+def compute_rolling_sharpe(daily_returns: list[float], window: int = 20) -> list[float]:
     """Compute rolling annualized Sharpe ratio.
 
     Sharpe = sqrt(252) * mean(returns) / std(returns)
@@ -119,9 +115,7 @@ def compute_rolling_sharpe(
     return sharpe.dropna().tolist()
 
 
-def compute_decay_velocity(
-    ic_series: list[float], expected_half_life: float
-) -> dict[str, Any]:
+def compute_decay_velocity(ic_series: list[float], expected_half_life: float) -> dict[str, Any]:
     """Compare actual IC decay against expected decay curve.
 
     Fits a linear regression to log(|IC|) vs time to estimate actual
@@ -161,9 +155,7 @@ def compute_decay_velocity(
     # Linear regression: log(IC) = a - b*t → half_life = ln(2)/b
     t_mean = t.mean()
     log_mean = log_ic.mean()
-    slope = (np.sum((t - t_mean) * (log_ic - log_mean))) / max(
-        np.sum((t - t_mean) ** 2), 1e-12
-    )
+    slope = (np.sum((t - t_mean) * (log_ic - log_mean))) / max(np.sum((t - t_mean) ** 2), 1e-12)
 
     if slope >= 0:
         # IC not decaying (increasing or flat)

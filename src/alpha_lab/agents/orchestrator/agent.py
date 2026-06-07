@@ -129,9 +129,7 @@ class OrchestratorAgent(BaseAgent):
         # Update stage
         if envelope.request_id in self._pending_requests:
             self._pending_requests[envelope.request_id]["stage"] = "validation"
-            self._pending_requests[envelope.request_id]["signal_bundle"] = (
-                envelope.payload
-            )
+            self._pending_requests[envelope.request_id]["signal_bundle"] = envelope.payload
 
         self.send_message(
             receiver=AgentID.VALIDATION,
@@ -158,16 +156,13 @@ class OrchestratorAgent(BaseAgent):
 
         self._log_decision(
             "validation_triage",
-            f"Validation: {deploy_count} DEPLOY, {refine_count} REFINE, "
-            f"{reject_count} REJECT",
+            f"Validation: {deploy_count} DEPLOY, {refine_count} REFINE, {reject_count} REJECT",
         )
 
         # Update stage
         if envelope.request_id in self._pending_requests:
             self._pending_requests[envelope.request_id]["stage"] = "execution"
-            self._pending_requests[envelope.request_id]["validation_report"] = (
-                report
-            )
+            self._pending_requests[envelope.request_id]["validation_report"] = report
 
         if deploy_count > 0:
             # Forward DEPLOY signals to execution
@@ -189,9 +184,7 @@ class OrchestratorAgent(BaseAgent):
         if refine_count > 0:
             # Send REFINE signals back to SIG-001
             refine_ids = [
-                v["signal_id"]
-                for v in report.get("verdicts", [])
-                if v.get("verdict") == "REFINE"
+                v["signal_id"] for v in report.get("verdicts", []) if v.get("verdict") == "REFINE"
             ]
             self.send_message(
                 receiver=AgentID.SIGNAL_ENG,
@@ -199,8 +192,7 @@ class OrchestratorAgent(BaseAgent):
                 payload={
                     "signal_ids": refine_ids,
                     "verdicts": [
-                        v for v in report.get("verdicts", [])
-                        if v.get("verdict") == "REFINE"
+                        v for v in report.get("verdicts", []) if v.get("verdict") == "REFINE"
                     ],
                 },
                 request_id=envelope.request_id,
@@ -228,9 +220,7 @@ class OrchestratorAgent(BaseAgent):
 
         if envelope.request_id in self._pending_requests:
             self._pending_requests[envelope.request_id]["stage"] = "complete"
-            self._pending_requests[envelope.request_id]["execution_report"] = (
-                report
-            )
+            self._pending_requests[envelope.request_id]["execution_report"] = report
 
         if approved:
             self._log_decision(
@@ -306,6 +296,7 @@ class OrchestratorAgent(BaseAgent):
             The request_id for this pipeline run
         """
         import uuid
+
         rid = request_id or str(uuid.uuid4())
 
         self._log_decision(
@@ -352,9 +343,7 @@ class OrchestratorAgent(BaseAgent):
             )
             return False
 
-    def handle_conflict(
-        self, agent_a: AgentID, agent_b: AgentID, issue: str
-    ) -> str:
+    def handle_conflict(self, agent_a: AgentID, agent_b: AgentID, issue: str) -> str:
         """
         Resolve inter-agent conflicts per the decision framework:
         - SIG vs VAL: VAL wins (statistical evidence overrides intuition)
@@ -404,7 +393,6 @@ class OrchestratorAgent(BaseAgent):
             "pending_requests": len(self._pending_requests),
             "decisions_made": len(self._decision_log),
             "phase_history": [
-                {"phase": h.phase.value, "passed": h.passed}
-                for h in self.pipeline.history
+                {"phase": h.phase.value, "passed": h.passed} for h in self.pipeline.history
             ],
         }

@@ -242,22 +242,16 @@ class TestICDegradation:
 
 class TestHitRateDegradation:
     def test_triggered(self):
-        alert = check_hit_rate_degradation(
-            live_hit_rate=0.46, consecutive_windows_below=3
-        )
+        alert = check_hit_rate_degradation(live_hit_rate=0.46, consecutive_windows_below=3)
         assert alert is not None
         assert alert.level == "WARNING"
 
     def test_not_triggered_windows(self):
-        alert = check_hit_rate_degradation(
-            live_hit_rate=0.46, consecutive_windows_below=1
-        )
+        alert = check_hit_rate_degradation(live_hit_rate=0.46, consecutive_windows_below=1)
         assert alert is None
 
     def test_not_triggered_rate(self):
-        alert = check_hit_rate_degradation(
-            live_hit_rate=0.49, consecutive_windows_below=3
-        )
+        alert = check_hit_rate_degradation(live_hit_rate=0.49, consecutive_windows_below=3)
         assert alert is None
 
 
@@ -385,23 +379,17 @@ class TestClassifyRegime:
 
 class TestRegimeTransition:
     def test_triggered(self):
-        result = detect_regime_transition(
-            Regime.RANGING, Regime.TRENDING, confidence=0.75
-        )
+        result = detect_regime_transition(Regime.RANGING, Regime.TRENDING, confidence=0.75)
         assert result is not None
         assert result["from"] == "RANGING"
         assert result["to"] == "TRENDING"
 
     def test_same_regime_no_transition(self):
-        result = detect_regime_transition(
-            Regime.TRENDING, Regime.TRENDING, confidence=0.9
-        )
+        result = detect_regime_transition(Regime.TRENDING, Regime.TRENDING, confidence=0.9)
         assert result is None
 
     def test_low_confidence_no_transition(self):
-        result = detect_regime_transition(
-            Regime.RANGING, Regime.TRENDING, confidence=0.4
-        )
+        result = detect_regime_transition(Regime.RANGING, Regime.TRENDING, confidence=0.4)
         assert result is None
 
 
@@ -534,9 +522,7 @@ class TestMonitoringAgent:
         agent.handle_message(envelope)
         # Should have sent NACK
         audit = message_bus.get_audit_log()
-        nack_msgs = [
-            e for e in audit if e.message_type == MessageType.NACK
-        ]
+        nack_msgs = [e for e in audit if e.message_type == MessageType.NACK]
         assert len(nack_msgs) >= 1
 
     def test_update_metrics(self, message_bus):
@@ -544,9 +530,7 @@ class TestMonitoringAgent:
         agent._active_signals["SIG_TEST"] = SignalHealthState(
             signal_id="SIG_TEST", backtest_ic=0.05
         )
-        agent.update_metrics(
-            "SIG_TEST", live_ic=0.02, live_hit_rate=0.46, trades_today=5
-        )
+        agent.update_metrics("SIG_TEST", live_ic=0.02, live_hit_rate=0.46, trades_today=5)
         state = agent._active_signals["SIG_TEST"]
         assert state.live_ic == 0.02
         assert state.live_hit_rate == 0.46

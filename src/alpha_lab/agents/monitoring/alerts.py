@@ -38,9 +38,7 @@ DAILY_BUFFER_HALT = 0.20  # Daily loss buffer < 20% → HALT
 DAILY_BUFFER_WARNING = 0.80  # Daily loss buffer < 80% → WARNING
 
 
-def check_ic_degradation(
-    live_ic: float, backtest_ic: float, bars_below: int
-) -> Alert | None:
+def check_ic_degradation(live_ic: float, backtest_ic: float, bars_below: int) -> Alert | None:
     """Check if IC has dropped below 50% of backtest for 20+ bars.
 
     Returns WARNING alert if triggered, None otherwise.
@@ -61,9 +59,7 @@ def check_ic_degradation(
                 f"({ic_ratio:.0%} of backtest {backtest_ic:.4f}) "
                 f"for {bars_below} bars"
             ),
-            recommended_action=(
-                "Review signal parameters or reduce position size"
-            ),
+            recommended_action=("Review signal parameters or reduce position size"),
             timestamp=datetime.now(UTC).isoformat(),
         )
     return None
@@ -90,17 +86,13 @@ def check_hit_rate_degradation(
                 f"Hit rate {live_hit_rate:.1%} below {HIT_RATE_THRESHOLD:.0%} "
                 f"for {consecutive_windows_below} consecutive windows"
             ),
-            recommended_action=(
-                "Signal may be degrading, consider pausing new entries"
-            ),
+            recommended_action=("Signal may be degrading, consider pausing new entries"),
             timestamp=datetime.now(UTC).isoformat(),
         )
     return None
 
 
-def check_sharpe_degradation(
-    live_sharpe: float, days_below: int
-) -> Alert | None:
+def check_sharpe_degradation(live_sharpe: float, days_below: int) -> Alert | None:
     """Check if net Sharpe below 0.5 for 20+ days.
 
     Returns CRITICAL alert if triggered, None otherwise.
@@ -113,20 +105,15 @@ def check_sharpe_degradation(
             threshold=SHARPE_THRESHOLD,
             backtest_value=0.0,
             message=(
-                f"Net Sharpe {live_sharpe:.2f} below {SHARPE_THRESHOLD} "
-                f"for {days_below} days"
+                f"Net Sharpe {live_sharpe:.2f} below {SHARPE_THRESHOLD} for {days_below} days"
             ),
-            recommended_action=(
-                "Signal failing profitability threshold, halt deployment"
-            ),
+            recommended_action=("Signal failing profitability threshold, halt deployment"),
             timestamp=datetime.now(UTC).isoformat(),
         )
     return None
 
 
-def check_prop_firm_buffer(
-    dd_buffer_pct: float, daily_buffer_pct: float
-) -> Alert | None:
+def check_prop_firm_buffer(dd_buffer_pct: float, daily_buffer_pct: float) -> Alert | None:
     """Check prop firm drawdown and daily loss buffers.
 
     Priority: HALT (daily buffer < 20%) > CRITICAL (DD buffer < 30%)

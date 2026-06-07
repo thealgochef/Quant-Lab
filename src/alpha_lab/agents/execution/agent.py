@@ -96,17 +96,18 @@ class ExecutionAgent(BaseAgent):
 
                 # Allow per-request override of instrument/firm
                 if "instrument_spec" in envelope.payload:
-                    instrument = InstrumentSpec.model_validate(
-                        envelope.payload["instrument_spec"]
-                    )
+                    instrument = InstrumentSpec.model_validate(envelope.payload["instrument_spec"])
                 if "prop_firm_profile" in envelope.payload:
                     prop_firm = PropFirmProfile.model_validate(
                         envelope.payload["prop_firm_profile"]
                     )
 
                 report = self.analyze_signals(
-                    validation_report, price_data, signal_data,
-                    instrument, prop_firm,
+                    validation_report,
+                    price_data,
+                    signal_data,
+                    instrument,
+                    prop_firm,
                 )
                 self.send_message(
                     receiver=AgentID.ORCHESTRATOR,
@@ -154,9 +155,7 @@ class ExecutionAgent(BaseAgent):
         vetoed: list[ExecVerdict] = []
 
         # Only evaluate DEPLOY verdicts
-        deploy_verdicts = [
-            v for v in validation_report.verdicts if v.verdict == "DEPLOY"
-        ]
+        deploy_verdicts = [v for v in validation_report.verdicts if v.verdict == "DEPLOY"]
 
         for sv in deploy_verdicts:
             verdict = self._evaluate_single_signal(
@@ -210,9 +209,7 @@ class ExecutionAgent(BaseAgent):
 
         # --- Trade stats ---
         if has_signal_data and isinstance(bars, pd.DataFrame) and "close" in bars:
-            trade_stats = estimate_trade_stats(
-                direction, strength, bars["close"]
-            )
+            trade_stats = estimate_trade_stats(direction, strength, bars["close"])
         else:
             trade_stats = {
                 "win_rate": sv.hit_rate,
@@ -243,9 +240,7 @@ class ExecutionAgent(BaseAgent):
         hk_contracts = 0
         max_from_limit = 0
         if instrument is not None and prop_firm is not None:
-            hk_contracts = half_kelly_contracts(
-                kelly_f, prop_firm.account_size, instrument
-            )
+            hk_contracts = half_kelly_contracts(kelly_f, prop_firm.account_size, instrument)
             daily_limit = prop_firm.daily_loss_limit or prop_firm.trailing_max_drawdown
             max_from_limit = max_contracts_from_daily_limit(
                 daily_limit, _DEFAULT_STOP_TICKS, instrument
@@ -258,7 +253,10 @@ class ExecutionAgent(BaseAgent):
             sig_hash = int(hashlib.sha256(sv.signal_id.encode()).hexdigest(), 16)
             rng_seed = sig_hash % (2**31)
             ruin_probs = simulate_ruin_probability(
-                win_rate, avg_win, avg_loss, prop_firm,
+                win_rate,
+                avg_win,
+                avg_loss,
+                prop_firm,
                 num_simulations=1000,
                 trade_sequences=[100, 500],
                 rng_seed=rng_seed,
@@ -270,11 +268,16 @@ class ExecutionAgent(BaseAgent):
             # Build synthetic daily P&L from trade stats
             pnl_hash = int(hashlib.sha256(sv.signal_id.encode()).hexdigest(), 16)
             daily_pnl = _synthetic_daily_pnl(
-                win_rate, avg_win, avg_loss, num_trades, n_days=60,
+                win_rate,
+                avg_win,
+                avg_loss,
+                num_trades,
+                n_days=60,
                 seed=pnl_hash % (2**31),
             )
             feasibility = validate_prop_firm_constraints(
-                daily_pnl, prop_firm,
+                daily_pnl,
+                prop_firm,
                 kelly_f=kelly_f,
                 half_kelly_contracts=hk_contracts,
                 mc_ruin_prob=mc_ruin,
@@ -308,9 +311,7 @@ class ExecutionAgent(BaseAgent):
         )
 
 
-def _check_veto(
-    costs, feasibility, prop_firm: PropFirmProfile | None
-) -> str | None:
+def _check_veto(costs, feasibility, prop_firm: PropFirmProfile | None) -> str | None:
     """Check if any constraint warrants a veto."""
     if costs.net_sharpe < _NET_SHARPE_MIN:
         return f"Net Sharpe {costs.net_sharpe:.2f} < {_NET_SHARPE_MIN}"
@@ -397,9 +398,7 @@ def _build_portfolio_risk(approved: list[ExecVerdict]) -> dict[str, Any]:
             "combined_net_sharpe": 0.0,
         }
 
-    total_contracts = sum(
-        v.risk_parameters.get("max_contracts", 0) for v in approved
-    )
+    total_contracts = sum(v.risk_parameters.get("max_contracts", 0) for v in approved)
     net_sharpes = [v.costs.net_sharpe for v in approved]
     avg_net_sharpe = float(np.mean(net_sharpes)) if net_sharpes else 0.0
 

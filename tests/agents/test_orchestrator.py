@@ -33,16 +33,12 @@ class TestPipelineManager:
         """Every phase except DEPLOYED and HALT has a transition."""
         for state in PipelineState:
             if state not in (PipelineState.DEPLOYED, PipelineState.HALT):
-                assert state in PHASE_TRANSITIONS, (
-                    f"Missing transition for {state.value}"
-                )
+                assert state in PHASE_TRANSITIONS, f"Missing transition for {state.value}"
 
     def test_all_phases_have_criteria(self):
         """Every phase with a transition has criteria defined."""
         for state in PHASE_TRANSITIONS:
-            assert state in PHASE_CRITERIA, (
-                f"Missing criteria for {state.value}"
-            )
+            assert state in PHASE_CRITERIA, f"Missing criteria for {state.value}"
 
     def test_transition_description(self):
         pm = PipelineManager()
@@ -99,20 +95,24 @@ class TestPipelineManager:
         assert pm.current_state == PipelineState.PHASE_1_2
 
         # PHASE_1_2 -> PHASE_3_4
-        go = pm.evaluate_go_no_go({
-            "signals_implemented": True,
-            "unit_tests_pass": True,
-        })
+        go = pm.evaluate_go_no_go(
+            {
+                "signals_implemented": True,
+                "unit_tests_pass": True,
+            }
+        )
         pm.advance(go)
         assert pm.current_state == PipelineState.PHASE_3_4
 
         # PHASE_3_4 -> PHASE_5_6
-        go = pm.evaluate_go_no_go({
-            "deploy_count": (True, 10),
-            "min_ic_tstat": (True, 2.5),
-            "min_hit_rate": (True, 0.55),
-            "min_sharpe": (True, 1.2),
-        })
+        go = pm.evaluate_go_no_go(
+            {
+                "deploy_count": (True, 10),
+                "min_ic_tstat": (True, 2.5),
+                "min_hit_rate": (True, 0.55),
+                "min_sharpe": (True, 1.2),
+            }
+        )
         pm.advance(go)
         assert pm.current_state == PipelineState.PHASE_5_6
 
@@ -206,9 +206,7 @@ class TestOrchestratorRouting:
         """DATA_BUNDLE from DATA-001 should be forwarded to SIG-001."""
         agent = OrchestratorAgent(message_bus)
         received_by_sig = []
-        message_bus.register_agent(
-            AgentID.SIGNAL_ENG, lambda env: received_by_sig.append(env)
-        )
+        message_bus.register_agent(AgentID.SIGNAL_ENG, lambda env: received_by_sig.append(env))
 
         envelope = MessageEnvelope(
             request_id="test-001",
@@ -229,9 +227,7 @@ class TestOrchestratorRouting:
         """SIGNAL_BUNDLE from SIG-001 should be forwarded to VAL-001."""
         agent = OrchestratorAgent(message_bus)
         received_by_val = []
-        message_bus.register_agent(
-            AgentID.VALIDATION, lambda env: received_by_val.append(env)
-        )
+        message_bus.register_agent(AgentID.VALIDATION, lambda env: received_by_val.append(env))
 
         # First store data bundle so ORCH has price data
         agent._pending_requests["test-002"] = {
@@ -258,9 +254,7 @@ class TestOrchestratorRouting:
         """VALIDATION_REPORT with DEPLOY signals -> EXECUTION_REQUEST."""
         agent = OrchestratorAgent(message_bus)
         received_by_exec = []
-        message_bus.register_agent(
-            AgentID.EXECUTION, lambda env: received_by_exec.append(env)
-        )
+        message_bus.register_agent(AgentID.EXECUTION, lambda env: received_by_exec.append(env))
 
         agent._pending_requests["test-003"] = {
             "data_bundle": {"bars": {}},
@@ -288,10 +282,7 @@ class TestOrchestratorRouting:
         )
         agent.handle_message(envelope)
 
-        exec_msgs = [
-            e for e in received_by_exec
-            if e.message_type == MessageType.EXECUTION_REQUEST
-        ]
+        exec_msgs = [e for e in received_by_exec if e.message_type == MessageType.EXECUTION_REQUEST]
         assert len(exec_msgs) == 1
         assert "validation_report" in exec_msgs[0].payload
 
@@ -299,9 +290,7 @@ class TestOrchestratorRouting:
         """VALIDATION_REPORT with REFINE signals -> REFINE_REQUEST to SIG-001."""
         agent = OrchestratorAgent(message_bus)
         received_by_sig = []
-        message_bus.register_agent(
-            AgentID.SIGNAL_ENG, lambda env: received_by_sig.append(env)
-        )
+        message_bus.register_agent(AgentID.SIGNAL_ENG, lambda env: received_by_sig.append(env))
 
         envelope = MessageEnvelope(
             request_id="test-004",
@@ -331,10 +320,7 @@ class TestOrchestratorRouting:
         )
         agent.handle_message(envelope)
 
-        refine_msgs = [
-            e for e in received_by_sig
-            if e.message_type == MessageType.REFINE_REQUEST
-        ]
+        refine_msgs = [e for e in received_by_sig if e.message_type == MessageType.REFINE_REQUEST]
         assert len(refine_msgs) == 1
         assert refine_msgs[0].payload["signal_ids"] == ["SIG_A", "SIG_B"]
 
@@ -343,12 +329,8 @@ class TestOrchestratorRouting:
         agent = OrchestratorAgent(message_bus)
         received_by_exec = []
         received_by_sig = []
-        message_bus.register_agent(
-            AgentID.EXECUTION, lambda env: received_by_exec.append(env)
-        )
-        message_bus.register_agent(
-            AgentID.SIGNAL_ENG, lambda env: received_by_sig.append(env)
-        )
+        message_bus.register_agent(AgentID.EXECUTION, lambda env: received_by_exec.append(env))
+        message_bus.register_agent(AgentID.SIGNAL_ENG, lambda env: received_by_sig.append(env))
 
         envelope = MessageEnvelope(
             request_id="test-005",
@@ -368,14 +350,8 @@ class TestOrchestratorRouting:
         agent.handle_message(envelope)
 
         # No messages to EXEC or SIG
-        exec_msgs = [
-            e for e in received_by_exec
-            if e.message_type == MessageType.EXECUTION_REQUEST
-        ]
-        refine_msgs = [
-            e for e in received_by_sig
-            if e.message_type == MessageType.REFINE_REQUEST
-        ]
+        exec_msgs = [e for e in received_by_exec if e.message_type == MessageType.EXECUTION_REQUEST]
+        refine_msgs = [e for e in received_by_sig if e.message_type == MessageType.REFINE_REQUEST]
         assert len(exec_msgs) == 0
         assert len(refine_msgs) == 0
 
@@ -486,13 +462,9 @@ class TestOrchestratorPipeline:
         """run_pipeline sends DATA_REQUEST to DATA-001."""
         agent = OrchestratorAgent(message_bus)
         received = []
-        message_bus.register_agent(
-            AgentID.DATA_INFRA, lambda env: received.append(env)
-        )
+        message_bus.register_agent(AgentID.DATA_INFRA, lambda env: received.append(env))
 
-        rid = agent.run_pipeline(
-            {"instrument": "NQ", "date_range": ("2026-01-01", "2026-02-01")}
-        )
+        rid = agent.run_pipeline({"instrument": "NQ", "date_range": ("2026-01-01", "2026-02-01")})
         assert rid is not None
         assert len(received) == 1
         assert received[0].message_type == MessageType.DATA_REQUEST
@@ -501,7 +473,8 @@ class TestOrchestratorPipeline:
         """SIG vs VAL: VAL wins."""
         agent = OrchestratorAgent(message_bus)
         result = agent.handle_conflict(
-            AgentID.SIGNAL_ENG, AgentID.VALIDATION,
+            AgentID.SIGNAL_ENG,
+            AgentID.VALIDATION,
             "Signal shows edge, VAL says noise",
         )
         assert "VAL-001" in result
@@ -510,7 +483,8 @@ class TestOrchestratorPipeline:
         """EXEC vs VAL: EXEC wins."""
         agent = OrchestratorAgent(message_bus)
         result = agent.handle_conflict(
-            AgentID.EXECUTION, AgentID.VALIDATION,
+            AgentID.EXECUTION,
+            AgentID.VALIDATION,
             "Costs destroy alpha",
         )
         assert "EXEC-001" in result
@@ -519,7 +493,8 @@ class TestOrchestratorPipeline:
         """MON involved: pause for consensus."""
         agent = OrchestratorAgent(message_bus)
         result = agent.handle_conflict(
-            AgentID.MONITORING, AgentID.SIGNAL_ENG,
+            AgentID.MONITORING,
+            AgentID.SIGNAL_ENG,
             "Regime shift detected",
         )
         assert "PAUSE" in result
@@ -528,7 +503,8 @@ class TestOrchestratorPipeline:
         """Unknown conflict: ORCH decides."""
         agent = OrchestratorAgent(message_bus)
         result = agent.handle_conflict(
-            AgentID.DATA_INFRA, AgentID.SIGNAL_ENG,
+            AgentID.DATA_INFRA,
+            AgentID.SIGNAL_ENG,
             "Data format dispute",
         )
         assert "ORCH-001" in result
@@ -545,15 +521,9 @@ class TestEndToEndFlow:
         val_received = []
         exec_received = []
 
-        message_bus.register_agent(
-            AgentID.SIGNAL_ENG, lambda env: sig_received.append(env)
-        )
-        message_bus.register_agent(
-            AgentID.VALIDATION, lambda env: val_received.append(env)
-        )
-        message_bus.register_agent(
-            AgentID.EXECUTION, lambda env: exec_received.append(env)
-        )
+        message_bus.register_agent(AgentID.SIGNAL_ENG, lambda env: sig_received.append(env))
+        message_bus.register_agent(AgentID.VALIDATION, lambda env: val_received.append(env))
+        message_bus.register_agent(AgentID.EXECUTION, lambda env: exec_received.append(env))
 
         # Step 1: DATA-001 sends DATA_BUNDLE to ORCH
         data_env = MessageEnvelope(
@@ -600,10 +570,7 @@ class TestEndToEndFlow:
         agent.handle_message(val_env)
 
         # Should have forwarded to EXEC
-        exec_msgs = [
-            e for e in exec_received
-            if e.message_type == MessageType.EXECUTION_REQUEST
-        ]
+        exec_msgs = [e for e in exec_received if e.message_type == MessageType.EXECUTION_REQUEST]
         assert len(exec_msgs) == 1
 
         # Check decision log covers the full flow

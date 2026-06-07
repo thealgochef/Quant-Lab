@@ -215,9 +215,7 @@ class MonitoringAgent(BaseAgent):
             Transition dict if detected, None otherwise.
         """
         new_regime, confidence = classify_regime(market_data)
-        transition = detect_regime_transition(
-            self._current_regime, new_regime, confidence
-        )
+        transition = detect_regime_transition(self._current_regime, new_regime, confidence)
 
         if transition is not None:
             self.logger.info(
@@ -264,9 +262,7 @@ class MonitoringAgent(BaseAgent):
                 "live_sharpe": state.live_sharpe,
                 "days_below_sharpe": state.days_below_sharpe_threshold,
                 "dd_buffer_pct": self._prop_firm_status.get("dd_buffer_pct", 1.0),
-                "daily_buffer_pct": self._prop_firm_status.get(
-                    "daily_buffer_pct", 1.0
-                ),
+                "daily_buffer_pct": self._prop_firm_status.get("daily_buffer_pct", 1.0),
             }
             alerts = evaluate_all_alerts(metrics)
             all_alerts.extend(alerts)
@@ -299,15 +295,10 @@ class MonitoringAgent(BaseAgent):
         if state is None:
             raise KeyError(f"Signal {signal_id} not tracked")
 
-        ic_ratio = (
-            state.live_ic / state.backtest_ic if state.backtest_ic > 0 else 0.0
-        )
+        ic_ratio = state.live_ic / state.backtest_ic if state.backtest_ic > 0 else 0.0
 
         # Determine health status
-        if (
-            state.bars_below_ic_threshold >= 20
-            or state.days_below_sharpe_threshold >= 20
-        ):
+        if state.bars_below_ic_threshold >= 20 or state.days_below_sharpe_threshold >= 20:
             status = SignalHealth.FAILING.value
         elif (
             state.bars_below_ic_threshold >= 5
@@ -339,10 +330,7 @@ class MonitoringAgent(BaseAgent):
 
         Assembles signal health, alerts, regime, and prop firm status.
         """
-        signal_health = [
-            self.check_signal_health(sid)
-            for sid in self._active_signals
-        ]
+        signal_health = [self.check_signal_health(sid) for sid in self._active_signals]
         alerts = self.evaluate_alerts()
 
         regime_info = {

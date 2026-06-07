@@ -307,8 +307,11 @@ class TestPropConstraints:
         # Moderate daily P&L, well within drawdown limits
         daily_pnl = [100, -50, 200, -30, 150, 80, -100, 200, 50, -20]
         result = validate_prop_firm_constraints(
-            daily_pnl, apex_50k,
-            kelly_f=0.05, half_kelly_contracts=2, mc_ruin_prob=0.02,
+            daily_pnl,
+            apex_50k,
+            kelly_f=0.05,
+            half_kelly_contracts=2,
+            mc_ruin_prob=0.02,
         )
         assert result.passes_trailing_dd
         assert result.passes_daily_limit  # Apex has no daily limit
@@ -319,8 +322,11 @@ class TestPropConstraints:
         # Large losses that exceed trailing DD
         daily_pnl = [100, -1000, -1000, -600, 50]
         result = validate_prop_firm_constraints(
-            daily_pnl, apex_50k,
-            kelly_f=0.05, half_kelly_contracts=2, mc_ruin_prob=0.02,
+            daily_pnl,
+            apex_50k,
+            kelly_f=0.05,
+            half_kelly_contracts=2,
+            mc_ruin_prob=0.02,
         )
         assert not result.passes_trailing_dd
         assert result.max_trailing_dd > apex_50k.trailing_max_drawdown
@@ -329,16 +335,22 @@ class TestPropConstraints:
         # Day with >$1000 loss
         daily_pnl = [100, -1500, 200, 50]
         result = validate_prop_firm_constraints(
-            daily_pnl, topstep_50k,
-            kelly_f=0.05, half_kelly_contracts=2, mc_ruin_prob=0.02,
+            daily_pnl,
+            topstep_50k,
+            kelly_f=0.05,
+            half_kelly_contracts=2,
+            mc_ruin_prob=0.02,
         )
         assert not result.passes_daily_limit
 
     def test_passes_daily_limit_topstep(self, topstep_50k):
         daily_pnl = [100, -800, 200, 50]
         result = validate_prop_firm_constraints(
-            daily_pnl, topstep_50k,
-            kelly_f=0.05, half_kelly_contracts=2, mc_ruin_prob=0.02,
+            daily_pnl,
+            topstep_50k,
+            kelly_f=0.05,
+            half_kelly_contracts=2,
+            mc_ruin_prob=0.02,
         )
         assert result.passes_daily_limit
 
@@ -362,20 +374,26 @@ class TestPropConstraints:
 
     def test_recommended_contracts_capped(self, apex_50k):
         result = validate_prop_firm_constraints(
-            [100, 200], apex_50k,
-            kelly_f=0.2, half_kelly_contracts=100,
+            [100, 200],
+            apex_50k,
+            kelly_f=0.2,
+            half_kelly_contracts=100,
         )
         # Should be capped at firm max (4)
         assert result.recommended_contracts <= apex_50k.max_contracts
 
     def test_mc_ruin_check(self, apex_50k):
         result_pass = validate_prop_firm_constraints(
-            [100], apex_50k, mc_ruin_prob=0.03,
+            [100],
+            apex_50k,
+            mc_ruin_prob=0.03,
         )
         assert result_pass.passes_mc_check
 
         result_fail = validate_prop_firm_constraints(
-            [100], apex_50k, mc_ruin_prob=0.10,
+            [100],
+            apex_50k,
+            mc_ruin_prob=0.10,
         )
         assert not result_fail.passes_mc_check
 
@@ -433,12 +451,22 @@ class TestMonteCarlo:
 
     def test_reproducible_with_seed(self, apex_50k):
         r1 = simulate_ruin_probability(
-            0.55, 150, 100, apex_50k,
-            num_simulations=100, trade_sequences=[100], rng_seed=123,
+            0.55,
+            150,
+            100,
+            apex_50k,
+            num_simulations=100,
+            trade_sequences=[100],
+            rng_seed=123,
         )
         r2 = simulate_ruin_probability(
-            0.55, 150, 100, apex_50k,
-            num_simulations=100, trade_sequences=[100], rng_seed=123,
+            0.55,
+            150,
+            100,
+            apex_50k,
+            num_simulations=100,
+            trade_sequences=[100],
+            rng_seed=123,
         )
         assert r1 == r2
 
@@ -460,25 +488,17 @@ class TestExecutionAgent:
         assert agent.name == "Execution & Risk"
 
     def test_create_with_config(self, message_bus, nq_spec, apex_50k):
-        agent = ExecutionAgent(
-            message_bus, instrument=nq_spec, prop_firm=apex_50k
-        )
+        agent = ExecutionAgent(message_bus, instrument=nq_spec, prop_firm=apex_50k)
         assert agent._instrument == nq_spec
         assert agent._prop_firm == apex_50k
 
     def test_handle_execution_request(
         self, message_bus, nq_spec, apex_50k, sample_validation_report
     ):
-        agent = ExecutionAgent(
-            message_bus, instrument=nq_spec, prop_firm=apex_50k
-        )
+        agent = ExecutionAgent(message_bus, instrument=nq_spec, prop_firm=apex_50k)
         received = []
-        message_bus.register_agent(
-            AgentID.EXECUTION, agent.handle_message
-        )
-        message_bus.register_agent(
-            AgentID.ORCHESTRATOR, lambda env: received.append(env)
-        )
+        message_bus.register_agent(AgentID.EXECUTION, agent.handle_message)
+        message_bus.register_agent(AgentID.ORCHESTRATOR, lambda env: received.append(env))
 
         envelope = MessageEnvelope(
             request_id="test-exec-001",
@@ -493,10 +513,7 @@ class TestExecutionAgent:
         agent.handle_message(envelope)
 
         # Should have sent ACK + EXECUTION_REPORT
-        reports = [
-            e for e in received
-            if e.message_type == MessageType.EXECUTION_REPORT
-        ]
+        reports = [e for e in received if e.message_type == MessageType.EXECUTION_REPORT]
         assert len(reports) == 1
         report_data = reports[0].payload["report"]
         report = ExecutionReport.model_validate(report_data)
@@ -505,12 +522,8 @@ class TestExecutionAgent:
     def test_handle_unexpected_message(self, message_bus):
         agent = ExecutionAgent(message_bus)
         received = []
-        message_bus.register_agent(
-            AgentID.EXECUTION, agent.handle_message
-        )
-        message_bus.register_agent(
-            AgentID.ORCHESTRATOR, lambda env: received.append(env)
-        )
+        message_bus.register_agent(AgentID.EXECUTION, agent.handle_message)
+        message_bus.register_agent(AgentID.ORCHESTRATOR, lambda env: received.append(env))
 
         envelope = MessageEnvelope(
             request_id="test-002",
@@ -525,9 +538,7 @@ class TestExecutionAgent:
         nacks = [e for e in received if e.message_type == MessageType.NACK]
         assert len(nacks) == 1
 
-    def test_analyze_signals_no_config(
-        self, message_bus, sample_validation_report
-    ):
+    def test_analyze_signals_no_config(self, message_bus, sample_validation_report):
         """Agent works with default fallbacks when no instrument/firm."""
         agent = ExecutionAgent(message_bus)
         report = agent.analyze_signals(sample_validation_report)
@@ -538,9 +549,7 @@ class TestExecutionAgent:
     def test_analyze_signals_with_config(
         self, message_bus, nq_spec, apex_50k, sample_validation_report
     ):
-        agent = ExecutionAgent(
-            message_bus, instrument=nq_spec, prop_firm=apex_50k
-        )
+        agent = ExecutionAgent(message_bus, instrument=nq_spec, prop_firm=apex_50k)
         report = agent.analyze_signals(sample_validation_report)
         assert isinstance(report, ExecutionReport)
 
@@ -586,9 +595,7 @@ class TestExecutionAgent:
             overall_assessment="1 signals evaluated: 1 REJECT",
             timestamp=datetime.now(UTC).isoformat(),
         )
-        agent = ExecutionAgent(
-            message_bus, instrument=nq_spec, prop_firm=apex_50k
-        )
+        agent = ExecutionAgent(message_bus, instrument=nq_spec, prop_firm=apex_50k)
         exec_report = agent.analyze_signals(report)
         assert len(exec_report.approved_signals) == 0
         assert len(exec_report.vetoed_signals) == 0

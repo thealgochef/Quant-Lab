@@ -84,9 +84,9 @@ class TestMonitoringDeployment:
         # Verify REGIME_SHIFT message was sent
         audit = bus.get_audit_log()
         regime_msgs = [
-            e for e in audit
-            if e.message_type == MessageType.REGIME_SHIFT
-            and e.sender == AgentID.MONITORING
+            e
+            for e in audit
+            if e.message_type == MessageType.REGIME_SHIFT and e.sender == AgentID.MONITORING
         ]
         assert len(regime_msgs) >= 1
 

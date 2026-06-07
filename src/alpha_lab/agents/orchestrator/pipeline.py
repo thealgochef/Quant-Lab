@@ -80,7 +80,10 @@ PHASE_CRITERIA: dict[PipelineState, list[str]] = {
     PipelineState.INIT: ["data_quality_passed"],
     PipelineState.PHASE_1_2: ["signals_implemented", "unit_tests_pass"],
     PipelineState.PHASE_3_4: [
-        "deploy_count", "min_ic_tstat", "min_hit_rate", "min_sharpe",
+        "deploy_count",
+        "min_ic_tstat",
+        "min_hit_rate",
+        "min_sharpe",
     ],
     PipelineState.PHASE_5_6: ["composite_ic", "regime_weights_validated"],
     PipelineState.PHASE_7: ["net_sharpe", "prop_firm_feasible", "mc_ruin_ok"],
@@ -183,15 +186,12 @@ class PipelineManager:
         """
         if not go_no_go.passed:
             raise ValueError(
-                f"Cannot advance from {self.current_state.value}: "
-                f"go/no-go criteria not met"
+                f"Cannot advance from {self.current_state.value}: go/no-go criteria not met"
             )
 
         transition = PHASE_TRANSITIONS.get(self.current_state)
         if transition is None:
-            raise ValueError(
-                f"No transition defined from {self.current_state.value}"
-            )
+            raise ValueError(f"No transition defined from {self.current_state.value}")
 
         _, next_state = transition
         self.history.append(go_no_go)
@@ -201,7 +201,8 @@ class PipelineManager:
 
         logger.info(
             "Pipeline advanced: %s -> %s",
-            old_state.value, next_state.value,
+            old_state.value,
+            next_state.value,
         )
 
         return next_state

@@ -58,9 +58,7 @@ class TestAllAgentsOnBus:
 
 
 class TestFullPipeline:
-    def test_sig_generates_signals_from_bundle(
-        self, message_bus, synthetic_data_bundle
-    ):
+    def test_sig_generates_signals_from_bundle(self, message_bus, synthetic_data_bundle):
         """SIG-001 produces signals from a real DataBundle."""
         sig = SignalEngineeringAgent(message_bus)
         bundle = sig.generate_signals(synthetic_data_bundle)
@@ -69,9 +67,7 @@ class TestFullPipeline:
         for sv in bundle.signals:
             assert len(sv.direction) == len(synthetic_data_bundle.bars["5m"])
 
-    def test_val_validates_signal_bundle(
-        self, message_bus, synthetic_data_bundle
-    ):
+    def test_val_validates_signal_bundle(self, message_bus, synthetic_data_bundle):
         """VAL-001 evaluates all signals and returns verdicts."""
         sig = SignalEngineeringAgent(message_bus)
         signal_bundle = sig.generate_signals(synthetic_data_bundle)
@@ -105,9 +101,7 @@ class TestFullPipeline:
                 request_id=val_report.request_id,
                 signal_bundle_id=val_report.signal_bundle_id,
                 verdicts=[
-                    SignalVerdict(
-                        **{**v.model_dump(), "verdict": "DEPLOY", "max_factor_corr": 0.1}
-                    )
+                    SignalVerdict(**{**v.model_dump(), "verdict": "DEPLOY", "max_factor_corr": 0.1})
                 ],
                 deploy_count=1,
                 refine_count=0,
@@ -148,9 +142,7 @@ class TestFullPipeline:
                 request_id=val_report.request_id,
                 signal_bundle_id=val_report.signal_bundle_id,
                 verdicts=[
-                    SignalVerdict(
-                        **{**v.model_dump(), "verdict": "DEPLOY", "max_factor_corr": 0.1}
-                    )
+                    SignalVerdict(**{**v.model_dump(), "verdict": "DEPLOY", "max_factor_corr": 0.1})
                 ],
                 deploy_count=1,
                 refine_count=0,
@@ -186,9 +178,9 @@ class TestHandoffProtocols:
 
         audit = bus.get_audit_log()
         sig_msgs = [
-            e for e in audit
-            if e.receiver == AgentID.SIGNAL_ENG
-            and e.message_type == MessageType.DATA_BUNDLE
+            e
+            for e in audit
+            if e.receiver == AgentID.SIGNAL_ENG and e.message_type == MessageType.DATA_BUNDLE
         ]
         assert len(sig_msgs) >= 1
         assert sig_msgs[0].request_id == "h002-test"
@@ -214,9 +206,9 @@ class TestHandoffProtocols:
 
         audit = bus.get_audit_log()
         val_msgs = [
-            e for e in audit
-            if e.receiver == AgentID.VALIDATION
-            and e.message_type == MessageType.SIGNAL_BUNDLE
+            e
+            for e in audit
+            if e.receiver == AgentID.VALIDATION and e.message_type == MessageType.SIGNAL_BUNDLE
         ]
         assert len(val_msgs) >= 1
         # Verify price_data was attached
@@ -250,9 +242,9 @@ class TestHandoffProtocols:
 
         audit = bus.get_audit_log()
         exec_msgs = [
-            e for e in audit
-            if e.receiver == AgentID.EXECUTION
-            and e.message_type == MessageType.EXECUTION_REQUEST
+            e
+            for e in audit
+            if e.receiver == AgentID.EXECUTION and e.message_type == MessageType.EXECUTION_REQUEST
         ]
         assert len(exec_msgs) >= 1
 
@@ -278,9 +270,9 @@ class TestHandoffProtocols:
 
         audit = bus.get_audit_log()
         refine_msgs = [
-            e for e in audit
-            if e.receiver == AgentID.SIGNAL_ENG
-            and e.message_type == MessageType.REFINE_REQUEST
+            e
+            for e in audit
+            if e.receiver == AgentID.SIGNAL_ENG and e.message_type == MessageType.REFINE_REQUEST
         ]
         assert len(refine_msgs) >= 1
         assert "SIG_TEST" in refine_msgs[0].payload.get("signal_ids", [])
@@ -309,9 +301,9 @@ class TestHandoffProtocols:
         audit = bus.get_audit_log()
         new_msgs = audit[initial_audit_len:]
         exec_msgs = [
-            e for e in new_msgs
-            if e.receiver == AgentID.EXECUTION
-            and e.message_type == MessageType.EXECUTION_REQUEST
+            e
+            for e in new_msgs
+            if e.receiver == AgentID.EXECUTION and e.message_type == MessageType.EXECUTION_REQUEST
         ]
         assert len(exec_msgs) == 0
 
