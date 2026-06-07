@@ -4,6 +4,8 @@ __pycache__/
 *.so
 dist/
 build/
+node_modules/
+tsconfig.tsbuildinfo
 *.egg-info/
 *.egg
 .eggs/
@@ -22,8 +24,11 @@ env/
 htmlcov/
 # Generated ML artifacts
 catboost_info/
+models/
 *.cbm
-# Cached data exports
+
+# Cached/local market-data exports
+data/databento/
 *.csv
 *.parquet
 *.h5

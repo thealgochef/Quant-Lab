@@ -4,7 +4,8 @@ Signal Engineering Agent (SIG-001) — Alpha Researcher.
 Builds, tests, and iterates on trading signal detectors for NQ/ES futures.
 Takes clean DataBundle objects from DATA-001 and produces SignalBundle objects.
 
-See docs/agent_prompts/SIG-001.md for full system prompt.
+Legacy standalone prompt docs were pruned; current behavior is defined by code,
+tests, and repository docs.
 """
 
 from __future__ import annotations

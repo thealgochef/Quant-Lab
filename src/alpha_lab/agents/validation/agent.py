@@ -4,7 +4,8 @@ Statistical Validation Agent (VAL-001) — Quant Reviewer.
 The firewall against overfitting. Receives signal vectors as OPAQUE
 NUMERICAL ARRAYS. Does not know how they were constructed.
 
-See docs/agent_prompts/VAL-001.md for full system prompt.
+Legacy standalone prompt docs were pruned; current behavior is defined by code,
+tests, and repository docs.
 """
 
 from __future__ import annotations

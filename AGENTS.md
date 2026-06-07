@@ -1,43 +1,108 @@
 # Alpha Signal Research Lab - Agent Notes
 
-## Start Points
-- This repo is a Python ML training workbench for NQ futures plus a dashboard runtime; the primary training path is `scripts/dashboard.py` -> `scripts/ml_training_tab.py` -> `src/alpha_lab/agents/data_infra/ml/`.
-- High-level documentation for the Streamlit ML tab lives at `docs/ML_TRAINING_WORKBENCH.md`.
-- The older multi-agent scaffold under `src/alpha_lab/agents/` still exists, but for model-training changes start with `scripts/ml_training_tab.py`, not the generic agent classes.
-- Training modes live in `MLPipelineConfig.training_mode`: `extrema_rebound_crossing` is the binary tick-extrema research mode; `dashboard_utility` is the 3-class level-touch model aligned to Trading-Dashboard.
+Updated: 2026-06-04.
+
+## Start points
+
+- This repo is a Python ML training workbench for NQ/ES futures plus local dashboard surfaces.
+- Current canonical architecture doc: `ARCHITECTURE.md`.
+- Docs index / stale-doc classification: `docs/README.md`.
+- Streamlit ML tab workflow: `docs/ML_TRAINING_WORKBENCH.md`.
+- Session experiment CLI: `scripts/run_dashboard_session_experiment.py`.
+- Strategy-Core v3 cross-repo matrix: `../Strategy-Core/V3_COMPATIBILITY_MATRIX.md`.
+- For model-training changes, start with `scripts/ml_training_tab.py` and `src/alpha_lab/agents/data_infra/ml/`, not the older generic multi-agent scaffold.
 
 ## Commands
-- Use Python 3.13 at `"/c/Users/gonza/AppData/Local/Programs/Python/Python313/python.exe"`; dependencies are installed there even though `pyproject.toml` allows `>=3.11`.
-- Install backend deps if needed with `"/c/Users/gonza/AppData/Local/Programs/Python/Python313/python.exe" -m pip install -e ".[dev]"`.
-- Run all backend tests with `"/c/Users/gonza/AppData/Local/Programs/Python/Python313/python.exe" -m pytest tests/ -v`; collection is 669 tests as of 2026-04-27.
-- Run focused backend tests with normal pytest node ids, for example `"/c/Users/gonza/AppData/Local/Programs/Python/Python313/python.exe" -m pytest tests/agents/test_ml_pipeline.py::TestModelTrainer::test_basic_training -v`.
-- Backend lint/typecheck commands are `"/c/Users/gonza/AppData/Local/Programs/Python/Python313/python.exe" -m ruff check src tests scripts` and `"/c/Users/gonza/AppData/Local/Programs/Python/Python313/python.exe" -m mypy src`.
-- Run the Streamlit workbench with `streamlit run scripts/dashboard.py`.
-- React dashboard commands run from `dashboard-ui/`: `npm install` if `node_modules/` is missing, `npm run dev`, `npm run build`, and `npm test`.
-- The React Vite dev server uses port 3000 and proxies `/api` plus `/ws` to `localhost:8000`; start the FastAPI backend with `PYTHONPATH=src "/c/Users/gonza/AppData/Local/Programs/Python/Python313/python.exe" -m alpha_lab.dashboard.api`.
 
-## Data Flow
-- Databento batch import is `"/c/Users/gonza/AppData/Local/Programs/Python/Python313/python.exe" scripts/process_batch_download.py <zip>`; without an argument it auto-finds the newest `GLBX-*.zip` in Downloads.
-- Imported tick files are expected at `data/databento/{symbol}/{YYYY-MM-DD}/mbp10.parquet`, `mbp1.parquet`, or `trades.parquet`; the Streamlit UI currently offers `NQ`/`ES`, reads local Parquet, and does not call the Databento API.
-- Per-date ML caches are mode-specific: extrema uses `ml_features_{config_hash}.parquet`; dashboard-utility uses `ml_utility_{config_hash}.parquet`. The hash includes training mode and dataset-relevant config, so config changes create separate cache files.
-- The ML-tab dashboard-utility builder is self-contained from local tick Parquet; retained experiment/export scripts still use `data/experiment/events.parquet` and `data/experiment/feature_matrix.parquet`.
+Use the active local environment when present:
 
-## Evaluation Rules
+```bash
+cd /root/trading-algos/Quant-Lab
+. .venv/bin/activate
+python -m pytest tests/agents/test_strategy_contract_nodrift.py tests/agents/test_strategy_contract_repoint.py -q
+python -m ruff check src tests scripts
+streamlit run scripts/dashboard.py
+```
+
+Project metadata requires Python `>=3.14`; prefer the pinned `.python-version` (`3.14.5`) via `uv`. The previous Windows Python 3.13 path may exist on AlgoChef's workstation, but do not hardcode it in new docs or scripts.
+
+React dashboard commands run from `dashboard-ui/`:
+
+```bash
+npm install      # if node_modules is missing
+npm run dev
+npm run build
+npm test
+```
+
+FastAPI dashboard backend:
+
+```bash
+cd /root/trading-algos/Quant-Lab
+. .venv/bin/activate
+PYTHONPATH=src python -m alpha_lab.dashboard.api
+```
+
+Python 3.14 base installs are Databento-first. The legacy Rithmic adapter is not
+installed in the base dependency set because current `async-rithmic` pins protobuf
+`<5`, which conflicts with the Python 3.14-compatible protobuf stack used by
+Streamlit.
+
+## Data flow
+
+- Databento batch import: `python scripts/process_batch_download.py <zip>`.
+- Imported tick files are expected at `data/databento/{symbol}/{YYYY-MM-DD}/mbp10.parquet`, `mbp1.parquet`, or `trades.parquet`.
+- The Streamlit ML tab reads local parquet only; it does not call the Databento API.
+- Per-date ML caches are mode-specific:
+  - Extrema: `ml_features_{config_hash}.parquet`
+  - Dashboard utility: `ml_utility_{config_hash}.parquet`
+- The dashboard-utility hash includes Strategy-Core engine/source semantics, so v1/v2/v3 structural changes do not reuse stale caches.
+
+## Current Strategy-Core v3 contract
+
+Dashboard-utility mode is the production-aligned research path and is single-sourced to Strategy-Core v3:
+
+- `engine_version`: `strategy_core_engine_v3`
+- Bars/features: trade-price/trade-print, NQ 0.25 grid, default `147t` touch bars.
+- Sessions: ET `asia` 19:00→02:45, `london` 03:00→08:00, `ny` 09:00→17:00; 18:00 ET trading-day boundary.
+- Levels: PDH/PDL from the full prior trading day; Asia/London levels from current-day sessions.
+- Touch guard: level `available_from` is enforced; pre-availability self-touches do not consume zones.
+- Label entry: realistic decision-time price at `touch_close + 5m`; not level price at touch.
+- Cutoffs: flatten/no-new-decision at 16:40 ET; forward cutoff 17:00 ET.
+- Gate: `tradeable_reversal`, `eligible_session="ny"`, confidence `0.70`.
+- Research session experiments: train/evaluate all sessions by default, production-gate NY by default; scope is persisted into `evaluation.json`, `metadata.json`, and `strategy.json` as audit metadata.
+
+Trade-Lab is not v3-compatible yet; do not claim runtime readiness until Trade-Lab is repointed and end-to-end parity is proven.
+
+## Evaluation rules
+
 - Quality gates must use concatenated out-of-sample walk-forward fold predictions, not predictions from the final refit model.
 - RFECV runs once before the walk-forward loop; the selected features must be reused by every fold model and the final saved model.
 - Label purging removes training rows whose forward labeling window crosses into the test period.
 - The saved runtime model is refit on all labeled rows after evaluation.
-- Preserve CatBoost's native missing-value handling in training; do not blanket `fillna(0.0)` unless you are intentionally matching a runtime approximation path.
+- Session experiment filters are applied after broad dataset generation: fold training, OOS metrics, and final refit use the configured training/evaluation scope.
+- Preserve CatBoost native missing-value handling; do not blanket `fillna(0.0)` unless intentionally matching a separate runtime approximation path.
 
-## Dashboard Contract
-- Keep the retained compatibility path working: `src/alpha_lab/experiment/`, `scripts/experiment_tab.py`, and `scripts/train_dashboard_model.py`.
-- The canonical downstream artifact is `data/models/dashboard_3feature_v1.cbm`; the FastAPI dashboard auto-load prefers this file from `data/models/`.
-- Trading-Dashboard at `C:\Users\gonza\Documents\Trade-Dashboard` consumes exactly these features in order: `int_time_beyond_level`, `int_time_within_2pts`, `int_absorption_ratio`.
-- The 3 dashboard classes are `tradeable_reversal` (0), `trap_reversal` (1), and `aggressive_blowthrough` (2); resolution ordering is MAE-first.
-- `src/alpha_lab/agents/signal_eng/detectors/tier3/ml_extrema_classifier.py` is explicitly experimental and has a known train/serve domain mismatch; do not treat it as production-ready.
+## Runtime/output artifacts
 
-## Runtime And Outputs
-- Root `.env.example` documents `POLYGON_API_KEY` and `DATABENTO_API_KEY`; dashboard live settings use `DASHBOARD_`-prefixed env vars from `src/alpha_lab/dashboard/config/settings.py`, such as `DASHBOARD_DATABENTO_API_KEY`, `DASHBOARD_DATA_SOURCE`, `DASHBOARD_DATABASE_URL`, and `DASHBOARD_MODEL_DIR`.
-- The live dashboard defaults to Databento and will continue without PostgreSQL persistence if DB init fails, but Databento streaming requires `DASHBOARD_DATABENTO_API_KEY`.
-- Treat `models/`, `catboost_info/`, `*.cbm`, cached `*.parquet`/`*.csv`, `data/raw/`, `data/processed/`, and scratch chart HTML files as generated local outputs unless a task explicitly says otherwise.
-- If architecture is unclear, read `ARCHITECTURE.md`, `docs/pipeline_state.yaml`, and `docs/DECISIONS.md`; they are concise and aligned with the current dual-mode training workflow.
+A Streamlit save writes:
+
+```text
+models/{model_name}/model.cbm
+models/{model_name}/metadata.json
+models/{model_name}/evaluation.json
+models/{model_name}/strategy.json
+models/{model_name}/oos_predictions.parquet  # when OOS rows are available
+```
+
+Treat `models/`, `catboost_info/`, `*.cbm`, cached `*.parquet`/`*.csv`, local imported data, and scratch chart HTML as generated local outputs unless a task explicitly says otherwise.
+
+The old `data/models/dashboard_3feature_v1.cbm` exporter is retained compatibility tooling, not automatically a v3 bundle. Canonical bundle location/checksum verification is deferred until the incoming local zip is available.
+
+## Documentation maintenance
+
+When code behavior changes, update docs in the same change. At minimum:
+
+- Strategy/session/feature/label semantics -> `ARCHITECTURE.md`, `docs/ML_TRAINING_WORKBENCH.md`, `docs/pipeline_state.yaml`, and Strategy-Core docs/matrix.
+- UI/workflow changes -> `docs/ML_TRAINING_WORKBENCH.md`.
+- Model-bundle/cache output changes -> `ARCHITECTURE.md`, `docs/README.md`, and this file.

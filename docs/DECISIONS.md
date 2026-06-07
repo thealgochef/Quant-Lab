@@ -54,19 +54,20 @@ This prevents re-litigating settled questions across sessions.
 
 ---
 
-## D-007: Python 3.13 as Runtime
+## D-007: Python 3.14 as Runtime
 **Date**: 2026-02-22
-**Context**: Machine has both Python 3.11 and 3.13.
-**Decision**: All dependencies installed to Python 3.13. Use `"/c/Users/gonza/AppData/Local/Programs/Python/Python313/python.exe"` for running tests.
-**Rationale**: pip resolves to 3.13. pyproject.toml requires >=3.11. Both work, but 3.13 has all deps installed.
+**Context**: Project standard is Python 3.14.5 via `uv` / `.python-version`.
+**Decision**: Install and run project dependencies with Python 3.14.5. In Quant-Lab environments, install Strategy-Core editable from `../Strategy-Core`.
+**Rationale**: pyproject.toml requires >=3.14. The pinned `.python-version` keeps repo-local tooling on the same interpreter.
 
 ---
 
-## D-008: Agent System Prompts Stored as Files
+## D-008: Agent System Prompts Stored as Files — Superseded
 **Date**: 2026-02-22
 **Context**: Architecture spec defined system prompts inline. They exist in conversation history which compresses.
 **Decision**: Store all 6 agent system prompts as `.md` files in `docs/agent_prompts/`.
 **Rationale**: Survives context compression. Agents can load their prompts from disk. Prompts are the authoritative behavioral spec for each agent.
+**Superseded 2026-06-06**: The prompt files were pruned as stale scaffold docs. Current Quant-Lab behavior is defined by code, tests, `AGENTS.md`, `ARCHITECTURE.md`, `docs/ML_TRAINING_WORKBENCH.md`, and Strategy-Core v3 docs.
 
 ---
 
@@ -234,6 +235,69 @@ This prevents re-litigating settled questions across sessions.
 **Context**: The runtime detector approximates tick-level training features from bar-level OHLCV, filling missing features with 0.0 and using placeholder values. This is a severe domain mismatch.
 **Decision**: Marked with `_EXPERIMENTAL = True`, updated docstring, and runtime DeprecationWarning on load.
 **Rationale**: Prevents accidental production use of a path with known train/serve mismatch.
+
+---
+
+## D-029: Dashboard-Utility Uses Strategy-Core as the Canonical Decision Layer
+**Date**: 2026-06-04
+**Context**: Quant-Lab, Strategy-Core, and Trade-Lab had accumulated duplicate definitions for sessions, levels, touches, features, outcomes, and contract fields.
+**Decision**: Treat Strategy-Core as the canonical source for dashboard-utility strategy semantics. Quant-Lab's production utility path runs the decision/feature/outcome stage through `engine_decision.py` into Strategy-Core, and `strategy_contract.py` emits structural fields from Strategy-Core constants.
+**Rationale**: Research/runtime drift is more dangerous than a normal implementation bug because a model can backtest under one strategy and trade under another.
+**Trade-off**: Quant-Lab retains legacy/book-mid comparison paths and experiment tooling, but they are explicitly not the v3 canonical path.
+
+---
+
+## D-030: Engine v3 Session, Level, and Availability Semantics
+**Date**: 2026-06-04
+**Context**: Earlier dashboard-utility docs and reports referenced `ny_rth` 09:30-16:15, prior-NY-session PDH/PDL, and an `available_from_guard` that was declared but not enforced.
+**Decision**: The current dashboard-utility path is `strategy_core_engine_v3`: ET-native sessions are `asia` 19:00-02:45, `london` 03:00-08:00, and `ny` 09:00-17:00 with the 18:00 ET trading-day boundary; PDH/PDL are the full prior trading day's high/low; level `available_from` is enforced before a touch can consume a zone.
+**Rationale**: This prevents session-extreme self-touches from leaking future information into labels and aligns levels with full trading-day semantics.
+**Trade-off**: v1/v2 bundles and historical reports are no longer semantically compatible with current v3 training.
+
+---
+
+## D-031: Honest Decision-Time Entry Is the Label Anchor
+**Date**: 2026-06-04
+**Context**: Level-at-touch labels overlapped with the post-touch feature window and did not match the price available when a prediction can actually fire.
+**Decision**: Dashboard-utility labels/outcomes use `entry_reference=realistic_at_decision`; decision time is `touch_close + decision_offset_minutes` (default 5 minutes), entry price is the realistic trade price at that decision instant, no new decisions are accepted at/after 16:40 ET, and the forward cutoff is 17:00 ET.
+**Rationale**: The feature window and label window must not overlap; labels should model the executable decision point, not the idealized level price from five minutes earlier.
+**Trade-off**: Old profitability/edge reports using level-entry or older cutoffs are historical only.
+
+---
+
+## D-032: Saved Dashboard-Utility Bundles Must Carry `strategy.json`
+**Date**: 2026-06-04
+**Context**: A CatBoost `.cbm` plus metadata does not fully describe strategy semantics to a runtime.
+**Decision**: A Streamlit-saved dashboard-utility bundle is `model.cbm`, `metadata.json`, `evaluation.json`, and `strategy.json`. The contract must carry `contract_version`, `engine_version`, session scheme, level scheme, touch rule, feature windows, label policy, inference policy, data requirements, and provenance.
+**Rationale**: Runtime activation must fail closed when the bundle's strategy semantics cannot be reproduced.
+**Trade-off**: The retained `data/models/dashboard_3feature_v1.cbm` export path is compatibility tooling, not sufficient evidence of v3 compatibility by itself.
+
+---
+
+## D-033: Trade-Lab Is Not v3-Compatible Yet
+**Date**: 2026-06-04
+**Context**: Inspection of current Trade-Lab code shows local duplicate semantics: no `engine_version` in the local contract schema, no `decision_offset_minutes`, Chicago sessions, exact-tick level touches, quote-mid dwell features, and level-price outcome tracking.
+**Decision**: Do not describe a v3 dashboard-utility bundle as Trade-Lab-ready until Trade-Lab is repointed to Strategy-Core's contract loader, sessions, touch/zone rules, feature formulas, and honest-entry outcome orchestration, then verified by end-to-end parity.
+**Rationale**: Serving a v3 model through stale runtime semantics would recreate the drift Strategy-Core was built to eliminate.
+**Trade-off**: Quant-Lab can still train and emit v3 contracts before Trade-Lab is ready; runtime use remains blocked.
+
+---
+
+## D-034: Current Docs Are Indexed; Stale Historical Reports Are Pruned
+**Date**: 2026-06-04
+**Context**: Quant-Lab had many Markdown docs from different phases. Some were still useful audit history but contradicted current Strategy-Core v3 semantics.
+**Decision**: `docs/README.md` is the docs index; root `ARCHITECTURE.md`, `docs/ML_TRAINING_WORKBENCH.md`, `docs/pipeline_state.yaml`, and Strategy-Core docs are current. Stale historical reports and old scaffold prompt docs were pruned from the working tree.
+**Rationale**: Stale reports with old numbers/paths were more likely to confuse current v3 work than to help. Git history remains available for audit recovery.
+**Trade-off**: Some historical context now requires Git-history lookup before it can be consolidated into new docs.
+
+---
+
+## D-035: Training Saves Are Gated and Reports Must Preserve OOS Slices
+**Date**: 2026-06-05
+**Context**: Databento-backed smoke training proved the machinery can train/save/load, but weak smoke artifacts can look deceptively complete if the report only contains aggregate metrics and a model file.
+**Decision**: `save_trained_model()` blocks failed quality gates by default. Overrides must be explicit and recorded. Dashboard-utility reports now preserve production-gate OOS diagnostics (`session == ny` and `P(tradeable_reversal) >= 0.70`), session-filtered metrics, three-class OOS balance, exact purge metadata, and optional `oos_predictions.parquet` rows for post-training error analysis.
+**Rationale**: Model training must produce decision-useful evidence, not just a CatBoost artifact. Failed-gate bundles are smoke/research artifacts until stronger OOS, gated, and cost-aware evidence supports promotion.
+**Trade-off**: Research saves with failed gates require an explicit override, which is intentionally less convenient than silently writing a weak bundle.
 
 ---
 

@@ -4,7 +4,8 @@ Data Infrastructure Agent (DATA-001) — Market Data Engineer.
 Owns the entire data pipeline from raw exchange tick feeds through
 clean, session-tagged OHLCV bars at all timeframes.
 
-See docs/agent_prompts/DATA-001.md for full system prompt.
+Legacy standalone prompt docs were pruned; current behavior is defined by code,
+tests, and repository docs.
 """
 
 from __future__ import annotations

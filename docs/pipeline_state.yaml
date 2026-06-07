@@ -1,30 +1,88 @@
-current_phase: "DUAL_MODE_TRAINING_WORKBENCH"
-last_updated: "2026-04-04"
-repo_role: "ml_training_workbench_with_dashboard_utility_mode"
+current_phase: "STRATEGY_CORE_V3_DASHBOARD_UTILITY"
+last_updated: "2026-06-04"
+repo_role: "ml_training_workbench_with_strategy_core_v3_dashboard_utility_path"
 
 training_modes:
   extrema_rebound_crossing:
-    status: "ACTIVE (research)"
+    status: "ACTIVE_RESEARCH"
     description: "Binary tick-level extrema classifier"
     target: "rebound vs crossing at detected price extrema"
-    features: "PL microstructure + MS momentum (~25 features)"
+    features: "PL microstructure + MS momentum; signal features supported lower-level"
     labels: "binary (0=crossing, 1=rebound)"
-    runtime_detector: "ml_extrema_classifier.py (EXPERIMENTAL — train/serve mismatch)"
+    runtime_detector: "ml_extrema_classifier.py (EXPERIMENTAL; train/serve mismatch)"
 
   dashboard_utility:
-    status: "ACTIVE (production-aligned)"
-    description: "3-class level-touch classifier for Trading-Dashboard"
+    status: "ACTIVE_STRATEGY_CORE_V3_RESEARCH_PATH"
+    description: "3-class level-touch classifier built through Strategy-Core v3"
     target: "tradeable_reversal vs trap_reversal vs aggressive_blowthrough"
-    features: "int_time_beyond_level, int_time_within_2pts, int_absorption_ratio"
-    labels: "3-class (0=reversal, 1=trap, 2=blowthrough)"
-    labeling_config: "configurable TP/SL (default +15/-30), MAE-first ordering"
-    runtime_consumer: "Trading-Dashboard model contract"
+    engine_version: "strategy_core_engine_v3"
+    contract_version: "trade_lab_contract_v1"
+    bar_price_source: "trade_price"
+    tick_size: 0.25
+    default_bar_type: "147t"
+    sessions:
+      timezone: "US/Eastern"
+      trading_day_boundary: "18:00"
+      asia: "19:00-02:45"
+      london: "03:00-08:00"
+      ny: "09:00-17:00"
+    level_scheme:
+      pdh_pdl_source: "prior_day_full"
+      session_levels:
+        - "asia_high"
+        - "asia_low"
+        - "london_high"
+        - "london_low"
+        - "pdh"
+        - "pdl"
+      available_from_guard: true
+    touch_rule: "bar_intersect merged zones; first_touch_per_zone_per_day"
+    features:
+      interaction:
+        - "int_time_beyond_level"
+        - "int_time_within_2pts"
+        - "int_absorption_ratio"
+      runtime_approach_subset:
+        - "app_large_trade_vol_pct"
+        - "app_avg_trade_size"
+        - "app_max_spread"
+    labels:
+      classes:
+        0: "tradeable_reversal"
+        1: "trap_reversal"
+        2: "aggressive_blowthrough"
+      resolution: "mae_first"
+      entry_reference: "realistic_at_decision"
+      decision_offset_minutes: 5
+      default_tp_points: 15.0
+      default_sl_points: 30.0
+      trap_mfe_min: 5.0
+      flatten_time_et: "16:40"
+      forward_cutoff_et: "17:00"
+    inference_gate:
+      eligible_class: "tradeable_reversal"
+      eligible_session: "ny"
+      confidence_gate: 0.70
+    session_experiment_defaults:
+      training_sessions: ["asia", "london", "ny"]
+      evaluation_sessions: ["asia", "london", "ny"]
+      production_gate_sessions: ["ny"]
+      report_session_breakdowns: true
+      presets:
+        - "all_to_ny"
+        - "ny_only"
+        - "asia_only"
+        - "london_only"
+        - "asia_london_only"
+        - "all_sessions_all_gates"
+    runtime_consumer_status: "Trade-Lab not v3-compatible yet"
 
 primary_workflow:
   status: "ACTIVE"
   entrypoints:
-    - "scripts/ml_training_tab.py"
     - "scripts/dashboard.py"
+    - "scripts/ml_training_tab.py"
+    - "scripts/run_dashboard_session_experiment.py"
   data_path:
     - "scripts/process_batch_download.py"
     - "src/alpha_lab/agents/data_infra/tick_store.py"
@@ -32,50 +90,66 @@ primary_workflow:
     - "src/alpha_lab/agents/data_infra/ml/config.py"
     - "src/alpha_lab/agents/data_infra/ml/dataset_builder.py"
     - "src/alpha_lab/agents/data_infra/ml/dashboard_utility_builder.py"
-    - "src/alpha_lab/agents/data_infra/ml/dashboard_utility_labeling.py"
-    - "src/alpha_lab/agents/data_infra/ml/extrema_detection.py"
-    - "src/alpha_lab/agents/data_infra/ml/labeling.py"
-    - "src/alpha_lab/agents/data_infra/ml/features_microstructure.py"
-    - "src/alpha_lab/agents/data_infra/ml/features_momentum.py"
-    - "src/alpha_lab/agents/data_infra/ml/features_signals.py"
+    - "src/alpha_lab/agents/data_infra/ml/engine_decision.py"
+    - "src/alpha_lab/agents/data_infra/ml/strategy_contract.py"
     - "src/alpha_lab/agents/data_infra/ml/walk_forward.py"
     - "src/alpha_lab/agents/data_infra/ml/model_trainer.py"
     - "src/alpha_lab/agents/data_infra/ml/model_evaluator.py"
   evaluation_policy:
     - "Quality gates are computed from concatenated out-of-sample fold predictions."
-    - "RFECV runs once before walk-forward loop; same features for all folds and final model."
-    - "Label purging removes training rows whose forward window crosses test boundary."
-    - "Block bootstrap for confidence intervals (block_size=10)."
-    - "Brier score quality gate enforced."
-    - "RTH coverage fraction reported."
-    - "Feature stability (Spearman rank-correlation) reported."
-    - "Trade utility metrics (expectancy, profit factor) surfaced."
-    - "Feature cache keyed to config hash (mode + all parameters)."
-    - "The saved runtime model is refit on all labeled rows after evaluation."
+    - "RFECV runs once before walk-forward; same features for all folds and final model."
+    - "Label purging removes training rows whose forward window crosses the test boundary."
+    - "Block bootstrap confidence intervals and Brier score gate are retained."
+    - "The saved runtime model is refit on all labeled rows after OOS evaluation."
+    - "Utility-mode cache hashes include Strategy-Core engine/source semantics."
+    - "Session experiments filter fold training/evaluation/refit rows after broad dataset generation."
+    - "Production-gate reports accept configured gate sessions while defaulting to NY."
+
+saved_bundle_shape:
+  streamlit_model_bundle:
+    root: "models/{model_name}/"
+    files:
+      - "model.cbm"
+      - "metadata.json"
+      - "evaluation.json"
+      - "strategy.json"
+      - "oos_predictions.parquet (when OOS rows are available)"
+    persisted_session_scope:
+      - "evaluation.json.session_experiment"
+      - "evaluation.json.session_filter"
+      - "metadata.json.session_experiment"
+      - "metadata.json.session_filter"
+      - "strategy.json.research_session_experiment"
+  canonical_bundle_verification: "DEFERRED until local data/model zip is available"
+  legacy_export_artifact: "data/models/dashboard_3feature_v1.cbm (retained compatibility path, not automatically v3)"
 
 secondary_compatibility_path:
-  status: "SUPPORTED"
-  purpose: "Feed Trading-Dashboard with the retained 3-class model/export path"
+  status: "RETAINED_HISTORICAL_COMPATIBILITY"
+  purpose: "Old 3-feature exporter and experiment diagnostics; not canonical Strategy-Core v3 bundle path"
   entrypoints:
     - "scripts/experiment_tab.py"
     - "scripts/train_dashboard_model.py"
-    - "src/alpha_lab/experiment/training.py"
-  canonical_export_artifact: "data/models/dashboard_3feature_v1.cbm"
+    - "src/alpha_lab/experiment/"
 
 cross_repo_alignment:
-  dashboard_repo: "C:\\Users\\gonza\\Documents\\Trade-Dashboard"
-  feature_contract: "ALIGNED (3 features, same names, same order, same proximity thresholds)"
-  class_contract: "ALIGNED (3 classes, same encoding)"
-  resolution_ordering: "ALIGNED (MAE-first in both repos)"
-  remaining_drift:
-    - "Entry price: labels use level_price, trades use market_price"
-    - "Execution population: training includes all sessions, dashboard executes only NY RTH"
-    - "Outcome tracker measures from level_price; trade P&L from entry_price"
+  strategy_core_repo: "../Strategy-Core"
+  matrix: "../Strategy-Core/V3_COMPATIBILITY_MATRIX.md"
+  quant_lab: "ALIGNED for v3 training and contract emission"
+  strategy_core: "CANONICAL v3 engine and contract loader"
+  trade_lab: "INCOMPATIBLE pending repoint"
+  trade_lab_gaps:
+    - "contract schema lacks engine_version and decision_offset_minutes"
+    - "session classifier is Chicago, not Strategy-Core ET v3"
+    - "touch detection is exact-tick per session/kind, not bar-intersect merged zones with availability"
+    - "two dwell features use quote-mid instead of trade prints"
+    - "outcome tracker enters from level_price, not decision-time price"
 
-supporting_surfaces:
-  - "src/alpha_lab/dashboard/"
-  - "dashboard-ui/"
-  - "src/alpha_lab/agents/"
+documentation:
+  canonical_index: "docs/README.md"
+  canonical_architecture: "ARCHITECTURE.md"
+  workflow_doc: "docs/ML_TRAINING_WORKBENCH.md"
+  pruned_stale_docs: true
+  historical_context_source: "Git history only; verify against current code before citing"
 
 generated_outputs:
   local_only:
@@ -84,3 +158,4 @@ generated_outputs:
     - "*.cbm"
     - "cached parquet/csv outputs under data/"
     - "scratch chart HTML files"
+    - "imported Databento parquet"

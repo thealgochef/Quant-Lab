@@ -1,136 +1,164 @@
-# Architecture - Alpha Signal Research Lab
+# Architecture — Quant-Lab
 
-## Repo Purpose
+Updated: 2026-06-04.
 
-Alpha Signal Research Lab is a futures ML research and training workbench for NQ contracts. It has two training modes and one retained compatibility export path:
+Quant-Lab is the research/training workbench for NQ/ES futures ML models. Its current production-aligned path is the **dashboard-utility** workflow, which is now single-sourced to **Strategy-Core v3** for the decision semantics that must match runtime execution.
 
-1. **Extrema Rebound/Crossing mode** (research) — binary classifier on tick-level price extrema
-2. **Dashboard Utility mode** (production-aligned) — 3-class level-touch classifier aligned to Trading-Dashboard execution semantics
-3. **Retained compatibility export** — standalone `train_dashboard_model.py` exporter for the canonical 3-feature downstream artifact
+> Current compatibility state: Quant-Lab emits `strategy_core_engine_v3` contracts and builds dashboard-utility datasets through Strategy-Core. Trade-Lab is **not yet v3-compatible**; see `../Strategy-Core/V3_COMPATIBILITY_MATRIX.md`.
 
-The multi-agent architecture still exists but is not the primary workflow.
+---
 
-## Training Modes
+## Canonical read order
 
-The Streamlit UI (`scripts/ml_training_tab.py`) provides a mode selector:
+1. `docs/README.md` — docs inventory and stale/historical classification.
+2. `ARCHITECTURE.md` — this current architecture summary.
+3. `docs/ML_TRAINING_WORKBENCH.md` — Streamlit workflow details.
+4. `docs/pipeline_state.yaml` — machine-readable current-state summary.
+5. `../Strategy-Core/README.md` and `../Strategy-Core/V3_COMPATIBILITY_MATRIX.md` — shared engine and cross-repo contract truth.
+6. `scripts/ml_training_tab.py` — orchestration of build/train/save.
+7. `src/alpha_lab/agents/data_infra/ml/dashboard_utility_builder.py`, `engine_decision.py`, and `strategy_contract.py` — v3 utility path.
 
-### Mode 1: Extrema Rebound/Crossing (Research)
+Older historical reports and scaffold prompt documents were pruned from the working tree. Reconstruct current state from the canonical docs above plus current code/tests; use Git history only for audit context.
 
-Pipeline: tick data -> extrema detection -> binary labeling -> PL/MS feature extraction -> walk-forward CatBoost training -> OOS evaluation -> final refit -> model save
+---
 
-Key modules:
-- `src/alpha_lab/agents/data_infra/ml/extrema_detection.py` — scipy peak-finding on tick prices
-- `src/alpha_lab/agents/data_infra/ml/labeling.py` — binary rebound/crossing labels at configurable tick thresholds
-- `src/alpha_lab/agents/data_infra/ml/features_microstructure.py` — PL features from MBP-10 book data (snapshot + dynamics)
-- `src/alpha_lab/agents/data_infra/ml/features_momentum.py` — MS features (RSI, MACD, velocity, volatility)
-- `src/alpha_lab/agents/data_infra/ml/dataset_builder.py` — orchestrates tick -> extrema -> labels -> features
-- `src/alpha_lab/agents/signal_eng/detectors/tier3/ml_extrema_classifier.py` — **EXPERIMENTAL** runtime detector (known train/serve domain mismatch)
+## Workflows
 
-### Mode 2: Dashboard Utility (Production-Aligned)
+### 1. Extrema Rebound/Crossing mode — research only
 
-Pipeline: experiment events.parquet -> utility labeling (+TP/-SL) -> 3 dashboard features from tick interaction window -> walk-forward CatBoost MultiClass -> OOS evaluation -> final refit -> model save
+Purpose: binary classifier over tick-level extrema.
 
-Key modules:
-- `src/alpha_lab/agents/data_infra/ml/dashboard_utility_builder.py` — builds 3-feature dataset from level-touch events
-- `src/alpha_lab/agents/data_infra/ml/dashboard_utility_labeling.py` — 3-class labels aligned to dashboard execution (MAE-first, configurable TP/SL)
-- Reuses `src/alpha_lab/experiment/event_detection.py` for touch events and `src/alpha_lab/experiment/labeling.py` for forward-bar loading
+Pipeline:
 
-Output: CatBoost `.cbm` with 3 features (`int_time_beyond_level`, `int_time_within_2pts`, `int_absorption_ratio`) and 3 classes (tradeable_reversal, trap_reversal, aggressive_blowthrough). Directly compatible with Trading-Dashboard's `validate_model_contract()`.
-
-## Shared Training Infrastructure
-
-Both modes use:
-- `src/alpha_lab/agents/data_infra/ml/config.py` — Pydantic config with `training_mode` field, `DashboardUtilityConfig`, `ModelConfig` (supports `loss_function: MultiClass`)
-- `src/alpha_lab/agents/data_infra/ml/walk_forward.py` — time-series walk-forward splitter with gap enforcement
-- `src/alpha_lab/agents/data_infra/ml/model_trainer.py` — CatBoost training with optional RFECV, supports binary and multiclass
-- `src/alpha_lab/agents/data_infra/ml/model_evaluator.py` — OOS evaluation with block bootstrap CI, Brier score, probability-based Cohen's d, permutation test
-- `src/alpha_lab/agents/data_infra/tick_store.py` — DuckDB-backed parquet query layer with look-ahead prevention
-
-## Data Flow
-
-```
-Databento ZIP -> process_batch_download.py -> per-date Parquet (with ingest validation)
-                                                ↓
-                                          TickStore (DuckDB)
-                                                ↓
-                            ┌───── Mode 1 (Extrema) ──────┐
-                            │  detect_extrema              │
-                            │  label rebound/crossing      │
-                            │  extract PL/MS features      │
-                            └──────────────────────────────┘
-                                        OR
-                            ┌───── Mode 2 (Utility) ──────┐
-                            │  load experiment events      │
-                            │  label with TP/SL thresholds │
-                            │  compute 3 dashboard features│
-                            └──────────────────────────────┘
-                                        ↓
-                              walk-forward splits
-                              (with label purging)
-                                        ↓
-                              per-fold CatBoost train
-                              (RFECV once before loop)
-                                        ↓
-                              OOS fold evaluation
-                              (block bootstrap, Brier, utility metrics)
-                                        ↓
-                              full-data refit -> model.cbm
+```text
+local Databento parquet
+  -> ExtremaDatasetBuilder
+  -> extrema detection
+  -> rebound/crossing labels
+  -> PL/MS feature extraction
+  -> walk-forward CatBoost binary evaluation
+  -> final refit model bundle
 ```
 
-## Quality Gates
+Key modules:
 
-Current gates in `check_quality_gates()`:
-- Precision >= 0.55
-- Permutation p < 0.05 (plus-one corrected, 500 permutations)
-- Fold stability (std < 0.15)
-- ROC-AUC > 0.55
-- Brier score < 0.25
-- Test samples >= 200
+- `src/alpha_lab/agents/data_infra/ml/dataset_builder.py`
+- `src/alpha_lab/agents/data_infra/ml/extrema_detection.py`
+- `src/alpha_lab/agents/data_infra/ml/labeling.py`
+- `src/alpha_lab/agents/data_infra/ml/features_microstructure.py`
+- `src/alpha_lab/agents/data_infra/ml/features_momentum.py`
 
-Additional metrics surfaced in UI:
-- RTH coverage fraction (warns if < 50%)
-- Label-purged row count
-- Feature stability (Spearman rank-correlation across folds)
-- Trade utility (expectancy at 15/15 and 15/30, profit factor)
+Runtime caveat: `src/alpha_lab/agents/signal_eng/detectors/tier3/ml_extrema_classifier.py` is explicitly experimental and has a known train/serve domain mismatch.
 
-## Retained Compatibility / Export Path
+### 2. Dashboard Utility mode — production-aligned research path
 
-Standalone exporter for the canonical downstream artifact:
+Purpose: 3-class level-touch classifier whose semantics are intended to be reproducible by Trade-Lab once Trade-Lab is repointed to Strategy-Core v3.
 
-- `scripts/train_dashboard_model.py` — purged walk-forward training on 3 features, exports `data/models/dashboard_3feature_v1.cbm`
-- `src/alpha_lab/experiment/` — self-contained 6-phase research pipeline (key_levels, event_detection, labeling, features, training, diagnostics)
-- `scripts/experiment_tab.py` — Streamlit diagnostics surface
+Pipeline:
 
-### Downstream Contract
+```text
+local Databento parquet
+  -> TickStore / DuckDB bar + tick queries
+  -> dashboard_utility_builder.py
+  -> Strategy-Core v3 decision layer
+       build_zones
+       detect_touches with available_from guard
+       resolve_honest_outcome
+       v3 feature formulas
+  -> walk-forward CatBoost MultiClass evaluation
+  -> final refit model bundle
+  -> strategy.json emitted from Strategy-Core constants
+```
 
-- Artifact: `data/models/dashboard_3feature_v1.cbm`
-- Features: `int_time_beyond_level`, `int_time_within_2pts`, `int_absorption_ratio`
-- Classes: tradeable_reversal (0), trap_reversal (1), aggressive_blowthrough (2)
-- Consumer: Trading-Dashboard (`C:\Users\gonza\Documents\Trade-Dashboard`)
+Key modules:
 
-## Feature Cache
+- `src/alpha_lab/agents/data_infra/ml/dashboard_utility_builder.py` — self-contained date loop, bars, levels, cache writes.
+- `src/alpha_lab/agents/data_infra/ml/engine_decision.py` — adapter from Quant-Lab dataframes/tick queries to Strategy-Core neutral types.
+- `src/alpha_lab/agents/data_infra/ml/strategy_contract.py` — emits `strategy.json` from Strategy-Core constants/version stamps.
+- `src/alpha_lab/agents/data_infra/ml/config.py` — config models and dataset cache hash; hash includes Strategy-Core engine version and price/label semantics.
+- `src/alpha_lab/agents/data_infra/tick_store.py` — local DuckDB-backed parquet query layer.
+- `scripts/run_dashboard_session_experiment.py` — CLI entrypoint for repeatable session-scope experiments.
 
-Cached datasets use config-keyed filenames: `ml_features_{hash}.parquet` where hash = SHA256 of (training_mode + extrema + labeling + features + dashboard_utility + tick_size). Changing any config parameter auto-invalidates stale cache.
+Session-scope experiments are explicit research config. The default is to train/evaluate on `asia`, `london`, and `ny`, while production-gate diagnostics remain NY-only. Presets such as `ny_only`, `asia_only`, `london_only`, `asia_london_only`, and `all_sessions_all_gates` apply after dataset generation so caches stay reusable while fold training, OOS metrics, final refit, and gate reporting stay auditable.
 
-## Known Limitations
+### 3. Retained legacy compatibility/export path
 
-1. **ml_extrema_classifier.py train/serve mismatch** — marked `_EXPERIMENTAL`. Approximates tick-level features from bars with 0.0 fills and placeholder values. Not execution-faithful.
-2. **Entry price semantic drift** — training labels use level_price as reference; dashboard trades enter at market_price. Prediction "correct" may not equal "profitable."
-3. **Execution population** — training includes all sessions; dashboard executes only NY RTH tradeable_reversal predictions.
+The older `src/alpha_lab/experiment/`, `scripts/experiment_tab.py`, and `scripts/train_dashboard_model.py` path is retained as historical/compatibility tooling. It is **not** the canonical Strategy-Core v3 bundle path.
 
-## Generated Outputs (Not Source Code)
+Legacy artifact:
 
-- `models/` — saved model bundles
-- `catboost_info/` — CatBoost scratch logs
-- `*.cbm` — model binaries
-- `data/` — cached parquet/csv outputs
+```text
+data/models/dashboard_3feature_v1.cbm
+```
+
+Do not treat that legacy 3-feature artifact as v3-compatible unless its accompanying `strategy.json` validates against `strategy_core_engine_v3` and the bundle files/checksums are verified.
+
+---
+
+## Strategy-Core v3 semantics used by dashboard-utility mode
+
+| Area | Current behavior |
+|---|---|
+| Engine stamp | `strategy_core_engine_v3` |
+| Contract stamp | `trade_lab_contract_v1` |
+| Bars | Trade-price tick bars on 0.25 grid; default touch bar `147t`. |
+| Sessions | ET-native: 18:00 trading-day boundary; `asia` 19:00→02:45, `london` 03:00→08:00, `ny` 09:00→17:00; gaps classify as `none`. |
+| Levels | `PDH/PDL` = full prior trading-day high/low over `[18:00, 18:00)` ET. Session levels: Asia high/low and London high/low. |
+| Availability guard | Enforced. A level cannot be touched before the session that defines it has closed. Merged-zone availability is the max constituent availability. |
+| Touches | Merged zones within 3.0 points; representative = mean; first bar whose `[low, high]` intersects the zone representative; first touch per zone/day. |
+| Features | `int_time_beyond_level`, `int_time_within_2pts`, `int_absorption_ratio` from trade prints; live runtime approach subset is `app_large_trade_vol_pct`, `app_avg_trade_size`, `app_max_spread`. |
+| Labels | `tradeable_reversal=0`, `trap_reversal=1`, `aggressive_blowthrough=2`; MAE-first same-bar priority; TP 15, SL 30, trap MFE min 5 by default. |
+| Honest entry | Decision can fire only after the post-touch feature window: `touch_close + 5m`. Label/outcome entry is the realistic trade price at that decision instant, not the level price at touch time. |
+| Cutoffs | Drop new decisions at/after 16:40 ET; forward label cutoff is 17:00 ET. |
+| Inference gate | Default contract gate is `tradeable_reversal`, `eligible_session="ny"`, `confidence_gate=0.70`. |
+
+---
+
+## Data and generated outputs
+
+Local data layout:
+
+```text
+data/databento/{symbol}/{YYYY-MM-DD}/mbp10.parquet
+data/databento/{symbol}/{YYYY-MM-DD}/mbp1.parquet
+data/databento/{symbol}/{YYYY-MM-DD}/trades.parquet
+```
+
+Per-date training caches:
+
+```text
+ml_features_{config_hash}.parquet   # extrema mode
+ml_utility_{config_hash}.parquet    # dashboard-utility mode
+```
+
+Saved Streamlit model bundle:
+
+```text
+models/{model_name}/model.cbm
+models/{model_name}/metadata.json
+models/{model_name}/evaluation.json
+models/{model_name}/strategy.json
+models/{model_name}/oos_predictions.parquet  # when OOS rows are available
+```
+
+Saved `evaluation.json` and `metadata.json` include `session_experiment` and `session_filter`; emitted `strategy.json` includes `research_session_experiment` but still advertises `supported_by_runtime=false` until Trade-Lab v3 parity is proven.
+
+Generated/local outputs, not source-of-truth docs/code:
+
+- `models/`
+- `catboost_info/`
+- `*.cbm`
+- cached parquet/csv files under `data/`
 - scratch chart HTML files
+- local imported Databento data
 
-## Recommended Read Order
+The roadmap item "identify canonical data/model bundle location and verify file presence/checksums" is deliberately deferred until AlgoChef's local data zip is available.
 
-1. `scripts/ml_training_tab.py` (mode selector, full training flow)
-2. `src/alpha_lab/agents/data_infra/ml/config.py` (all config models)
-3. `src/alpha_lab/agents/data_infra/ml/dashboard_utility_builder.py` (utility mode)
-4. `src/alpha_lab/agents/data_infra/ml/model_evaluator.py` (evaluation)
-5. `scripts/train_dashboard_model.py` (canonical export)
-6. `src/alpha_lab/experiment/` (experiment pipeline)
+---
+
+## Verification expectations
+
+- For code changes, run focused tests and update relevant docs in the same change.
+- For dashboard-utility semantics, run Strategy-Core tests and Quant-Lab contract/no-drift tests before claiming v3 alignment.
+- For any model/backtest claim, report date range, data source, fees/slippage assumptions, trade count, return/expectancy, drawdown, and limitations.
+- Do not claim Trade-Lab runtime readiness until Trade-Lab is repointed to Strategy-Core v3 and end-to-end parity is proven.
