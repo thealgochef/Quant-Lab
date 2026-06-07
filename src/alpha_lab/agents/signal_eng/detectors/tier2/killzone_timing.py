@@ -9,6 +9,7 @@ Signal composition:
 - strength: combines activity vs average, directional consistency,
   and proximity to killzone start
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -29,8 +30,12 @@ class KillzoneTimingDetector(SignalDetector):
     category = "killzone_timing"
     tier = SignalTier.ICT_STRUCTURAL
     timeframes = [
-        tf.value for tf in [
-            Timeframe.M5, Timeframe.M15, Timeframe.M30, Timeframe.H1,
+        tf.value
+        for tf in [
+            Timeframe.M5,
+            Timeframe.M15,
+            Timeframe.M30,
+            Timeframe.H1,
         ]
     ]
 
@@ -88,7 +93,10 @@ class KillzoneTimingDetector(SignalDetector):
         return False, "NONE", 0.0
 
     def _compute_timeframe(
-        self, df: pd.DataFrame, timeframe: str, instrument: str,
+        self,
+        df: pd.DataFrame,
+        timeframe: str,
+        instrument: str,
     ) -> SignalVector | None:
         atr = compute_atr(df)
         atr_safe = atr.replace(0, np.nan).ffill().fillna(1.0)
@@ -99,12 +107,23 @@ class KillzoneTimingDetector(SignalDetector):
 
         closes = df["close"].values
         volumes = df["volume"].values
-        vol_avg = pd.Series(volumes).rolling(
-            min(100, len(df)), min_periods=1,
-        ).mean().values
-        atr_avg = atr_safe.rolling(
-            min(100, len(df)), min_periods=1,
-        ).mean().values
+        vol_avg = (
+            pd.Series(volumes)
+            .rolling(
+                min(100, len(df)),
+                min_periods=1,
+            )
+            .mean()
+            .values
+        )
+        atr_avg = (
+            atr_safe.rolling(
+                min(100, len(df)),
+                min_periods=1,
+            )
+            .mean()
+            .values
+        )
 
         # Bar-level returns for momentum
         returns = pd.Series(closes).diff().fillna(0.0).values
@@ -127,16 +146,14 @@ class KillzoneTimingDetector(SignalDetector):
             # Activity ratio: current ATR vs rolling average
             bar_range = df["high"].iloc[i] - df["low"].iloc[i]
             activity = bar_range / atr_avg[i] if atr_avg[i] > 0 else 0
-            vol_ratio = (
-                volumes[i] / vol_avg[i] if vol_avg[i] > 0 else 1.0
-            )
+            vol_ratio = volumes[i] / vol_avg[i] if vol_avg[i] > 0 else 1.0
             activity_score = (activity + vol_ratio) / 2.0
 
             if activity_score < self.min_activity_ratio * 0.5:
                 continue
 
             # Directional consistency: % of recent bars trending same way
-            window = returns[max(0, i - self.direction_window + 1): i + 1]
+            window = returns[max(0, i - self.direction_window + 1) : i + 1]
             n_up = np.sum(window > 0)
             n_down = np.sum(window < 0)
             total = len(window)
@@ -155,11 +172,7 @@ class KillzoneTimingDetector(SignalDetector):
             cons_score = consistency
             prox_score = proximity
 
-            score = (
-                0.50 * act_score
-                + 0.30 * cons_score
-                + 0.20 * prox_score
-            )
+            score = 0.50 * act_score + 0.30 * cons_score + 0.20 * prox_score
 
             direction.iloc[i] = sig_dir
             strength.iloc[i] = round(min(score, 1.0), 6)

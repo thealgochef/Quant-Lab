@@ -9,6 +9,7 @@ Signal composition:
              -1 (triple bearish), 0 (mixed)
 - strength: combines VWAP z-score, EMA spread rank, and alignment consistency
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -49,11 +50,7 @@ class EmaVwapInteractionDetector(SignalDetector):
     def validate_inputs(self, data: DataBundle) -> bool:
         for tf in self.timeframes:
             df = data.bars.get(tf)
-            if (
-                isinstance(df, pd.DataFrame)
-                and len(df) > _MIN_BARS
-                and "volume" in df.columns
-            ):
+            if isinstance(df, pd.DataFrame) and len(df) > _MIN_BARS and "volume" in df.columns:
                 return True
         return False
 

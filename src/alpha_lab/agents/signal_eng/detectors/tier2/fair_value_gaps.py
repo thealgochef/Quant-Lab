@@ -8,6 +8,7 @@ Signal composition:
 - direction: +1 near unfilled bullish FVG, -1 near bearish FVG, 0 otherwise
 - strength: combines gap size, proximity to gap, and time decay
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -32,9 +33,14 @@ class FairValueGapsDetector(SignalDetector):
     category = "fair_value_gaps"
     tier = SignalTier.ICT_STRUCTURAL
     timeframes = [
-        tf.value for tf in [
-            Timeframe.M1, Timeframe.M5, Timeframe.M15,
-            Timeframe.M30, Timeframe.H1, Timeframe.H4,
+        tf.value
+        for tf in [
+            Timeframe.M1,
+            Timeframe.M5,
+            Timeframe.M15,
+            Timeframe.M30,
+            Timeframe.H1,
+            Timeframe.H4,
         ]
     ]
 
@@ -69,7 +75,10 @@ class FairValueGapsDetector(SignalDetector):
         return signals
 
     def _compute_timeframe(
-        self, df: pd.DataFrame, timeframe: str, instrument: str,
+        self,
+        df: pd.DataFrame,
+        timeframe: str,
+        instrument: str,
     ) -> SignalVector | None:
         # Detect and track FVGs
         fvgs = detect_fvgs(df, self.min_gap_atr)
@@ -112,15 +121,12 @@ class FairValueGapsDetector(SignalDetector):
                 # Strength components
                 gap_score = min(fvg["size_atr"] / 2.0, 1.0)
                 prox_score = max(
-                    1.0 - dist_atr / self.approach_distance_atr, 0.0,
+                    1.0 - dist_atr / self.approach_distance_atr,
+                    0.0,
                 )
                 decay = 0.5 ** (age / self.decay_half_life)
 
-                score = (
-                    0.35 * gap_score
-                    + 0.35 * prox_score
-                    + 0.30 * decay
-                )
+                score = 0.35 * gap_score + 0.35 * prox_score + 0.30 * decay
 
                 if score > best_score:
                     best_score = score

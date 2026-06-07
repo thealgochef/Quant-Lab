@@ -64,6 +64,7 @@ class MLExtremaClassifierDetector(SignalDetector):
             self._try_load_model()
             if self._loaded:
                 import warnings
+
                 warnings.warn(
                     "MLExtremaClassifierDetector uses bar-level feature "
                     "approximations that differ from the tick-level features "
@@ -78,13 +79,15 @@ class MLExtremaClassifierDetector(SignalDetector):
             from alpha_lab.agents.data_infra.ml.model_trainer import (
                 ExtremaModelTrainer,
             )
+
             trained = ExtremaModelTrainer.load_model(self.model_path)
             self._model = trained.model
             self._selected_features = trained.selected_features
             self._loaded = True
             logger.info(
                 "ML model loaded from %s (%d features)",
-                self.model_path, len(self._selected_features),
+                self.model_path,
+                len(self._selected_features),
             )
         except Exception as exc:
             logger.warning("Failed to load ML model from %s: %s", self.model_path, exc)
@@ -138,8 +141,8 @@ class MLExtremaClassifierDetector(SignalDetector):
         # Detect bar-level extrema using simple lookback
         lookback = 10
         for i in range(lookback, len(df) - 1):
-            window_high = high.iloc[i - lookback: i + 1]
-            window_low = low.iloc[i - lookback: i + 1]
+            window_high = high.iloc[i - lookback : i + 1]
+            window_low = low.iloc[i - lookback : i + 1]
 
             is_peak = high.iloc[i] == window_high.max()
             is_trough = low.iloc[i] == window_low.min()
@@ -213,7 +216,9 @@ class MLExtremaClassifierDetector(SignalDetector):
 
     @staticmethod
     def _build_bar_features(
-        df: pd.DataFrame, idx: int, atr_safe: pd.Series,
+        df: pd.DataFrame,
+        idx: int,
+        atr_safe: pd.Series,
     ) -> dict[str, float]:
         """Build a feature dict from bar-level data at a given index.
 
@@ -230,13 +235,11 @@ class MLExtremaClassifierDetector(SignalDetector):
         # Price-based features
         a = float(atr_safe.iloc[idx])
         if a > 0:
-            features["pl_prominence"] = float(
-                (high.iloc[idx] - low.iloc[idx]) / a
-            )
+            features["pl_prominence"] = float((high.iloc[idx] - low.iloc[idx]) / a)
         features["pl_width"] = 50.0  # Placeholder
 
         # Volume features
-        vol_avg = float(volume.iloc[max(0, idx - 20): idx + 1].mean())
+        vol_avg = float(volume.iloc[max(0, idx - 20) : idx + 1].mean())
         if vol_avg > 0:
             features["ms_volume_momentum"] = float(volume.iloc[idx]) / vol_avg
 
@@ -252,11 +255,9 @@ class MLExtremaClassifierDetector(SignalDetector):
         # Body ratio
         bar_range = high.iloc[idx] - low.iloc[idx]
         if bar_range > 0:
-            features["pl_extremum_type"] = (
-                1.0 if close.iloc[idx] < df["open"].iloc[idx] else 0.0
-            )
+            features["pl_extremum_type"] = 1.0 if close.iloc[idx] < df["open"].iloc[idx] else 0.0
             features["ms_volatility"] = float(
-                close.iloc[max(0, idx - 20): idx + 1].pct_change().std()
+                close.iloc[max(0, idx - 20) : idx + 1].pct_change().std()
             )
 
         return features

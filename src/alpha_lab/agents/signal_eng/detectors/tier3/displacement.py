@@ -8,6 +8,7 @@ Signal composition:
 - direction: +1 (bullish displacement), -1 (bearish displacement), 0 (none)
 - strength: combines body size rank, volume, FVG presence, consolidation tightness
 """
+
 from __future__ import annotations
 
 import numpy as np

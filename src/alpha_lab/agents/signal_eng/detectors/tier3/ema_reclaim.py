@@ -8,6 +8,7 @@ Signal composition:
 - direction: +1 (bullish reclaim), -1 (bearish reclaim), 0 (no pattern)
 - strength: combines sweep depth, reclaim speed, and volume confirmation
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -129,7 +130,7 @@ class EmaReclaimDetector(SignalDetector):
                         depth_score = min(bull_max_depth / a / 2.0, 1.0)
                         speed_score = max(1.0 - bars_in / self.max_sweep_bars, 0.0)
                         vol_score = min(vol_vals[i] / vol_avg_vals[i] / 3.0, 1.0)
-                        s = (0.40 * depth_score + 0.30 * speed_score + 0.30 * vol_score)
+                        s = 0.40 * depth_score + 0.30 * speed_score + 0.30 * vol_score
                         direction.iloc[i] = 1
                         strength.iloc[i] = round(min(s, 1.0), 6)
                         formation_idx.iloc[i] = i
@@ -159,7 +160,7 @@ class EmaReclaimDetector(SignalDetector):
                         depth_score = min(bear_max_depth / a / 2.0, 1.0)
                         speed_score = max(1.0 - bars_in / self.max_sweep_bars, 0.0)
                         vol_score = min(vol_vals[i] / vol_avg_vals[i] / 3.0, 1.0)
-                        s = (0.40 * depth_score + 0.30 * speed_score + 0.30 * vol_score)
+                        s = 0.40 * depth_score + 0.30 * speed_score + 0.30 * vol_score
                         direction.iloc[i] = -1
                         strength.iloc[i] = round(min(s, 1.0), 6)
                         formation_idx.iloc[i] = i

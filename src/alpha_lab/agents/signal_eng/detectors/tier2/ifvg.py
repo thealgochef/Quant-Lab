@@ -8,6 +8,7 @@ Signal composition:
 - direction: +1 on bullish rejection from filled FVG zone, -1 on bearish
 - strength: combines rejection quality, zone touch count, and volume
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -32,8 +33,12 @@ class IFVGDetector(SignalDetector):
     category = "ifvg"
     tier = SignalTier.ICT_STRUCTURAL
     timeframes = [
-        tf.value for tf in [
-            Timeframe.M5, Timeframe.M15, Timeframe.H1, Timeframe.H4,
+        tf.value
+        for tf in [
+            Timeframe.M5,
+            Timeframe.M15,
+            Timeframe.H1,
+            Timeframe.H4,
         ]
     ]
 
@@ -66,7 +71,10 @@ class IFVGDetector(SignalDetector):
         return signals
 
     def _compute_timeframe(
-        self, df: pd.DataFrame, timeframe: str, instrument: str,
+        self,
+        df: pd.DataFrame,
+        timeframe: str,
+        instrument: str,
     ) -> SignalVector | None:
         fvgs = detect_fvgs(df, self.min_gap_atr)
         fvgs = track_fvg_fills(fvgs, df, max_age=200)
@@ -126,15 +134,13 @@ class IFVGDetector(SignalDetector):
 
                 if fvg["type"] == "bullish":
                     # Bullish IFVG: price dips into zone, closes above
-                    if (closes[i] > zone_hi
-                            and body_ratio >= self.rejection_body_ratio):
+                    if closes[i] > zone_hi and body_ratio >= self.rejection_body_ratio:
                         sig_dir = 1
                     else:
                         continue
                 else:
                     # Bearish IFVG: price pokes into zone, closes below
-                    if (closes[i] < zone_lo
-                            and body_ratio >= self.rejection_body_ratio):
+                    if closes[i] < zone_lo and body_ratio >= self.rejection_body_ratio:
                         sig_dir = -1
                     else:
                         continue
@@ -145,19 +151,13 @@ class IFVGDetector(SignalDetector):
                 # Strength components
                 rejection_score = min(body_ratio, 1.0)
                 touch_score = max(
-                    1.0 - (touches - 1) / self.max_touches, 0.0,
+                    1.0 - (touches - 1) / self.max_touches,
+                    0.0,
                 )
-                vol_ratio = (
-                    volumes[i] / vol_avg[i]
-                    if vol_avg[i] > 0 else 1.0
-                )
+                vol_ratio = volumes[i] / vol_avg[i] if vol_avg[i] > 0 else 1.0
                 vol_score = min(vol_ratio / 3.0, 1.0)
 
-                score = (
-                    0.40 * rejection_score
-                    + 0.30 * touch_score
-                    + 0.30 * vol_score
-                )
+                score = 0.40 * rejection_score + 0.30 * touch_score + 0.30 * vol_score
 
                 if score > best_score:
                     best_score = score

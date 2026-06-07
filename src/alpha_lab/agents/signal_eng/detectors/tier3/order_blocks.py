@@ -8,6 +8,7 @@ Signal composition:
 - direction: +1 (bullish OB / demand zone), -1 (bearish OB / supply zone), 0 (none)
 - strength: combines break distance, OB freshness, FVG overlap, and volume
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -129,13 +130,15 @@ class OrderBlocksDetector(SignalDetector):
                 # Find last bearish candle before BOS = bullish OB (demand zone)
                 for j in range(i - 1, max(i - 10, 0), -1):
                     if close_vals[j] < open_vals[j]:
-                        active_obs.append({
-                            "type": "bullish",
-                            "zone_low": low_vals[j],
-                            "zone_high": high_vals[j],
-                            "formed_at": i,
-                            "break_dist": break_dist,
-                        })
+                        active_obs.append(
+                            {
+                                "type": "bullish",
+                                "zone_low": low_vals[j],
+                                "zone_high": high_vals[j],
+                                "formed_at": i,
+                                "break_dist": break_dist,
+                            }
+                        )
                         break
                 # Don't reset last_swing_hi to close — let detected swings update it
 
@@ -143,22 +146,22 @@ class OrderBlocksDetector(SignalDetector):
                 break_dist = last_swing_lo - close_vals[i]
                 for j in range(i - 1, max(i - 10, 0), -1):
                     if close_vals[j] > open_vals[j]:
-                        active_obs.append({
-                            "type": "bearish",
-                            "zone_low": low_vals[j],
-                            "zone_high": high_vals[j],
-                            "formed_at": i,
-                            "break_dist": break_dist,
-                        })
+                        active_obs.append(
+                            {
+                                "type": "bearish",
+                                "zone_low": low_vals[j],
+                                "zone_high": high_vals[j],
+                                "formed_at": i,
+                                "break_dist": break_dist,
+                            }
+                        )
                         break
                 # Don't reset last_swing_lo to close — let detected swings update it
 
             # Expire old OBs and limit count
-            active_obs = [
-                ob for ob in active_obs if (i - ob["formed_at"]) <= self.ob_max_age
-            ]
+            active_obs = [ob for ob in active_obs if (i - ob["formed_at"]) <= self.ob_max_age]
             if len(active_obs) > self.max_active_obs:
-                active_obs = active_obs[-self.max_active_obs:]
+                active_obs = active_obs[-self.max_active_obs :]
 
             # Check if price returns to any active OB zone
             best_score = 0.0
@@ -196,15 +199,13 @@ class OrderBlocksDetector(SignalDetector):
                 # FVG overlap bonus
                 fvg_overlap = 0.0
                 for fvg in fvgs:
-                    if (fvg["zone_low"] <= ob["zone_high"]
-                            and fvg["zone_high"] >= ob["zone_low"]):
+                    if fvg["zone_low"] <= ob["zone_high"] and fvg["zone_high"] >= ob["zone_low"]:
                         fvg_overlap = 1.0
                         break
 
                 vol_score = min(vol_vals[i] / vol_avg_vals[i] / 3.0, 1.0)
 
-                score = (0.30 * dist_score + 0.25 * freshness
-                         + 0.20 * fvg_overlap + 0.25 * vol_score)
+                score = 0.30 * dist_score + 0.25 * freshness + 0.20 * fvg_overlap + 0.25 * vol_score
 
                 if score > best_score:
                     best_score = score

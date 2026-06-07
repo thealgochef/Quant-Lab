@@ -8,6 +8,7 @@ Signal composition:
 - direction: +1 (trending up), -1 (trending down), 0 (ranging)
 - strength: combines efficiency ratio, EMA spread rank, and direction consistency
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -113,9 +114,14 @@ class AdaptiveRegimeDetector(SignalDetector):
                 return 0.0
             return float((vals == vals.iloc[-1]).mean())
 
-        consistency = dir_sign.rolling(window=win, min_periods=1).apply(
-            _dir_consistency, raw=False,
-        ).fillna(0.0)
+        consistency = (
+            dir_sign.rolling(window=win, min_periods=1)
+            .apply(
+                _dir_consistency,
+                raw=False,
+            )
+            .fillna(0.0)
+        )
 
         strength = (0.40 * er_component + 0.30 * spread_rank + 0.30 * consistency).clip(0.0, 1.0)
         strength = strength.where(direction != 0, 0.0)

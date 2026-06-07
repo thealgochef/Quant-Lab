@@ -8,6 +8,7 @@ Signal composition:
 - direction: +1 bullish sweep (wicks below, closes above), -1 bearish
 - strength: combines sweep magnitude, reversal quality, and volume
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -28,8 +29,12 @@ class LiquiditySweepsDetector(SignalDetector):
     category = "liquidity_sweeps"
     tier = SignalTier.ICT_STRUCTURAL
     timeframes = [
-        tf.value for tf in [
-            Timeframe.M1, Timeframe.M5, Timeframe.M15, Timeframe.H1,
+        tf.value
+        for tf in [
+            Timeframe.M1,
+            Timeframe.M5,
+            Timeframe.M15,
+            Timeframe.H1,
         ]
     ]
 
@@ -64,7 +69,9 @@ class LiquiditySweepsDetector(SignalDetector):
         return signals
 
     def _get_sweep_levels(
-        self, date_str: str, data: DataBundle,
+        self,
+        date_str: str,
+        data: DataBundle,
     ) -> list[tuple[str, float, str]]:
         """Get (name, price, type) for all sweepable levels.
 
@@ -95,7 +102,10 @@ class LiquiditySweepsDetector(SignalDetector):
     }
 
     def _compute_timeframe(
-        self, df: pd.DataFrame, timeframe: str, data: DataBundle,
+        self,
+        df: pd.DataFrame,
+        timeframe: str,
+        data: DataBundle,
     ) -> SignalVector | None:
         atr = compute_atr(df)
         atr_safe = atr.replace(0, np.nan).ffill().fillna(1.0)
@@ -126,7 +136,8 @@ class LiquiditySweepsDetector(SignalDetector):
 
             if date_str not in level_cache:
                 level_cache[date_str] = self._get_sweep_levels(
-                    date_str, data,
+                    date_str,
+                    data,
                 )
             levels = list(level_cache[date_str])
 
@@ -184,21 +195,19 @@ class LiquiditySweepsDetector(SignalDetector):
                     sig_dir = -1
 
                 # Strength components
-                sweep_mag = min(
-                    penetration / atr_vals[i], 1.0,
-                ) if atr_vals[i] > 0 else 0
-                reversal_score = min(reversal, 1.0)
-                vol_ratio = (
-                    volumes[i] / vol_avg[i]
-                    if vol_avg[i] > 0 else 1.0
+                sweep_mag = (
+                    min(
+                        penetration / atr_vals[i],
+                        1.0,
+                    )
+                    if atr_vals[i] > 0
+                    else 0
                 )
+                reversal_score = min(reversal, 1.0)
+                vol_ratio = volumes[i] / vol_avg[i] if vol_avg[i] > 0 else 1.0
                 vol_score = min(vol_ratio / 3.0, 1.0)
 
-                score = (
-                    0.40 * sweep_mag
-                    + 0.30 * reversal_score
-                    + 0.30 * vol_score
-                )
+                score = 0.40 * sweep_mag + 0.30 * reversal_score + 0.30 * vol_score
 
                 if score > best_score:
                     best_score = score

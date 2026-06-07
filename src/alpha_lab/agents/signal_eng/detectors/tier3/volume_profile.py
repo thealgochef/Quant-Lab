@@ -8,6 +8,7 @@ Signal composition:
 - direction: +1 (near support / VAL), -1 (near resistance / VAH), 0 (none)
 - strength: combines volume concentration, proximity to node, and price reaction
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -34,17 +35,26 @@ def _build_volume_histogram(
     """
     window = df.iloc[start_idx:end_idx]
     if len(window) == 0:
-        return {"poc_price": np.nan, "vah": np.nan, "val": np.nan,
-                "total_volume": 0.0, "poc_volume": 0.0}
+        return {
+            "poc_price": np.nan,
+            "vah": np.nan,
+            "val": np.nan,
+            "total_volume": 0.0,
+            "poc_volume": 0.0,
+        }
 
     price_low = float(window["low"].min())
     price_high = float(window["high"].max())
 
     if price_high <= price_low:
         mid = price_low
-        return {"poc_price": mid, "vah": mid, "val": mid,
-                "total_volume": float(window["volume"].sum()),
-                "poc_volume": float(window["volume"].sum())}
+        return {
+            "poc_price": mid,
+            "vah": mid,
+            "val": mid,
+            "total_volume": float(window["volume"].sum()),
+            "poc_volume": float(window["volume"].sum()),
+        }
 
     bin_edges = np.linspace(price_low, price_high, num_bins + 1)
     bin_volumes = np.zeros(num_bins)
@@ -67,8 +77,7 @@ def _build_volume_histogram(
     total_volume = bin_volumes.sum()
     if total_volume <= 0:
         mid = (price_low + price_high) / 2
-        return {"poc_price": mid, "vah": mid, "val": mid,
-                "total_volume": 0.0, "poc_volume": 0.0}
+        return {"poc_price": mid, "vah": mid, "val": mid, "total_volume": 0.0, "poc_volume": 0.0}
 
     # POC: bin with highest volume
     poc_idx = int(np.argmax(bin_volumes))
@@ -116,9 +125,13 @@ class VolumeProfileDetector(SignalDetector):
     category = "volume_profile"
     tier = SignalTier.COMPOSITE
     timeframes = [
-        tf.value for tf in [
-            Timeframe.M15, Timeframe.M30, Timeframe.H1,
-            Timeframe.H4, Timeframe.D1,
+        tf.value
+        for tf in [
+            Timeframe.M15,
+            Timeframe.M30,
+            Timeframe.H1,
+            Timeframe.H4,
+            Timeframe.D1,
         ]
     ]
 
@@ -137,11 +150,7 @@ class VolumeProfileDetector(SignalDetector):
     def validate_inputs(self, data: DataBundle) -> bool:
         for tf in self.timeframes:
             df = data.bars.get(tf)
-            if (
-                isinstance(df, pd.DataFrame)
-                and len(df) > _MIN_BARS
-                and "volume" in df.columns
-            ):
+            if isinstance(df, pd.DataFrame) and len(df) > _MIN_BARS and "volume" in df.columns:
                 return True
         return False
 

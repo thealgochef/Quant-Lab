@@ -1,4 +1,5 @@
 """Tier 3 — Composite signals combining multiple indicators and timeframes."""
+
 from alpha_lab.agents.signal_eng.detectors.tier3.adaptive_regime import AdaptiveRegimeDetector
 from alpha_lab.agents.signal_eng.detectors.tier3.displacement import DisplacementDetector
 from alpha_lab.agents.signal_eng.detectors.tier3.ema_reclaim import EmaReclaimDetector
@@ -18,9 +19,15 @@ from alpha_lab.agents.signal_eng.detectors.tier3.sweep_fvg_combo import SweepFVG
 from alpha_lab.agents.signal_eng.detectors.tier3.volume_profile import VolumeProfileDetector
 
 __all__ = [
-    "MultiTFConfluenceDetector", "EmaVwapInteractionDetector", "DisplacementDetector",
-    "OrderBlocksDetector", "VolumeProfileDetector", "ScalpEntryDetector",
-    "SweepFVGComboDetector", "EmaReclaimDetector", "SessionGapDetector",
+    "MultiTFConfluenceDetector",
+    "EmaVwapInteractionDetector",
+    "DisplacementDetector",
+    "OrderBlocksDetector",
+    "VolumeProfileDetector",
+    "ScalpEntryDetector",
+    "SweepFVGComboDetector",
+    "EmaReclaimDetector",
+    "SessionGapDetector",
     "AdaptiveRegimeDetector",
     "MLExtremaClassifierDetector",
 ]

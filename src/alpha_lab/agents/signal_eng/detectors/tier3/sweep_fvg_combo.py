@@ -8,6 +8,7 @@ Signal composition:
 - direction: +1 (bullish sweep + bullish FVG), -1 (bearish combo), 0 (none)
 - strength: combines sweep depth, FVG size, and temporal proximity
 """
+
 from __future__ import annotations
 
 import numpy as np

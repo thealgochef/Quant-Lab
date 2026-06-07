@@ -316,13 +316,26 @@ class TestDetectorRegistry:
     def test_all_detector_ids(self):
         ids = SignalDetectorRegistry.list_ids()
         expected = [
-            "adaptive_regime", "displacement", "ema_confluence",
-            "ema_reclaim", "ema_vwap_interaction", "fair_value_gaps",
-            "ifvg", "kama_regime", "killzone_timing", "liquidity_sweeps",
-            "market_structure", "ml_extrema_classifier",
-            "multi_tf_confluence", "order_blocks",
-            "pd_levels_poi", "scalp_entry", "session_gap",
-            "sweep_fvg_combo", "tick_microstructure", "volume_profile",
+            "adaptive_regime",
+            "displacement",
+            "ema_confluence",
+            "ema_reclaim",
+            "ema_vwap_interaction",
+            "fair_value_gaps",
+            "ifvg",
+            "kama_regime",
+            "killzone_timing",
+            "liquidity_sweeps",
+            "market_structure",
+            "ml_extrema_classifier",
+            "multi_tf_confluence",
+            "order_blocks",
+            "pd_levels_poi",
+            "scalp_entry",
+            "session_gap",
+            "sweep_fvg_combo",
+            "tick_microstructure",
+            "volume_profile",
             "vwap_deviation",
         ]
         assert ids == expected
@@ -488,9 +501,7 @@ class TestKamaRegimeDetector:
                 "session_id": "NQ_2026-02-20_RTH",
                 "killzone": "NEW_YORK",
             },
-            index=pd.date_range(
-                "2026-02-20 09:30", periods=n, freq="5min", tz="US/Eastern"
-            ),
+            index=pd.date_range("2026-02-20 09:30", periods=n, freq="5min", tz="US/Eastern"),
         )
         df.index.name = "timestamp"
         data = _make_data_bundle({"5m": df})
@@ -623,9 +634,7 @@ class TestBundleBuilder:
     def test_build_with_nonexistent_detector(self):
         """Non-existent detector IDs should be silently ignored."""
         data = _make_data_bundle()
-        bundle = build_signal_bundle(
-            data, detector_ids=["ema_confluence", "nonexistent_detector"]
-        )
+        bundle = build_signal_bundle(data, detector_ids=["ema_confluence", "nonexistent_detector"])
         assert bundle.total_signals > 0
 
     def test_build_empty_detector_list(self):
@@ -650,7 +659,9 @@ class TestBundleBuilder:
         """Passing None for detector_kwargs is backward compatible."""
         data = _make_data_bundle()
         bundle = build_signal_bundle(
-            data, detector_ids=["ema_confluence"], detector_kwargs=None,
+            data,
+            detector_ids=["ema_confluence"],
+            detector_kwargs=None,
         )
         assert bundle.total_signals > 0
 
@@ -658,7 +669,9 @@ class TestBundleBuilder:
         """run_single_detector passes kwargs to constructor."""
         data = _make_data_bundle()
         signals = run_single_detector(
-            EmaConfluenceDetector, data, kwargs={"ema_fast": 8},
+            EmaConfluenceDetector,
+            data,
+            kwargs={"ema_fast": 8},
         )
         assert len(signals) > 0
         assert signals[0].parameters["ema_fast"] == 8
@@ -718,9 +731,7 @@ class TestSignalEngineeringAgent:
 
         # Check that agent sent a SIGNAL_BUNDLE back
         log = message_bus.get_audit_log()
-        signal_msgs = [
-            m for m in log if m.message_type == MessageType.SIGNAL_BUNDLE
-        ]
+        signal_msgs = [m for m in log if m.message_type == MessageType.SIGNAL_BUNDLE]
         assert len(signal_msgs) >= 1
 
     def test_handle_unexpected_message(self, message_bus):
@@ -737,9 +748,7 @@ class TestSignalEngineeringAgent:
         )
 
         agent.handle_message(envelope)
-        nacks = [
-            m for m in message_bus.get_audit_log() if m.message_type == MessageType.NACK
-        ]
+        nacks = [m for m in message_bus.get_audit_log() if m.message_type == MessageType.NACK]
         assert len(nacks) >= 1
 
     def test_refine_max_iterations(self, message_bus):
@@ -768,7 +777,10 @@ def _make_data_bundle_with_pd_levels(
         bars_1h = _make_ohlcv(60, seed=44)
         bars_1m = _make_ohlcv(300, seed=45)
         timeframes = {
-            "1m": bars_1m, "5m": bars_5m, "15m": bars_15m, "1H": bars_1h,
+            "1m": bars_1m,
+            "5m": bars_5m,
+            "15m": bars_15m,
+            "1H": bars_1h,
         }
 
     ref = timeframes.get("5m", list(timeframes.values())[0])
@@ -838,7 +850,7 @@ class TestSwingIndicators:
             pos = df.index.get_loc(idx)
             # Swing stamped at confirmation bar (pos), pivot was at pos - right
             pivot_pos = pos - 3
-            window = df["high"].iloc[max(0, pivot_pos - 3): pivot_pos + 4]
+            window = df["high"].iloc[max(0, pivot_pos - 3) : pivot_pos + 4]
             assert valid[idx] == window.max()
 
     def test_swing_lows_are_local_minima(self):
@@ -849,7 +861,7 @@ class TestSwingIndicators:
             pos = df.index.get_loc(idx)
             # Swing stamped at confirmation bar (pos), pivot was at pos - right
             pivot_pos = pos - 3
-            window = df["low"].iloc[max(0, pivot_pos - 3): pivot_pos + 4]
+            window = df["low"].iloc[max(0, pivot_pos - 3) : pivot_pos + 4]
             assert valid[idx] == window.min()
 
 
@@ -915,7 +927,8 @@ class TestFairValueGapsDetector:
     def test_custom_parameters(self):
         data = _make_data_bundle()
         detector = FairValueGapsDetector(
-            min_gap_atr=0.3, decay_half_life=100,
+            min_gap_atr=0.3,
+            decay_half_life=100,
         )
         signals = detector.compute(data)
         if signals:
@@ -1055,7 +1068,9 @@ class TestMarketStructureDetector:
     def test_custom_parameters(self):
         data = _make_data_bundle()
         detector = MarketStructureDetector(
-            pivot_left=5, pivot_right=5, min_break_atr=0.5,
+            pivot_left=5,
+            pivot_right=5,
+            min_break_atr=0.5,
         )
         signals = detector.compute(data)
         if signals:
@@ -1124,7 +1139,8 @@ class TestLiquiditySweepsDetector:
     def test_custom_parameters(self):
         data = _make_data_bundle_with_pd_levels()
         detector = LiquiditySweepsDetector(
-            sweep_buffer_atr=0.2, min_reversal_ratio=0.5,
+            sweep_buffer_atr=0.2,
+            min_reversal_ratio=0.5,
         )
         signals = detector.compute(data)
         for sv in signals:
@@ -1259,7 +1275,8 @@ class TestKillzoneTimingDetector:
     def test_custom_parameters(self):
         data = _make_data_bundle()
         detector = KillzoneTimingDetector(
-            min_activity_ratio=2.0, direction_window=6,
+            min_activity_ratio=2.0,
+            direction_window=6,
         )
         signals = detector.compute(data)
         for sv in signals:
@@ -1336,7 +1353,8 @@ class TestTickMicrostructureDetector:
         bars_1m = _make_ohlcv(300, seed=50)
         data = _make_data_bundle({"1m": bars_1m})
         detector = TickMicrostructureDetector(
-            min_velocity_atr=0.5, streak_length=3,
+            min_velocity_atr=0.5,
+            streak_length=3,
         )
         signals = detector.compute(data)
         for sv in signals:
@@ -1656,7 +1674,8 @@ class TestDisplacementDetector:
     def test_custom_parameters(self):
         data = _make_data_bundle()
         detector = DisplacementDetector(
-            consolidation_threshold=2.0, displacement_multiplier=3.0,
+            consolidation_threshold=2.0,
+            displacement_multiplier=3.0,
         )
         signals = detector.compute(data)
         for sv in signals:

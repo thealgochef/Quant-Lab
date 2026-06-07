@@ -144,7 +144,5 @@ class SignalEngineeringAgent(BaseAgent):
 
         # TODO: Implement parameter adjustment based on failed_metric
         # For now, raise NotImplementedError for metrics we don't handle yet
-        msg = (
-            f"Refinement logic for metric '{failed_metric}' not yet implemented"
-        )
+        msg = f"Refinement logic for metric '{failed_metric}' not yet implemented"
         raise NotImplementedError(msg)

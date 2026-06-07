@@ -8,6 +8,7 @@ Signal composition:
 - direction: +1/-1 when micro momentum confirms macro direction, 0 otherwise
 - strength: combines momentum magnitude, macro alignment score, and volume
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -28,8 +29,10 @@ class ScalpEntryDetector(SignalDetector):
     category = "scalp_entry"
     tier = SignalTier.COMPOSITE
     timeframes = [
-        Timeframe.TICK_987.value, Timeframe.TICK_2000.value,
-        Timeframe.M1.value, Timeframe.M3.value,
+        Timeframe.TICK_987.value,
+        Timeframe.TICK_2000.value,
+        Timeframe.M1.value,
+        Timeframe.M3.value,
     ]
 
     def __init__(
@@ -85,7 +88,10 @@ class ScalpEntryDetector(SignalDetector):
             if not isinstance(df, pd.DataFrame) or len(df) <= _MIN_BARS:
                 continue
             sv = self._compute_timeframe(
-                df, tf, data.instrument, macro_dir_series,
+                df,
+                tf,
+                data.instrument,
+                macro_dir_series,
             )
             if sv is not None:
                 signals.append(sv)
@@ -114,15 +120,14 @@ class ScalpEntryDetector(SignalDetector):
 
         for macro_s in macro_dir_series:
             has_tz_r = hasattr(macro_s.index, "tz") and macro_s.index.tz
-            right_idx = (
-                macro_s.index.tz_localize(None) if has_tz_r
-                else macro_s.index
-            )
+            right_idx = macro_s.index.tz_localize(None) if has_tz_r else macro_s.index
             left_df = pd.DataFrame({"_key": 0}, index=left_idx)
             right_df = pd.DataFrame({"dir": macro_s.values}, index=right_idx)
             aligned = pd.merge_asof(
-                left_df, right_df,
-                left_index=True, right_index=True,
+                left_df,
+                right_df,
+                left_index=True,
+                right_index=True,
                 direction="backward",
             )
             aligned_dir = aligned["dir"].fillna(0).astype(int).values
@@ -136,7 +141,8 @@ class ScalpEntryDetector(SignalDetector):
         macro_dir = macro_dir.where(~(n_bear > n_bull), -1)
 
         macro_alignment = pd.concat(
-            [n_bull, n_bear], axis=1,
+            [n_bull, n_bear],
+            axis=1,
         ).max(axis=1) / max(n_macro, 1)
 
         # Micro momentum: velocity of price change / ATR
@@ -157,10 +163,10 @@ class ScalpEntryDetector(SignalDetector):
         vol_score = (volume / vol_avg).clip(0.0, 3.0) / 3.0
 
         strength = (
-            0.40 * momentum_mag
-            + 0.35 * macro_alignment
-            + 0.25 * vol_score
-        ).clip(0.0, 1.0).fillna(0.0)
+            (0.40 * momentum_mag + 0.35 * macro_alignment + 0.25 * vol_score)
+            .clip(0.0, 1.0)
+            .fillna(0.0)
+        )
         strength = strength.where(direction != 0, 0.0)
 
         # Formation index

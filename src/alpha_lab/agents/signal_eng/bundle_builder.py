@@ -47,11 +47,7 @@ def build_signal_bundle(
     all_detectors = SignalDetectorRegistry.get_all()
 
     if detector_ids is not None:
-        detectors_to_run = {
-            did: all_detectors[did]
-            for did in detector_ids
-            if did in all_detectors
-        }
+        detectors_to_run = {did: all_detectors[did] for did in detector_ids if did in all_detectors}
     else:
         detectors_to_run = all_detectors
 
@@ -67,9 +63,7 @@ def build_signal_bundle(
             for sv in signals:
                 timeframes_seen.add(sv.timeframe)
             if signals:
-                logger.info(
-                    "Detector %s produced %d signals", detector_id, len(signals)
-                )
+                logger.info("Detector %s produced %d signals", detector_id, len(signals))
         except NotImplementedError:
             # Stub detectors (Tier 2/3) — skip silently
             logger.debug("Detector %s not yet implemented, skipping", detector_id)

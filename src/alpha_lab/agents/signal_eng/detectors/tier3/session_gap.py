@@ -8,6 +8,7 @@ Signal composition:
 - direction: +1 (gap up / bullish continuation), -1 (gap down / bearish), 0 (no gap)
 - strength: combines gap size/ATR, fill status, and time decay
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -42,9 +43,7 @@ class SessionGapDetector(SignalDetector):
     def validate_inputs(self, data: DataBundle) -> bool:
         for tf in self.timeframes:
             df = data.bars.get(tf)
-            if (isinstance(df, pd.DataFrame)
-                    and len(df) > _MIN_BARS
-                    and hasattr(df.index, 'date')):
+            if isinstance(df, pd.DataFrame) and len(df) > _MIN_BARS and hasattr(df.index, "date"):
                 return True
         return False
 
@@ -54,7 +53,7 @@ class SessionGapDetector(SignalDetector):
             df = data.bars.get(tf)
             if not isinstance(df, pd.DataFrame) or len(df) <= _MIN_BARS:
                 continue
-            if not hasattr(df.index, 'date'):
+            if not hasattr(df.index, "date"):
                 continue
             sv = self._compute_timeframe(df, tf, data.instrument)
             if sv is not None:

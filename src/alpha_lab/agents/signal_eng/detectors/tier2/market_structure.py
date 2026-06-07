@@ -8,6 +8,7 @@ Signal composition:
 - direction: +1 on bullish BOS, -1 on bearish BOS, 0 on CHOCH/neutral
 - strength: combines break distance, sequence consistency, and volume
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -32,9 +33,15 @@ class MarketStructureDetector(SignalDetector):
     category = "market_structure"
     tier = SignalTier.ICT_STRUCTURAL
     timeframes = [
-        tf.value for tf in [
-            Timeframe.M1, Timeframe.M5, Timeframe.M15, Timeframe.M30,
-            Timeframe.H1, Timeframe.H4, Timeframe.D1,
+        tf.value
+        for tf in [
+            Timeframe.M1,
+            Timeframe.M5,
+            Timeframe.M15,
+            Timeframe.M30,
+            Timeframe.H1,
+            Timeframe.H4,
+            Timeframe.D1,
         ]
     ]
 
@@ -71,13 +78,20 @@ class MarketStructureDetector(SignalDetector):
         return signals
 
     def _compute_timeframe(
-        self, df: pd.DataFrame, timeframe: str, instrument: str,
+        self,
+        df: pd.DataFrame,
+        timeframe: str,
+        instrument: str,
     ) -> SignalVector | None:
         swing_hi = compute_swing_highs(
-            df["high"], self.pivot_left, self.pivot_right,
+            df["high"],
+            self.pivot_left,
+            self.pivot_right,
         )
         swing_lo = compute_swing_lows(
-            df["low"], self.pivot_left, self.pivot_right,
+            df["low"],
+            self.pivot_left,
+            self.pivot_right,
         )
 
         atr = compute_atr(df)
@@ -133,21 +147,16 @@ class MarketStructureDetector(SignalDetector):
                     # Break distance for strength
                     if sig_dir != 0:
                         dist_score = min(
-                            abs(break_dist) / 2.0, 1.0,
+                            abs(break_dist) / 2.0,
+                            1.0,
                         )
                         seq_score = min(
-                            consecutive / self.structure_memory, 1.0,
+                            consecutive / self.structure_memory,
+                            1.0,
                         )
-                        vol_ratio = (
-                            volumes[i] / vol_avg[i]
-                            if vol_avg[i] > 0 else 1.0
-                        )
+                        vol_ratio = volumes[i] / vol_avg[i] if vol_avg[i] > 0 else 1.0
                         vol_score = min(vol_ratio / 3.0, 1.0)
-                        sig_score = (
-                            0.40 * dist_score
-                            + 0.30 * seq_score
-                            + 0.30 * vol_score
-                        )
+                        sig_score = 0.40 * dist_score + 0.30 * seq_score + 0.30 * vol_score
                 else:
                     trend = 0
 
@@ -164,8 +173,7 @@ class MarketStructureDetector(SignalDetector):
                     if sl < prev_sl:  # Lower Low
                         if trend == -1:
                             # BOS: continuation in downtrend
-                            if (break_dist >= self.min_break_atr
-                                    and sig_dir == 0):
+                            if break_dist >= self.min_break_atr and sig_dir == 0:
                                 sig_dir = -1
                                 consecutive += 1
                         elif trend == 1:
@@ -183,21 +191,16 @@ class MarketStructureDetector(SignalDetector):
 
                     if sig_dir == -1 and sig_score == 0.0:
                         dist_score = min(
-                            abs(break_dist) / 2.0, 1.0,
+                            abs(break_dist) / 2.0,
+                            1.0,
                         )
                         seq_score = min(
-                            consecutive / self.structure_memory, 1.0,
+                            consecutive / self.structure_memory,
+                            1.0,
                         )
-                        vol_ratio = (
-                            volumes[i] / vol_avg[i]
-                            if vol_avg[i] > 0 else 1.0
-                        )
+                        vol_ratio = volumes[i] / vol_avg[i] if vol_avg[i] > 0 else 1.0
                         vol_score = min(vol_ratio / 3.0, 1.0)
-                        sig_score = (
-                            0.40 * dist_score
-                            + 0.30 * seq_score
-                            + 0.30 * vol_score
-                        )
+                        sig_score = 0.40 * dist_score + 0.30 * seq_score + 0.30 * vol_score
 
                 recent_lows.append(sl)
                 if len(recent_lows) > self.structure_memory:

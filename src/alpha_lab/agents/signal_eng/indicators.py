@@ -93,16 +93,12 @@ def compute_kama(
         kama_vals[first_valid] = close_vals[first_valid]
 
     for i in range(first_valid + 1, len(close)):
-        kama_vals[i] = kama_vals[i - 1] + sc_vals[i] * (
-            close_vals[i] - kama_vals[i - 1]
-        )
+        kama_vals[i] = kama_vals[i - 1] + sc_vals[i] * (close_vals[i] - kama_vals[i - 1])
 
     return pd.Series(kama_vals, index=close.index)
 
 
-def compute_kama_efficiency_ratio(
-    close: pd.Series, period: int = 10
-) -> pd.Series:
+def compute_kama_efficiency_ratio(close: pd.Series, period: int = 10) -> pd.Series:
     """Kaufman Efficiency Ratio (directional movement / volatility).
 
     ER near 1.0 = strong trend, ER near 0.0 = choppy/ranging.
@@ -122,18 +118,18 @@ def compute_kama_efficiency_ratio(
 
 def compute_session_vwap(df: pd.DataFrame) -> pd.Series:
     # Ensure session_id is present (from tag_sessions)
-    if 'session_id' not in df.columns:
+    if "session_id" not in df.columns:
         raise ValueError("DataFrame missing 'session_id' column for proper anchoring.")
 
     typical_price = (df["high"] + df["low"] + df["close"]) / 3.0
     tp_vol = typical_price * df["volume"]
 
     # Group by session_id instead of calendar date
-    cum_tp_vol = tp_vol.groupby(df['session_id']).cumsum()
-    cum_vol = df["volume"].groupby(df['session_id']).cumsum()
+    cum_tp_vol = tp_vol.groupby(df["session_id"]).cumsum()
+    cum_vol = df["volume"].groupby(df["session_id"]).cumsum()
 
     vwap = cum_tp_vol / cum_vol
-    return vwap.fillna(method='ffill')  # Forward-fill any initial NaNs if needed
+    return vwap.ffill()  # Forward-fill any initial NaNs if needed
 
 
 def compute_session_vwap_bands(
@@ -166,9 +162,7 @@ def compute_session_vwap_bands(
     return vwap, upper, lower
 
 
-def compute_swing_highs(
-    highs: pd.Series, left: int = 3, right: int = 3
-) -> pd.Series:
+def compute_swing_highs(highs: pd.Series, left: int = 3, right: int = 3) -> pd.Series:
     """Detect swing highs using N-bar pivot logic.
 
     A swing high at bar *i* requires ``highs[i]`` to be the strict
@@ -187,7 +181,7 @@ def compute_swing_highs(
     result = pd.Series(np.nan, index=highs.index)
     vals = highs.values
     for i in range(left, len(vals) - right):
-        window = vals[i - left: i + right + 1]
+        window = vals[i - left : i + right + 1]
         if vals[i] == window.max():
             # On tie, pick leftmost: only stamp if no earlier bar in window matches
             tie_indices = np.where(window == vals[i])[0]
@@ -196,9 +190,7 @@ def compute_swing_highs(
     return result
 
 
-def compute_swing_lows(
-    lows: pd.Series, left: int = 3, right: int = 3
-) -> pd.Series:
+def compute_swing_lows(lows: pd.Series, left: int = 3, right: int = 3) -> pd.Series:
     """Detect swing lows using N-bar pivot logic.
 
     A swing low at bar *i* requires ``lows[i]`` to be the strict
@@ -217,7 +209,7 @@ def compute_swing_lows(
     result = pd.Series(np.nan, index=lows.index)
     vals = lows.values
     for i in range(left, len(vals) - right):
-        window = vals[i - left: i + right + 1]
+        window = vals[i - left : i + right + 1]
         if vals[i] == window.min():
             # On tie, pick leftmost: only stamp if no earlier bar in window matches
             tie_indices = np.where(window == vals[i])[0]

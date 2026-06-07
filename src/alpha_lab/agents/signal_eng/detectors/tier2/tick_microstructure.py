@@ -11,6 +11,7 @@ Signal composition:
 - direction: +1 bullish velocity/momentum, -1 bearish, 0 no signal
 - strength: combines velocity magnitude, streak consistency, volume spike
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -64,7 +65,10 @@ class TickMicrostructureDetector(SignalDetector):
         return signals
 
     def _compute_timeframe(
-        self, df: pd.DataFrame, timeframe: str, instrument: str,
+        self,
+        df: pd.DataFrame,
+        timeframe: str,
+        instrument: str,
     ) -> SignalVector | None:
         atr = compute_atr(df)
         atr_safe = atr.replace(0, np.nan).ffill().fillna(1.0)
@@ -77,14 +81,18 @@ class TickMicrostructureDetector(SignalDetector):
         opens = df["open"].values
         volumes = df["volume"].values
         # Bar-level velocity: (close - open) / ATR
-        velocity = (
-            pd.Series(closes - opens) / atr_safe.values
-        ).fillna(0).values
+        velocity = (pd.Series(closes - opens) / atr_safe.values).fillna(0).values
 
         # Rolling volume average
-        vol_avg = pd.Series(volumes).rolling(
-            self.lookback_window, min_periods=1,
-        ).mean().values
+        vol_avg = (
+            pd.Series(volumes)
+            .rolling(
+                self.lookback_window,
+                min_periods=1,
+            )
+            .mean()
+            .values
+        )
 
         # Momentum streak: count consecutive same-direction closes
         bar_dir = np.sign(closes[1:] - closes[:-1])
@@ -103,9 +111,7 @@ class TickMicrostructureDetector(SignalDetector):
             vel_abs = abs(vel)
 
             # Volume spike
-            vol_ratio = (
-                volumes[i] / vol_avg[i] if vol_avg[i] > 0 else 1.0
-            )
+            vol_ratio = volumes[i] / vol_avg[i] if vol_avg[i] > 0 else 1.0
             has_vol_spike = vol_ratio >= self.volume_spike_ratio
 
             # Velocity burst
@@ -132,12 +138,22 @@ class TickMicrostructureDetector(SignalDetector):
 
             # Strength components
             vel_score = min(vel_abs / 1.0, 1.0) if has_velocity else 0.0
-            streak_score = min(
-                streak[i] / (self.streak_length * 2), 1.0,
-            ) if has_streak else 0.0
-            vol_score = min(
-                vol_ratio / (self.volume_spike_ratio * 2), 1.0,
-            ) if has_vol_spike else 0.0
+            streak_score = (
+                min(
+                    streak[i] / (self.streak_length * 2),
+                    1.0,
+                )
+                if has_streak
+                else 0.0
+            )
+            vol_score = (
+                min(
+                    vol_ratio / (self.volume_spike_ratio * 2),
+                    1.0,
+                )
+                if has_vol_spike
+                else 0.0
+            )
 
             # Weight by which triggers fired
             active = [

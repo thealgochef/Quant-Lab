@@ -8,6 +8,7 @@ Signal composition:
 - direction: +1 (majority bullish), -1 (majority bearish), 0 (tied)
 - strength: combines agreement ratio across TFs with local EMA spread rank
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -80,7 +81,11 @@ class MultiTFConfluenceDetector(SignalDetector):
         signals: list[SignalVector] = []
         for tf, df in tf_dataframes.items():
             sv = self._compute_timeframe(
-                df, tf, data.instrument, tf_dir_series, n_tfs,
+                df,
+                tf,
+                data.instrument,
+                tf_dir_series,
+                n_tfs,
             )
             if sv is not None:
                 signals.append(sv)
@@ -122,17 +127,16 @@ class MultiTFConfluenceDetector(SignalDetector):
             has_tz = hasattr(df.index, "tz") and df.index.tz
             left_idx = df.index.tz_localize(None) if has_tz else df.index
             has_tz_r = hasattr(otf_dir.index, "tz") and otf_dir.index.tz
-            right_idx = (
-                otf_dir.index.tz_localize(None) if has_tz_r
-                else otf_dir.index
-            )
+            right_idx = otf_dir.index.tz_localize(None) if has_tz_r else otf_dir.index
 
             left_df = pd.DataFrame({"_key": 0}, index=left_idx)
             right_df = pd.DataFrame({"dir": otf_dir.values}, index=right_idx)
 
             aligned = pd.merge_asof(
-                left_df, right_df,
-                left_index=True, right_index=True,
+                left_df,
+                right_df,
+                left_index=True,
+                right_index=True,
                 direction="backward",
             )
             aligned_dir = aligned["dir"].fillna(0).astype(int).values

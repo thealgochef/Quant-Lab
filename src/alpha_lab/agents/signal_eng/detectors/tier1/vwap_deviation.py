@@ -57,11 +57,7 @@ class VwapDeviationDetector(SignalDetector):
         """Need at least one intraday timeframe with volume data."""
         for tf in self.timeframes:
             df = data.bars.get(tf)
-            if (
-                isinstance(df, pd.DataFrame)
-                and len(df) > 20
-                and "volume" in df.columns
-            ):
+            if isinstance(df, pd.DataFrame) and len(df) > 20 and "volume" in df.columns:
                 return True
         return False
 
@@ -123,9 +119,9 @@ class VwapDeviationDetector(SignalDetector):
 
         # --- Strength: z-score magnitude + volume + slope ---
         zscore_magnitude = zscore.abs().clip(0.0, 3.0) / 3.0
-        strength = (
-            0.5 * zscore_magnitude + 0.3 * vol_confirmation + 0.2 * slope_rank
-        ).clip(0.0, 1.0)
+        strength = (0.5 * zscore_magnitude + 0.3 * vol_confirmation + 0.2 * slope_rank).clip(
+            0.0, 1.0
+        )
         strength = strength.where(direction != 0, 0.0)
 
         # Formation index

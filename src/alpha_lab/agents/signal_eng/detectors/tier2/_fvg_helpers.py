@@ -3,6 +3,7 @@
 Used by both FairValueGapsDetector and IFVGDetector to avoid
 duplicating the 3-candle gap pattern detection algorithm.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -51,27 +52,31 @@ def detect_fvgs(
         if highs[i - 1] < lows[i + 1]:
             gap_size = lows[i + 1] - highs[i - 1]
             if gap_size / atr_i >= min_gap_atr:
-                fvgs.append({
-                    "idx": i + 1,
-                    "bar_index": df.index[i + 1],
-                    "type": "bullish",
-                    "zone_low": highs[i - 1],
-                    "zone_high": lows[i + 1],
-                    "size_atr": gap_size / atr_i,
-                })
+                fvgs.append(
+                    {
+                        "idx": i + 1,
+                        "bar_index": df.index[i + 1],
+                        "type": "bullish",
+                        "zone_low": highs[i - 1],
+                        "zone_high": lows[i + 1],
+                        "size_atr": gap_size / atr_i,
+                    }
+                )
 
         # Bearish FVG: candle before's low > candle after's high
         if lows[i - 1] > highs[i + 1]:
             gap_size = lows[i - 1] - highs[i + 1]
             if gap_size / atr_i >= min_gap_atr:
-                fvgs.append({
-                    "idx": i + 1,
-                    "bar_index": df.index[i + 1],
-                    "type": "bearish",
-                    "zone_low": highs[i + 1],
-                    "zone_high": lows[i - 1],
-                    "size_atr": gap_size / atr_i,
-                })
+                fvgs.append(
+                    {
+                        "idx": i + 1,
+                        "bar_index": df.index[i + 1],
+                        "type": "bearish",
+                        "zone_low": highs[i + 1],
+                        "zone_high": lows[i - 1],
+                        "size_atr": gap_size / atr_i,
+                    }
+                )
 
     return fvgs
 

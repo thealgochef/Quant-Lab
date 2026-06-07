@@ -8,6 +8,7 @@ Signal composition:
 - direction: +1 on support bounce, -1 on resistance rejection
 - strength: combines level importance, proximity, reaction, and volume
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -39,8 +40,12 @@ class PDLevelsPOIDetector(SignalDetector):
     category = "pd_levels_poi"
     tier = SignalTier.ICT_STRUCTURAL
     timeframes = [
-        tf.value for tf in [
-            Timeframe.M1, Timeframe.M5, Timeframe.M15, Timeframe.H1,
+        tf.value
+        for tf in [
+            Timeframe.M1,
+            Timeframe.M5,
+            Timeframe.M15,
+            Timeframe.H1,
         ]
     ]
 
@@ -77,7 +82,9 @@ class PDLevelsPOIDetector(SignalDetector):
         return signals
 
     def _get_levels_for_date(
-        self, date_str: str, data: DataBundle,
+        self,
+        date_str: str,
+        data: DataBundle,
     ) -> list[tuple[str, float, float]]:
         """Get (name, price, importance_weight) for all PD levels."""
         pdl = data.pd_levels.get(date_str)
@@ -85,8 +92,14 @@ class PDLevelsPOIDetector(SignalDetector):
             return []
         levels = []
         for attr in [
-            "pd_high", "pd_low", "pd_mid", "pd_close",
-            "pw_high", "pw_low", "overnight_high", "overnight_low",
+            "pd_high",
+            "pd_low",
+            "pd_mid",
+            "pd_close",
+            "pw_high",
+            "pw_low",
+            "overnight_high",
+            "overnight_low",
         ]:
             val = getattr(pdl, attr, None)
             if val is not None and val > 0:
@@ -95,7 +108,10 @@ class PDLevelsPOIDetector(SignalDetector):
         return levels
 
     def _compute_timeframe(
-        self, df: pd.DataFrame, timeframe: str, data: DataBundle,
+        self,
+        df: pd.DataFrame,
+        timeframe: str,
+        data: DataBundle,
     ) -> SignalVector | None:
         atr = compute_atr(df)
         atr_safe = atr.replace(0, np.nan).ffill().fillna(1.0)
@@ -124,7 +140,8 @@ class PDLevelsPOIDetector(SignalDetector):
 
             if date_str not in level_cache:
                 level_cache[date_str] = self._get_levels_for_date(
-                    date_str, data,
+                    date_str,
+                    data,
                 )
             levels = level_cache[date_str]
             if not levels:
@@ -169,21 +186,14 @@ class PDLevelsPOIDetector(SignalDetector):
                 # Strength components
                 imp_score = importance
                 prox_score = max(
-                    1.0 - dist_atr / self.level_proximity_atr, 0.0,
+                    1.0 - dist_atr / self.level_proximity_atr,
+                    0.0,
                 )
                 react_score = min(body_ratio, 1.0)
-                vol_ratio = (
-                    volumes[i] / vol_avg[i]
-                    if vol_avg[i] > 0 else 1.0
-                )
+                vol_ratio = volumes[i] / vol_avg[i] if vol_avg[i] > 0 else 1.0
                 vol_score = min(vol_ratio / 3.0, 1.0)
 
-                score = (
-                    0.35 * imp_score
-                    + 0.30 * prox_score
-                    + 0.20 * react_score
-                    + 0.15 * vol_score
-                )
+                score = 0.35 * imp_score + 0.30 * prox_score + 0.20 * react_score + 0.15 * vol_score
 
                 if score > best_score:
                     best_score = score
