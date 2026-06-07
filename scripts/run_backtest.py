@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """
 Historical backtest — replays MBP-10 data through the exact same
 dashboard pipeline components used in the live system.
@@ -79,7 +80,6 @@ def detect_front_month(conn: duckdb.DuckDBPyConnection, mbp_path: str) -> str:
     return rows[0][0]
 
 
-
 def load_trades_for_date(
     conn: duckdb.DuckDBPyConnection,
     date_str: str,
@@ -131,7 +131,8 @@ class BacktestState:
         self.account_manager = AccountManager()
         self.trade_executor = TradeExecutor(self.account_manager)
         self.position_monitor = PositionMonitor(
-            self.account_manager, self.trade_executor,
+            self.account_manager,
+            self.trade_executor,
         )
 
         # Accounts (same as server.py — 5x Group A, 15pt TP/SL)
@@ -220,9 +221,11 @@ class BacktestState:
                 print(f"      Event ID:   {prediction.event_id[:8]}...")
                 print(f"      Direction:  {prediction.trade_direction.value}")
                 print(f"      Level:      {float(prediction.level_price):.2f}")
-                print(f"      Market:     {mkt_price:.2f}" if mkt_price else "      Market:     N/A")
+                print(
+                    f"      Market:     {mkt_price:.2f}" if mkt_price else "      Market:     N/A"
+                )
                 print(f"      Session:    {prediction.observation.event.session}")
-                print(f"      Features:")
+                print("      Features:")
                 for k, v in prediction.features.items():
                     print(f"        {k}: {v:.4f}")
                 print(f"      Class:      {prediction.predicted_class}")
@@ -233,22 +236,28 @@ class BacktestState:
             self.outcome_tracker.start_tracking(prediction)
 
             # Shadow position for non-executable tradeable_reversal
-            if (not prediction.is_executable
-                    and prediction.predicted_class == "tradeable_reversal"):
-                self.shadow_positions.append({
-                    "event_id": prediction.event_id,
-                    "session": session,
-                    "direction": prediction.trade_direction.value,
-                    "level_price": float(prediction.level_price),
-                    "entry_time": market_time,
-                    "mfe_pts": 0.0,
-                    "mae_pts": 0.0,
-                    "tp15_hit": False, "tp30_hit": False,
-                    "sl15_hit": False, "sl30_hit": False,
-                    "tp15_time": None, "tp30_time": None,
-                    "sl15_time": None, "sl30_time": None,
-                    "resolved_15": False, "resolved_30": False,
-                })
+            if not prediction.is_executable and prediction.predicted_class == "tradeable_reversal":
+                self.shadow_positions.append(
+                    {
+                        "event_id": prediction.event_id,
+                        "session": session,
+                        "direction": prediction.trade_direction.value,
+                        "level_price": float(prediction.level_price),
+                        "entry_time": market_time,
+                        "mfe_pts": 0.0,
+                        "mae_pts": 0.0,
+                        "tp15_hit": False,
+                        "tp30_hit": False,
+                        "sl15_hit": False,
+                        "sl30_hit": False,
+                        "tp15_time": None,
+                        "tp30_time": None,
+                        "sl15_time": None,
+                        "sl30_time": None,
+                        "resolved_15": False,
+                        "resolved_30": False,
+                    }
+                )
 
             # Execute trade if executable
             if prediction.is_executable:
@@ -260,7 +269,9 @@ class BacktestState:
                 # Entry at current market price (the tick that completed
                 # the observation window), NOT the level/touch price
                 # from 5 minutes ago.
-                market_price = Decimal(str(self.latest_price)) if self.latest_price else prediction.level_price
+                market_price = (
+                    Decimal(str(self.latest_price)) if self.latest_price else prediction.level_price
+                )
                 self.trade_executor.on_prediction(
                     prediction=executor_dict,
                     timestamp=market_time,
@@ -336,16 +347,14 @@ def process_trade_tick(state: BacktestState, trade: TradeUpdate) -> None:
     # touches/observations/predictions can open new ones.
     # 3:55 PM ET = 19:55 UTC (during EDT)
     state.position_monitor.check_flatten_time(
-        trade.timestamp, trade.price,
+        trade.timestamp,
+        trade.price,
     )
 
     # Session end: force-resolve remaining predictions
     if not state.session_ended:
         ts_et = trade.timestamp.astimezone(ET)
-        past_flatten = (
-            ts_et.hour > 15
-            or (ts_et.hour == 15 and ts_et.minute >= 55)
-        )
+        past_flatten = ts_et.hour > 15 or (ts_et.hour == 15 and ts_et.minute >= 55)
         if past_flatten:
             state.session_ended = True
             state.outcome_tracker.on_session_end()
@@ -439,10 +448,13 @@ def process_trading_day(
     # ── 3. Compute levels ─────────────────────────────────────
     # Use 09:30 ET as current_time — all overnight sessions complete
     rth_open = datetime.combine(
-        trading_date, time(9, 30), tzinfo=ET,
+        trading_date,
+        time(9, 30),
+        tzinfo=ET,
     ).astimezone(UTC)
     levels = state.level_engine.compute_levels(
-        trading_date, current_time=rth_open,
+        trading_date,
+        current_time=rth_open,
     )
     n_zones = len(state.level_engine.get_active_zones())
 
@@ -511,9 +523,7 @@ def process_trading_day(
     day_pnl = sum(float(t.get("pnl", 0)) for t in state.day_trades)
     day_pnl_pts = sum(float(t.get("pnl_points", 0)) for t in state.day_trades)
 
-    pred_correct = sum(
-        1 for o in state.day_outcomes if o.get("prediction_correct")
-    )
+    pred_correct = sum(1 for o in state.day_outcomes if o.get("prediction_correct"))
     pred_total = len(state.day_outcomes)
 
     result = {
@@ -545,10 +555,21 @@ def process_trading_day(
 
 def _empty_day_result(date_str: str) -> dict:
     return {
-        "date": date_str, "front_month": "", "levels": 0, "zones": 0,
-        "ticks": 0, "signals": 0, "executable": 0, "trades": 0,
-        "wins": 0, "losses": 0, "day_pnl": 0, "day_pnl_pts": 0,
-        "pred_correct": 0, "pred_total": 0, "pred_accuracy": 0,
+        "date": date_str,
+        "front_month": "",
+        "levels": 0,
+        "zones": 0,
+        "ticks": 0,
+        "signals": 0,
+        "executable": 0,
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "day_pnl": 0,
+        "day_pnl_pts": 0,
+        "pred_correct": 0,
+        "pred_total": 0,
+        "pred_accuracy": 0,
         "elapsed_sec": 0,
     }
 
@@ -584,9 +605,7 @@ def print_final_summary(state: BacktestState) -> None:
     total_pnl_pts = sum(float(t.get("pnl_points", 0)) for t in state.all_trades)
     win_rate = total_wins / total_trades if total_trades > 0 else 0
 
-    pred_correct = sum(
-        1 for o in state.all_outcomes if o.get("prediction_correct")
-    )
+    pred_correct = sum(1 for o in state.all_outcomes if o.get("prediction_correct"))
     pred_total = len(state.all_outcomes)
     pred_acc = pred_correct / pred_total if pred_total > 0 else 0
 
@@ -607,21 +626,22 @@ def print_final_summary(state: BacktestState) -> None:
         r = t.get("exit_reason", "unknown")
         reasons[r] = reasons.get(r, 0) + 1
     if reasons:
-        print(f"\n  Exit reasons:")
+        print("\n  Exit reasons:")
         for reason, count in sorted(reasons.items()):
             print(f"    {reason:15s}  {count}")
 
     # Per-account equity curves
-    print(f"\n  --- Per-Account Equity ---\n")
-    print(f"  {'Account':10s}  {'Group':5s}  {'Balance':>12s}  {'Profit':>10s}  "
-          f"{'Tier':>4s}  {'Status':>10s}  {'Trades':>6s}")
-    print(f"  {'-------':10s}  {'-----':5s}  {'-------':>12s}  {'------':>10s}  "
-          f"{'----':>4s}  {'------':>10s}  {'------':>6s}")
+    print("\n  --- Per-Account Equity ---\n")
+    print(
+        f"  {'Account':10s}  {'Group':5s}  {'Balance':>12s}  {'Profit':>10s}  "
+        f"{'Tier':>4s}  {'Status':>10s}  {'Trades':>6s}"
+    )
+    print(
+        f"  {'-------':10s}  {'-----':5s}  {'-------':>12s}  {'------':>10s}  "
+        f"{'----':>4s}  {'------':>10s}  {'------':>6s}"
+    )
     for acct in state.account_manager.get_all_accounts():
-        acct_trades = sum(
-            1 for t in state.all_trades
-            if t.get("account_id") == acct.account_id
-        )
+        acct_trades = sum(1 for t in state.all_trades if t.get("account_id") == acct.account_id)
         print(
             f"  {acct.label:10s}  {acct.group:5s}  "
             f"${float(acct.balance):>11,.2f}  "
@@ -669,14 +689,19 @@ def print_final_summary(state: BacktestState) -> None:
 
     # Monthly P&L breakdown
     if state.daily_results:
-        print(f"\n  --- Monthly P&L Breakdown ---\n")
+        print("\n  --- Monthly P&L Breakdown ---\n")
         months: dict[str, dict] = {}
         for r in state.daily_results:
             month = r["date"][:7]  # YYYY-MM
             if month not in months:
                 months[month] = {
-                    "pnl": 0, "trades": 0, "wins": 0, "losses": 0,
-                    "signals": 0, "executable": 0, "days": 0,
+                    "pnl": 0,
+                    "trades": 0,
+                    "wins": 0,
+                    "losses": 0,
+                    "signals": 0,
+                    "executable": 0,
+                    "days": 0,
                 }
             m = months[month]
             m["pnl"] += r["day_pnl"]
@@ -688,8 +713,10 @@ def print_final_summary(state: BacktestState) -> None:
             if r["ticks"] > 0:
                 m["days"] += 1
 
-        print(f"  {'Month':8s}  {'Days':>4s}  {'Signals':>7s}  {'Exec':>4s}  "
-              f"{'Trades':>6s}  {'W/L':>7s}  {'Win%':>5s}  {'P&L':>12s}")
+        print(
+            f"  {'Month':8s}  {'Days':>4s}  {'Signals':>7s}  {'Exec':>4s}  "
+            f"{'Trades':>6s}  {'W/L':>7s}  {'Win%':>5s}  {'P&L':>12s}"
+        )
         print(f"  {'-' * 65}")
         for month, m in sorted(months.items()):
             wr = m["wins"] / m["trades"] if m["trades"] > 0 else 0
@@ -711,9 +738,11 @@ def print_final_summary(state: BacktestState) -> None:
         f"{'Exec':4s}  {'Rejection Reason'}"
     )
     print(header)
-    print(f"  {'---':>3s}  {'----------':10s}  {'--------':8s}  {'-----':5s}  "
-          f"{'----------':>10s}  {'----------':>10s}  {'------------':12s}  {'-------------------------':25s}  "
-          f"{'----':4s}  {'----------------'}")
+    print(
+        f"  {'---':>3s}  {'----------':10s}  {'--------':8s}  {'-----':5s}  "
+        f"{'----------':>10s}  {'----------':>10s}  {'------------':12s}  {'-------------------------':25s}  "
+        f"{'----':4s}  {'----------------'}"
+    )
 
     for i, p in enumerate(state.all_predictions, 1):
         ts = datetime.fromisoformat(p["timestamp"])
@@ -749,15 +778,18 @@ def print_final_summary(state: BacktestState) -> None:
         )
 
     # ── Signal Breakdown ───────────────────────────────────────
-    print(f"\n  --- Signals by Session ---\n")
+    print("\n  --- Signals by Session ---\n")
     sessions_count: dict[str, int] = {}
     for p in state.all_predictions:
         s = p.get("session", "?")
         sessions_count[s] = sessions_count.get(s, 0) + 1
     for s in ["ny_rth", "london", "asia", "pre_market"]:
         print(f"    {s:15s}  {sessions_count.get(s, 0)}")
-    other_sessions = {k: v for k, v in sessions_count.items()
-                      if k not in ("ny_rth", "london", "asia", "pre_market")}
+    other_sessions = {
+        k: v
+        for k, v in sessions_count.items()
+        if k not in ("ny_rth", "london", "asia", "pre_market")
+    }
     for s, c in sorted(other_sessions.items()):
         print(f"    {s:15s}  {c}")
 
@@ -765,13 +797,13 @@ def print_final_summary(state: BacktestState) -> None:
     rth_preds = [p for p in state.all_predictions if p.get("session") == "ny_rth"]
     non_rth_preds = [p for p in state.all_predictions if p.get("session") != "ny_rth"]
 
-    print(f"\n  --- NY RTH Signals by Predicted Class ---\n")
+    print("\n  --- NY RTH Signals by Predicted Class ---\n")
     for cls in ["tradeable_reversal", "trap_reversal", "aggressive_blowthrough"]:
         count = sum(1 for p in rth_preds if p["predicted_class"] == cls)
         suffix = " (executable)" if cls == "tradeable_reversal" else ""
         print(f"    {cls:25s}  {count}{suffix}")
 
-    print(f"\n  --- Non-RTH Signals by Predicted Class ---\n")
+    print("\n  --- Non-RTH Signals by Predicted Class ---\n")
     for cls in ["tradeable_reversal", "trap_reversal", "aggressive_blowthrough"]:
         count = sum(1 for p in non_rth_preds if p["predicted_class"] == cls)
         suffix = " (would be executable if RTH)" if cls == "tradeable_reversal" else ""
@@ -791,10 +823,12 @@ def print_final_summary(state: BacktestState) -> None:
             f"{'15pt':6s}  {'30pt':6s}  {'Time to Res (15pt)'}"
         )
         print(header)
-        print(f"  {'---':>3s}  {'----------':10s}  {'--------':8s}  {'-----':5s}  "
-              f"{'----------':>10s}  {'------------':12s}  "
-              f"{'------':>6s}  {'------':>6s}  "
-              f"{'------':6s}  {'------':6s}  {'-------------------'}")
+        print(
+            f"  {'---':>3s}  {'----------':10s}  {'--------':8s}  {'-----':5s}  "
+            f"{'----------':>10s}  {'------------':12s}  "
+            f"{'------':>6s}  {'------':>6s}  "
+            f"{'------':6s}  {'------':6s}  {'-------------------'}"
+        )
 
         for i, sp in enumerate(shadow, 1):
             ts_et = sp["entry_time"].astimezone(ET)
@@ -836,12 +870,14 @@ def print_final_summary(state: BacktestState) -> None:
             )
 
         # ── Comparison Summary ──────────────────────────────────
-        print(f"\n  --- Comparison: RTH vs London (Shadow) ---\n")
+        print("\n  --- Comparison: RTH vs London (Shadow) ---\n")
 
         # RTH actual trades (from outcome tracker)
-        rth_exec = [p for p in state.all_predictions
-                    if p.get("session") == "ny_rth"
-                    and p["predicted_class"] == "tradeable_reversal"]
+        rth_exec = [
+            p
+            for p in state.all_predictions
+            if p.get("session") == "ny_rth" and p["predicted_class"] == "tradeable_reversal"
+        ]
         # Match outcomes
         rth_outcomes = []
         for p in rth_exec:
@@ -850,18 +886,18 @@ def print_final_summary(state: BacktestState) -> None:
                     rth_outcomes.append(o)
                     break
 
-        print(f"  RTH Signals (actual trades):")
+        print("  RTH Signals (actual trades):")
         print(f"    Total:       {len(rth_exec)}")
         if rth_outcomes:
             rth_mfes = [o["mfe_points"] for o in rth_outcomes]
             rth_maes = [o["mae_points"] for o in rth_outcomes]
-            print(f"    Win rate:    100.0% (all TP)")
-            print(f"    Avg MFE:     {sum(rth_mfes)/len(rth_mfes):.1f} pts")
-            print(f"    Avg MAE:     {sum(rth_maes)/len(rth_maes):.1f} pts")
+            print("    Win rate:    100.0% (all TP)")
+            print(f"    Avg MFE:     {sum(rth_mfes) / len(rth_mfes):.1f} pts")
+            print(f"    Avg MAE:     {sum(rth_maes) / len(rth_maes):.1f} pts")
 
         # London shadow results
         london_shadow = [sp for sp in shadow if sp["session"] == "london"]
-        print(f"\n  London Signals (simulated):")
+        print("\n  London Signals (simulated):")
         print(f"    Total:       {len(london_shadow)}")
 
         if london_shadow:
@@ -877,8 +913,12 @@ def print_final_summary(state: BacktestState) -> None:
             wr15 = tp15_wins / resolved15 if resolved15 > 0 else 0
             wr30 = tp30_wins / resolved30 if resolved30 > 0 else 0
 
-            print(f"    Win rate (15pt TP/SL):  {wr15:.1%} ({tp15_wins}W/{sl15_losses}L/{open15} open)")
-            print(f"    Win rate (30pt TP/SL):  {wr30:.1%} ({tp30_wins}W/{sl30_losses}L/{open30} open)")
+            print(
+                f"    Win rate (15pt TP/SL):  {wr15:.1%} ({tp15_wins}W/{sl15_losses}L/{open15} open)"
+            )
+            print(
+                f"    Win rate (30pt TP/SL):  {wr30:.1%} ({tp30_wins}W/{sl30_losses}L/{open30} open)"
+            )
             avg_mfe = sum(sp["mfe_pts"] for sp in london_shadow) / len(london_shadow)
             avg_mae = sum(sp["mae_pts"] for sp in london_shadow) / len(london_shadow)
             print(f"    Avg MFE:     {avg_mfe:.1f} pts")
@@ -898,7 +938,7 @@ def print_final_summary(state: BacktestState) -> None:
 
         # All non-RTH shadow
         all_shadow = shadow
-        print(f"\n  All Non-RTH Signals (simulated):")
+        print("\n  All Non-RTH Signals (simulated):")
         print(f"    Total:       {len(all_shadow)}")
         if all_shadow:
             tp15_all = sum(1 for sp in all_shadow if sp["tp15_hit"])
@@ -906,10 +946,12 @@ def print_final_summary(state: BacktestState) -> None:
             open15_all = sum(1 for sp in all_shadow if not sp["resolved_15"])
             res15_all = tp15_all + sl15_all
             wr15_all = tp15_all / res15_all if res15_all > 0 else 0
-            print(f"    Win rate (15pt): {wr15_all:.1%} ({tp15_all}W/{sl15_all}L/{open15_all} open)")
+            print(
+                f"    Win rate (15pt): {wr15_all:.1%} ({tp15_all}W/{sl15_all}L/{open15_all} open)"
+            )
 
         # Combined projection (all 5 accounts @ 15pt TP/SL)
-        print(f"\n  Combined (if both RTH + London traded):")
+        print("\n  Combined (if both RTH + London traded):")
         combined_total = len(rth_exec) + len(london_shadow)
         combined_wins_15 = len(rth_exec) + tp15_wins  # RTH all won
         combined_losses_15 = sl15_losses
@@ -961,9 +1003,7 @@ def main() -> None:
             start_idx = all_dates.index(args.start)
         except ValueError:
             # Find first date >= start
-            start_idx = next(
-                (i for i, d in enumerate(all_dates) if d >= args.start), None
-            )
+            start_idx = next((i for i, d in enumerate(all_dates) if d >= args.start), None)
             if start_idx is None:
                 print(f"ERROR: No dates on or after {args.start}")
                 print(f"  Available: {all_dates[0]} to {all_dates[-1]}")
@@ -973,9 +1013,7 @@ def main() -> None:
 
     if args.end:
         # Find last date <= end
-        end_idx = next(
-            (i for i, d in enumerate(reversed(all_dates)) if d <= args.end), None
-        )
+        end_idx = next((i for i, d in enumerate(reversed(all_dates)) if d <= args.end), None)
         if end_idx is not None:
             end_idx = len(all_dates) - 1 - end_idx
             selected_dates = all_dates[start_idx : end_idx + 1]
@@ -992,8 +1030,8 @@ def main() -> None:
     print(f"\n  Model:    {model_path}")
     n_days = len(selected_dates)
     print(f"  Dates:    {selected_dates[0]} to {selected_dates[-1]} ({n_days} days)")
-    print(f"  Accounts: 5 (all Group A)")
-    print(f"  TP/SL:    15/15pts (all accounts)")
+    print("  Accounts: 5 (all Group A)")
+    print("  TP/SL:    15/15pts (all accounts)")
 
     # ── 2. Create state with all components ───────────────────
     state = BacktestState()
@@ -1006,7 +1044,7 @@ def main() -> None:
     # ── 3. Run day by day ─────────────────────────────────────
     conn = duckdb.connect()
 
-    print(f"\n  --- Daily Results ---\n")
+    print("\n  --- Daily Results ---\n")
     print(
         f"  {'Date':10s}  "
         f"{'Sym':5s}  "

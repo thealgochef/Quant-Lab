@@ -1,3 +1,4 @@
+# ruff: noqa: N806,SIM115
 """DIAGNOSTIC (read-only): enrich the HONEST v3 NY touch population (no model, no gate).
 
 Reproduces the v3 dataset's touch generation (availability-ENFORCED, full-prior-day
@@ -16,6 +17,7 @@ the baseline) -> fast. NO model, NO retrain, NO writes outside scripts/v3_verify
 PYTHONPATH=src.  Usage: python ny_baseline_enrich.py --start-idx I --end-idx J
 (processes sorted dates_used[I:J]; warms prev_full_hl from dates_used[I-1]).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -27,20 +29,27 @@ from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
-
-import strategy_core as sc
 from strategy_core import (
-    Direction, HonestEntryDrop, build_zones, classify_session, detect_touches,
+    Direction,
+    HonestEntryDrop,
+    build_zones,
+    classify_session,
+    detect_touches,
     resolve_honest_outcome,
 )
-from strategy_core.constants import DECISION_OFFSET_MINUTES, RTH_END, NO_RESOLUTION
+from strategy_core.constants import DECISION_OFFSET_MINUTES, NO_RESOLUTION, RTH_END
 
 from alpha_lab.agents.data_infra.ml.config import DashboardUtilityConfig
 from alpha_lab.agents.data_infra.ml.dashboard_utility_builder import (
-    _build_bars_for_date, _compute_levels_for_date, _ensure_et_index,
+    _build_bars_for_date,
+    _compute_levels_for_date,
+    _ensure_et_index,
 )
 from alpha_lab.agents.data_infra.ml.engine_decision import (
-    TRADE_TICK, bars_et_to_engine, levels_to_engine, _trade_price_at,
+    TRADE_TICK,
+    _trade_price_at,
+    bars_et_to_engine,
+    levels_to_engine,
 )
 from alpha_lab.agents.data_infra.tick_store import TickStore
 
@@ -51,9 +60,15 @@ OUTDIR = Path(__file__).parent / "ny_enriched"
 SLIP_PTS = 0.25  # 1 tick adverse per side (verbatim from enrich_dates.py)
 # Model's exact label policy (tp15/sl15/int5/147t) — UNCHANGED, no config edit.
 UTIL = DashboardUtilityConfig(
-    tp_points=15.0, sl_points=15.0, trap_mfe_min=5.0, interaction_window_minutes=5,
-    level_proximity_pts=0.5, bar_type="147t", include_approach_features=False,
-    approach_window_minutes=15)
+    tp_points=15.0,
+    sl_points=15.0,
+    trap_mfe_min=5.0,
+    interaction_window_minutes=5,
+    level_proximity_pts=0.5,
+    bar_type="147t",
+    include_approach_features=False,
+    approach_window_minutes=15,
+)
 
 
 def _honest_scan(direction, entry_price, forward_bars_et, tp, sl, tick):
@@ -133,14 +148,24 @@ def enrich_one(date_str: str, prev_full_hl):
                 "representative_price": float(t.representative_price),
                 # look-ahead self-check within NY (must be False — gate guarantees it).
                 "lookahead": bool(A is not None and t.bar_ts_utc < A),
-                "eligible": None, "drop_reason": None, "label": None,
-                "label_encoded": np.nan, "max_mfe": np.nan, "max_mae": np.nan,
-                "entry_price": np.nan, "honest_exit_reason": None, "honest_gross_pts": np.nan,
+                "eligible": None,
+                "drop_reason": None,
+                "label": None,
+                "label_encoded": np.nan,
+                "max_mfe": np.nan,
+                "max_mae": np.nan,
+                "entry_price": np.nan,
+                "honest_exit_reason": None,
+                "honest_gross_pts": np.nan,
             }
 
             result = resolve_honest_outcome(
-                t, eng_bars, _tp, tick_size=tick,
-                tp_points=UTIL.tp_points, sl_points=UTIL.sl_points,
+                t,
+                eng_bars,
+                _tp,
+                tick_size=tick,
+                tp_points=UTIL.tp_points,
+                sl_points=UTIL.sl_points,
                 trap_mfe_min=UTIL.trap_mfe_min,
                 decision_offset_minutes=UTIL.interaction_window_minutes,
             )
@@ -156,20 +181,25 @@ def enrich_one(date_str: str, prev_full_hl):
             rec["eligible"] = True
             rec["label"] = result.label
             rec["label_encoded"] = (
-                result.label_encoded if result.label_encoded is not None else np.nan)
+                result.label_encoded if result.label_encoded is not None else np.nan
+            )
             rec["max_mfe"] = result.max_mfe
             rec["max_mae"] = result.max_mae
             rec["drop_reason"] = "kept" if result.label != NO_RESOLUTION else "no_resolution"
 
             entry_price = _tp(decision_ts_utc)
             rec["entry_price"] = float(entry_price) if entry_price is not None else np.nan
-            forward = [b for b in eng_bars
-                       if b.close_ts_utc > decision_ts_utc and b.close_ts_utc < rth_cutoff]
+            forward = [
+                b
+                for b in eng_bars
+                if b.close_ts_utc > decision_ts_utc and b.close_ts_utc < rth_cutoff
+            ]
             if entry_price is not None and forward:
                 is_long = t.direction == Direction.LONG
                 slip_entry = entry_price + SLIP_PTS if is_long else entry_price - SLIP_PTS
                 ex_reason, gross = _honest_scan(
-                    t.direction, slip_entry, forward, UTIL.tp_points, UTIL.sl_points, tick)
+                    t.direction, slip_entry, forward, UTIL.tp_points, UTIL.sl_points, tick
+                )
                 rec["honest_exit_reason"] = ex_reason
                 rec["honest_gross_pts"] = gross
             rows.append(rec)

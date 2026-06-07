@@ -16,15 +16,16 @@ Usage:
 
 from __future__ import annotations
 
+import contextlib
 import gc
 import os
 import re
 import sys
-import tempfile
 import zipfile
 from pathlib import Path
 
 import databento as db
+import pandas as pd
 
 # ── Config ──────────────────────────────────────────────────────────
 SYMBOL = "NQ"
@@ -76,13 +77,19 @@ def process_zip(zip_path: Path) -> None:
 
         if out_path.exists():
             size_mb = out_path.stat().st_size / 1024 / 1024
-            print(f"  [{i}/{len(dbn_files)}] EXISTS ({size_mb:.1f} MB): {date_str}/{schema_filename}")
+            print(
+                f"  [{i}/{len(dbn_files)}] EXISTS ({size_mb:.1f} MB): {date_str}/{schema_filename}"
+            )
             skipped += 1
             continue
 
         info = zf.getinfo(name)
         size_mb = info.file_size / 1024 / 1024
-        print(f"  [{i}/{len(dbn_files)}] Processing {date_str} ({size_mb:.1f} MB compressed)...", end="", flush=True)
+        print(
+            f"  [{i}/{len(dbn_files)}] Processing {date_str} ({size_mb:.1f} MB compressed)...",
+            end="",
+            flush=True,
+        )
 
         try:
             # Use a persistent temp dir to avoid Windows file locking issues
@@ -178,8 +185,7 @@ def process_zip(zip_path: Path) -> None:
     # Show summary of available dates
     if (DATA_DIR / SYMBOL).exists():
         dates = sorted(
-            d.name for d in (DATA_DIR / SYMBOL).iterdir()
-            if d.is_dir() and any(d.glob("*.parquet"))
+            d.name for d in (DATA_DIR / SYMBOL).iterdir() if d.is_dir() and any(d.glob("*.parquet"))
         )
         print(f"\nAvailable dates for {SYMBOL}: {len(dates)}")
         if dates:
@@ -188,10 +194,8 @@ def process_zip(zip_path: Path) -> None:
 
 def _safe_remove(path: Path) -> None:
     """Remove a file, ignoring errors (Windows file locking)."""
-    try:
+    with contextlib.suppress(Exception):
         os.remove(path)
-    except Exception:
-        pass
 
 
 if __name__ == "__main__":

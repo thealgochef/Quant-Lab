@@ -1,3 +1,4 @@
+# ruff: noqa: E501,SIM115
 """AUDIT: reproduce the 33-fold walk-forward OOS for NQ_20260602_232808 and compute the
 honest edge (B2/F).  READ-ONLY: trains throwaway fold models in memory, touches nothing.
 
@@ -11,6 +12,7 @@ STEP B  score the FULL entered population (kept + no_resolution, from enrich_dat
 
 PYTHONPATH=src.
 """
+
 from __future__ import annotations
 
 import glob
@@ -23,14 +25,24 @@ import pandas as pd
 from scipy.stats import spearmanr
 
 from alpha_lab.agents.data_infra.ml.config import (
-    DashboardUtilityConfig, MLPipelineConfig, ModelConfig, WalkForwardConfig)
-from alpha_lab.agents.data_infra.ml.walk_forward import WalkForwardSplitter
+    DashboardUtilityConfig,
+    MLPipelineConfig,
+    ModelConfig,
+    WalkForwardConfig,
+)
 from alpha_lab.agents.data_infra.ml.model_trainer import ExtremaModelTrainer
+from alpha_lab.agents.data_infra.ml.walk_forward import WalkForwardSplitter
 
 STORE = "C:/Users/gonza/Documents/Claude-Quant-Lab/data/databento/NQ"
 ENRICHED = Path(__file__).parent / "enriched"
-FEATS = ["int_time_beyond_level", "int_time_within_2pts", "int_absorption_ratio",
-         "app_avg_trade_size", "app_large_trade_vol_pct", "app_max_spread"]
+FEATS = [
+    "int_time_beyond_level",
+    "int_time_within_2pts",
+    "int_absorption_ratio",
+    "app_avg_trade_size",
+    "app_large_trade_vol_pct",
+    "app_max_spread",
+]
 POINT_VALUE = 20.0
 COMMISSION_RT = (2.14 + 0.50) * 2.0  # $5.28
 COMMISSION_PTS = COMMISSION_RT / POINT_VALUE
@@ -38,13 +50,28 @@ COMMISSION_PTS = COMMISSION_RT / POINT_VALUE
 CFG = MLPipelineConfig(
     training_mode="dashboard_utility",
     walk_forward=WalkForwardConfig(train_days=30, test_days=7, gap_days=1, expanding=False),
-    model=ModelConfig(iterations=500, depth=4, learning_rate=0.03, loss_function="MultiClass",
-                      auto_class_weights="Balanced", rfecv_enabled=False, rfecv_min_features=5),
+    model=ModelConfig(
+        iterations=500,
+        depth=4,
+        learning_rate=0.03,
+        loss_function="MultiClass",
+        auto_class_weights="Balanced",
+        rfecv_enabled=False,
+        rfecv_min_features=5,
+    ),
     dashboard_utility=DashboardUtilityConfig(
-        tp_points=15.0, sl_points=15.0, trap_mfe_min=5.0, interaction_window_minutes=5,
-        level_proximity_pts=0.5, bar_type="147t", include_approach_features=True,
-        approach_window_minutes=15),
-    tick_size=0.25, instrument="NQ")
+        tp_points=15.0,
+        sl_points=15.0,
+        trap_mfe_min=5.0,
+        interaction_window_minutes=5,
+        level_proximity_pts=0.5,
+        bar_type="147t",
+        include_approach_features=True,
+        approach_window_minutes=15,
+    ),
+    tick_size=0.25,
+    instrument="NQ",
+)
 
 
 def load_labeled_384():
@@ -63,7 +90,11 @@ def train_folds(valid):
     valid = valid.reset_index(drop=True)
     features = valid[FEATS]
     y = valid["label_encoded"].astype(int)
-    ts = pd.to_datetime(valid["timestamp"]) if "timestamp" in valid else pd.to_datetime(valid["event_ts"])
+    ts = (
+        pd.to_datetime(valid["timestamp"])
+        if "timestamp" in valid
+        else pd.to_datetime(valid["event_ts"])
+    )
     splits = WalkForwardSplitter(CFG.walk_forward).split(ts)
 
     fw_min = max(5, CFG.labeling.forward_window // 500)
@@ -102,8 +133,10 @@ def train_folds(valid):
 def confusion(oos):
     yt = (oos["label_encoded"].astype(int) == 0).astype(int).values
     yp = (oos["raw_pred"].astype(int) == 0).astype(int).values
-    tp = int(((yt == 1) & (yp == 1)).sum()); fp = int(((yt == 0) & (yp == 1)).sum())
-    tn = int(((yt == 0) & (yp == 0)).sum()); fn = int(((yt == 1) & (yp == 0)).sum())
+    tp = int(((yt == 1) & (yp == 1)).sum())
+    fp = int(((yt == 0) & (yp == 1)).sum())
+    tn = int(((yt == 0) & (yp == 0)).sum())
+    fn = int(((yt == 1) & (yp == 0)).sum())
     return dict(tp=tp, fp=fp, tn=tn, fn=fn)
 
 
@@ -114,14 +147,16 @@ def honest_block(t, label):
         return {"label": label, "n": 0}
     gp = t["honest_gross_pts"].astype(float).values
     net = gp - COMMISSION_PTS
-    wins = gp[gp > 0]; losses = gp[gp < 0]
+    wins = gp[gp > 0]
+    losses = gp[gp < 0]
     boot = []
     rng = np.random.default_rng(42)
     for _ in range(10000):
         boot.append(net[rng.integers(0, n, n)].mean())
     ci = [float(np.percentile(boot, 2.5)), float(np.percentile(boot, 97.5))]
     return {
-        "label": label, "n": int(n),
+        "label": label,
+        "n": int(n),
         "hit_rate": float((gp > 0).mean()),
         "exit_reasons": t["honest_exit_reason"].value_counts().to_dict(),
         "expectancy_gross_pts": float(gp.mean()),
@@ -141,7 +176,8 @@ def main():
     splits, models, oos, fimp, n_purged = train_folds(valid)
     cm = confusion(oos)
     out["reproduction"] = {
-        "n_oos": len(oos), "confusion": cm,
+        "n_oos": len(oos),
+        "confusion": cm,
         "precision": cm["tp"] / (cm["tp"] + cm["fp"]),
         "recall": cm["tp"] / (cm["tp"] + cm["fn"]),
         "accuracy": (cm["tp"] + cm["tn"]) / len(oos),
@@ -156,16 +192,23 @@ def main():
     tt = []
     for thr in [0.5, 0.6, 0.7, 0.8, 0.9]:
         m = pr >= thr
-        tt.append({"threshold": thr, "n": int(m.sum()), "coverage": float(m.mean()),
-                   "precision": float(yt[m].mean()) if m.sum() else 0.0,
-                   "exp_15_15_pts": float(15 * (2 * yt[m].mean() - 1)) if m.sum() else 0.0})
+        tt.append(
+            {
+                "threshold": thr,
+                "n": int(m.sum()),
+                "coverage": float(m.mean()),
+                "precision": float(yt[m].mean()) if m.sum() else 0.0,
+                "exp_15_15_pts": float(15 * (2 * yt[m].mean() - 1)) if m.sum() else 0.0,
+            }
+        )
     out["threshold_table_reproduced"] = tt
 
     # E3 feature stability
     fs = []
     for i in range(len(fimp)):
         for j in range(i + 1, len(fimp)):
-            a = [fimp[i].get(f, 0.0) for f in FEATS]; b = [fimp[j].get(f, 0.0) for f in FEATS]
+            a = [fimp[i].get(f, 0.0) for f in FEATS]
+            b = [fimp[j].get(f, 0.0) for f in FEATS]
             rho, _ = spearmanr(a, b)
             if np.isfinite(rho):
                 fs.append(rho)
@@ -173,21 +216,29 @@ def main():
 
     # E4 Brier baseline
     base = yt.mean()
-    out["brier"] = {"model": float(np.mean((pr - yt) ** 2)),
-                    "base_rate": float(base),
-                    "baseline_constant_baserate": float(base * (1 - base) ** 2 + (1 - base) * base ** 2)}
+    out["brier"] = {
+        "model": float(np.mean((pr - yt) ** 2)),
+        "base_rate": float(base),
+        "baseline_constant_baserate": float(base * (1 - base) ** 2 + (1 - base) * base**2),
+    }
 
     # D4 fold precision dist (reproduced)
     fps = []
-    for f, g in oos.groupby("fold"):
+    for _f, g in oos.groupby("fold"):
         ytf = (g["label_encoded"].astype(int) == 0).astype(int).values
         ypf = (g["raw_pred"].astype(int) == 0).astype(int).values
-        d = ((ytf == 1) & (ypf == 1)).sum(); dn = ((ytf == 0) & (ypf == 1)).sum()
+        d = ((ytf == 1) & (ypf == 1)).sum()
+        dn = ((ytf == 0) & (ypf == 1)).sum()
         fps.append(d / (d + dn) if (d + dn) > 0 else 0.0)
     fps = np.array(fps)
-    out["fold_precision_repro"] = {"mean": float(fps.mean()), "median": float(np.median(fps)),
-                                   "std": float(np.std(fps)), "below_0.5": int((fps < 0.5).sum()),
-                                   "le_0.5": int((fps <= 0.5).sum()), "n": len(fps)}
+    out["fold_precision_repro"] = {
+        "mean": float(fps.mean()),
+        "median": float(np.median(fps)),
+        "std": float(np.std(fps)),
+        "below_0.5": int((fps < 0.5).sum()),
+        "le_0.5": int((fps <= 0.5).sum()),
+        "n": len(fps),
+    }
 
     # ---- STEP B: score full entered population from enrichment ----
     efiles = sorted(glob.glob(str(ENRICHED / "*.parquet")))
@@ -206,10 +257,12 @@ def main():
         infold = np.full(len(entered), -1)
         evts = entered["event_ts"]
         for fold, (model, t0, t1) in models.items():
-            t0u = pd.Timestamp(t0); t1u = pd.Timestamp(t1)
+            t0u = pd.Timestamp(t0)
+            t1u = pd.Timestamp(t1)
             if t0u.tz is None:
                 # align tz
-                t0u = t0u.tz_localize(evts.dt.tz); t1u = t1u.tz_localize(evts.dt.tz)
+                t0u = t0u.tz_localize(evts.dt.tz)
+                t1u = t1u.tz_localize(evts.dt.tz)
             m = (evts >= t0u) & (evts <= t1u)
             if m.any():
                 classes = list(np.asarray(model.classes_).astype(int))
@@ -229,24 +282,42 @@ def main():
         rth_resolved = rth[rth["drop_reason"] != "no_resolution"]
         out["rth"] = {
             "n_entered_rth": len(rth),
-            "rth_base_rate_resolved": float((rth_resolved["label_encoded"] == 0).mean()) if len(rth_resolved) else None,
+            "rth_base_rate_resolved": float((rth_resolved["label_encoded"] == 0).mean())
+            if len(rth_resolved)
+            else None,
             "n_gated_rth_0.70": len(gated_rth),
-            "gated_rth_precision_resolved": float((gated_rth[gated_rth["drop_reason"] != "no_resolution"]["label_encoded"] == 0).mean()) if len(gated_rth[gated_rth["drop_reason"] != "no_resolution"]) else None,
+            "gated_rth_precision_resolved": float(
+                (
+                    gated_rth[gated_rth["drop_reason"] != "no_resolution"]["label_encoded"] == 0
+                ).mean()
+            )
+            if len(gated_rth[gated_rth["drop_reason"] != "no_resolution"])
+            else None,
             "n_gated_rth_no_resolution": int((gated_rth["drop_reason"] == "no_resolution").sum()),
         }
         out["F_headline"] = {
             "per_trade_taken_RTH_gated": honest_block(gated_rth, "RTH gate0.70 per-trade-taken"),
-            "resolved_only_RTH_gated": honest_block(gated_rth[gated_rth["drop_reason"] != "no_resolution"], "RTH gate0.70 resolved-only"),
+            "resolved_only_RTH_gated": honest_block(
+                gated_rth[gated_rth["drop_reason"] != "no_resolution"], "RTH gate0.70 resolved-only"
+            ),
             "baseline_all_RTH_entered_nogate": honest_block(rth, "RTH all entered no-gate"),
-            "blended_gated_allsession": honest_block(gated_all, "ALL-session gate0.70 per-trade-taken"),
+            "blended_gated_allsession": honest_block(
+                gated_all, "ALL-session gate0.70 per-trade-taken"
+            ),
         }
-        out["cost_scheme"] = {"slippage_ticks_per_side": 1.0, "slippage_pts_rt": 0.5,
-                              "commission_rt_usd": COMMISSION_RT, "commission_pts": COMMISSION_PTS,
-                              "point_value": POINT_VALUE}
+        out["cost_scheme"] = {
+            "slippage_ticks_per_side": 1.0,
+            "slippage_pts_rt": 0.5,
+            "commission_rt_usd": COMMISSION_RT,
+            "commission_pts": COMMISSION_PTS,
+            "point_value": POINT_VALUE,
+        }
     else:
         out["enriched_dates"] = 0
 
-    Path(__file__).parent.joinpath("oos_results.json").write_text(json.dumps(out, indent=2, default=str))
+    Path(__file__).parent.joinpath("oos_results.json").write_text(
+        json.dumps(out, indent=2, default=str)
+    )
     print(json.dumps(out, indent=2, default=str))
 
 

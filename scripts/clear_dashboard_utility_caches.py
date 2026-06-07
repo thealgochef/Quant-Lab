@@ -12,27 +12,39 @@ from pathlib import Path
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="List/delete dashboard utility cache parquet files")
-    parser.add_argument("--data-dir", default="data/databento/NQ", help="Symbol root containing YYYY-MM-DD directories")
+    parser = argparse.ArgumentParser(
+        description="List/delete dashboard utility cache parquet files"
+    )
+    parser.add_argument(
+        "--data-dir",
+        default="data/databento/NQ",
+        help="Symbol root containing YYYY-MM-DD directories",
+    )
     parser.add_argument("--start", default=None, help="Optional start date YYYY-MM-DD")
     parser.add_argument("--end", default=None, help="Optional end date YYYY-MM-DD")
-    parser.add_argument("--hash", dest="config_hash", default=None, help="Optional exact config hash, e.g. b46a2e31")
-    parser.add_argument("--delete", action="store_true", help="Actually delete matched cache files; default is dry-run")
+    parser.add_argument(
+        "--hash", dest="config_hash", default=None, help="Optional exact config hash, e.g. b46a2e31"
+    )
+    parser.add_argument(
+        "--delete",
+        action="store_true",
+        help="Actually delete matched cache files; default is dry-run",
+    )
     return parser.parse_args()
 
 
 def _matches_date(name: str, start: str | None, end: str | None) -> bool:
     if start is not None and name < start:
         return False
-    if end is not None and name > end:
-        return False
-    return True
+    return not (end is not None and name > end)
 
 
 def main() -> None:
     args = _parse_args()
     data_dir = Path(args.data_dir)
-    pattern = f"ml_utility_{args.config_hash}.parquet" if args.config_hash else "ml_utility_*.parquet"
+    pattern = (
+        f"ml_utility_{args.config_hash}.parquet" if args.config_hash else "ml_utility_*.parquet"
+    )
 
     matches: list[Path] = []
     for day_dir in sorted(p for p in data_dir.iterdir() if p.is_dir()):

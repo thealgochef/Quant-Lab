@@ -1,8 +1,10 @@
 """Trace per-account trailing DD, safety net, and liquidation threshold."""
+
 from __future__ import annotations
 
-import pandas as pd
 from zoneinfo import ZoneInfo
+
+import pandas as pd
 
 ET = ZoneInfo("America/New_York")
 
@@ -30,17 +32,23 @@ print("=" * 120)
 print("  TRAILING DRAWDOWN TIMELINE — Account A1")
 print("=" * 120)
 print()
-print(f"  {'#':>3s}  {'Date':10s}  {'Dir':5s}  {'Result':>6s}  "
-      f"{'P&L':>10s}  {'Balance':>12s}  {'Peak Bal':>12s}  "
-      f"{'Liq Thresh':>12s}  {'Safety Net':>10s}  {'Buffer':>10s}")
-print(f"  {'---':>3s}  {'----------':10s}  {'-----':5s}  {'------':>6s}  "
-      f"{'----------':>10s}  {'------------':>12s}  {'------------':>12s}  "
-      f"{'------------':>12s}  {'----------':>10s}  {'----------':>10s}")
+print(
+    f"  {'#':>3s}  {'Date':10s}  {'Dir':5s}  {'Result':>6s}  "
+    f"{'P&L':>10s}  {'Balance':>12s}  {'Peak Bal':>12s}  "
+    f"{'Liq Thresh':>12s}  {'Safety Net':>10s}  {'Buffer':>10s}"
+)
+print(
+    f"  {'---':>3s}  {'----------':10s}  {'-----':5s}  {'------':>6s}  "
+    f"{'----------':>10s}  {'------------':>12s}  {'------------':>12s}  "
+    f"{'------------':>12s}  {'----------':>10s}  {'----------':>10s}"
+)
 
 # Starting state
-print(f"  {'':>3s}  {'START':10s}  {'':5s}  {'':>6s}  "
-      f"{'':>10s}  ${balance:>11,.2f}  ${peak:>11,.2f}  "
-      f"${liq_threshold:>11,.2f}  {'NO':>10s}  ${balance - liq_threshold:>9,.2f}")
+print(
+    f"  {'':>3s}  {'START':10s}  {'':5s}  {'':>6s}  "
+    f"{'':>10s}  ${balance:>11,.2f}  ${peak:>11,.2f}  "
+    f"${liq_threshold:>11,.2f}  {'NO':>10s}  ${balance - liq_threshold:>9,.2f}"
+)
 
 safety_net_date = None
 min_buffer = balance - liq_threshold
@@ -70,17 +78,20 @@ for i, (_, r) in enumerate(t1.iterrows(), 1):
     blown = "BLOWN!" if balance <= liq_threshold else ""
 
     exit_dt = r["exit_dt"].astimezone(ET)
-    print(f"  {i:3d}  {exit_dt.strftime('%Y-%m-%d')}  {r['direction']:5s}  "
-          f"{r['exit_reason']:>6s}  "
-          f"${pnl:>+9,.2f}  ${balance:>11,.2f}  ${peak:>11,.2f}  "
-          f"${liq_threshold:>11,.2f}  "
-          f"{'LOCKED':>10s}" if safety_net else
-          f"  {i:3d}  {exit_dt.strftime('%Y-%m-%d')}  {r['direction']:5s}  "
-          f"{r['exit_reason']:>6s}  "
-          f"${pnl:>+9,.2f}  ${balance:>11,.2f}  ${peak:>11,.2f}  "
-          f"${liq_threshold:>11,.2f}  "
-          f"{'trailing':>10s}",
-          f"  ${buffer:>9,.2f}  {blown}")
+    print(
+        f"  {i:3d}  {exit_dt.strftime('%Y-%m-%d')}  {r['direction']:5s}  "
+        f"{r['exit_reason']:>6s}  "
+        f"${pnl:>+9,.2f}  ${balance:>11,.2f}  ${peak:>11,.2f}  "
+        f"${liq_threshold:>11,.2f}  "
+        f"{'LOCKED':>10s}"
+        if safety_net
+        else f"  {i:3d}  {exit_dt.strftime('%Y-%m-%d')}  {r['direction']:5s}  "
+        f"{r['exit_reason']:>6s}  "
+        f"${pnl:>+9,.2f}  ${balance:>11,.2f}  ${peak:>11,.2f}  "
+        f"${liq_threshold:>11,.2f}  "
+        f"{'trailing':>10s}",
+        f"  ${buffer:>9,.2f}  {blown}",
+    )
 
 # Summary
 print()
@@ -99,7 +110,9 @@ print(f"  Final peak:             ${peak:,.2f}")
 print(f"  Final liq threshold:    ${liq_threshold:,.2f}")
 print(f"  Final buffer:           ${balance - liq_threshold:,.2f}")
 print()
-print(f"  Minimum buffer:         ${min_buffer:,.2f} (trade #{min_buffer_trade} on {min_buffer_date})")
+print(
+    f"  Minimum buffer:         ${min_buffer:,.2f} (trade #{min_buffer_trade} on {min_buffer_date})"
+)
 print(f"  Account blown?          {'YES' if balance <= liq_threshold else 'NO'}")
 
 # August analysis
@@ -135,7 +148,7 @@ for _, r in t1.iterrows():
                 liq2 = SAFETY_NET_LIQUIDATION
 
 if aug_start_balance:
-    print(f"  At start of August:")
+    print("  At start of August:")
     print(f"    Balance:              ${aug_start_balance:,.2f}")
     print(f"    Liquidation:          ${aug_start_liq:,.2f}")
     print(f"    Safety net:           {'LOCKED' if aug_start_sn else 'trailing'}")
@@ -144,12 +157,14 @@ if aug_start_balance:
     if aug_start_sn:
         print(f"  With safety net LOCKED at ${SAFETY_NET_LIQUIDATION:,.2f}:")
         print(f"    The account could lose ${aug_start_balance - SAFETY_NET_LIQUIDATION:,.2f}")
-        print(f"    before being blown — NOT just $2,000!")
+        print("    before being blown — NOT just $2,000!")
         print(f"    That's {(aug_start_balance - SAFETY_NET_LIQUIDATION) / 300:.0f} consecutive")
-        print(f"    15-pt SL hits before liquidation.")
+        print("    15-pt SL hits before liquidation.")
     else:
-        print(f"  Safety net NOT yet reached at start of August.")
-        print(f"  Trailing DD still active — buffer is only ${aug_start_balance - aug_start_liq:,.2f}")
+        print("  Safety net NOT yet reached at start of August.")
+        print(
+            f"  Trailing DD still active — buffer is only ${aug_start_balance - aug_start_liq:,.2f}"
+        )
 
 print()
 print("=" * 120)

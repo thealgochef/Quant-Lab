@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """AUDIT enrichment (READ-ONLY): per-touch full population for model NQ_20260602_232808.
 
 Reuses PRODUCTION functions verbatim (engine_decision / dashboard_utility_builder /
@@ -12,9 +13,11 @@ reconciles to the production 384.  Writes one parquet per date (resumable).
 CQL requires PYTHONPATH=src.  Run in date-sharded chunks for parallelism; each shard
 warms 3 prior trading days so prev-day NY H/L (PDH/PDL) is correct.
 """
+
 from __future__ import annotations
 
 import argparse
+import contextlib
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -22,20 +25,34 @@ from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
-
-import strategy_core as sc
-from strategy_core import Direction, HonestEntryDrop, build_zones, detect_touches, resolve_honest_outcome
-from strategy_core.constants import DECISION_OFFSET_MINUTES, FLATTEN_TIME, RTH_END, NO_RESOLUTION
+from strategy_core import (
+    Direction,
+    HonestEntryDrop,
+    build_zones,
+    detect_touches,
+    resolve_honest_outcome,
+)
+from strategy_core.constants import DECISION_OFFSET_MINUTES, NO_RESOLUTION, RTH_END
 
 from alpha_lab.agents.data_infra.ml.config import (
-    DashboardUtilityConfig, MLPipelineConfig, ModelConfig, WalkForwardConfig,
+    DashboardUtilityConfig,
+    MLPipelineConfig,
+    ModelConfig,
+    WalkForwardConfig,
 )
 from alpha_lab.agents.data_infra.ml.dashboard_utility_builder import (
-    _build_bars_for_date, _compute_levels_for_date, _ensure_et_index, _get_session_hl_for_date,
+    _build_bars_for_date,
+    _compute_levels_for_date,
+    _ensure_et_index,
+    _get_session_hl_for_date,
 )
 from alpha_lab.agents.data_infra.ml.engine_decision import (
-    TRADE_TICK, bars_et_to_engine, levels_to_engine,
-    compute_interaction_features_engine, compute_approach_features_engine, _trade_price_at,
+    TRADE_TICK,
+    _trade_price_at,
+    bars_et_to_engine,
+    compute_approach_features_engine,
+    compute_interaction_features_engine,
+    levels_to_engine,
 )
 from alpha_lab.agents.data_infra.tick_store import TickStore
 
@@ -49,13 +66,28 @@ SLIP_PTS = 0.25  # 1 tick adverse per side
 THIS_CONFIG = MLPipelineConfig(
     training_mode="dashboard_utility",
     walk_forward=WalkForwardConfig(train_days=30, test_days=7, gap_days=1, expanding=False),
-    model=ModelConfig(iterations=500, depth=4, learning_rate=0.03, loss_function="MultiClass",
-                      auto_class_weights="Balanced", rfecv_enabled=False, rfecv_min_features=5),
+    model=ModelConfig(
+        iterations=500,
+        depth=4,
+        learning_rate=0.03,
+        loss_function="MultiClass",
+        auto_class_weights="Balanced",
+        rfecv_enabled=False,
+        rfecv_min_features=5,
+    ),
     dashboard_utility=DashboardUtilityConfig(
-        tp_points=15.0, sl_points=15.0, trap_mfe_min=5.0, interaction_window_minutes=5,
-        level_proximity_pts=0.5, bar_type="147t", include_approach_features=True,
-        approach_window_minutes=15),
-    tick_size=0.25, instrument="NQ")
+        tp_points=15.0,
+        sl_points=15.0,
+        trap_mfe_min=5.0,
+        interaction_window_minutes=5,
+        level_proximity_pts=0.5,
+        bar_type="147t",
+        include_approach_features=True,
+        approach_window_minutes=15,
+    ),
+    tick_size=0.25,
+    instrument="NQ",
+)
 
 
 def _in_ny_rth(ts_et: pd.Timestamp) -> bool:
@@ -97,7 +129,9 @@ def enrich_one_date(date_str, config, prev_state):
     util = config.dashboard_utility
     bars = _build_bars_for_date(DATA_DIR, SYMBOL, date_str, util)
     if bars.empty:
-        return pd.DataFrame(), _get_session_hl_for_date(DATA_DIR, SYMBOL, date_str, util, *prev_state)
+        return pd.DataFrame(), _get_session_hl_for_date(
+            DATA_DIR, SYMBOL, date_str, util, *prev_state
+        )
     bars_et = _ensure_et_index(bars)
     levels = _compute_levels_for_date(bars_et, date_str, *prev_state)
     new_state = _get_session_hl_for_date(DATA_DIR, SYMBOL, date_str, util, *prev_state)
@@ -135,24 +169,43 @@ def enrich_one_date(date_str, config, prev_state):
                 "representative_price": float(touch.representative_price),
                 "session_rth": bool(_in_ny_rth(bar_ts_et)),
                 "decision_rth": bool(_in_ny_rth(decision_ts_et)),
-                "drop_reason": None, "label": None, "label_encoded": np.nan,
-                "max_mfe": np.nan, "max_mae": np.nan,
-                "entry_price": np.nan, "honest_exit_reason": None, "honest_gross_pts": np.nan,
-                "int_time_beyond_level": np.nan, "int_time_within_2pts": np.nan,
-                "int_absorption_ratio": np.nan, "app_avg_trade_size": np.nan,
-                "app_large_trade_vol_pct": np.nan, "app_max_spread": np.nan,
+                "drop_reason": None,
+                "label": None,
+                "label_encoded": np.nan,
+                "max_mfe": np.nan,
+                "max_mae": np.nan,
+                "entry_price": np.nan,
+                "honest_exit_reason": None,
+                "honest_gross_pts": np.nan,
+                "int_time_beyond_level": np.nan,
+                "int_time_within_2pts": np.nan,
+                "int_absorption_ratio": np.nan,
+                "app_avg_trade_size": np.nan,
+                "app_large_trade_vol_pct": np.nan,
+                "app_max_spread": np.nan,
             }
 
             result = resolve_honest_outcome(
-                touch, eng_bars, _tp_for, tick_size=tick,
-                tp_points=util.tp_points, sl_points=util.sl_points,
-                trap_mfe_min=util.trap_mfe_min, decision_offset_minutes=util.interaction_window_minutes,
+                touch,
+                eng_bars,
+                _tp_for,
+                tick_size=tick,
+                tp_points=util.tp_points,
+                sl_points=util.sl_points,
+                trap_mfe_min=util.trap_mfe_min,
+                decision_offset_minutes=util.interaction_window_minutes,
             )
 
             # Features (computed regardless, needed to score no_resolution touches too).
             feats = compute_interaction_features_engine(
-                touch, DATA_DIR, SYMBOL, util, price_source="trade", tick_size=tick,
-                window_minutes=util.interaction_window_minutes)
+                touch,
+                DATA_DIR,
+                SYMBOL,
+                util,
+                price_source="trade",
+                tick_size=tick,
+                window_minutes=util.interaction_window_minutes,
+            )
             appr = compute_approach_features_engine(touch, DATA_DIR, SYMBOL, util)
             if feats:
                 rec.update(feats)
@@ -166,18 +219,25 @@ def enrich_one_date(date_str, config, prev_state):
 
             # OutcomeResult (entered touch).
             rec["label"] = result.label
-            rec["label_encoded"] = result.label_encoded if result.label_encoded is not None else np.nan
+            rec["label_encoded"] = (
+                result.label_encoded if result.label_encoded is not None else np.nan
+            )
             rec["max_mfe"] = result.max_mfe
             rec["max_mae"] = result.max_mae
             entry_price = _tp_for(decision_ts_utc)
             rec["entry_price"] = float(entry_price) if entry_price is not None else np.nan
             # Honest trade scan from slipped entry on (decision, cutoff) bars.
-            forward = [b for b in eng_bars if b.close_ts_utc > decision_ts_utc and b.close_ts_utc < rth_cutoff]
+            forward = [
+                b
+                for b in eng_bars
+                if b.close_ts_utc > decision_ts_utc and b.close_ts_utc < rth_cutoff
+            ]
             if entry_price is not None and forward:
                 is_long = touch.direction == Direction.LONG
                 slip_entry = entry_price + SLIP_PTS if is_long else entry_price - SLIP_PTS
-                ex_reason, gross = _honest_scan(touch.direction, slip_entry, forward,
-                                                util.tp_points, util.sl_points, tick)
+                ex_reason, gross = _honest_scan(
+                    touch.direction, slip_entry, forward, util.tp_points, util.sl_points, tick
+                )
                 rec["honest_exit_reason"] = ex_reason
                 rec["honest_gross_pts"] = gross
 
@@ -232,10 +292,8 @@ def main():
             df, prev_state = enrich_one_date(ds, THIS_CONFIG, prev_state)
         except Exception as e:
             sys.stderr.write(f"FAIL {ds}: {e}\n")
-            try:
+            with contextlib.suppress(Exception):
                 prev_state = _get_session_hl_for_date(DATA_DIR, SYMBOL, ds, util, *prev_state)
-            except Exception:
-                pass
             continue
         if ds in target:
             df.to_parquet(out_path, index=False)

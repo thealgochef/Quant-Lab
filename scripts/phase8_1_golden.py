@@ -1,3 +1,4 @@
+# ruff: noqa: N812
 """Phase 8.1 golden capture / equivalence — honest-entry orchestration relocation.
 
 Captures the FULL per-touch honest-entry orchestration record (decision_ts, drop
@@ -19,6 +20,7 @@ is the real one), then for each touch records the orchestration outcome. resolve
 is the SAME pure function in both modes; the ONLY thing under test is the orchestration
 (decision_ts / flatten / cutoff / entry / forward selection) relocation.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -34,17 +36,12 @@ for p in (SC_SRC, CQL_SRC):
         sys.path.insert(0, p)
 
 import pandas as pd  # noqa: E402
-
 import strategy_core as sc  # noqa: E402
 from strategy_core import build_zones, detect_touches, resolve_outcome  # noqa: E402
-from strategy_core.constants import (  # noqa: E402
-    DECISION_OFFSET_MINUTES,
-    FLATTEN_TIME,
-)
 
-from alpha_lab.agents.data_infra.ml.config import DashboardUtilityConfig  # noqa: E402
 from alpha_lab.agents.data_infra.ml import dashboard_utility_builder as B  # noqa: E402
 from alpha_lab.agents.data_infra.ml import engine_decision as ED  # noqa: E402
+from alpha_lab.agents.data_infra.ml.config import DashboardUtilityConfig  # noqa: E402
 from alpha_lab.agents.data_infra.tick_store import TickStore  # noqa: E402
 
 DATA_DIR = Path(r"C:/Users/gonza/Documents/Trade-Dashboard/data/databento")
@@ -65,9 +62,7 @@ def _prev_ny_hl(day: str, cfg) -> tuple[float, float] | None:
             break
     if prev is None:
         return None
-    ny, _asia, _london = B._get_session_hl_for_date(
-        DATA_DIR, SYMBOL, prev, cfg, None, None, None
-    )
+    ny, _asia, _london = B._get_session_hl_for_date(DATA_DIR, SYMBOL, prev, cfg, None, None, None)
     return ny
 
 
@@ -130,31 +125,61 @@ def _capture_day_golden(day, bars_et, touches, cfg, entry_store):
         decision_ts_utc = ED._to_utc_dt(decision_ts_et)
 
         if ED._at_or_after_flatten(decision_ts_et):
-            recs.append(_record(touch, drop=True, reason="flatten",
-                                decision_ts_utc=decision_ts_utc, entry_price=None,
-                                forward_bars=[], outcome=None))
+            recs.append(
+                _record(
+                    touch,
+                    drop=True,
+                    reason="flatten",
+                    decision_ts_utc=decision_ts_utc,
+                    entry_price=None,
+                    forward_bars=[],
+                    outcome=None,
+                )
+            )
             continue
         if decision_ts_et >= rth_cutoff:
-            recs.append(_record(touch, drop=True, reason="cutoff",
-                                decision_ts_utc=decision_ts_utc, entry_price=None,
-                                forward_bars=[], outcome=None))
+            recs.append(
+                _record(
+                    touch,
+                    drop=True,
+                    reason="cutoff",
+                    decision_ts_utc=decision_ts_utc,
+                    entry_price=None,
+                    forward_bars=[],
+                    outcome=None,
+                )
+            )
             continue
 
         entry_price = ED._trade_price_at(entry_store, SYMBOL, decision_ts_utc)
         if entry_price is None:
-            recs.append(_record(touch, drop=True, reason="no_fill",
-                                decision_ts_utc=decision_ts_utc, entry_price=None,
-                                forward_bars=[], outcome=None))
+            recs.append(
+                _record(
+                    touch,
+                    drop=True,
+                    reason="no_fill",
+                    decision_ts_utc=decision_ts_utc,
+                    entry_price=None,
+                    forward_bars=[],
+                    outcome=None,
+                )
+            )
             continue
 
-        forward = bars_et[
-            (bars_et.index > decision_ts_et) & (bars_et.index < rth_cutoff)
-        ]
+        forward = bars_et[(bars_et.index > decision_ts_et) & (bars_et.index < rth_cutoff)]
         forward_bars = ED.bars_et_to_engine(forward, td, ED.TRADE_TICK)
         if not forward_bars:
-            recs.append(_record(touch, drop=True, reason="no_forward",
-                                decision_ts_utc=decision_ts_utc, entry_price=entry_price,
-                                forward_bars=[], outcome=None))
+            recs.append(
+                _record(
+                    touch,
+                    drop=True,
+                    reason="no_forward",
+                    decision_ts_utc=decision_ts_utc,
+                    entry_price=entry_price,
+                    forward_bars=[],
+                    outcome=None,
+                )
+            )
             continue
 
         outcome = resolve_outcome(
@@ -166,9 +191,17 @@ def _capture_day_golden(day, bars_et, touches, cfg, entry_store):
             sl_points=cfg.sl_points,
             trap_mfe_min=cfg.trap_mfe_min,
         )
-        recs.append(_record(touch, drop=False, reason=None,
-                            decision_ts_utc=decision_ts_utc, entry_price=entry_price,
-                            forward_bars=forward_bars, outcome=outcome))
+        recs.append(
+            _record(
+                touch,
+                drop=False,
+                reason=None,
+                decision_ts_utc=decision_ts_utc,
+                entry_price=entry_price,
+                forward_bars=forward_bars,
+                outcome=outcome,
+            )
+        )
     return recs
 
 
@@ -194,26 +227,36 @@ def _capture_day_engine(day, bars_et, touches, cfg, entry_store):
             decision_offset_minutes=cfg.interaction_window_minutes,
         )
         if isinstance(res, sc.HonestEntryDrop):
-            recs.append(_record(touch, drop=True, reason=res.reason,
-                                decision_ts_utc=res.decision_ts_utc,
-                                entry_price=res.entry_price,
-                                forward_bars=[], outcome=None))
+            recs.append(
+                _record(
+                    touch,
+                    drop=True,
+                    reason=res.reason,
+                    decision_ts_utc=res.decision_ts_utc,
+                    entry_price=res.entry_price,
+                    forward_bars=[],
+                    outcome=None,
+                )
+            )
         else:
             # recompute forward bounds the same way the engine selected them
-            decision_ts_utc = touch.bar_ts_utc + timedelta(
-                minutes=cfg.interaction_window_minutes
-            )
+            decision_ts_utc = touch.bar_ts_utc + timedelta(minutes=cfg.interaction_window_minutes)
             rth_cutoff = pd.Timestamp(f"{day} 16:15:00", tz=_ET)
             decision_ts_et = pd.Timestamp(decision_ts_utc).tz_convert(_ET)
-            forward = bars_et[
-                (bars_et.index > decision_ts_et) & (bars_et.index < rth_cutoff)
-            ]
+            forward = bars_et[(bars_et.index > decision_ts_et) & (bars_et.index < rth_cutoff)]
             forward_bars = ED.bars_et_to_engine(forward, td, ED.TRADE_TICK)
             entry_price = ED._trade_price_at(entry_store, SYMBOL, decision_ts_utc)
-            recs.append(_record(touch, drop=False, reason=None,
-                                decision_ts_utc=decision_ts_utc,
-                                entry_price=entry_price,
-                                forward_bars=forward_bars, outcome=res))
+            recs.append(
+                _record(
+                    touch,
+                    drop=False,
+                    reason=None,
+                    decision_ts_utc=decision_ts_utc,
+                    entry_price=entry_price,
+                    forward_bars=forward_bars,
+                    outcome=res,
+                )
+            )
     return recs
 
 
@@ -241,8 +284,9 @@ def run(mode: str):
         n_drop += sum(1 for r in recs if r["drop"])
     out = OUT_DIR / (f"{mode}.json")
     out.write_text(json.dumps(all_recs, indent=2, sort_keys=True))
-    print(f"[{mode}] wrote {out}: n_touches={n_touch} n_dropped={n_drop} "
-          f"n_traded={n_touch - n_drop}")
+    print(
+        f"[{mode}] wrote {out}: n_touches={n_touch} n_dropped={n_drop} n_traded={n_touch - n_drop}"
+    )
     return all_recs
 
 
@@ -259,7 +303,7 @@ def compare():
         if len(gr) != len(er):
             diffs.append(f"{day}: touch count {len(gr)} vs {len(er)}")
             continue
-        for i, (a, b) in enumerate(zip(gr, er)):
+        for i, (a, b) in enumerate(zip(gr, er, strict=False)):
             n_compared += 1
             if a.get("drop"):
                 n_drop += 1
@@ -277,8 +321,7 @@ def compare():
         print(f"total diffs: {len(diffs)}")
     else:
         print("BYTE_IDENTICAL=YES")
-    print(f"n_touches_compared={n_compared} n_dropped={n_drop} "
-          f"n_traded={n_compared - n_drop}")
+    print(f"n_touches_compared={n_compared} n_dropped={n_drop} n_traded={n_compared - n_drop}")
     return not diffs
 
 

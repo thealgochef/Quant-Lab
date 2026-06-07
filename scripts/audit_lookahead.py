@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """
 Look-ahead bias audit -- 7 tests on the backtest pipeline.
 
@@ -12,7 +13,6 @@ Usage:
 from __future__ import annotations
 
 import sys
-import time as time_mod
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -45,6 +45,7 @@ WARMUP_DATE = "2025-06-02"  # Prior day for level computation
 
 # -- Instrumented state with audit hooks ----------------------
 
+
 class AuditState:
     """BacktestState with diagnostic hooks for all 7 audit tests."""
 
@@ -60,7 +61,8 @@ class AuditState:
         self.account_manager = AccountManager()
         self.trade_executor = TradeExecutor(self.account_manager)
         self.position_monitor = PositionMonitor(
-            self.account_manager, self.trade_executor,
+            self.account_manager,
+            self.trade_executor,
         )
 
         self.account_manager.add_account("A1", Decimal("147"), Decimal("85"), "A")
@@ -114,16 +116,18 @@ class AuditState:
             # TEST 2: Record observation window tick timestamps
             trade_timestamps = [t.timestamp for t in window.trades_accumulated]
             bbo_timestamps = [b.timestamp for b in window.bbo_accumulated]
-            self.obs_audit_data.append({
-                "event_id": window.event.event_id[:8],
-                "touch_ts": window.event.timestamp,
-                "window_start": window.start_time,
-                "window_end": window.end_time,
-                "trade_timestamps": trade_timestamps,
-                "bbo_timestamps": bbo_timestamps,
-                "n_trades": len(trade_timestamps),
-                "n_bbos": len(bbo_timestamps),
-            })
+            self.obs_audit_data.append(
+                {
+                    "event_id": window.event.event_id[:8],
+                    "touch_ts": window.event.timestamp,
+                    "window_start": window.start_time,
+                    "window_end": window.end_time,
+                    "trade_timestamps": trade_timestamps,
+                    "bbo_timestamps": bbo_timestamps,
+                    "n_trades": len(trade_timestamps),
+                    "n_bbos": len(bbo_timestamps),
+                }
+            )
 
             self.prediction_engine.predict(window)
 
@@ -136,19 +140,21 @@ class AuditState:
             market_time = prediction.observation.end_time
 
             # TEST 3: Record exact features passed to model
-            self.pred_audit_data.append({
-                "event_id": prediction.event_id[:8],
-                "features": dict(prediction.features),
-                "predicted_class": prediction.predicted_class,
-                "is_executable": prediction.is_executable,
-                "observation_n_trades": len(prediction.observation.trades_accumulated),
-                "observation_n_bbos": len(prediction.observation.bbo_accumulated),
-                "model_input_keys": list(prediction.features.keys()),
-                "window_start": prediction.observation.start_time,
-                "window_end": prediction.observation.end_time,
-                "level_price": float(prediction.level_price),
-                "direction": prediction.trade_direction.value,
-            })
+            self.pred_audit_data.append(
+                {
+                    "event_id": prediction.event_id[:8],
+                    "features": dict(prediction.features),
+                    "predicted_class": prediction.predicted_class,
+                    "is_executable": prediction.is_executable,
+                    "observation_n_trades": len(prediction.observation.trades_accumulated),
+                    "observation_n_bbos": len(prediction.observation.bbo_accumulated),
+                    "model_input_keys": list(prediction.features.keys()),
+                    "window_start": prediction.observation.start_time,
+                    "window_end": prediction.observation.end_time,
+                    "level_price": float(prediction.level_price),
+                    "direction": prediction.trade_direction.value,
+                }
+            )
 
             # Start outcome tracking
             # TEST 5: Record when tracking starts
@@ -163,7 +169,9 @@ class AuditState:
                     "level_price": prediction.level_price,
                 }
                 # TEST 4: Record position open time and prices
-                market_price = Decimal(str(self.latest_price)) if self.latest_price else prediction.level_price
+                market_price = (
+                    Decimal(str(self.latest_price)) if self.latest_price else prediction.level_price
+                )
                 self.position_open_timestamps.append(market_time)
                 self.entry_price_audit = {
                     "level_price": float(prediction.level_price),
@@ -196,6 +204,7 @@ class AuditState:
 
 
 # -- Data loading (same as run_backtest.py) -------------------
+
 
 def detect_front_month(conn, mbp_path: str) -> str:
     rows = conn.execute(f"""
@@ -245,17 +254,17 @@ def process_trade_tick(state: AuditState, trade: TradeUpdate) -> None:
     state.observation_manager.on_trade(trade)
 
     # TEST 4: Track ticks checked by position monitor
-    has_positions_before = any(
-        a.has_position for a in state.account_manager.get_all_accounts()
-    )
+    has_positions_before = any(a.has_position for a in state.account_manager.get_all_accounts())
     if has_positions_before:
         _tpsl_tick_count += 1
         if _tpsl_tick_count <= 5:  # Record first 5 ticks
-            state.tpsl_ticks_checked.append({
-                "tick_num": _tpsl_tick_count,
-                "timestamp": trade.timestamp,
-                "price": float(trade.price),
-            })
+            state.tpsl_ticks_checked.append(
+                {
+                    "tick_num": _tpsl_tick_count,
+                    "timestamp": trade.timestamp,
+                    "price": float(trade.price),
+                }
+            )
     state.position_monitor.on_trade(trade)
 
     # TEST 5: Track ticks checked by outcome tracker
@@ -281,6 +290,7 @@ def process_bbo_tick(state: AuditState, bbo: BBOUpdate) -> None:
 
 
 # -- Main audit -----------------------------------------------
+
 
 def main() -> None:
     global _tpsl_tick_count, _outcome_tick_count
@@ -324,16 +334,22 @@ def main() -> None:
         ask_price = Decimal(str(round(float(row["ask_price"]), 2)))
 
         bbo = BBOUpdate(
-            timestamp=ts_utc, bid_price=bid_price, bid_size=int(row["bid_size"]),
-            ask_price=ask_price, ask_size=int(row["ask_size"]),
+            timestamp=ts_utc,
+            bid_price=bid_price,
+            bid_size=int(row["bid_size"]),
+            ask_price=ask_price,
+            ask_size=int(row["ask_size"]),
             symbol=front_month_warmup,
         )
         state.price_buffer.add_bbo(bbo)
 
         side = "BUY" if row["side"] == "A" else "SELL"
         trade = TradeUpdate(
-            timestamp=ts_utc, price=trade_price, size=int(row["size"]),
-            aggressor_side=side, symbol=front_month_warmup,
+            timestamp=ts_utc,
+            price=trade_price,
+            size=int(row["size"]),
+            aggressor_side=side,
+            symbol=front_month_warmup,
         )
         state.price_buffer.add_trade(trade)
 
@@ -354,9 +370,7 @@ def main() -> None:
     # Check what's in the price buffer BEFORE computing levels
     with state.price_buffer._lock:
         if state.price_buffer._trades:
-            state.price_buffer_latest_at_level_compute = (
-                state.price_buffer._trades[-1].timestamp
-            )
+            state.price_buffer_latest_at_level_compute = state.price_buffer._trades[-1].timestamp
         else:
             state.price_buffer_latest_at_level_compute = None
 
@@ -364,11 +378,14 @@ def main() -> None:
     # TEST 1: Compute levels and record sources
     # ----------------------------------------------------------
     rth_open = datetime.combine(
-        trading_date, time(9, 30), tzinfo=ET,
+        trading_date,
+        time(9, 30),
+        tzinfo=ET,
     ).astimezone(UTC)
 
     levels = state.level_engine.compute_levels(
-        trading_date, current_time=rth_open,
+        trading_date,
+        current_time=rth_open,
     )
 
     level_audit = {
@@ -378,16 +395,18 @@ def main() -> None:
         "levels": [],
     }
     for lv in levels:
-        level_audit["levels"].append({
-            "type": lv.level_type.value,
-            "price": float(lv.price),
-            "side": lv.side.value,
-            "available_from_utc": lv.available_from.isoformat(),
-            "available_from_et": lv.available_from.astimezone(ET).strftime(
-                "%Y-%m-%d %H:%M:%S ET"
-            ),
-            "source_session_date": str(lv.source_session_date),
-        })
+        level_audit["levels"].append(
+            {
+                "type": lv.level_type.value,
+                "price": float(lv.price),
+                "side": lv.side.value,
+                "available_from_utc": lv.available_from.isoformat(),
+                "available_from_et": lv.available_from.astimezone(ET).strftime(
+                    "%Y-%m-%d %H:%M:%S ET"
+                ),
+                "source_session_date": str(lv.source_session_date),
+            }
+        )
     state.level_audit_data = level_audit
 
     # -- Load and replay audit day -----------------------------
@@ -418,16 +437,22 @@ def main() -> None:
         ask_price = Decimal(str(round(float(row["ask_price"]), 2)))
 
         bbo = BBOUpdate(
-            timestamp=ts_utc, bid_price=bid_price, bid_size=int(row["bid_size"]),
-            ask_price=ask_price, ask_size=int(row["ask_size"]),
+            timestamp=ts_utc,
+            bid_price=bid_price,
+            bid_size=int(row["bid_size"]),
+            ask_price=ask_price,
+            ask_size=int(row["ask_size"]),
             symbol=front_month,
         )
         process_bbo_tick(state, bbo)
 
         side = "BUY" if row["side"] == "A" else "SELL"
         trade = TradeUpdate(
-            timestamp=ts_utc, price=trade_price, size=int(row["size"]),
-            aggressor_side=side, symbol=front_month,
+            timestamp=ts_utc,
+            price=trade_price,
+            size=int(row["size"]),
+            aggressor_side=side,
+            symbol=front_month,
         )
         process_trade_tick(state, trade)
 
@@ -482,7 +507,7 @@ def main() -> None:
     if test1_pass:
         print(f"\n  >>> TEST 1: PASS -- All {len(la['levels'])} levels use only past data")
     else:
-        print(f"\n  >>> TEST 1: FAIL -- Some levels use future data!")
+        print("\n  >>> TEST 1: FAIL -- Some levels use future data!")
     results.append(("Test 1: Level computation", test1_pass))
 
     # ----------------------------------------------------------
@@ -501,9 +526,15 @@ def main() -> None:
         # Find the executable signal (or first signal)
         for obs in state.obs_audit_data:
             print(f"\n  Observation: {obs['event_id']}")
-            print(f"    Touch timestamp:  {obs['touch_ts'].astimezone(ET).strftime('%H:%M:%S.%f ET')}")
-            print(f"    Window start:     {obs['window_start'].astimezone(ET).strftime('%H:%M:%S.%f ET')}")
-            print(f"    Window end:       {obs['window_end'].astimezone(ET).strftime('%H:%M:%S.%f ET')}")
+            print(
+                f"    Touch timestamp:  {obs['touch_ts'].astimezone(ET).strftime('%H:%M:%S.%f ET')}"
+            )
+            print(
+                f"    Window start:     {obs['window_start'].astimezone(ET).strftime('%H:%M:%S.%f ET')}"
+            )
+            print(
+                f"    Window end:       {obs['window_end'].astimezone(ET).strftime('%H:%M:%S.%f ET')}"
+            )
             print(f"    Trades accumulated: {obs['n_trades']}")
             print(f"    BBOs accumulated:   {obs['n_bbos']}")
 
@@ -534,18 +565,18 @@ def main() -> None:
 
             # Print first 5 and last 5 trade timestamps
             if obs["trade_timestamps"]:
-                print(f"\n    First 5 trade timestamps:")
+                print("\n    First 5 trade timestamps:")
                 for ts in obs["trade_timestamps"][:5]:
                     print(f"      {ts.astimezone(ET).strftime('%H:%M:%S.%f ET')}")
                 if len(obs["trade_timestamps"]) > 5:
-                    print(f"    Last 5 trade timestamps:")
+                    print("    Last 5 trade timestamps:")
                     for ts in obs["trade_timestamps"][-5:]:
                         print(f"      {ts.astimezone(ET).strftime('%H:%M:%S.%f ET')}")
 
     if test2_pass:
-        print(f"\n  >>> TEST 2: PASS -- All ticks within observation windows")
+        print("\n  >>> TEST 2: PASS -- All ticks within observation windows")
     else:
-        print(f"\n  >>> TEST 2: FAIL -- Ticks found outside observation windows!")
+        print("\n  >>> TEST 2: FAIL -- Ticks found outside observation windows!")
     results.append(("Test 2: Observation window bounds", test2_pass))
 
     # ----------------------------------------------------------
@@ -564,32 +595,34 @@ def main() -> None:
         print(f"    Executable:      {pred['is_executable']}")
         print(f"    Direction:       {pred['direction']}")
         print(f"    Level price:     {pred['level_price']:.2f}")
-        print(f"    Window:          {pred['window_start'].astimezone(ET).strftime('%H:%M:%S ET')} -> "
-              f"{pred['window_end'].astimezone(ET).strftime('%H:%M:%S ET')}")
+        print(
+            f"    Window:          {pred['window_start'].astimezone(ET).strftime('%H:%M:%S ET')} -> "
+            f"{pred['window_end'].astimezone(ET).strftime('%H:%M:%S ET')}"
+        )
         print(f"    Trades in window:  {pred['observation_n_trades']}")
         print(f"    BBOs in window:    {pred['observation_n_bbos']}")
         print(f"    Feature keys:    {pred['model_input_keys']}")
-        print(f"    Feature values:")
-        for k, v in pred['features'].items():
+        print("    Feature values:")
+        for k, v in pred["features"].items():
             print(f"      {k}: {v:.6f}")
 
-        actual_keys = set(pred['model_input_keys'])
+        actual_keys = set(pred["model_input_keys"])
         if actual_keys != expected_keys:
             print(f"    FAIL: Unexpected feature keys: {actual_keys - expected_keys}")
             test3_pass = False
         else:
-            print(f"    Feature keys match expected 3 features: OK")
+            print("    Feature keys match expected 3 features: OK")
 
-        if len(pred['features']) != 3:
+        if len(pred["features"]) != 3:
             print(f"    FAIL: Expected 3 features, got {len(pred['features'])}")
             test3_pass = False
         else:
-            print(f"    Exactly 3 features passed to model: OK")
+            print("    Exactly 3 features passed to model: OK")
 
     if test3_pass:
-        print(f"\n  >>> TEST 3: PASS -- Model receives only 3 observation window features")
+        print("\n  >>> TEST 3: PASS -- Model receives only 3 observation window features")
     else:
-        print(f"\n  >>> TEST 3: FAIL -- Model receives unexpected data!")
+        print("\n  >>> TEST 3: FAIL -- Model receives unexpected data!")
     results.append(("Test 3: Model input isolation", test3_pass))
 
     # ----------------------------------------------------------
@@ -606,15 +639,19 @@ def main() -> None:
         test4_pass = True
     else:
         entry_time = state.position_open_timestamps[0]
-        print(f"\n  Position opened at (window end): {entry_time.astimezone(ET).strftime('%H:%M:%S.%f ET')}")
+        print(
+            f"\n  Position opened at (window end): {entry_time.astimezone(ET).strftime('%H:%M:%S.%f ET')}"
+        )
 
         # Entry price comparison
         epa = state.entry_price_audit
         if epa:
-            print(f"\n  Entry price verification:")
+            print("\n  Entry price verification:")
             print(f"    Level price (touch, 5 min ago):  {epa['level_price']:.2f}")
-            print(f"    Market price (at window close):   {epa['market_price_at_window_close']:.2f}")
-            diff = abs(epa['market_price_at_window_close'] - epa['level_price'])
+            print(
+                f"    Market price (at window close):   {epa['market_price_at_window_close']:.2f}"
+            )
+            diff = abs(epa["market_price_at_window_close"] - epa["level_price"])
             print(f"    Difference:                       {diff:.2f} pts")
             print(f"    Direction:                        {epa['direction']}")
 
@@ -623,18 +660,18 @@ def main() -> None:
             for acct in state.account_manager.get_all_accounts():
                 if acct.has_position:
                     actual_entry = float(acct.current_position.entry_price)
-                    matches_market = abs(actual_entry - epa['market_price_at_window_close']) < 0.01
-                    matches_level = abs(actual_entry - epa['level_price']) < 0.01
+                    matches_market = abs(actual_entry - epa["market_price_at_window_close"]) < 0.01
+                    matches_level = abs(actual_entry - epa["level_price"]) < 0.01
                     print(f"\n    Account {acct.label} actual entry: {actual_entry:.2f}")
                     if matches_market and not matches_level:
-                        print(f"      -> Matches MARKET price: OK (honest entry)")
+                        print("      -> Matches MARKET price: OK (honest entry)")
                     elif matches_level and not matches_market:
-                        print(f"      -> Matches LEVEL price: FAIL (stale entry)")
+                        print("      -> Matches LEVEL price: FAIL (stale entry)")
                         test4_pass = False
                     elif matches_market and matches_level:
-                        print(f"      -> Level == Market (no slippage this time)")
+                        print("      -> Level == Market (no slippage this time)")
                     else:
-                        print(f"      -> Matches neither?! FAIL")
+                        print("      -> Matches neither?! FAIL")
                         test4_pass = False
                     break  # All accounts have same entry
 
@@ -645,14 +682,16 @@ def main() -> None:
             ok = "OK" if ts >= entry_time else "FAIL"
             if ts < entry_time:
                 test4_pass = False
-            print(f"    Tick #{tick['tick_num']}: "
-                  f"{ts.astimezone(ET).strftime('%H:%M:%S.%f ET')}  "
-                  f"price={tick['price']:.2f}  {relation} entry  [{ok}]")
+            print(
+                f"    Tick #{tick['tick_num']}: "
+                f"{ts.astimezone(ET).strftime('%H:%M:%S.%f ET')}  "
+                f"price={tick['price']:.2f}  {relation} entry  [{ok}]"
+            )
 
     if test4_pass:
-        print(f"\n  >>> TEST 4: PASS -- All TP/SL checks are on ticks at/after window completion")
+        print("\n  >>> TEST 4: PASS -- All TP/SL checks are on ticks at/after window completion")
     else:
-        print(f"\n  >>> TEST 4: FAIL -- TP/SL checked on ticks before entry!")
+        print("\n  >>> TEST 4: FAIL -- TP/SL checked on ticks before entry!")
     results.append(("Test 4: TP/SL temporal ordering", test4_pass))
 
     # ----------------------------------------------------------
@@ -672,21 +711,25 @@ def main() -> None:
             eid_short = eid[:8]
 
             print(f"\n  Event: {eid_short}")
-            print(f"    Tracking started (window end): {start_ts.astimezone(ET).strftime('%H:%M:%S.%f ET')}")
+            print(
+                f"    Tracking started (window end): {start_ts.astimezone(ET).strftime('%H:%M:%S.%f ET')}"
+            )
 
             if first_tick:
                 relation = "AT/AFTER" if first_tick >= start_ts else "BEFORE"
                 ok = "OK" if first_tick >= start_ts else "FAIL"
                 if first_tick < start_ts:
                     test5_pass = False
-                print(f"    First tick processed:          {first_tick.astimezone(ET).strftime('%H:%M:%S.%f ET')}  {relation}  [{ok}]")
+                print(
+                    f"    First tick processed:          {first_tick.astimezone(ET).strftime('%H:%M:%S.%f ET')}  {relation}  [{ok}]"
+                )
             else:
-                print(f"    No ticks processed (resolved at session end)")
+                print("    No ticks processed (resolved at session end)")
 
     if test5_pass:
-        print(f"\n  >>> TEST 5: PASS -- Outcome tracker only processes ticks after prediction")
+        print("\n  >>> TEST 5: PASS -- Outcome tracker only processes ticks after prediction")
     else:
-        print(f"\n  >>> TEST 5: FAIL -- Outcome tracker uses ticks before prediction!")
+        print("\n  >>> TEST 5: FAIL -- Outcome tracker uses ticks before prediction!")
     results.append(("Test 5: Outcome tracker timing", test5_pass))
 
     # ----------------------------------------------------------
@@ -714,24 +757,24 @@ def main() -> None:
         print(f"  FAIL: {violations} monotonicity violations!")
         i, prev, curr = first_violation
         print(f"  First violation at index {i}:")
-        print(f"    tick[{i-1}] = {prev.astimezone(ET).strftime('%H:%M:%S.%f ET')}")
+        print(f"    tick[{i - 1}] = {prev.astimezone(ET).strftime('%H:%M:%S.%f ET')}")
         print(f"    tick[{i}]   = {curr.astimezone(ET).strftime('%H:%M:%S.%f ET')}")
     else:
         print(f"  Monotonicity check: 0 violations in {n_ticks:,} ticks")
 
     # Print first 10 and last 10
-    print(f"\n  First 10 ticks:")
+    print("\n  First 10 ticks:")
     for i, ts in enumerate(all_tick_timestamps[:10]):
         print(f"    [{i:5d}] {ts.astimezone(ET).strftime('%Y-%m-%d %H:%M:%S.%f ET')}")
 
-    print(f"\n  Last 10 ticks:")
+    print("\n  Last 10 ticks:")
     for i, ts in enumerate(all_tick_timestamps[-10:], n_ticks - 10):
         print(f"    [{i:5d}] {ts.astimezone(ET).strftime('%Y-%m-%d %H:%M:%S.%f ET')}")
 
     if test6_pass:
         print(f"\n  >>> TEST 6: PASS -- All {n_ticks:,} ticks in strictly chronological order")
     else:
-        print(f"\n  >>> TEST 6: FAIL -- Tick replay is not chronological!")
+        print("\n  >>> TEST 6: FAIL -- Tick replay is not chronological!")
     results.append(("Test 6: Tick replay ordering", test6_pass))
 
     # ----------------------------------------------------------
@@ -750,8 +793,10 @@ def main() -> None:
         test7_pass = True
     else:
         latest_et = latest_in_buffer.astimezone(ET)
-        audit_date_start = datetime.combine(
-            date.fromisoformat(AUDIT_DATE), time(0, 0), tzinfo=ET,
+        datetime.combine(
+            date.fromisoformat(AUDIT_DATE),
+            time(0, 0),
+            tzinfo=ET,
         )
         # The latest tick should be from BEFORE the audit date's
         # earliest possible session (Asia starts at 18:00 ET prev day)
@@ -761,12 +806,16 @@ def main() -> None:
 
         print(f"\n  At level computation time (before loading {AUDIT_DATE} ticks):")
         print(f"    Latest tick in price buffer: {latest_et.strftime('%Y-%m-%d %H:%M:%S.%f ET')}")
-        print(f"    RTH open for {AUDIT_DATE}:    {rth_open.astimezone(ET).strftime('%Y-%m-%d %H:%M:%S ET')}")
+        print(
+            f"    RTH open for {AUDIT_DATE}:    {rth_open.astimezone(ET).strftime('%Y-%m-%d %H:%M:%S ET')}"
+        )
         print(f"    Latest tick is BEFORE RTH open? {'YES' if is_past else 'NO'}")
 
         # Check that no tick from audit date exists in buffer
-        audit_day_midnight_utc = datetime.combine(
-            date.fromisoformat(AUDIT_DATE), time(0, 0), tzinfo=UTC,
+        datetime.combine(
+            date.fromisoformat(AUDIT_DATE),
+            time(0, 0),
+            tzinfo=UTC,
         )
 
         # For the audit, we want to verify that the latest trade in the
@@ -787,7 +836,7 @@ def main() -> None:
         # point is: no ticks from the AUDIT day's RTH were loaded.
         if latest_in_buffer >= rth_open:
             test7_pass = False
-            print(f"\n  FAIL: Price buffer contains data at/after RTH open!")
+            print("\n  FAIL: Price buffer contains data at/after RTH open!")
         else:
             print(f"\n  Price buffer contains only data BEFORE {AUDIT_DATE} RTH open: OK")
 
@@ -801,17 +850,21 @@ def main() -> None:
 
         hl = state.price_buffer.get_high_low_in_range(rth_start_utc, rth_end_utc)
         if hl:
-            print(f"\n  PDH/PDL source data verification:")
-            print(f"    Query range: {rth_start_et.strftime('%Y-%m-%d %H:%M ET')} to "
-                  f"{rth_end_et.strftime('%Y-%m-%d %H:%M ET')}")
+            print("\n  PDH/PDL source data verification:")
+            print(
+                f"    Query range: {rth_start_et.strftime('%Y-%m-%d %H:%M ET')} to "
+                f"{rth_end_et.strftime('%Y-%m-%d %H:%M ET')}"
+            )
             print(f"    High: {float(hl[0]):.2f}")
             print(f"    Low:  {float(hl[1]):.2f}")
             print(f"    Both from {prev_day} RTH (completed before {AUDIT_DATE}): OK")
 
     if test7_pass:
-        print(f"\n  >>> TEST 7: PASS -- Price buffer only contains past data at level computation time")
+        print(
+            "\n  >>> TEST 7: PASS -- Price buffer only contains past data at level computation time"
+        )
     else:
-        print(f"\n  >>> TEST 7: FAIL -- Price buffer contains future data!")
+        print("\n  >>> TEST 7: FAIL -- Price buffer contains future data!")
     results.append(("Test 7: Price buffer isolation", test7_pass))
 
     # ==========================================================

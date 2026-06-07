@@ -1,3 +1,4 @@
+# ruff: noqa: B007,N806
 """
 Train the canonical 3-feature CatBoost compatibility model.
 
@@ -28,6 +29,8 @@ FEATURE_COLS = [
     "int_time_within_2pts",
     "int_absorption_ratio",
 ]
+
+actual_predicted = "Actual \\ Predicted"
 
 CLASS_NAMES = {
     0: "tradeable_reversal",
@@ -95,13 +98,15 @@ def create_purged_walk_forward_folds(
             start += step_days
             continue
 
-        folds.append({
-            "fold": fold_idx,
-            "train_dates": train_dates,
-            "test_dates": test_dates,
-            "train_idx": train_idx,
-            "test_idx": test_idx,
-        })
+        folds.append(
+            {
+                "fold": fold_idx,
+                "train_dates": train_dates,
+                "test_dates": test_dates,
+                "train_idx": train_idx,
+                "test_idx": test_idx,
+            }
+        )
         fold_idx += 1
         start += step_days
 
@@ -129,9 +134,9 @@ def main() -> None:
     print(f"  Shape: {df.shape}")
     print(f"  Trading days: {df['date'].nunique()}")
     print(f"  Date range: {df['date'].min()} to {df['date'].max()}")
-    print(f"  Label distribution:")
+    print("  Label distribution:")
     for label, cnt in df["label"].value_counts().sort_index().items():
-        print(f"    {label:30s}  {cnt:4d}  ({100*cnt/len(df):.1f}%)")
+        print(f"    {label:30s}  {cnt:4d}  ({100 * cnt / len(df):.1f}%)")
 
     # Handle NaN in absorption_ratio (4 events)
     nan_count = df[FEATURE_COLS].isna().any(axis=1).sum()
@@ -145,8 +150,10 @@ def main() -> None:
 
     # 2. Create purged walk-forward folds
     folds = create_purged_walk_forward_folds(df)
-    print(f"\n  Created {len(folds)} purged walk-forward folds "
-          f"(train={TRAIN_DAYS}d, purge={PURGE_DAYS}d, test={TEST_DAYS}d, step={STEP_DAYS}d)")
+    print(
+        f"\n  Created {len(folds)} purged walk-forward folds "
+        f"(train={TRAIN_DAYS}d, purge={PURGE_DAYS}d, test={TEST_DAYS}d, step={STEP_DAYS}d)"
+    )
 
     if not folds:
         raise ValueError("No valid folds created — not enough data")
@@ -159,10 +166,14 @@ def main() -> None:
     print(f"\n{'=' * 72}")
     print("  WALK-FORWARD TRAINING (purged, 3-feature dashboard model)")
     print(f"{'=' * 72}")
-    print(f"\n  {'Fold':>4}  {'N_train':>7}  {'N_test':>6}  "
-          f"{'Accuracy':>8}  {'Rev Prec':>8}  {'BT Recall':>9}  {'Test Dates'}")
-    print(f"  {'----':>4}  {'-------':>7}  {'------':>6}  "
-          f"{'--------':>8}  {'--------':>8}  {'---------':>9}  {'----------'}")
+    print(
+        f"\n  {'Fold':>4}  {'N_train':>7}  {'N_test':>6}  "
+        f"{'Accuracy':>8}  {'Rev Prec':>8}  {'BT Recall':>9}  {'Test Dates'}"
+    )
+    print(
+        f"  {'----':>4}  {'-------':>7}  {'------':>6}  "
+        f"{'--------':>8}  {'--------':>8}  {'---------':>9}  {'----------'}"
+    )
 
     for fold in folds:
         X_train = df.iloc[fold["train_idx"]][FEATURE_COLS]
@@ -194,13 +205,15 @@ def main() -> None:
         rev_pred_mask = y_pred == 0
         rev_prec = (
             float(np.sum(y_true[rev_pred_mask] == 0) / rev_pred_mask.sum())
-            if rev_pred_mask.sum() > 0 else 0.0
+            if rev_pred_mask.sum() > 0
+            else 0.0
         )
 
         bt_actual_mask = y_true == 2
         bt_recall = (
             float(np.sum(y_pred[bt_actual_mask] == 2) / bt_actual_mask.sum())
-            if bt_actual_mask.sum() > 0 else 0.0
+            if bt_actual_mask.sum() > 0
+            else 0.0
         )
 
         test_dates_str = f"{fold['test_dates'][0]} -- {fold['test_dates'][-1]}"
@@ -222,7 +235,7 @@ def main() -> None:
     total_test = len(all_y_true)
 
     print(f"\n  --- Aggregated Confusion Matrix (pooled, n={total_test}) ---\n")
-    print(f"  {'Actual \\ Predicted':25s}  {'Pred Rev':>8}  {'Pred Trap':>9}  {'Pred BT':>7}")
+    print(f"  {actual_predicted:25s}  {'Pred Rev':>8}  {'Pred Trap':>9}  {'Pred BT':>7}")
     print(f"  {'':25s}  {'--------':>8}  {'---------':>9}  {'-------':>7}")
     for i, name in CLASS_NAMES.items():
         row = cm[i]
@@ -230,12 +243,12 @@ def main() -> None:
         acc = row[i] / total_row * 100 if total_row > 0 else 0
         print(f"  {name:25s}  {row[0]:8d}  {row[1]:9d}  {row[2]:7d}   ({acc:.1f}% correct)")
 
-    print(f"\n  Overall accuracy: {overall_accuracy:.4f} ({overall_accuracy*100:.1f}%)")
+    print(f"\n  Overall accuracy: {overall_accuracy:.4f} ({overall_accuracy * 100:.1f}%)")
     print(f"  Total test samples: {total_test}")
     print(f"  Total training samples: {len(df)}")
 
     # Per-class accuracy
-    print(f"\n  --- Per-Class Accuracy ---")
+    print("\n  --- Per-Class Accuracy ---")
     for i, name in CLASS_NAMES.items():
         actual_mask = all_y_true == i
         if actual_mask.sum() > 0:
@@ -274,8 +287,8 @@ def main() -> None:
 
     # Feature importances
     importances = final_model.get_feature_importance()
-    print(f"\n  Feature importances:")
-    for feat, imp in zip(FEATURE_COLS, importances):
+    print("\n  Feature importances:")
+    for feat, imp in zip(FEATURE_COLS, importances, strict=False):
         print(f"    {feat:30s}  {imp:.2f}")
 
     # 6. Verification
@@ -292,8 +305,8 @@ def main() -> None:
 
     print(f"  Test input: {test_input[0]}")
     print(f"  Predicted class: {pred_class} ({CLASS_NAMES[pred_class]})")
-    print(f"  Probabilities:")
-    for i, (name, prob) in enumerate(zip(CLASS_NAMES.values(), pred_probs)):
+    print("  Probabilities:")
+    for i, (name, prob) in enumerate(zip(CLASS_NAMES.values(), pred_probs, strict=False)):
         print(f"    {name:30s}  {prob:.6f}")
     print(f"  Sum of probabilities: {sum(pred_probs):.10f}")
     print(f"  Valid (sums to 1.0): {abs(sum(pred_probs) - 1.0) < 1e-6}")

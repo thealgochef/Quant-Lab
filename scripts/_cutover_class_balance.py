@@ -1,3 +1,4 @@
+# ruff: noqa: E402,E501,N812
 """Ad-hoc validation: NEW (trade-bar + honest-entry) vs OLD (book-mid level-entry)
 class balance on a small sample. INFORMATIONAL ONLY — not committed logic.
 
@@ -8,6 +9,7 @@ OLD  = engine book-mid mode (price_source="book_mid", tick_size=0.125, honest_en
 
 Run:  PYTHONPATH=src python scripts/_cutover_class_balance.py
 """
+
 from __future__ import annotations
 
 import warnings
@@ -25,8 +27,15 @@ from alpha_lab.agents.data_infra.ml.config import DashboardUtilityConfig, MLPipe
 DATA_DIR = Path(r"C:/Users/gonza/Documents/Trade-Dashboard/data/databento")
 SYMBOL = "NQ"
 SAMPLE = [
-    "2026-02-09", "2026-02-10", "2026-02-11", "2026-02-12", "2026-02-13",
-    "2026-02-17", "2026-02-18", "2026-02-19", "2026-02-20",
+    "2026-02-09",
+    "2026-02-10",
+    "2026-02-11",
+    "2026-02-12",
+    "2026-02-13",
+    "2026-02-17",
+    "2026-02-18",
+    "2026-02-19",
+    "2026-02-20",
 ]  # ~10 trade days (16th is a holiday in the store; skipped if absent)
 
 
@@ -70,8 +79,11 @@ def _balance(df: pd.DataFrame) -> dict:
         return {"n": 0}
     vc = df["label"].value_counts().to_dict()
     n = int(len(df))
-    return {"n": n, **{k: int(v) for k, v in vc.items()},
-            **{f"{k}_pct": round(100 * v / n, 1) for k, v in vc.items()}}
+    return {
+        "n": n,
+        **{k: int(v) for k, v in vc.items()},
+        **{f"{k}_pct": round(100 * v / n, 1) for k, v in vc.items()},
+    }
 
 
 def main():
@@ -95,24 +107,37 @@ def main():
         bm = _bookmid_bars(ds, util)
         if bm.empty:
             prev_ny, prev_asia, prev_london = B._get_session_hl_for_date(
-                DATA_DIR, SYMBOL, ds, util, prev_ny, prev_asia, prev_london)
+                DATA_DIR, SYMBOL, ds, util, prev_ny, prev_asia, prev_london
+            )
             continue
         bars_et = B._ensure_et_index(bm.copy())
         levels = B._compute_levels_for_date(bars_et, ds, prev_ny, prev_asia, prev_london)
         df = E.process_single_date_engine(
-            bars_et, levels, ds, DATA_DIR, SYMBOL, util,
-            price_source="book_mid", tick_size=E.BOOK_MID_TICK, honest_entry=False,
+            bars_et,
+            levels,
+            ds,
+            DATA_DIR,
+            SYMBOL,
+            util,
+            price_source="book_mid",
+            tick_size=E.BOOK_MID_TICK,
+            honest_entry=False,
         )
         if not df.empty:
             old_frames.append(df)
         prev_ny, prev_asia, prev_london = B._get_session_hl_for_date(
-            DATA_DIR, SYMBOL, ds, util, prev_ny, prev_asia, prev_london)
+            DATA_DIR, SYMBOL, ds, util, prev_ny, prev_asia, prev_london
+        )
     old_df = pd.concat(old_frames, ignore_index=True) if old_frames else pd.DataFrame()
 
     print("DATES:", dates)
     print("NEW (trade-bar + decision-time honest entry):", _balance(new_df))
     print("OLD (book-mid + level entry):                ", _balance(old_df))
-    has_int = [c for c in ("int_time_beyond_level", "int_time_within_2pts", "int_absorption_ratio") if c in new_df.columns]
+    has_int = [
+        c
+        for c in ("int_time_beyond_level", "int_time_within_2pts", "int_absorption_ratio")
+        if c in new_df.columns
+    ]
     print("NEW interaction feature cols present:", has_int)
 
 

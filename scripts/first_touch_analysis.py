@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """
 First-touch-only rule diagnostic.
 
@@ -18,7 +19,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import copy
 import sys
 import time as time_mod
 import uuid
@@ -30,16 +30,15 @@ from zoneinfo import ZoneInfo
 import duckdb
 import pandas as pd
 
+from alpha_lab.dashboard.engine.feature_computer import FeatureComputer
 from alpha_lab.dashboard.engine.level_engine import LevelEngine
 from alpha_lab.dashboard.engine.models import (
     LevelSide,
-    LevelZone,
     ObservationStatus,
     TouchEvent,
     TradeDirection,
 )
 from alpha_lab.dashboard.engine.observation_manager import ObservationManager
-from alpha_lab.dashboard.engine.feature_computer import FeatureComputer
 from alpha_lab.dashboard.model.model_manager import ModelManager
 from alpha_lab.dashboard.model.prediction_engine import PredictionEngine
 from alpha_lab.dashboard.pipeline.price_buffer import PriceBuffer
@@ -54,6 +53,7 @@ OUTPUT_CSV = Path("data/experiment/first_touch_analysis.csv")
 
 
 # ---- Session classifier (same as touch_detector.py) ----
+
 
 def classify_session(ts_utc: datetime) -> str:
     ts_et = ts_utc.astimezone(ET)
@@ -70,6 +70,7 @@ def classify_session(ts_utc: datetime) -> str:
 
 
 # ---- Data loading (from run_backtest.py) ----
+
 
 def get_available_dates() -> list[str]:
     dates = []
@@ -118,6 +119,7 @@ def load_trades_for_date(
 
 # ---- Touch tracking state ----
 
+
 class TouchTracker:
     """Tracks all touch events per zone per session for diagnostic analysis."""
 
@@ -134,18 +136,21 @@ class TouchTracker:
         trade_price: Decimal,
         direction: str,
     ) -> None:
-        self.touches.append({
-            "zone_id": zone_id,
-            "zone_price": float(zone_price),
-            "zone_side": zone_side,
-            "session": session,
-            "timestamp": timestamp,
-            "trade_price": float(trade_price),
-            "direction": direction,
-        })
+        self.touches.append(
+            {
+                "zone_id": zone_id,
+                "zone_price": float(zone_price),
+                "zone_side": zone_side,
+                "session": session,
+                "timestamp": timestamp,
+                "trade_price": float(trade_price),
+                "direction": direction,
+            }
+        )
 
 
 # ---- Counterfactual touch detector (no spending) ----
+
 
 def run_counterfactual_touches(
     zones_snapshot: list[dict],
@@ -162,14 +167,16 @@ def run_counterfactual_touches(
     # Build working zone list: {zone_id, price, side, is_touched, touched_session}
     zones = []
     for z in zones_snapshot:
-        zones.append({
-            "zone_id": z["zone_id"],
-            "price": z["price"],
-            "side": z["side"],
-            "is_touched": False,
-            "touched_session": None,
-            "touch_events": [],
-        })
+        zones.append(
+            {
+                "zone_id": z["zone_id"],
+                "price": z["price"],
+                "side": z["side"],
+                "is_touched": False,
+                "touched_session": None,
+                "touch_events": [],
+            }
+        )
 
     current_session = None
 
@@ -213,29 +220,34 @@ def run_counterfactual_touches(
             if touched:
                 if mode == "rth_only" and session != "ny_rth":
                     # Record the touch but don't mark as spent
-                    z["touch_events"].append({
-                        "session": session,
-                        "timestamp": ts_utc,
-                        "price": float(trade_price),
-                        "direction": direction,
-                        "spent": False,
-                    })
+                    z["touch_events"].append(
+                        {
+                            "session": session,
+                            "timestamp": ts_utc,
+                            "price": float(trade_price),
+                            "direction": direction,
+                            "spent": False,
+                        }
+                    )
                     continue
 
                 z["is_touched"] = True
                 z["touched_session"] = session
-                z["touch_events"].append({
-                    "session": session,
-                    "timestamp": ts_utc,
-                    "price": float(trade_price),
-                    "direction": direction,
-                    "spent": True,
-                })
+                z["touch_events"].append(
+                    {
+                        "session": session,
+                        "timestamp": ts_utc,
+                        "price": float(trade_price),
+                        "direction": direction,
+                        "spent": True,
+                    }
+                )
 
     return zones
 
 
 # ---- Main analysis ----
+
 
 def analyze_day(
     price_buffer: PriceBuffer,
@@ -250,7 +262,9 @@ def analyze_day(
     # Compute levels at RTH open (same as run_backtest.py)
     level_engine = LevelEngine(price_buffer)
     rth_open = datetime.combine(
-        trading_date, time(9, 30), tzinfo=ET,
+        trading_date,
+        time(9, 30),
+        tzinfo=ET,
     ).astimezone(UTC)
     levels = level_engine.compute_levels(trading_date, current_time=rth_open)
     zones = level_engine.get_active_zones()
@@ -261,11 +275,13 @@ def analyze_day(
     # Snapshot zones for counterfactual analysis
     zones_snapshot = []
     for z in zones:
-        zones_snapshot.append({
-            "zone_id": z.zone_id,
-            "price": z.representative_price,
-            "side": z.side.value,
-        })
+        zones_snapshot.append(
+            {
+                "zone_id": z.zone_id,
+                "price": z.representative_price,
+                "side": z.side.value,
+            }
+        )
 
     # Load ticks for the day
     mbp_path = str(DATA_DIR / date_str / "mbp10.parquet")
@@ -286,13 +302,21 @@ def analyze_day(
 
     # Track touches per session
     touches_by_session: dict[str, int] = {
-        "asia": 0, "london": 0, "pre_market": 0, "ny_rth": 0, "post_market": 0,
+        "asia": 0,
+        "london": 0,
+        "pre_market": 0,
+        "ny_rth": 0,
+        "post_market": 0,
     }
     rth_signals = 0
     rth_executable = 0
     all_signals = 0
     predictions_by_session: dict[str, list] = {
-        "asia": [], "london": [], "pre_market": [], "ny_rth": [], "post_market": [],
+        "asia": [],
+        "london": [],
+        "pre_market": [],
+        "ny_rth": [],
+        "post_market": [],
     }
 
     # Wire observation -> prediction
@@ -308,19 +332,19 @@ def analyze_day(
         nonlocal rth_signals, rth_executable, all_signals
         session = prediction.observation.event.session
         all_signals += 1
-        predictions_by_session[session].append({
-            "predicted_class": prediction.predicted_class,
-            "is_executable": prediction.is_executable,
-            "direction": prediction.trade_direction.value,
-        })
+        predictions_by_session[session].append(
+            {
+                "predicted_class": prediction.predicted_class,
+                "is_executable": prediction.is_executable,
+                "direction": prediction.trade_direction.value,
+            }
+        )
         if session == "ny_rth":
             rth_signals += 1
             if prediction.is_executable:
                 rth_executable += 1
 
     pred_engine.on_prediction(_on_prediction)
-
-    latest_price = None
 
     for _, row in trades_df.iterrows():
         ts = pd.Timestamp(row["ts_event"])
@@ -330,7 +354,6 @@ def analyze_day(
         trade_price = Decimal(str(round(float(row["price"]), 2)))
         bid_price = Decimal(str(round(float(row["bid_price"]), 2)))
         ask_price = Decimal(str(round(float(row["ask_price"]), 2)))
-        latest_price = trade_price
 
         # Add to price buffer for future days
         trade_update = TradeUpdate(
@@ -375,8 +398,13 @@ def analyze_day(
                 level_engine_actual.mark_zone_touched(zone.zone_id, ts_utc)
                 touches_by_session[session] = touches_by_session.get(session, 0) + 1
                 touch_tracker.record_touch(
-                    zone.zone_id, zone.representative_price, zone.side.value,
-                    session, ts_utc, trade_price, direction.value,
+                    zone.zone_id,
+                    zone.representative_price,
+                    zone.side.value,
+                    session,
+                    ts_utc,
+                    trade_price,
+                    direction.value,
                 )
 
                 # Fire observation window
@@ -404,28 +432,32 @@ def analyze_day(
 
     # ---- Counterfactual: per-session first-touch ----
     cf_per_session = run_counterfactual_touches(
-        zones_snapshot, trades_df, front_month, "per_session",
+        zones_snapshot,
+        trades_df,
+        front_month,
+        "per_session",
     )
     cf_rth_touches_per_session = sum(
-        1 for z in cf_per_session
+        1
+        for z in cf_per_session
         for e in z["touch_events"]
         if e["session"] == "ny_rth" and e["spent"]
     )
-    cf_total_touches_per_session = sum(
-        len(z["touch_events"]) for z in cf_per_session
-    )
+    cf_total_touches_per_session = sum(len(z["touch_events"]) for z in cf_per_session)
 
     # ---- Counterfactual: RTH-only spending ----
     cf_rth_only = run_counterfactual_touches(
-        zones_snapshot, trades_df, front_month, "rth_only",
+        zones_snapshot,
+        trades_df,
+        front_month,
+        "rth_only",
     )
     cf_rth_touches_rth_only = sum(
-        1 for z in cf_rth_only
-        for e in z["touch_events"]
-        if e["session"] == "ny_rth" and e["spent"]
+        1 for z in cf_rth_only for e in z["touch_events"] if e["session"] == "ny_rth" and e["spent"]
     )
     cf_non_rth_touches_rth_only = sum(
-        1 for z in cf_rth_only
+        1
+        for z in cf_rth_only
         for e in z["touch_events"]
         if e["session"] != "ny_rth" and not e["spent"]
     )
@@ -463,20 +495,34 @@ def analyze_day(
 
 def _empty_result(date_str: str) -> dict:
     return {
-        "date": date_str, "front_month": "", "total_levels": 0,
-        "total_zones": 0, "touched_asia": 0, "touched_london": 0,
-        "touched_pre_market": 0, "touched_before_rth": 0,
-        "available_at_rth": 0, "touched_rth": 0, "rth_signals": 0,
-        "rth_executable": 0, "all_signals": 0,
-        "cf_per_session_rth_touches": 0, "cf_per_session_total_touches": 0,
-        "cf_rth_only_rth_touches": 0, "cf_rth_only_non_rth_touches_ignored": 0,
-        "sigs_asia": 0, "sigs_london": 0, "sigs_pre_market": 0,
+        "date": date_str,
+        "front_month": "",
+        "total_levels": 0,
+        "total_zones": 0,
+        "touched_asia": 0,
+        "touched_london": 0,
+        "touched_pre_market": 0,
+        "touched_before_rth": 0,
+        "available_at_rth": 0,
+        "touched_rth": 0,
+        "rth_signals": 0,
+        "rth_executable": 0,
+        "all_signals": 0,
+        "cf_per_session_rth_touches": 0,
+        "cf_per_session_total_touches": 0,
+        "cf_rth_only_rth_touches": 0,
+        "cf_rth_only_non_rth_touches_ignored": 0,
+        "sigs_asia": 0,
+        "sigs_london": 0,
+        "sigs_pre_market": 0,
         "sigs_ny_rth": 0,
-        "_touch_details": [], "_predictions_by_session": {},
+        "_touch_details": [],
+        "_predictions_by_session": {},
     }
 
 
 # ---- Printing ----
+
 
 def print_results(results: list[dict]) -> None:
     print(f"\n{'=' * 100}")
@@ -484,7 +530,7 @@ def print_results(results: list[dict]) -> None:
     print(f"{'=' * 100}")
 
     # ---- Per-day table ----
-    print(f"\n  --- Current Behavior: Per-Day First-Touch (levels spent across all sessions) ---\n")
+    print("\n  --- Current Behavior: Per-Day First-Touch (levels spent across all sessions) ---\n")
     header = (
         f"  {'Date':10s}  {'Zones':>5s}  "
         f"{'Asia':>5s}  {'Lon':>5s}  {'Pre':>5s}  "
@@ -496,9 +542,16 @@ def print_results(results: list[dict]) -> None:
     print(f"  {'-' * 90}")
 
     totals = {
-        "zones": 0, "asia": 0, "london": 0, "pre": 0,
-        "pre_rth": 0, "at_rth": 0, "rth_tch": 0,
-        "rth_sig": 0, "rth_exec": 0, "all_sig": 0,
+        "zones": 0,
+        "asia": 0,
+        "london": 0,
+        "pre": 0,
+        "pre_rth": 0,
+        "at_rth": 0,
+        "rth_tch": 0,
+        "rth_sig": 0,
+        "rth_exec": 0,
+        "all_sig": 0,
     }
 
     for r in results:
@@ -535,32 +588,41 @@ def print_results(results: list[dict]) -> None:
     )
     if n > 0:
         print(
-            f"  {'AVG/day':10s}  {totals['zones']/n:>5.1f}  "
-            f"{totals['asia']/n:>5.1f}  {totals['london']/n:>5.1f}  "
-            f"{totals['pre']/n:>5.1f}  "
-            f"{totals['pre_rth']/n:>6.1f}  {totals['at_rth']/n:>5.1f}  "
-            f"{totals['rth_tch']/n:>7.1f}  {totals['rth_sig']/n:>7.1f}  "
-            f"{totals['rth_exec']/n:>8.1f}  "
-            f"{totals['all_sig']/n:>7.1f}"
+            f"  {'AVG/day':10s}  {totals['zones'] / n:>5.1f}  "
+            f"{totals['asia'] / n:>5.1f}  {totals['london'] / n:>5.1f}  "
+            f"{totals['pre'] / n:>5.1f}  "
+            f"{totals['pre_rth'] / n:>6.1f}  {totals['at_rth'] / n:>5.1f}  "
+            f"{totals['rth_tch'] / n:>7.1f}  {totals['rth_sig'] / n:>7.1f}  "
+            f"{totals['rth_exec'] / n:>8.1f}  "
+            f"{totals['all_sig'] / n:>7.1f}"
         )
 
     # ---- Key insight: what % of zones are consumed before RTH? ----
     if totals["zones"] > 0:
         pct_consumed = totals["pre_rth"] / totals["zones"] * 100
-        print(f"\n  >> {totals['pre_rth']}/{totals['zones']} zones "
-              f"({pct_consumed:.1f}%) consumed before RTH opens")
+        print(
+            f"\n  >> {totals['pre_rth']}/{totals['zones']} zones "
+            f"({pct_consumed:.1f}%) consumed before RTH opens"
+        )
         pct_rth_touch = totals["rth_tch"] / totals["zones"] * 100
-        print(f"  >> {totals['rth_tch']}/{totals['zones']} zones "
-              f"({pct_rth_touch:.1f}%) touched during RTH")
-        pct_untouched = (totals["zones"] - totals["pre_rth"] - totals["rth_tch"]) / totals["zones"] * 100
+        print(
+            f"  >> {totals['rth_tch']}/{totals['zones']} zones "
+            f"({pct_rth_touch:.1f}%) touched during RTH"
+        )
+        pct_untouched = (
+            (totals["zones"] - totals["pre_rth"] - totals["rth_tch"]) / totals["zones"] * 100
+        )
         untouched = totals["zones"] - totals["pre_rth"] - totals["rth_tch"]
-        print(f"  >> {untouched}/{totals['zones']} zones "
-              f"({pct_untouched:.1f}%) never touched all day")
+        print(
+            f"  >> {untouched}/{totals['zones']} zones ({pct_untouched:.1f}%) never touched all day"
+        )
 
     # ---- Counterfactual: per-session ----
-    print(f"\n\n  --- Counterfactual A: Per-SESSION First-Touch (reset touch state each session) ---\n")
-    print(f"  In this mode, a London touch does NOT spend the zone for RTH.")
-    print(f"  Each session gets its own independent first-touch.\n")
+    print(
+        "\n\n  --- Counterfactual A: Per-SESSION First-Touch (reset touch state each session) ---\n"
+    )
+    print("  In this mode, a London touch does NOT spend the zone for RTH.")
+    print("  Each session gets its own independent first-touch.\n")
 
     header_cf = (
         f"  {'Date':10s}  {'Zones':>5s}  "
@@ -595,12 +657,14 @@ def print_results(results: list[dict]) -> None:
     )
     if cf_total_actual_rth > 0:
         pct_increase = (cf_total_cf_rth - cf_total_actual_rth) / cf_total_actual_rth * 100
-        print(f"\n  >> Per-session first-touch would yield {cf_total_cf_rth} RTH touches "
-              f"vs {cf_total_actual_rth} actual ({pct_increase:+.0f}%)")
+        print(
+            f"\n  >> Per-session first-touch would yield {cf_total_cf_rth} RTH touches "
+            f"vs {cf_total_actual_rth} actual ({pct_increase:+.0f}%)"
+        )
 
     # ---- Counterfactual: RTH-only spending ----
-    print(f"\n\n  --- Counterfactual B: Only RTH Touches Count as 'Spent' ---\n")
-    print(f"  In this mode, London/Asia touches are ignored for spending.")
+    print("\n\n  --- Counterfactual B: Only RTH Touches Count as 'Spent' ---\n")
+    print("  In this mode, London/Asia touches are ignored for spending.")
     print(f"  All {totals['zones']} zones remain available at RTH open every day.\n")
 
     header_cf2 = (
@@ -637,25 +701,29 @@ def print_results(results: list[dict]) -> None:
     )
     if cf2_total_actual_rth > 0:
         pct_increase2 = (cf2_total_cf_rth - cf2_total_actual_rth) / cf2_total_actual_rth * 100
-        print(f"\n  >> RTH-only spending would yield {cf2_total_cf_rth} RTH touches "
-              f"vs {cf2_total_actual_rth} actual ({pct_increase2:+.0f}%)")
+        print(
+            f"\n  >> RTH-only spending would yield {cf2_total_cf_rth} RTH touches "
+            f"vs {cf2_total_actual_rth} actual ({pct_increase2:+.0f}%)"
+        )
 
     # ---- Detailed touch breakdown ----
-    print(f"\n\n  --- Detailed Touch Log (zones consumed before RTH) ---\n")
+    print("\n\n  --- Detailed Touch Log (zones consumed before RTH) ---\n")
 
     pre_rth_details = []
     for r in results:
         for t in r.get("_touch_details", []):
             if t["session"] in ("asia", "london", "pre_market"):
                 ts_et = t["timestamp"].astimezone(ET)
-                pre_rth_details.append({
-                    "date": r["date"],
-                    "time_et": ts_et.strftime("%H:%M:%S"),
-                    "session": t["session"],
-                    "zone_price": t["zone_price"],
-                    "zone_side": t["zone_side"],
-                    "direction": t["direction"],
-                })
+                pre_rth_details.append(
+                    {
+                        "date": r["date"],
+                        "time_et": ts_et.strftime("%H:%M:%S"),
+                        "session": t["session"],
+                        "zone_price": t["zone_price"],
+                        "zone_side": t["zone_side"],
+                        "direction": t["direction"],
+                    }
+                )
 
     if pre_rth_details:
         print(
@@ -676,33 +744,42 @@ def print_results(results: list[dict]) -> None:
     print("  SUMMARY & RECOMMENDATIONS")
     print(f"{'=' * 100}\n")
 
-    print(f"  Current behavior:")
+    print("  Current behavior:")
     print(f"    - {totals['zones']} total zones across {n} trading days")
     if totals["zones"] > 0:
-        print(f"    - {totals['pre_rth']} ({totals['pre_rth']/totals['zones']*100:.0f}%) spent before RTH")
-        print(f"    - {totals['rth_tch']} ({totals['rth_tch']/totals['zones']*100:.0f}%) touched during RTH")
+        print(
+            f"    - {totals['pre_rth']} ({totals['pre_rth'] / totals['zones'] * 100:.0f}%) spent before RTH"
+        )
+        print(
+            f"    - {totals['rth_tch']} ({totals['rth_tch'] / totals['zones'] * 100:.0f}%) touched during RTH"
+        )
         print(f"    - {totals['rth_sig']} RTH signals, {totals['rth_exec']} executable")
         print(f"    - {totals['all_sig']} total signals across all sessions")
 
-    print(f"\n  Counterfactual A (per-session first-touch):")
+    print("\n  Counterfactual A (per-session first-touch):")
     if cf_total_actual_rth > 0:
-        print(f"    - Would increase RTH touches from {cf_total_actual_rth} to {cf_total_cf_rth} "
-              f"({(cf_total_cf_rth - cf_total_actual_rth) / cf_total_actual_rth * 100:+.0f}%)")
-    print(f"    - Pro: More RTH trade opportunities")
-    print(f"    - Con: Same zone may generate conflicting signals across sessions")
+        print(
+            f"    - Would increase RTH touches from {cf_total_actual_rth} to {cf_total_cf_rth} "
+            f"({(cf_total_cf_rth - cf_total_actual_rth) / cf_total_actual_rth * 100:+.0f}%)"
+        )
+    print("    - Pro: More RTH trade opportunities")
+    print("    - Con: Same zone may generate conflicting signals across sessions")
 
-    print(f"\n  Counterfactual B (RTH-only spending):")
+    print("\n  Counterfactual B (RTH-only spending):")
     if cf2_total_actual_rth > 0:
-        print(f"    - Would increase RTH touches from {cf2_total_actual_rth} to {cf2_total_cf_rth} "
-              f"({(cf2_total_cf_rth - cf2_total_actual_rth) / cf2_total_actual_rth * 100:+.0f}%)")
-    print(f"    - Pro: All zones available at RTH, more signals")
-    print(f"    - Con: Non-RTH touches still provide information (price reacted)")
-    print(f"    - Trade-off: Higher signal count but may include lower-quality setups")
+        print(
+            f"    - Would increase RTH touches from {cf2_total_actual_rth} to {cf2_total_cf_rth} "
+            f"({(cf2_total_cf_rth - cf2_total_actual_rth) / cf2_total_actual_rth * 100:+.0f}%)"
+        )
+    print("    - Pro: All zones available at RTH, more signals")
+    print("    - Con: Non-RTH touches still provide information (price reacted)")
+    print("    - Trade-off: Higher signal count but may include lower-quality setups")
 
     print()
 
 
 # ---- Main ----
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="First-touch rule diagnostic")
@@ -722,10 +799,12 @@ def main() -> None:
 
     # Select date range
     start_idx = next(
-        (i for i, d in enumerate(all_dates) if d >= args.start), None,
+        (i for i, d in enumerate(all_dates) if d >= args.start),
+        None,
     )
     end_idx = next(
-        (i for i, d in enumerate(reversed(all_dates)) if d <= args.end), None,
+        (i for i, d in enumerate(reversed(all_dates)) if d <= args.end),
+        None,
     )
     if start_idx is None or end_idx is None:
         print(f"ERROR: Date range {args.start} to {args.end} not available")
@@ -736,7 +815,9 @@ def main() -> None:
     print(f"\n{'=' * 100}")
     print("  FIRST-TOUCH RULE DIAGNOSTIC")
     print(f"{'=' * 100}")
-    print(f"\n  Date range: {selected_dates[0]} to {selected_dates[-1]} ({len(selected_dates)} days)")
+    print(
+        f"\n  Date range: {selected_dates[0]} to {selected_dates[-1]} ({len(selected_dates)} days)"
+    )
 
     # Components
     price_buffer = PriceBuffer(max_duration=timedelta(hours=72))
@@ -748,7 +829,7 @@ def main() -> None:
     conn = duckdb.connect()
     results: list[dict] = []
 
-    print(f"\n  Processing...\n")
+    print("\n  Processing...\n")
 
     for i, date_str in enumerate(selected_dates):
         t0 = time_mod.monotonic()
@@ -761,7 +842,7 @@ def main() -> None:
         rth = result["touched_rth"]
         zones = result["total_zones"]
         sys.stdout.write(
-            f"\r  [{i+1:2d}/{len(selected_dates)}] {date_str}  "
+            f"\r  [{i + 1:2d}/{len(selected_dates)}] {date_str}  "
             f"zones={zones}  pre-RTH={pre_rth}  RTH={rth}  "
             f"sigs={result['all_signals']}  [{elapsed:.1f}s]"
         )

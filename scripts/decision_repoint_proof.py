@@ -1,3 +1,4 @@
+# ruff: noqa: E501,N812
 """Phase-5 Part-1 plumbing proof: engine decision layer == legacy CQL decision layer.
 
 Runs BOTH paths on a sample of book-mid days and prints a per-day table proving the
@@ -34,7 +35,6 @@ from alpha_lab.agents.data_infra.ml import dashboard_utility_builder as B
 from alpha_lab.agents.data_infra.ml import engine_decision as E
 from alpha_lab.agents.data_infra.ml.config import MLPipelineConfig
 from alpha_lab.agents.data_infra.ml.dashboard_utility_labeling import (
-    NO_RESOLUTION,
     label_touch_event,
 )
 
@@ -111,7 +111,8 @@ def _bookmid_bars(date_str):
     This proof is a BOOK-MID engine==legacy proof; build book-mid bars directly so
     the trade-bar cutover does not turn it into a trade-vs-book mismatch.
     """
-    from datetime import date as _date, timedelta as _td
+    from datetime import date as _date
+    from datetime import timedelta as _td
 
     from alpha_lab.agents.data_infra.tick_store import TickStore
 
@@ -134,9 +135,7 @@ def run_day(date_str, prev_ny, prev_asia, prev_london) -> dict:
     if bars.empty:
         return {"day": date_str, "skip": "no bars"}
     bars_et = B._ensure_et_index(bars.copy())
-    levels = B._compute_levels_for_date(
-        bars_et, date_str, prev_ny, prev_asia, prev_london
-    )
+    levels = B._compute_levels_for_date(bars_et, date_str, prev_ny, prev_asia, prev_london)
 
     td = date.fromisoformat(date_str)
 
@@ -163,7 +162,7 @@ def run_day(date_str, prev_ny, prev_asia, prev_london) -> dict:
     rth_cutoff = pd.Timestamp(f"{date_str} 16:15:00", tz=_ET)
     labels_match = True
     label_mismatch = None
-    for lt, et in zip(legacy_touches, eng_touches):
+    for lt, et in zip(legacy_touches, eng_touches, strict=False):
         forward = bars_et[(bars_et.index > lt["bar_ts"]) & (bars_et.index < rth_cutoff)]
         if forward.empty:
             continue
@@ -180,8 +179,10 @@ def run_day(date_str, prev_ny, prev_asia, prev_london) -> dict:
         ok = (
             legacy_lab["label"] == eng_out.label
             and legacy_lab["label_encoded"] == eng_out.label_encoded
-            and abs(round(float(legacy_lab["max_mfe"]), 4) - round(float(eng_out.max_mfe), 4)) < 1e-9
-            and abs(round(float(legacy_lab["max_mae"]), 4) - round(float(eng_out.max_mae), 4)) < 1e-9
+            and abs(round(float(legacy_lab["max_mfe"]), 4) - round(float(eng_out.max_mfe), 4))
+            < 1e-9
+            and abs(round(float(legacy_lab["max_mae"]), 4) - round(float(eng_out.max_mae), 4))
+            < 1e-9
         )
         if not ok and label_mismatch is None:
             label_mismatch = (
@@ -195,13 +196,17 @@ def run_day(date_str, prev_ny, prev_asia, prev_london) -> dict:
     feat_worst = None
     kept = 0
     artifact_note = None
-    for lt, et in zip(legacy_touches, eng_touches):
+    for lt, et in zip(legacy_touches, eng_touches, strict=False):
         legacy_int = B._compute_interaction_features(lt, DATA_DIR, SYMBOL, U)
         if legacy_int is None:
             continue
         eng_int = E.compute_interaction_features_engine(
-            et, DATA_DIR, SYMBOL, U,
-            price_source="book_mid", tick_size=E.BOOK_MID_TICK,
+            et,
+            DATA_DIR,
+            SYMBOL,
+            U,
+            price_source="book_mid",
+            tick_size=E.BOOK_MID_TICK,
         )
         if eng_int is None:
             # legacy kept it, engine dropped (or vice versa) -> a real divergence
@@ -224,9 +229,7 @@ def run_day(date_str, prev_ny, prev_asia, prev_london) -> dict:
             d = abs(float(lv) - float(ev))
             if d > feat_max_abs:
                 feat_max_abs = d
-                feat_worst = (
-                    f"{f} @ {et.bar_ts_utc.isoformat()}: legacy={lv} eng={ev} (|d|={d})"
-                )
+                feat_worst = f"{f} @ {et.bar_ts_utc.isoformat()}: legacy={lv} eng={ev} (|d|={d})"
                 # Known harness/window artifact: a touch whose 5-min interaction
                 # window crosses UTC midnight from a ~23:59-ET bar.
                 ts_et = pd.Timestamp(et.bar_ts_utc).tz_convert(_ET)
@@ -258,17 +261,13 @@ def run_day(date_str, prev_ny, prev_asia, prev_london) -> dict:
 def main():
     prev_ny = prev_asia = prev_london = None
     # warm carry
-    prev_ny, prev_asia, prev_london = _advance_carry(
-        WARMUP_DAY, prev_ny, prev_asia, prev_london
-    )
+    prev_ny, prev_asia, prev_london = _advance_carry(WARMUP_DAY, prev_ny, prev_asia, prev_london)
 
     rows = []
     for d in SAMPLE_DAYS:
         r = run_day(d, prev_ny, prev_asia, prev_london)
         rows.append(r)
-        prev_ny, prev_asia, prev_london = _advance_carry(
-            d, prev_ny, prev_asia, prev_london
-        )
+        prev_ny, prev_asia, prev_london = _advance_carry(d, prev_ny, prev_asia, prev_london)
         print(
             f"{d}: touches L/E={r.get('n_touches_legacy')}/{r.get('n_touches_engine')} "
             f"kept={r.get('kept_feature_touches')} zones={r.get('zones_match')} "

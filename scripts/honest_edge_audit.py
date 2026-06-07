@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Honest-edge audit harness for the production book-mid 3-class reversal model.
 
 WHAT THIS AUDITS (and what it does NOT change)
@@ -112,6 +113,11 @@ the end (or with --analyze-only) over whatever is in the parquet.
 from __future__ import annotations
 
 import argparse
+import contextlib
+
+# compute_utility_metrics lives in scripts/ml_training_tab.py.  Import it by path
+# (the scripts dir is not a package).
+import importlib.util as _ilu
 import json
 import logging
 from datetime import date, datetime, timedelta
@@ -121,8 +127,6 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
 import yaml
-
-import strategy_core as sc
 
 from alpha_lab.agents.data_infra.ml.config import (
     DashboardUtilityConfig,
@@ -145,10 +149,6 @@ from alpha_lab.agents.data_infra.ml.model_trainer import ExtremaModelTrainer
 from alpha_lab.agents.data_infra.ml.walk_forward import WalkForwardSplitter
 from alpha_lab.agents.data_infra.tick_store import TickStore
 
-# compute_utility_metrics lives in scripts/ml_training_tab.py.  Import it by path
-# (the scripts dir is not a package).
-import importlib.util as _ilu
-
 _THIS = Path(__file__).resolve()
 _MLT_PATH = _THIS.parent / "ml_training_tab.py"
 _spec = _ilu.spec_from_file_location("_mlt_for_audit", _MLT_PATH)
@@ -170,26 +170,29 @@ INSTRUMENTS_YAML = _THIS.parent.parent / "config" / "instruments.yaml"
 KNOWN_GAPS = {"2025-07-08", "2025-11-14", "2025-11-20"}
 
 # Flatten / cutoff (ET).
-FLATTEN_HOUR, FLATTEN_MINUTE = 15, 55          # no new trades at/after 15:55 ET
-RTH_CUTOFF_HM = (16, 15)                         # forward scan / mark cutoff
+FLATTEN_HOUR, FLATTEN_MINUTE = 15, 55  # no new trades at/after 15:55 ET
+RTH_CUTOFF_HM = (16, 15)  # forward scan / mark cutoff
 
 # Stated execution assumptions.
-ENTRY_SLIPPAGE_TICKS = 1.0                       # 1 tick adverse on entry fill
-EXIT_SLIPPAGE_TICKS = 1.0                        # 1 tick adverse on exit fill
-TICK_SIZE = 0.25                                 # NQ
-POINT_VALUE = 20.0                               # NQ $/pt
-ENTRY_BOOK_LOOKBACK_MIN = 30                     # how far back to find a book quote
+ENTRY_SLIPPAGE_TICKS = 1.0  # 1 tick adverse on entry fill
+EXIT_SLIPPAGE_TICKS = 1.0  # 1 tick adverse on exit fill
+TICK_SIZE = 0.25  # NQ
+POINT_VALUE = 20.0  # NQ $/pt
+ENTRY_BOOK_LOOKBACK_MIN = 30  # how far back to find a book quote
 
 # Production gate.
 CONF_GATE = 0.70
-ELIGIBLE_CLASS_ENCODED = 0                       # tradeable_reversal
-NY_RTH = (datetime.min.time().replace(hour=9, minute=30),
-          datetime.min.time().replace(hour=16, minute=15))
+ELIGIBLE_CLASS_ENCODED = 0  # tradeable_reversal
+NY_RTH = (
+    datetime.min.time().replace(hour=9, minute=30),
+    datetime.min.time().replace(hour=16, minute=15),
+)
 
 
 # ════════════════════════════════════════════════════════════════════════════
 # Production config (the EXACT spec that produced 11.71 / 574 / 6.333)
 # ════════════════════════════════════════════════════════════════════════════
+
 
 def build_production_config() -> MLPipelineConfig:
     """The MLPipelineConfig matching evaluation.json full_config.
@@ -202,7 +205,10 @@ def build_production_config() -> MLPipelineConfig:
     return MLPipelineConfig(
         training_mode="dashboard_utility",
         walk_forward=WalkForwardConfig(
-            train_days=40, test_days=5, gap_days=2, expanding=False,
+            train_days=40,
+            test_days=5,
+            gap_days=2,
+            expanding=False,
         ),
         model=ModelConfig(
             model_type="catboost",
@@ -239,6 +245,7 @@ def load_nq_cost_spec() -> dict:
 # Date helpers
 # ════════════════════════════════════════════════════════════════════════════
 
+
 def available_dates(start: str, end: str) -> list[str]:
     """Sorted store dates in [start, end] that exist and are not known gaps."""
     out: list[str] = []
@@ -272,8 +279,10 @@ def _in_ny_rth(ts_et: pd.Timestamp) -> bool:
 # Front-month book-mid lookup at a timestamp (the +5m entry price source)
 # ════════════════════════════════════════════════════════════════════════════
 
-def _book_mid_at(store: TickStore, symbol: str, as_of_utc: datetime,
-                 lookback_min: int = ENTRY_BOOK_LOOKBACK_MIN) -> float | None:
+
+def _book_mid_at(
+    store: TickStore, symbol: str, as_of_utc: datetime, lookback_min: int = ENTRY_BOOK_LOOKBACK_MIN
+) -> float | None:
     """Most-recent front-month book-mid (bid_px_00+ask_px_00)/2 with ts <= as_of.
 
     Mirrors the front-month + book filters used in ``query_tick_feature_rows`` /
@@ -312,6 +321,7 @@ def _book_mid_at(store: TickStore, symbol: str, as_of_utc: datetime,
 # STEP 1 -- honest forward scan on book-mid bars
 # ════════════════════════════════════════════════════════════════════════════
 
+
 def _honest_outcome(
     direction: str,
     entry_price: float,
@@ -338,21 +348,33 @@ def _honest_outcome(
         if is_long:
             if lo <= sl_level:
                 exit_px = sl_level - exit_slippage_pts
-                return {"exit_price": exit_px, "exit_reason": "sl",
-                        "gross_pts": exit_px - entry_price}
+                return {
+                    "exit_price": exit_px,
+                    "exit_reason": "sl",
+                    "gross_pts": exit_px - entry_price,
+                }
             if hi >= tp_level:
                 exit_px = tp_level - exit_slippage_pts
-                return {"exit_price": exit_px, "exit_reason": "tp",
-                        "gross_pts": exit_px - entry_price}
+                return {
+                    "exit_price": exit_px,
+                    "exit_reason": "tp",
+                    "gross_pts": exit_px - entry_price,
+                }
         else:
             if hi >= sl_level:
                 exit_px = sl_level + exit_slippage_pts
-                return {"exit_price": exit_px, "exit_reason": "sl",
-                        "gross_pts": entry_price - exit_px}
+                return {
+                    "exit_price": exit_px,
+                    "exit_reason": "sl",
+                    "gross_pts": entry_price - exit_px,
+                }
             if lo <= tp_level:
                 exit_px = tp_level + exit_slippage_pts
-                return {"exit_price": exit_px, "exit_reason": "tp",
-                        "gross_pts": entry_price - exit_px}
+                return {
+                    "exit_price": exit_px,
+                    "exit_reason": "tp",
+                    "gross_pts": entry_price - exit_px,
+                }
 
     # Neither bracket hit by cutoff -> mark-to-market at the last bar's close.
     last_close = float(forward_bars.iloc[-1]["close"])
@@ -383,20 +405,34 @@ def enrich_one_date(
     bars = _build_bars_for_date(DATA_DIR, symbol, date_str, util_cfg)
     if bars.empty:
         new_state = _get_session_hl_for_date(
-            DATA_DIR, symbol, date_str, util_cfg,
-            prev_ny_hl, prev_asia_hl, prev_london_hl,
+            DATA_DIR,
+            symbol,
+            date_str,
+            util_cfg,
+            prev_ny_hl,
+            prev_asia_hl,
+            prev_london_hl,
         )
         return pd.DataFrame(), new_state
 
     bars_et = _ensure_et_index(bars)
     levels = _compute_levels_for_date(
-        bars_et, date_str, prev_ny_hl, prev_asia_hl, prev_london_hl,
+        bars_et,
+        date_str,
+        prev_ny_hl,
+        prev_asia_hl,
+        prev_london_hl,
     )
 
     # Advance the level state for the next day (same call build_utility_dataset uses).
     new_state = _get_session_hl_for_date(
-        DATA_DIR, symbol, date_str, util_cfg,
-        prev_ny_hl, prev_asia_hl, prev_london_hl,
+        DATA_DIR,
+        symbol,
+        date_str,
+        util_cfg,
+        prev_ny_hl,
+        prev_asia_hl,
+        prev_london_hl,
     )
 
     if not levels:
@@ -408,8 +444,15 @@ def enrich_one_date(
     # honest-entry cutover (engine v2 production default) does NOT silently change
     # this harness's idealized baseline.
     base = process_single_date_engine(
-        bars_et, levels, date_str, DATA_DIR, symbol, util_cfg,
-        price_source="book_mid", tick_size=BOOK_MID_TICK, honest_entry=False,
+        bars_et,
+        levels,
+        date_str,
+        DATA_DIR,
+        symbol,
+        util_cfg,
+        price_source="book_mid",
+        tick_size=BOOK_MID_TICK,
+        honest_entry=False,
     )
     if base.empty:
         return pd.DataFrame(), new_state
@@ -454,10 +497,7 @@ def enrich_one_date(
             direction = r["direction"]
             is_long = str(direction).lower() == "long"
             # Entry slippage adverse: long pays up, short sells down.
-            if is_long:
-                entry_price = mid + entry_slip_pts
-            else:
-                entry_price = mid - entry_slip_pts
+            entry_price = mid + entry_slip_pts if is_long else mid - entry_slip_pts
 
             forward = bars_et[(bars_et.index > entry_ts_et) & (bars_et.index <= cutoff)]
             if forward.empty:
@@ -465,17 +505,23 @@ def enrich_one_date(
                 continue
 
             outcome = _honest_outcome(
-                direction, entry_price, forward,
-                tp_points, sl_points, exit_slip_pts,
+                direction,
+                entry_price,
+                forward,
+                tp_points,
+                sl_points,
+                exit_slip_pts,
             )
-            rec.update({
-                "traded": True,
-                "honest_entry_ts": entry_ts_et,
-                "honest_entry_price": entry_price,
-                "honest_exit_price": outcome["exit_price"],
-                "honest_exit_reason": outcome["exit_reason"],
-                "honest_gross_pts": outcome["gross_pts"],
-            })
+            rec.update(
+                {
+                    "traded": True,
+                    "honest_entry_ts": entry_ts_et,
+                    "honest_entry_price": entry_price,
+                    "honest_exit_price": outcome["exit_price"],
+                    "honest_exit_reason": outcome["exit_reason"],
+                    "honest_gross_pts": outcome["gross_pts"],
+                }
+            )
             honest_rows.append(rec)
     finally:
         store.close()
@@ -490,6 +536,7 @@ def enrich_one_date(
 # STEP 1 driver: build / append enriched parquet (resumable)
 # ════════════════════════════════════════════════════════════════════════════
 
+
 def _existing_dates(out_parquet: Path) -> set[str]:
     if not out_parquet.exists():
         return set()
@@ -501,8 +548,9 @@ def _existing_dates(out_parquet: Path) -> set[str]:
         return set(existing["date"].astype(str).unique()) if "date" in existing else set()
 
 
-def build_enriched(start: str, end: str, out_parquet: Path,
-                   config: MLPipelineConfig | None = None) -> dict:
+def build_enriched(
+    start: str, end: str, out_parquet: Path, config: MLPipelineConfig | None = None
+) -> dict:
     """STEP 1 over [start, end].  Appends per date; skips dates already present.
 
     To keep levels correct, the loop ALWAYS warms each prior day's session H/L
@@ -524,7 +572,11 @@ def build_enriched(start: str, end: str, out_parquet: Path,
         if ds in done:
             # Still advance level state from this day's bars (cheap, keeps levels right).
             prev_state = _get_session_hl_for_date(
-                DATA_DIR, SYMBOL, ds, util_cfg, *prev_state,
+                DATA_DIR,
+                SYMBOL,
+                ds,
+                util_cfg,
+                *prev_state,
             )
             continue
         try:
@@ -532,12 +584,14 @@ def build_enriched(start: str, end: str, out_parquet: Path,
         except Exception:
             logger.exception("Failed to enrich %s; skipping", ds)
             # Best-effort: advance level state so subsequent days are not corrupted.
-            try:
+            with contextlib.suppress(Exception):
                 prev_state = _get_session_hl_for_date(
-                    DATA_DIR, SYMBOL, ds, util_cfg, *prev_state,
+                    DATA_DIR,
+                    SYMBOL,
+                    ds,
+                    util_cfg,
+                    *prev_state,
                 )
-            except Exception:
-                pass
             continue
 
         if enriched.empty:
@@ -554,16 +608,15 @@ def build_enriched(start: str, end: str, out_parquet: Path,
         done.add(ds)
         n_new += 1
         n_touch += len(enriched)
-        logger.info("%s: %d touches (traded=%d)", ds, len(enriched),
-                    int(enriched["traded"].sum()))
+        logger.info("%s: %d touches (traded=%d)", ds, len(enriched), int(enriched["traded"].sum()))
 
-    return {"dates_in_range": len(dates), "dates_built": n_new,
-            "touches_built": n_touch}
+    return {"dates_in_range": len(dates), "dates_built": n_new, "touches_built": n_touch}
 
 
 # ════════════════════════════════════════════════════════════════════════════
 # STEP 2 -- reproduce the walk-forward OOS predictions (SAME spec, no new model)
 # ════════════════════════════════════════════════════════════════════════════
+
 
 def reproduce_walk_forward(enriched: pd.DataFrame, config: MLPipelineConfig) -> pd.DataFrame:
     """Recover per-touch OOS predictions over the production walk-forward.
@@ -600,8 +653,12 @@ def reproduce_walk_forward(enriched: pd.DataFrame, config: MLPipelineConfig) -> 
             rfecv_trainer = ExtremaModelTrainer(config.model)
             rfecv_res = rfecv_trainer.train(features, y, cv_splits=preliminary_cv)
             selected_features = rfecv_res.selected_features
-            logger.info("RFECV selected %d/%d features: %s",
-                        len(selected_features), len(feature_cols), selected_features)
+            logger.info(
+                "RFECV selected %d/%d features: %s",
+                len(selected_features),
+                len(feature_cols),
+                selected_features,
+            )
 
     fold_model_config = config.model.model_copy(update={"rfecv_enabled": False})
 
@@ -651,6 +708,7 @@ def reproduce_walk_forward(enriched: pd.DataFrame, config: MLPipelineConfig) -> 
 # STEP 3 -- gate + metrics
 # ════════════════════════════════════════════════════════════════════════════
 
+
 def _idealized_metrics(oos: pd.DataFrame, tp_points: float, sl_points: float) -> dict:
     """Reproduce the EXACT 11.71 number.
 
@@ -697,7 +755,7 @@ def _honest_block(trades: pd.DataFrame, commission_rt: float) -> dict:
     gross_pnl_usd = float(gp.sum() * POINT_VALUE)
 
     commission_pts = commission_rt / POINT_VALUE  # express commission in points
-    net_pts = gp - commission_pts                  # slippage already in gp
+    net_pts = gp - commission_pts  # slippage already in gp
     net_exp_pts = float(net_pts.mean())
     net_exp_usd = float(net_exp_pts * POINT_VALUE)
     net_pnl_usd = float(net_pts.sum() * POINT_VALUE)
@@ -745,23 +803,27 @@ def _per_fold_table(gated: pd.DataFrame, commission_rt: float) -> list[dict]:
             rows.append({"fold": int(fold), "n_gated_traded": 0})
             continue
         gp = t["honest_gross_pts"].astype(float).values
-        rows.append({
-            "fold": int(fold),
-            "n_gated_traded": int(n),
-            "hit_rate": float((gp > 0).mean()),
-            "expectancy_gross_pts": float(gp.mean()),
-            "expectancy_net_pts": float((gp - commission_pts).mean()),
-        })
+        rows.append(
+            {
+                "fold": int(fold),
+                "n_gated_traded": int(n),
+                "hit_rate": float((gp > 0).mean()),
+                "expectancy_gross_pts": float(gp.mean()),
+                "expectancy_net_pts": float((gp - commission_pts).mean()),
+            }
+        )
     return rows
 
 
-def run_walk_forward_audit(enriched: pd.DataFrame, config: MLPipelineConfig,
-                           cost_spec: dict) -> dict:
+def run_walk_forward_audit(
+    enriched: pd.DataFrame, config: MLPipelineConfig, cost_spec: dict
+) -> dict:
     """STEP 2 + STEP 3: reproduce OOS preds, then compute (a)/(b)/(c)/per-fold."""
     tp = config.dashboard_utility.tp_points
     sl = config.dashboard_utility.sl_points
-    commission_rt = (cost_spec["exchange_nfa_per_side"]
-                     + cost_spec["broker_commission_per_side"]) * 2.0
+    commission_rt = (
+        cost_spec["exchange_nfa_per_side"] + cost_spec["broker_commission_per_side"]
+    ) * 2.0
 
     oos = reproduce_walk_forward(enriched, config)
     # ET helper column for the session gate.
@@ -776,10 +838,7 @@ def run_walk_forward_audit(enriched: pd.DataFrame, config: MLPipelineConfig,
     idealized = _idealized_metrics(oos, tp, sl)
 
     # PRODUCTION serve gate: prob_reversal>=0.70 AND ny_rth AND eligible_class.
-    gated_mask = (
-        (oos["prob_reversal"] >= CONF_GATE)
-        & oos["_in_rth"]
-    )
+    gated_mask = (oos["prob_reversal"] >= CONF_GATE) & oos["_in_rth"]
     gated = oos[gated_mask].copy()
 
     # (b) HONEST -- traded gated touches.
@@ -807,27 +866,36 @@ def run_walk_forward_audit(enriched: pd.DataFrame, config: MLPipelineConfig,
 # CLI
 # ════════════════════════════════════════════════════════════════════════════
 
+
 def _print_summary(report: dict) -> None:
     a = report["idealized"]
     b = report["honest_gated"]
     c = report["baseline_all_rth"]
     print("\n================ HONEST EDGE AUDIT (terse) ================")
-    print(f"OOS touches={report['n_oos_touches']}  rth={report['n_oos_rth_touches']}  "
-          f"gated={report['n_gated']}  gated_traded={report['n_gated_traded']}")
-    print(f"(a) IDEALIZED: expectancy={a['expectancy_pts']} pts  PF={a['profit_factor']}  "
-          f"n={a['n_simulated_trades']}  cm={a['confusion']}")
+    print(
+        f"OOS touches={report['n_oos_touches']}  rth={report['n_oos_rth_touches']}  "
+        f"gated={report['n_gated']}  gated_traded={report['n_gated_traded']}"
+    )
+    print(
+        f"(a) IDEALIZED: expectancy={a['expectancy_pts']} pts  PF={a['profit_factor']}  "
+        f"n={a['n_simulated_trades']}  cm={a['confusion']}"
+    )
     if b.get("n"):
-        print(f"(b) HONEST gated: n={b['n']}  hit={b['hit_rate']:.3f}  "
-              f"exp_gross={b['expectancy_gross_pts']:.3f}pt  "
-              f"exp_net={b['expectancy_net_pts']:.3f}pt (${b['expectancy_net_usd']:.2f})  "
-              f"PFnet={b['profit_factor_net']:.3f}  netPnL=${b['total_net_pnl_usd']:.0f}  "
-              f"maxDD=${b['max_drawdown_usd']:.0f}")
+        print(
+            f"(b) HONEST gated: n={b['n']}  hit={b['hit_rate']:.3f}  "
+            f"exp_gross={b['expectancy_gross_pts']:.3f}pt  "
+            f"exp_net={b['expectancy_net_pts']:.3f}pt (${b['expectancy_net_usd']:.2f})  "
+            f"PFnet={b['profit_factor_net']:.3f}  netPnL=${b['total_net_pnl_usd']:.0f}  "
+            f"maxDD=${b['max_drawdown_usd']:.0f}"
+        )
     else:
         print("(b) HONEST gated: n=0")
     if c.get("n"):
-        print(f"(c) BASELINE all-rth: n={c['n']}  hit={c['hit_rate']:.3f}  "
-              f"exp_net={c['expectancy_net_pts']:.3f}pt  PFnet={c['profit_factor_net']:.3f}  "
-              f"netPnL=${c['total_net_pnl_usd']:.0f}")
+        print(
+            f"(c) BASELINE all-rth: n={c['n']}  hit={c['hit_rate']:.3f}  "
+            f"exp_net={c['expectancy_net_pts']:.3f}pt  PFnet={c['profit_factor_net']:.3f}  "
+            f"netPnL=${c['total_net_pnl_usd']:.0f}"
+        )
     else:
         print("(c) BASELINE all-rth: n=0")
     print("==========================================================\n")
@@ -839,10 +907,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--end", required=True)
     p.add_argument("--out-parquet", required=True, type=Path)
     p.add_argument("--results-json", type=Path, default=None)
-    p.add_argument("--enrich-only", action="store_true",
-                   help="STEP 1 only: build/append enriched parquet, no WF/metrics.")
-    p.add_argument("--analyze-only", action="store_true",
-                   help="STEP 2+3 only: read existing parquet, emit metrics.")
+    p.add_argument(
+        "--enrich-only",
+        action="store_true",
+        help="STEP 1 only: build/append enriched parquet, no WF/metrics.",
+    )
+    p.add_argument(
+        "--analyze-only",
+        action="store_true",
+        help="STEP 2+3 only: read existing parquet, emit metrics.",
+    )
     p.add_argument("--log-level", default="INFO")
     args = p.parse_args(argv)
 
@@ -853,8 +927,9 @@ def main(argv: list[str] | None = None) -> int:
 
     config = build_production_config()
     cost_spec = load_nq_cost_spec()
-    commission_rt = (cost_spec["exchange_nfa_per_side"]
-                     + cost_spec["broker_commission_per_side"]) * 2.0
+    commission_rt = (
+        cost_spec["exchange_nfa_per_side"] + cost_spec["broker_commission_per_side"]
+    ) * 2.0
 
     build_stats = None
     if not args.analyze_only:
@@ -875,7 +950,9 @@ def main(argv: list[str] | None = None) -> int:
     report["cost_scheme"] = {
         "slippage_ticks_per_side": ENTRY_SLIPPAGE_TICKS,
         "slippage_pts_round_turn": (ENTRY_SLIPPAGE_TICKS + EXIT_SLIPPAGE_TICKS) * TICK_SIZE,
-        "slippage_usd_round_turn": (ENTRY_SLIPPAGE_TICKS + EXIT_SLIPPAGE_TICKS) * TICK_SIZE * POINT_VALUE,
+        "slippage_usd_round_turn": (ENTRY_SLIPPAGE_TICKS + EXIT_SLIPPAGE_TICKS)
+        * TICK_SIZE
+        * POINT_VALUE,
         "slippage_modeled_in_fills": True,
         "commission_rt_usd": commission_rt,
         "commission_formula": "(exchange_nfa 2.14 + broker 0.50) * 2 sides = 5.28",

@@ -73,6 +73,7 @@ def _create_replay_state(
 
     # Auto-load model
     from alpha_lab.dashboard.api.server import _auto_load_model
+
     _auto_load_model(model_manager, settings.model_dir)
     prediction_engine = PredictionEngine(model_manager)
     outcome_tracker = OutcomeTracker()
@@ -136,20 +137,22 @@ def _create_replay_state(
     def _on_touch(event) -> None:
         window = observation_manager.start_observation(event)
         if window is not None:
-            _schedule_broadcast({
-                "type": "observation_started",
-                "data": {
-                    "event_id": event.event_id,
-                    "direction": event.trade_direction.value,
-                    "level_price": float(
-                        event.level_zone.representative_price,
-                    ),
-                    "start_time": window.start_time.isoformat(),
-                    "end_time": window.end_time.isoformat(),
-                    "status": window.status.value,
-                    "trades_accumulated": 0,
-                },
-            })
+            _schedule_broadcast(
+                {
+                    "type": "observation_started",
+                    "data": {
+                        "event_id": event.event_id,
+                        "direction": event.trade_direction.value,
+                        "level_price": float(
+                            event.level_zone.representative_price,
+                        ),
+                        "start_time": window.start_time.isoformat(),
+                        "end_time": window.end_time.isoformat(),
+                        "status": window.status.value,
+                        "trades_accumulated": 0,
+                    },
+                }
+            )
 
     touch_detector.on_touch(_on_touch)
 
@@ -161,29 +164,26 @@ def _create_replay_state(
     observation_manager.on_observation_complete(_on_observation_complete)
 
     def _broadcast_session_stats() -> None:
-        wins = sum(
-            1 for p in state.todays_predictions
-            if p.get("prediction_correct")
-        )
+        wins = sum(1 for p in state.todays_predictions if p.get("prediction_correct"))
         losses = sum(
-            1 for p in state.todays_predictions
-            if p.get("prediction_correct") is not None
-            and not p.get("prediction_correct")
+            1
+            for p in state.todays_predictions
+            if p.get("prediction_correct") is not None and not p.get("prediction_correct")
         )
         total = wins + losses
-        _schedule_broadcast({
-            "type": "session_stats",
-            "data": {
-                "signals_fired": len(state.todays_predictions),
-                "wins": wins,
-                "losses": losses,
-                "accuracy": round(wins / total, 4) if total > 0 else 0,
-                "total_trades": len(state.todays_trades),
-                "total_pnl": sum(
-                    float(t.get("pnl", 0)) for t in state.todays_trades
-                ),
-            },
-        })
+        _schedule_broadcast(
+            {
+                "type": "session_stats",
+                "data": {
+                    "signals_fired": len(state.todays_predictions),
+                    "wins": wins,
+                    "losses": losses,
+                    "accuracy": round(wins / total, 4) if total > 0 else 0,
+                    "total_trades": len(state.todays_trades),
+                    "total_pnl": sum(float(t.get("pnl", 0)) for t in state.todays_trades),
+                },
+            }
+        )
 
     def _on_prediction(prediction) -> None:
         pred_data = {
@@ -210,9 +210,7 @@ def _create_replay_state(
                 "level_price": prediction.level_price,
             }
             market_price = (
-                Decimal(str(state.latest_price))
-                if state.latest_price
-                else prediction.level_price
+                Decimal(str(state.latest_price)) if state.latest_price else prediction.level_price
             )
             state.trade_executor.on_prediction(
                 prediction=executor_dict,
@@ -235,18 +233,20 @@ def _create_replay_state(
             tp_price = float(entry - tp_points)
             sl_price = float(entry + sl_points)
 
-        _schedule_broadcast({
-            "type": "trade_opened",
-            "data": {
-                "account_id": pos.account_id,
-                "direction": pos.direction.value,
-                "entry_price": float(pos.entry_price),
-                "contracts": pos.contracts,
-                "entry_time": pos.entry_time.isoformat(),
-                "tp_price": tp_price,
-                "sl_price": sl_price,
-            },
-        })
+        _schedule_broadcast(
+            {
+                "type": "trade_opened",
+                "data": {
+                    "account_id": pos.account_id,
+                    "direction": pos.direction.value,
+                    "entry_price": float(pos.entry_price),
+                    "contracts": pos.contracts,
+                    "entry_time": pos.entry_time.isoformat(),
+                    "tp_price": tp_price,
+                    "sl_price": sl_price,
+                },
+            }
+        )
 
     state.trade_executor.on_trade_opened(_on_trade_opened)
 
@@ -269,26 +269,30 @@ def _create_replay_state(
 
         acct = state.account_manager.get_account(trade.account_id)
         if acct is not None:
-            state.equity_snapshots.append({
-                "timestamp": trade_data["exit_time"],
-                "account_id": trade.account_id,
-                "balance": float(acct.balance),
-                "profit": float(acct.profit),
-                "group": trade.group,
-            })
-            # Broadcast account update with new balance
-            _schedule_broadcast({
-                "type": "account_update",
-                "data": {
-                    "account_id": acct.account_id,
+            state.equity_snapshots.append(
+                {
+                    "timestamp": trade_data["exit_time"],
+                    "account_id": trade.account_id,
                     "balance": float(acct.balance),
                     "profit": float(acct.profit),
-                    "daily_pnl": float(acct.daily_pnl),
-                    "group": acct.group,
-                    "status": acct.status.value,
-                    "has_position": acct.has_position,
-                },
-            })
+                    "group": trade.group,
+                }
+            )
+            # Broadcast account update with new balance
+            _schedule_broadcast(
+                {
+                    "type": "account_update",
+                    "data": {
+                        "account_id": acct.account_id,
+                        "balance": float(acct.balance),
+                        "profit": float(acct.profit),
+                        "daily_pnl": float(acct.daily_pnl),
+                        "group": acct.group,
+                        "status": acct.status.value,
+                        "has_position": acct.has_position,
+                    },
+                }
+            )
         _broadcast_session_stats()
 
     state.trade_executor.on_trade_closed(_on_trade_closed)
@@ -299,18 +303,20 @@ def _create_replay_state(
                 pred["prediction_correct"] = outcome.prediction_correct
                 pred["actual_class"] = outcome.actual_class
                 break
-        _schedule_broadcast({
-            "type": "outcome_resolved",
-            "data": {
-                "event_id": outcome.event_id,
-                "predicted_class": outcome.prediction.predicted_class,
-                "actual_class": outcome.actual_class,
-                "prediction_correct": outcome.prediction_correct,
-                "mfe_points": outcome.mfe_points,
-                "mae_points": outcome.mae_points,
-                "resolution_type": outcome.resolution_type,
-            },
-        })
+        _schedule_broadcast(
+            {
+                "type": "outcome_resolved",
+                "data": {
+                    "event_id": outcome.event_id,
+                    "predicted_class": outcome.prediction.predicted_class,
+                    "actual_class": outcome.actual_class,
+                    "prediction_correct": outcome.prediction_correct,
+                    "mfe_points": outcome.mfe_points,
+                    "mae_points": outcome.mae_points,
+                    "resolution_type": outcome.resolution_type,
+                },
+            }
+        )
         _broadcast_session_stats()
 
     outcome_tracker.on_outcome_resolved(_on_outcome_resolved)
@@ -331,17 +337,15 @@ def _create_replay_state(
 
         try:
             state.position_monitor.check_flatten_time(
-                trade.timestamp, trade.price,
+                trade.timestamp,
+                trade.price,
             )
         except Exception:
             logger.exception("Replay _on_trade: flatten check failed")
 
         if not state.session_ended:
             ts_et = trade.timestamp.astimezone(ET)
-            past_flatten = (
-                ts_et.hour > 15
-                or (ts_et.hour == 15 and ts_et.minute >= 55)
-            )
+            past_flatten = ts_et.hour > 15 or (ts_et.hour == 15 and ts_et.minute >= 55)
             if past_flatten:
                 state.session_ended = True
                 outcome_tracker.on_session_end()
@@ -407,44 +411,54 @@ def _create_replay_state(
 
         # Compute levels (PDH/PDL from accumulated ticks)
         rth_open = datetime.combine(
-            trading_date, time(9, 30), tzinfo=ET,
+            trading_date,
+            time(9, 30),
+            tzinfo=ET,
         ).astimezone(UTC)
         levels = level_engine.compute_levels(
-            trading_date, current_time=rth_open,
+            trading_date,
+            current_time=rth_open,
         )
 
         # Broadcast level update
         zones_data = []
         for zone in level_engine.get_active_zones():
-            zones_data.append({
-                "zone_id": zone.zone_id,
-                "price": float(zone.representative_price),
-                "side": zone.side.value,
-                "is_touched": zone.is_touched,
-                "levels": [
-                    {
-                        "type": lv.level_type.value,
-                        "price": float(lv.price),
-                        "is_manual": lv.is_manual,
-                    }
-                    for lv in zone.levels
-                ],
-            })
+            zones_data.append(
+                {
+                    "zone_id": zone.zone_id,
+                    "price": float(zone.representative_price),
+                    "side": zone.side.value,
+                    "is_touched": zone.is_touched,
+                    "levels": [
+                        {
+                            "type": lv.level_type.value,
+                            "price": float(lv.price),
+                            "is_manual": lv.is_manual,
+                        }
+                        for lv in zone.levels
+                    ],
+                }
+            )
         if zones_data:
-            _schedule_broadcast({
-                "type": "level_update",
-                "data": {"action": "full_refresh", "levels": zones_data},
-            })
+            _schedule_broadcast(
+                {
+                    "type": "level_update",
+                    "data": {"action": "full_refresh", "levels": zones_data},
+                }
+            )
 
         # Broadcast replay day info
-        _schedule_broadcast({
-            "type": "replay_day",
-            "data": {"date": date_str, "levels_count": len(levels)},
-        })
+        _schedule_broadcast(
+            {
+                "type": "replay_day",
+                "data": {"date": date_str, "levels_count": len(levels)},
+            }
+        )
 
         logger.info(
             "Replay day boundary: %s (%d levels)",
-            date_str, len(levels),
+            date_str,
+            len(levels),
         )
 
     replay_client.on_day_boundary(_on_day_boundary)
@@ -460,7 +474,10 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8000, help="Server port")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Server host")
     parser.add_argument(
-        "--data-dir", type=str, default=str(DATA_DIR), help="Data directory",
+        "--data-dir",
+        type=str,
+        default=str(DATA_DIR),
+        help="Data directory",
     )
     args = parser.parse_args()
 
@@ -479,6 +496,7 @@ def main() -> None:
     app = create_app(state=state)
 
     import uvicorn
+
     uvicorn.run(app, host=args.host, port=args.port)
 
 

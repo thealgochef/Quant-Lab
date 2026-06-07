@@ -144,9 +144,7 @@ def generate_synthetic_bars(
     high = np.maximum(high, np.maximum(open_price, close))
     low = np.minimum(low, np.minimum(open_price, close))
     base_vol = rng.poisson(5000, n_bars).astype(float)
-    intraday_pattern = 1 + 0.5 * np.sin(
-        np.linspace(0, 2 * np.pi * (n_bars / 78), n_bars)
-    )
+    intraday_pattern = 1 + 0.5 * np.sin(np.linspace(0, 2 * np.pi * (n_bars / 78), n_bars))
     volume = base_vol * intraday_pattern
 
     start = datetime(2026, 1, 5, 9, 30)
@@ -190,15 +188,26 @@ def build_synthetic_data_bundle(bars_5m: pd.DataFrame) -> DataBundle:
         ],
         pd_levels={
             "2026-01-05": PreviousDayLevels(
-                pd_high=22150.0, pd_low=21980.0, pd_mid=22065.0,
-                pd_close=22100.0, pw_high=22200.0, pw_low=21850.0,
-                overnight_high=22130.0, overnight_low=22050.0,
+                pd_high=22150.0,
+                pd_low=21980.0,
+                pd_mid=22065.0,
+                pd_close=22100.0,
+                pw_high=22200.0,
+                pw_low=21850.0,
+                overnight_high=22130.0,
+                overnight_low=22050.0,
             ),
         },
         quality=QualityReport(
-            passed=True, total_bars=len(bars_5m), gaps_found=0, gaps_detail=[],
-            volume_zeros=0, ohlc_violations=0, cross_tf_mismatches=0,
-            timestamp_coverage=1.0, report_generated_at=now.isoformat(),
+            passed=True,
+            total_bars=len(bars_5m),
+            gaps_found=0,
+            gaps_detail=[],
+            volume_zeros=0,
+            ohlc_violations=0,
+            cross_tf_mismatches=0,
+            timestamp_coverage=1.0,
+            report_generated_at=now.isoformat(),
         ),
         date_range=("2026-01-05", "2026-02-20"),
     )
@@ -246,9 +255,7 @@ def fetch_live_data(symbol: str, days: int = 30) -> DataBundle:
     first_date = bars_5m.index[0].strftime("%Y-%m-%d")
 
     # Tag sessions
-    bars_5m["session_id"] = [
-        f"{symbol}_{ts.strftime('%Y-%m-%d')}_RTH" for ts in bars_5m.index
-    ]
+    bars_5m["session_id"] = [f"{symbol}_{ts.strftime('%Y-%m-%d')}_RTH" for ts in bars_5m.index]
 
     return DataBundle(
         instrument=symbol,
@@ -270,9 +277,7 @@ def fetch_live_data(symbol: str, days: int = 30) -> DataBundle:
                     (bars_5m["high"].iloc[:78].max() + bars_5m["low"].iloc[:78].min()) / 2
                 ),
                 pd_close=float(
-                    bars_5m["close"].iloc[77]
-                    if len(bars_5m) > 77
-                    else bars_5m["close"].iloc[-1]
+                    bars_5m["close"].iloc[77] if len(bars_5m) > 77 else bars_5m["close"].iloc[-1]
                 ),
                 pw_high=(
                     float(bars_5m["high"].iloc[:390].max())
@@ -289,10 +294,15 @@ def fetch_live_data(symbol: str, days: int = 30) -> DataBundle:
             ),
         },
         quality=QualityReport(
-            passed=True, total_bars=len(bars_5m), gaps_found=0, gaps_detail=[],
+            passed=True,
+            total_bars=len(bars_5m),
+            gaps_found=0,
+            gaps_detail=[],
             volume_zeros=int((bars_5m["volume"] == 0).sum()),
-            ohlc_violations=0, cross_tf_mismatches=0,
-            timestamp_coverage=1.0, report_generated_at=now.isoformat(),
+            ohlc_violations=0,
+            cross_tf_mismatches=0,
+            timestamp_coverage=1.0,
+            report_generated_at=now.isoformat(),
         ),
         date_range=(
             bars_5m.index[0].strftime("%Y-%m-%d"),
@@ -419,8 +429,7 @@ def render_validation_panel(val_report) -> None:
             tree = Tree(f"[dim]{v.signal_id} — failed checks:[/]")
             for fm in v.failed_metrics:
                 tree.add(
-                    f"[red]{fm['metric']}[/] = {fm['value']:.4f}"
-                    f" (threshold: {fm['threshold']})"
+                    f"[red]{fm['metric']}[/] = {fm['value']:.4f} (threshold: {fm['threshold']})"
                 )
             console.print(tree)
 
@@ -573,9 +582,7 @@ def render_monitoring_panel(mon) -> None:
     console.print()
 
 
-def render_summary(
-    orch, n_signals, val_report, exec_report, mon, mode: str
-) -> None:
+def render_summary(orch, n_signals, val_report, exec_report, mon, mode: str) -> None:
     """Render final pipeline summary panel."""
     status = orch.get_pipeline_status()
     portfolio = exec_report.portfolio_risk
@@ -790,9 +797,7 @@ def run_pipeline(live: bool = False, symbol: str = "NQ", days: int = 30) -> None
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Alpha Signal Research Lab — Pipeline Runner"
-    )
+    parser = argparse.ArgumentParser(description="Alpha Signal Research Lab — Pipeline Runner")
     parser.add_argument(
         "--live",
         action="store_true",
