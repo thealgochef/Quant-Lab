@@ -186,14 +186,16 @@ class PolygonDataProvider(DataProvider):
                 continue
             if ts >= end_ts:
                 break
-            rows.append({
-                "timestamp": ts,
-                "open": agg.open,
-                "high": agg.high,
-                "low": agg.low,
-                "close": agg.close,
-                "volume": agg.volume or 0,
-            })
+            rows.append(
+                {
+                    "timestamp": ts,
+                    "open": agg.open,
+                    "high": agg.high,
+                    "low": agg.low,
+                    "close": agg.close,
+                    "volume": agg.volume or 0,
+                }
+            )
 
         if not rows:
             return pd.DataFrame(

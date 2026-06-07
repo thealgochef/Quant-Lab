@@ -133,10 +133,7 @@ class DataInfraAgent(BaseAgent):
                     bars_dict[tf_str] = agg
 
             # Tick bar aggregation (if provider supports ticks)
-            tick_tfs = [
-                tf for tf in timeframes
-                if tf in (Timeframe.TICK_987, Timeframe.TICK_2000)
-            ]
+            tick_tfs = [tf for tf in timeframes if tf in (Timeframe.TICK_987, Timeframe.TICK_2000)]
             if tick_tfs:
                 try:
                     ticks = provider.get_ticks(instrument, start, end)
@@ -268,11 +265,7 @@ def _build_session_metadata(bars_1m: pd.DataFrame) -> list[SessionMetadata]:
 
         date_str = parts[1]
         stype = parts[2]
-        kz = (
-            session_bars["killzone"].iloc[0]
-            if "killzone" in session_bars.columns
-            else "NONE"
-        )
+        kz = session_bars["killzone"].iloc[0] if "killzone" in session_bars.columns else "NONE"
 
         sessions.append(
             SessionMetadata(

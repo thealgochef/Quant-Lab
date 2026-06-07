@@ -82,8 +82,7 @@ def tag_sessions(bars: pd.DataFrame, instrument: str) -> pd.DataFrame:
 
     df["session_type"] = session_types
     df["session_id"] = [
-        f"{instrument}_{d}_{s}"
-        for d, s in zip(trading_date_strs, session_types, strict=True)
+        f"{instrument}_{d}_{s}" for d, s in zip(trading_date_strs, session_types, strict=True)
     ]
     return df
 

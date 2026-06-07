@@ -40,9 +40,7 @@ from alpha_lab.core.enums import AgentID, Killzone, Timeframe
 @pytest.fixture
 def sample_1m_bars() -> pd.DataFrame:
     """Synthetic 1m bars for a single RTH session (09:30-16:14)."""
-    index = pd.date_range(
-        "2026-02-20 09:30", periods=405, freq="1min", tz="US/Eastern"
-    )
+    index = pd.date_range("2026-02-20 09:30", periods=405, freq="1min", tz="US/Eastern")
     rng = np.random.default_rng(42)
     base = 22000.0
     closes = base + rng.standard_normal(405).cumsum() * 5
@@ -171,9 +169,7 @@ class TestPolygonDataProvider:
         provider = PolygonDataProvider(api_key="test-key")
         provider.connect()
         with pytest.raises(NotImplementedError):
-            provider.get_ohlcv(
-                "NQ", Timeframe.TICK_987, dt.datetime.now(), dt.datetime.now()
-            )
+            provider.get_ohlcv("NQ", Timeframe.TICK_987, dt.datetime.now(), dt.datetime.now())
         provider.disconnect()
 
 
@@ -184,49 +180,50 @@ class TestPolygonDataProvider:
 
 class TestFrontMonthTicker:
     def test_january_resolves_to_march(self):
-        assert PolygonDataProvider.resolve_front_month_ticker(
-            "NQ", dt.datetime(2026, 1, 15)
-        ) == "NQH6"
+        assert (
+            PolygonDataProvider.resolve_front_month_ticker("NQ", dt.datetime(2026, 1, 15)) == "NQH6"
+        )
 
     def test_february_resolves_to_march(self):
-        assert PolygonDataProvider.resolve_front_month_ticker(
-            "NQ", dt.datetime(2026, 2, 10)
-        ) == "NQH6"
+        assert (
+            PolygonDataProvider.resolve_front_month_ticker("NQ", dt.datetime(2026, 2, 10)) == "NQH6"
+        )
 
     def test_march_early_resolves_to_march(self):
-        assert PolygonDataProvider.resolve_front_month_ticker(
-            "NQ", dt.datetime(2026, 3, 10)
-        ) == "NQH6"
+        assert (
+            PolygonDataProvider.resolve_front_month_ticker("NQ", dt.datetime(2026, 3, 10)) == "NQH6"
+        )
 
     def test_march_late_resolves_to_june(self):
-        assert PolygonDataProvider.resolve_front_month_ticker(
-            "NQ", dt.datetime(2026, 3, 20)
-        ) == "NQM6"
+        assert (
+            PolygonDataProvider.resolve_front_month_ticker("NQ", dt.datetime(2026, 3, 20)) == "NQM6"
+        )
 
     def test_april_resolves_to_june(self):
-        assert PolygonDataProvider.resolve_front_month_ticker(
-            "NQ", dt.datetime(2026, 4, 1)
-        ) == "NQM6"
+        assert (
+            PolygonDataProvider.resolve_front_month_ticker("NQ", dt.datetime(2026, 4, 1)) == "NQM6"
+        )
 
     def test_june_early_resolves_to_june(self):
-        assert PolygonDataProvider.resolve_front_month_ticker(
-            "NQ", dt.datetime(2026, 6, 1)
-        ) == "NQM6"
+        assert (
+            PolygonDataProvider.resolve_front_month_ticker("NQ", dt.datetime(2026, 6, 1)) == "NQM6"
+        )
 
     def test_july_resolves_to_september(self):
-        assert PolygonDataProvider.resolve_front_month_ticker(
-            "NQ", dt.datetime(2026, 7, 15)
-        ) == "NQU6"
+        assert (
+            PolygonDataProvider.resolve_front_month_ticker("NQ", dt.datetime(2026, 7, 15)) == "NQU6"
+        )
 
     def test_december_late_rolls_to_next_year(self):
-        assert PolygonDataProvider.resolve_front_month_ticker(
-            "NQ", dt.datetime(2026, 12, 20)
-        ) == "NQH7"
+        assert (
+            PolygonDataProvider.resolve_front_month_ticker("NQ", dt.datetime(2026, 12, 20))
+            == "NQH7"
+        )
 
     def test_es_ticker_format(self):
-        assert PolygonDataProvider.resolve_front_month_ticker(
-            "ES", dt.datetime(2026, 1, 15)
-        ) == "ESH6"
+        assert (
+            PolygonDataProvider.resolve_front_month_ticker("ES", dt.datetime(2026, 1, 15)) == "ESH6"
+        )
 
 
 # ────────────────────────────────────────────────────────────────
@@ -354,9 +351,7 @@ class TestAggregation:
         assert abs(result["low"].min() - sample_1m_bars["low"].min()) < 0.01
 
     def test_daily_aggregation(self, sample_1m_with_sessions):
-        result = aggregate_time_bars(
-            sample_1m_with_sessions, Timeframe.D1, self.BOUNDARIES
-        )
+        result = aggregate_time_bars(sample_1m_with_sessions, Timeframe.D1, self.BOUNDARIES)
         assert len(result) == 1  # One trading day
         assert abs(result["volume"].iloc[0] - sample_1m_with_sessions["volume"].sum()) < 1
 
@@ -446,8 +441,12 @@ class TestPDLevels:
         daily = aggregate_time_bars(
             bars,
             Timeframe.D1,
-            {"rth_open": "09:30", "rth_close": "16:15",
-             "globex_open": "18:00", "globex_close": "17:00"},
+            {
+                "rth_open": "09:30",
+                "rth_close": "16:15",
+                "globex_open": "18:00",
+                "globex_close": "17:00",
+            },
         )
         levels = _compute_pd_levels(daily, bars, "NQ")
         # First day has no previous, so only second day should have levels

@@ -64,9 +64,7 @@ class IngestionRunner:
         current = start_date
 
         while current <= end_date:
-            parquet_path = (
-                self._data_dir / symbol / current.isoformat() / "mbp10.parquet"
-            )
+            parquet_path = self._data_dir / symbol / current.isoformat() / "mbp10.parquet"
 
             if parquet_path.exists():
                 summary["cached"] += 1
@@ -74,9 +72,7 @@ class IngestionRunner:
             else:
                 try:
                     start_dt = datetime.combine(current, datetime.min.time())
-                    end_dt = datetime.combine(
-                        current + timedelta(days=1), datetime.min.time()
-                    )
+                    end_dt = datetime.combine(current + timedelta(days=1), datetime.min.time())
                     df = self._provider.get_ticks(symbol, start_dt, end_dt)
                     if not df.empty:
                         summary["fetched"] += 1
@@ -84,16 +80,12 @@ class IngestionRunner:
                     else:
                         summary["cached"] += 1  # No data for this date
                 except Exception:
-                    logger.exception(
-                        "Failed to ingest %s %s", symbol, current
-                    )
+                    logger.exception("Failed to ingest %s %s", symbol, current)
                     summary["failed"] += 1
 
             current += timedelta(days=1)
 
-        logger.info(
-            "Historical ingestion complete for %s: %s", symbol, summary
-        )
+        logger.info("Historical ingestion complete for %s: %s", symbol, summary)
         return summary
 
     def backfill(self, symbol: str, days: int = 252) -> dict:
@@ -166,9 +158,7 @@ class IngestionRunner:
                 # Extract timestamp and convert to date
                 ts_event = getattr(record, "ts_event", None)
                 if ts_event is not None:
-                    record_date = pd.Timestamp(
-                        ts_event, unit="ns"
-                    ).date()
+                    record_date = pd.Timestamp(ts_event, unit="ns").date()
                 else:
                     record_date = date.today()
 
@@ -195,20 +185,14 @@ class IngestionRunner:
         logger.info("Live ingestion: %d records processed", count)
         return {"records": count}
 
-    def _flush_buffer(
-        self, symbol: str, dt: date, buffer: list[dict]
-    ) -> None:
+    def _flush_buffer(self, symbol: str, dt: date, buffer: list[dict]) -> None:
         """Write buffered records to a Parquet file."""
         if not buffer:
             return
 
-        parquet_path = (
-            self._data_dir / symbol / dt.isoformat() / "mbp10_live.parquet"
-        )
+        parquet_path = self._data_dir / symbol / dt.isoformat() / "mbp10_live.parquet"
         parquet_path.parent.mkdir(parents=True, exist_ok=True)
 
         df = pd.DataFrame(buffer)
         df.to_parquet(parquet_path)
-        logger.info(
-            "Flushed %d live records to %s", len(buffer), parquet_path
-        )
+        logger.info("Flushed %d live records to %s", len(buffer), parquet_path)

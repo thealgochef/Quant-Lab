@@ -62,12 +62,14 @@ def aggregate_tick_bars(ticks: pd.DataFrame, tick_count: int) -> pd.DataFrame:
     sizes = ticks["size"].values
     n = len(ticks)
 
-    groups = pd.DataFrame({
-        "price": prices,
-        "size": sizes,
-        "timestamp": ts_values,
-        "group": [i // tick_count for i in range(n)],
-    })
+    groups = pd.DataFrame(
+        {
+            "price": prices,
+            "size": sizes,
+            "timestamp": ts_values,
+            "group": [i // tick_count for i in range(n)],
+        }
+    )
 
     agg = groups.groupby("group").agg(
         open=("price", "first"),
@@ -130,13 +132,15 @@ def aggregate_time_bars(
     resampled = (
         bars_1m[["open", "high", "low", "close", "volume"]]
         .resample(rule)
-        .agg({
-            "open": "first",
-            "high": "max",
-            "low": "min",
-            "close": "last",
-            "volume": "sum",
-        })
+        .agg(
+            {
+                "open": "first",
+                "high": "max",
+                "low": "min",
+                "close": "last",
+                "volume": "sum",
+            }
+        )
         .dropna(subset=["open"])
     )
     return resampled
@@ -159,13 +163,15 @@ def _aggregate_daily(bars_1m: pd.DataFrame) -> pd.DataFrame:
     ohlcv = bars_1m[["open", "high", "low", "close", "volume"]].copy()
     ohlcv["_td"] = trading_dates.values
 
-    daily = ohlcv.groupby("_td").agg({
-        "open": "first",
-        "high": "max",
-        "low": "min",
-        "close": "last",
-        "volume": "sum",
-    })
+    daily = ohlcv.groupby("_td").agg(
+        {
+            "open": "first",
+            "high": "max",
+            "low": "min",
+            "close": "last",
+            "volume": "sum",
+        }
+    )
     daily.index = pd.DatetimeIndex(daily.index, tz="US/Eastern")
     daily.index.name = "timestamp"
     return daily

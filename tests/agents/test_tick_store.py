@@ -36,11 +36,13 @@ def _make_synthetic_ticks(
     )
     prices = base_price + rng.standard_normal(n).cumsum() * 0.25
 
-    df = pd.DataFrame({
-        "ts_event": ts,
-        "price": prices,
-        "size": rng.integers(1, 50, n),
-    })
+    df = pd.DataFrame(
+        {
+            "ts_event": ts,
+            "price": prices,
+            "size": rng.integers(1, 50, n),
+        }
+    )
 
     # Add variable-depth book columns (e.g., 10 for MBP-10, 1 for MBP-1)
     for i in range(depth_levels):
@@ -68,9 +70,7 @@ def tick_data_dir(tmp_path) -> Path:
 def tick_store(tick_data_dir) -> TickStore:
     """TickStore with 2 days of NQ data registered."""
     store = TickStore(tick_data_dir)
-    store.register_date_range(
-        "NQ", date(2026, 2, 20), date(2026, 2, 21)
-    )
+    store.register_date_range("NQ", date(2026, 2, 20), date(2026, 2, 21))
     yield store
     store.close()
 
@@ -150,15 +150,10 @@ class TestTickStore:
         """Tick aggregation via DuckDB produces valid OHLCV."""
         start = datetime(2026, 2, 20, 9, 30, tzinfo=dt.UTC)
         end = datetime(2026, 2, 20, 9, 31, tzinfo=dt.UTC)
-        bars = tick_store.build_bars_from_ticks(
-            "NQ", start, end, bar_size="10 seconds"
-        )
+        bars = tick_store.build_bars_from_ticks("NQ", start, end, bar_size="10 seconds")
         assert isinstance(bars, pd.DataFrame)
         if not bars.empty:
-            assert all(
-                c in bars.columns
-                for c in ["open", "high", "low", "close", "volume"]
-            )
+            assert all(c in bars.columns for c in ["open", "high", "low", "close", "volume"])
             # OHLC integrity
             assert (bars["high"] >= bars["low"]).all()
             assert (bars["high"] >= bars["open"]).all()
@@ -234,11 +229,13 @@ class TestTickStore:
         """Feature-row query should fall back to compact projection for trades schema."""
         ts = pd.date_range("2026-02-20 09:30", periods=200, freq="100ms", tz="UTC")
         rng = np.random.default_rng(123)
-        trades = pd.DataFrame({
-            "ts_event": ts,
-            "price": 22000.0 + rng.standard_normal(200).cumsum() * 0.25,
-            "size": rng.integers(1, 20, 200),
-        })
+        trades = pd.DataFrame(
+            {
+                "ts_event": ts,
+                "price": 22000.0 + rng.standard_normal(200).cumsum() * 0.25,
+                "size": rng.integers(1, 20, 200),
+            }
+        )
         out_dir = tmp_path / "NQ" / "2026-02-20"
         out_dir.mkdir(parents=True)
         trades.to_parquet(out_dir / "trades.parquet")
@@ -262,9 +259,7 @@ class TestTickStore:
     def test_register_date_range_count(self, tick_data_dir):
         """register_date_range returns the count of files found."""
         store = TickStore(tick_data_dir)
-        count = store.register_date_range(
-            "NQ", date(2026, 2, 20), date(2026, 2, 21)
-        )
+        count = store.register_date_range("NQ", date(2026, 2, 20), date(2026, 2, 21))
         assert count == 2
         store.close()
 
@@ -295,13 +290,16 @@ class TestMLDatasetBuilder:
     def test_compute_bar_features(self):
         """Verify returns, volatility, volume z-score columns exist."""
         rng = np.random.default_rng(42)
-        bars = pd.DataFrame({
-            "open": 22000 + rng.standard_normal(100).cumsum(),
-            "high": 22005 + rng.standard_normal(100).cumsum(),
-            "low": 21995 + rng.standard_normal(100).cumsum(),
-            "close": 22000 + rng.standard_normal(100).cumsum(),
-            "volume": rng.integers(100, 5000, 100),
-        }, index=pd.date_range("2026-02-20 09:30", periods=100, freq="5min"))
+        bars = pd.DataFrame(
+            {
+                "open": 22000 + rng.standard_normal(100).cumsum(),
+                "high": 22005 + rng.standard_normal(100).cumsum(),
+                "low": 21995 + rng.standard_normal(100).cumsum(),
+                "close": 22000 + rng.standard_normal(100).cumsum(),
+                "volume": rng.integers(100, 5000, 100),
+            },
+            index=pd.date_range("2026-02-20 09:30", periods=100, freq="5min"),
+        )
         # Fix OHLC consistency
         bars["high"] = bars[["open", "high", "low", "close"]].max(axis=1) + 1
         bars["low"] = bars[["open", "high", "low", "close"]].min(axis=1) - 1
@@ -323,10 +321,15 @@ class TestMLDatasetBuilder:
     def test_forward_returns(self):
         """Labels are correct forward-looking returns."""
         close = pd.Series([100.0, 101.0, 102.0, 103.0, 104.0])
-        bars = pd.DataFrame({
-            "open": close, "high": close + 1, "low": close - 1,
-            "close": close, "volume": [100] * 5,
-        })
+        bars = pd.DataFrame(
+            {
+                "open": close,
+                "high": close + 1,
+                "low": close - 1,
+                "close": close,
+                "volume": [100] * 5,
+            }
+        )
         fwd = MLDatasetBuilder._compute_forward_returns(bars, horizons=[1, 2])
 
         # fwd_ret_1 at index 0 = (101/100) - 1 = 0.01
@@ -354,7 +357,10 @@ class TestMLDatasetBuilder:
         output = tmp_path / "test_export" / "features.parquet"
 
         counts = builder.export_dataset(
-            "NQ", start, end, "10 seconds",
+            "NQ",
+            start,
+            end,
+            "10 seconds",
             output_path=output,
             train_pct=0.7,
             val_pct=0.15,
@@ -375,17 +381,18 @@ class TestAggregateTickBars:
         """Verify tick bars produce valid OHLCV from synthetic ticks."""
         rng = np.random.default_rng(42)
         n = 2000
-        ticks = pd.DataFrame({
-            "price": 22000 + rng.standard_normal(n).cumsum() * 0.25,
-            "size": rng.integers(1, 50, n),
-            "timestamp": pd.date_range("2026-02-20 09:30", periods=n, freq="100ms"),
-        })
+        ticks = pd.DataFrame(
+            {
+                "price": 22000 + rng.standard_normal(n).cumsum() * 0.25,
+                "size": rng.integers(1, 50, n),
+                "timestamp": pd.date_range("2026-02-20 09:30", periods=n, freq="100ms"),
+            }
+        )
         result = aggregate_tick_bars(ticks, tick_count=987)
 
         assert not result.empty
         assert all(
-            c in result.columns
-            for c in ["open", "high", "low", "close", "volume", "tick_count"]
+            c in result.columns for c in ["open", "high", "low", "close", "volume", "tick_count"]
         )
         # Should produce 2 full bars from 2000 ticks at 987 per bar
         assert len(result) == 2
@@ -397,11 +404,13 @@ class TestAggregateTickBars:
         """Partial final chunk < 50% is dropped."""
         rng = np.random.default_rng(42)
         n = 1100  # 987 + 113 (113 < 987*0.5 = 493)
-        ticks = pd.DataFrame({
-            "price": 22000 + rng.standard_normal(n).cumsum() * 0.25,
-            "size": rng.integers(1, 50, n),
-            "timestamp": pd.date_range("2026-02-20 09:30", periods=n, freq="100ms"),
-        })
+        ticks = pd.DataFrame(
+            {
+                "price": 22000 + rng.standard_normal(n).cumsum() * 0.25,
+                "size": rng.integers(1, 50, n),
+                "timestamp": pd.date_range("2026-02-20 09:30", periods=n, freq="100ms"),
+            }
+        )
         result = aggregate_tick_bars(ticks, tick_count=987)
         # Only 1 full bar, partial dropped
         assert len(result) == 1
@@ -410,11 +419,13 @@ class TestAggregateTickBars:
         """Partial final chunk >= 50% is kept."""
         rng = np.random.default_rng(42)
         n = 1500  # 987 + 513 (513 >= 987*0.5 = 493.5)
-        ticks = pd.DataFrame({
-            "price": 22000 + rng.standard_normal(n).cumsum() * 0.25,
-            "size": rng.integers(1, 50, n),
-            "timestamp": pd.date_range("2026-02-20 09:30", periods=n, freq="100ms"),
-        })
+        ticks = pd.DataFrame(
+            {
+                "price": 22000 + rng.standard_normal(n).cumsum() * 0.25,
+                "size": rng.integers(1, 50, n),
+                "timestamp": pd.date_range("2026-02-20 09:30", periods=n, freq="100ms"),
+            }
+        )
         result = aggregate_tick_bars(ticks, tick_count=987)
         assert len(result) == 2  # Full bar + partial kept
 
@@ -427,10 +438,13 @@ class TestAggregateTickBars:
         rng = np.random.default_rng(42)
         n = 987
         idx = pd.date_range("2026-02-20 09:30", periods=n, freq="100ms")
-        ticks = pd.DataFrame({
-            "price": 22000 + rng.standard_normal(n).cumsum() * 0.25,
-            "size": rng.integers(1, 50, n),
-        }, index=idx)
+        ticks = pd.DataFrame(
+            {
+                "price": 22000 + rng.standard_normal(n).cumsum() * 0.25,
+                "size": rng.integers(1, 50, n),
+            },
+            index=idx,
+        )
         result = aggregate_tick_bars(ticks, tick_count=987)
         assert len(result) == 1
 
@@ -439,11 +453,13 @@ class TestAggregateTickBars:
         rng = np.random.default_rng(42)
         n = 987
         sizes = rng.integers(1, 50, n)
-        ticks = pd.DataFrame({
-            "price": 22000 + rng.standard_normal(n).cumsum() * 0.25,
-            "size": sizes,
-            "timestamp": pd.date_range("2026-02-20 09:30", periods=n, freq="100ms"),
-        })
+        ticks = pd.DataFrame(
+            {
+                "price": 22000 + rng.standard_normal(n).cumsum() * 0.25,
+                "size": sizes,
+                "timestamp": pd.date_range("2026-02-20 09:30", periods=n, freq="100ms"),
+            }
+        )
         result = aggregate_tick_bars(ticks, tick_count=987)
         assert result.iloc[0]["volume"] == sizes.sum()
 
@@ -474,16 +490,18 @@ def _make_mbp10_with_actions(
     trade_price = np.round(mid / 0.25) * 0.25
     order_price = mid + rng.standard_normal(n) * 0.1
     price = np.where(actions == "T", trade_price, order_price)
-    df = pd.DataFrame({
-        "ts_event": ts,
-        "sequence": np.arange(1, n + 1, dtype="int64"),
-        "action": actions,
-        "price": price,
-        "size": rng.integers(1, 50, n).astype("int64"),
-        # top-of-book on the 0.125 grid -> book-mid lands on 0.0625? keep mid on 0.125:
-        "bid_px_00": np.round((mid - 0.25) / 0.125) * 0.125,
-        "ask_px_00": np.round((mid + 0.25) / 0.125) * 0.125,
-    })
+    df = pd.DataFrame(
+        {
+            "ts_event": ts,
+            "sequence": np.arange(1, n + 1, dtype="int64"),
+            "action": actions,
+            "price": price,
+            "size": rng.integers(1, 50, n).astype("int64"),
+            # top-of-book on the 0.125 grid -> book-mid lands on 0.0625? keep mid on 0.125:
+            "bid_px_00": np.round((mid - 0.25) / 0.125) * 0.125,
+            "ask_px_00": np.round((mid + 0.25) / 0.125) * 0.125,
+        }
+    )
     return df
 
 
@@ -491,19 +509,23 @@ def _ref_trade_bars(df: pd.DataFrame, n: int, tick: float = 0.25) -> pd.DataFram
     """Independent pandas reference: trade-price tick bars over the SAME composite order."""
     t = df[df["action"].str.lower() == "t"].copy()
     t = t[t["price"].notna() & (t["price"] > 0)]
-    t = t.sort_values(["ts_event", "sequence", "price", "size"], kind="stable").reset_index(drop=True)
+    t = t.sort_values(["ts_event", "sequence", "price", "size"], kind="stable").reset_index(
+        drop=True
+    )
     t["bar_index"] = t.index // n  # single trading day in this fixture
     rows = []
     for bi, sub in t.groupby("bar_index", sort=True):
-        rows.append({
-            "bar_index": int(bi),
-            "open_t": round(sub["price"].iloc[0] / tick),
-            "high_t": round(sub["price"].max() / tick),
-            "low_t": round(sub["price"].min() / tick),
-            "close_t": round(sub["price"].iloc[-1] / tick),
-            "volume": int(sub["size"].sum()),
-            "trade_count": int(len(sub)),
-        })
+        rows.append(
+            {
+                "bar_index": int(bi),
+                "open_t": round(sub["price"].iloc[0] / tick),
+                "high_t": round(sub["price"].max() / tick),
+                "low_t": round(sub["price"].min() / tick),
+                "close_t": round(sub["price"].iloc[-1] / tick),
+                "volume": int(sub["size"].sum()),
+                "trade_count": int(len(sub)),
+            }
+        )
     return pd.DataFrame(rows)
 
 
@@ -517,8 +539,10 @@ def _register_frame(tmp_path: Path, df: pd.DataFrame, date_str: str = "2026-02-2
 
 
 class TestTradeBars:
-    _WIN = (datetime(2026, 2, 20, 14, 0, tzinfo=dt.UTC),
-            datetime(2026, 2, 20, 15, 0, tzinfo=dt.UTC))
+    _WIN = (
+        datetime(2026, 2, 20, 14, 0, tzinfo=dt.UTC),
+        datetime(2026, 2, 20, 15, 0, tzinfo=dt.UTC),
+    )
 
     def test_trade_bars_match_pandas_reference(self, tmp_path):
         """DuckDB trade bars == an independent pandas bucketer (portable parity, no store)."""
@@ -560,7 +584,9 @@ class TestTradeBars:
         store = _register_frame(tmp_path, df)
         try:
             trade_bars = store.build_tick_bars("NQ", *self._WIN, tick_count=50)
-            book_bars = store.build_tick_bars("NQ", *self._WIN, tick_count=50, price_source="book_mid")
+            book_bars = store.build_tick_bars(
+                "NQ", *self._WIN, tick_count=50, price_source="book_mid"
+            )
         finally:
             store.close()
         # every row has valid bid/ask, so book_mid sees ~all 600 rows vs ~240 trades.
@@ -585,12 +611,14 @@ class TestTradeBars:
         """A trades-style frame with sequence+price but NO action column = all trades."""
         rng = np.random.default_rng(1)
         n = 200
-        df = pd.DataFrame({
-            "ts_event": pd.date_range("2026-02-20 14:30", periods=n, freq="100ms", tz="UTC"),
-            "sequence": np.arange(1, n + 1, dtype="int64"),
-            "price": np.round((22000 + rng.standard_normal(n).cumsum() * 0.25) / 0.25) * 0.25,
-            "size": rng.integers(1, 20, n).astype("int64"),
-        })
+        df = pd.DataFrame(
+            {
+                "ts_event": pd.date_range("2026-02-20 14:30", periods=n, freq="100ms", tz="UTC"),
+                "sequence": np.arange(1, n + 1, dtype="int64"),
+                "price": np.round((22000 + rng.standard_normal(n).cumsum() * 0.25) / 0.25) * 0.25,
+                "size": rng.integers(1, 20, n).astype("int64"),
+            }
+        )
         out = tmp_path / "NQ" / "2026-02-20"
         out.mkdir(parents=True)
         df.to_parquet(out / "trades.parquet")
@@ -616,14 +644,16 @@ class TestTradeBars:
         rng = np.random.default_rng(2)
         n = 100
         mid = 22000 + rng.standard_normal(n).cumsum() * 0.25
-        df = pd.DataFrame({
-            "ts_event": pd.date_range("2026-02-20 14:30", periods=n, freq="100ms", tz="UTC"),
-            "sequence": np.arange(1, n + 1, dtype="int64"),
-            "action": ["A"] * n,
-            "size": rng.integers(1, 20, n).astype("int64"),
-            "bid_px_00": mid - 0.25,
-            "ask_px_00": mid + 0.25,
-        })
+        df = pd.DataFrame(
+            {
+                "ts_event": pd.date_range("2026-02-20 14:30", periods=n, freq="100ms", tz="UTC"),
+                "sequence": np.arange(1, n + 1, dtype="int64"),
+                "action": ["A"] * n,
+                "size": rng.integers(1, 20, n).astype("int64"),
+                "bid_px_00": mid - 0.25,
+                "ask_px_00": mid + 0.25,
+            }
+        )
         out = tmp_path / "NQ" / "2026-02-20"
         out.mkdir(parents=True)
         df.to_parquet(out / "mbp10.parquet")
@@ -639,12 +669,14 @@ class TestTradeBars:
         """No 'sequence' column -> reader-independent order impossible -> raise."""
         rng = np.random.default_rng(3)
         n = 100
-        df = pd.DataFrame({
-            "ts_event": pd.date_range("2026-02-20 14:30", periods=n, freq="100ms", tz="UTC"),
-            "action": ["T"] * n,
-            "price": np.round((22000 + rng.standard_normal(n).cumsum()) / 0.25) * 0.25,
-            "size": rng.integers(1, 20, n).astype("int64"),
-        })
+        df = pd.DataFrame(
+            {
+                "ts_event": pd.date_range("2026-02-20 14:30", periods=n, freq="100ms", tz="UTC"),
+                "action": ["T"] * n,
+                "price": np.round((22000 + rng.standard_normal(n).cumsum()) / 0.25) * 0.25,
+                "size": rng.integers(1, 20, n).astype("int64"),
+            }
+        )
         out = tmp_path / "NQ" / "2026-02-20"
         out.mkdir(parents=True)
         df.to_parquet(out / "trades.parquet")
@@ -687,64 +719,96 @@ def _make_mbp10_sided(n: int = 600, seed: int = 11) -> pd.DataFrame:
             i += 1
         mid += rng.standard_normal() * 0.5
         seq += 1
-    return pd.DataFrame({"ts_event": ts_l, "sequence": np.array(seq_l, dtype="int64"),
-                         "action": ["T"] * len(ts_l), "price": px_l,
-                         "size": np.array(sz_l, dtype="int64"), "side": sd_l})
+    return pd.DataFrame(
+        {
+            "ts_event": ts_l,
+            "sequence": np.array(seq_l, dtype="int64"),
+            "action": ["T"] * len(ts_l),
+            "price": px_l,
+            "size": np.array(sz_l, dtype="int64"),
+            "side": sd_l,
+        }
+    )
 
 
-def _ref_trade_bars_signed(df: pd.DataFrame, n: int, buy: str = "B", tick: float = 0.25) -> pd.DataFrame:
+def _ref_trade_bars_signed(
+    df: pd.DataFrame, n: int, buy: str = "B", tick: float = 0.25
+) -> pd.DataFrame:
     """Reference bucketer using the SIDE-SIGNED order: +price for buys, -price for sells."""
     t = df[df["action"].str.lower() == "t"].copy()
     t = t[t["price"].notna() & (t["price"] > 0)]
     # case-INSENSITIVE buy match, mirroring the DuckDB CASE (lower(side)='b').
     is_buy = t["side"].astype(str).str.upper().to_numpy() == buy.upper()
     t["_sgn"] = t["price"] * np.where(is_buy, 1.0, -1.0)
-    t = t.sort_values(["ts_event", "sequence", "_sgn", "size"], kind="stable").reset_index(drop=True)
+    t = t.sort_values(["ts_event", "sequence", "_sgn", "size"], kind="stable").reset_index(
+        drop=True
+    )
     t["bar_index"] = t.index // n
     rows = []
     for bi, sub in t.groupby("bar_index", sort=True):
-        rows.append({"bar_index": int(bi),
-                     "open_t": round(sub["price"].iloc[0] / tick), "high_t": round(sub["price"].max() / tick),
-                     "low_t": round(sub["price"].min() / tick), "close_t": round(sub["price"].iloc[-1] / tick),
-                     "volume": int(sub["size"].sum()), "trade_count": int(len(sub))})
+        rows.append(
+            {
+                "bar_index": int(bi),
+                "open_t": round(sub["price"].iloc[0] / tick),
+                "high_t": round(sub["price"].max() / tick),
+                "low_t": round(sub["price"].min() / tick),
+                "close_t": round(sub["price"].iloc[-1] / tick),
+                "volume": int(sub["size"].sum()),
+                "trade_count": int(len(sub)),
+            }
+        )
     return pd.DataFrame(rows)
 
 
 class TestSideSignedOrder:
-    _WIN = (datetime(2026, 2, 20, 14, 0, tzinfo=dt.UTC),
-            datetime(2026, 2, 20, 15, 0, tzinfo=dt.UTC))
+    _WIN = (
+        datetime(2026, 2, 20, 14, 0, tzinfo=dt.UTC),
+        datetime(2026, 2, 20, 15, 0, tzinfo=dt.UTC),
+    )
 
     def test_sell_sweep_orders_descending(self, tmp_path):
         """A sell sweep (side='A') under one (ts,seq): side-signed => descending = chronological,
         so open=highest, close=lowest -- the OPPOSITE of a naive price-ascending order."""
         ts = pd.Timestamp("2026-02-20 14:30:00", tz="UTC")
-        df = pd.DataFrame({  # arbitrary parquet row order; the SQL must impose the order
-            "ts_event": [ts, ts, ts], "sequence": [10, 10, 10], "action": ["T", "T", "T"],
-            "price": [100.00, 100.50, 100.25], "size": [3, 1, 2], "side": ["A", "A", "A"],
-        })
+        df = pd.DataFrame(
+            {  # arbitrary parquet row order; the SQL must impose the order
+                "ts_event": [ts, ts, ts],
+                "sequence": [10, 10, 10],
+                "action": ["T", "T", "T"],
+                "price": [100.00, 100.50, 100.25],
+                "size": [3, 1, 2],
+                "side": ["A", "A", "A"],
+            }
+        )
         store = _register_frame(tmp_path, df)
         try:
             bars = store.build_tick_bars("NQ", *self._WIN, tick_count=3)
         finally:
             store.close()
         r = bars.reset_index().iloc[0]
-        assert int(round(r.open / 0.25)) == int(round(100.50 / 0.25))   # first = highest
+        assert int(round(r.open / 0.25)) == int(round(100.50 / 0.25))  # first = highest
         assert int(round(r.close / 0.25)) == int(round(100.00 / 0.25))  # last = lowest
 
     def test_buy_sweep_orders_ascending(self, tmp_path):
         """A buy sweep (side='B'): side-signed => ascending; open=lowest, close=highest."""
         ts = pd.Timestamp("2026-02-20 14:30:00", tz="UTC")
-        df = pd.DataFrame({
-            "ts_event": [ts, ts, ts], "sequence": [10, 10, 10], "action": ["T", "T", "T"],
-            "price": [100.50, 100.00, 100.25], "size": [3, 1, 2], "side": ["B", "B", "B"],
-        })
+        df = pd.DataFrame(
+            {
+                "ts_event": [ts, ts, ts],
+                "sequence": [10, 10, 10],
+                "action": ["T", "T", "T"],
+                "price": [100.50, 100.00, 100.25],
+                "size": [3, 1, 2],
+                "side": ["B", "B", "B"],
+            }
+        )
         store = _register_frame(tmp_path, df)
         try:
             bars = store.build_tick_bars("NQ", *self._WIN, tick_count=3)
         finally:
             store.close()
         r = bars.reset_index().iloc[0]
-        assert int(round(r.open / 0.25)) == int(round(100.00 / 0.25))   # first = lowest
+        assert int(round(r.open / 0.25)) == int(round(100.00 / 0.25))  # first = lowest
         assert int(round(r.close / 0.25)) == int(round(100.50 / 0.25))  # last = highest
 
     def test_side_signed_matches_pandas_reference(self, tmp_path):
@@ -752,7 +816,9 @@ class TestSideSignedOrder:
         df = _make_mbp10_sided(n=600)
         store = _register_frame(tmp_path, df)
         try:
-            bars = store.build_tick_bars("NQ", *self._WIN, tick_count=50)  # default trade, side-signed
+            bars = store.build_tick_bars(
+                "NQ", *self._WIN, tick_count=50
+            )  # default trade, side-signed
         finally:
             store.close()
         ref = _ref_trade_bars_signed(df, 50)
@@ -775,9 +841,9 @@ class TestSideSignedOrder:
             signed = store.build_tick_bars("NQ", *self._WIN, tick_count=50)
         finally:
             store.close()
-        ref_asc = _ref_trade_bars(df, 50)          # 4d price-ascending reference
+        ref_asc = _ref_trade_bars(df, 50)  # 4d price-ascending reference
         ref_signed = _ref_trade_bars_signed(df, 50)
-        assert not ref_asc.equals(ref_signed)      # sell sweeps reversed -> side matters
+        assert not ref_asc.equals(ref_signed)  # sell sweeps reversed -> side matters
         got = signed.reset_index().sort_values("bar_index").reset_index(drop=True)
         assert int(round(got.iloc[0].close / 0.25)) == ref_signed.iloc[0].close_t
 
@@ -785,16 +851,22 @@ class TestSideSignedOrder:
         """A (ts,seq) carrying both a buy and a sell: side-signed puts the sell (-price) before
         the buy (+price) deterministically (−P < +P' for any positive prices)."""
         ts = pd.Timestamp("2026-02-20 14:30:00", tz="UTC")
-        df = pd.DataFrame({
-            "ts_event": [ts, ts], "sequence": [10, 10], "action": ["T", "T"],
-            "price": [100.00, 100.50], "size": [4, 7], "side": ["B", "A"],  # buy@100.00, sell@100.50
-        })
+        df = pd.DataFrame(
+            {
+                "ts_event": [ts, ts],
+                "sequence": [10, 10],
+                "action": ["T", "T"],
+                "price": [100.00, 100.50],
+                "size": [4, 7],
+                "side": ["B", "A"],  # buy@100.00, sell@100.50
+            }
+        )
         store = _register_frame(tmp_path, df)
         try:
             bars = store.build_tick_bars("NQ", *self._WIN, tick_count=2)
         finally:
             store.close()
         r = bars.reset_index().iloc[0]
-        assert int(round(r.open / 0.25)) == int(round(100.50 / 0.25))   # sell first
+        assert int(round(r.open / 0.25)) == int(round(100.50 / 0.25))  # sell first
         assert int(round(r.close / 0.25)) == int(round(100.00 / 0.25))  # buy last
         assert int(r.volume) == 11

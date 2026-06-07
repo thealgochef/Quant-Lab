@@ -103,11 +103,13 @@ class TestDatabentDataProvider:
         # Create a fake cached file
         date_dir = tmp_path / "NQ" / "2026-02-20"
         date_dir.mkdir(parents=True)
-        fake_df = pd.DataFrame({
-            "ts_event": pd.date_range("2026-02-20", periods=5, freq="1s", tz="UTC"),
-            "price": [22000.0, 22001.0, 22002.0, 22001.5, 22003.0],
-            "size": [10, 20, 15, 5, 30],
-        })
+        fake_df = pd.DataFrame(
+            {
+                "ts_event": pd.date_range("2026-02-20", periods=5, freq="1s", tz="UTC"),
+                "price": [22000.0, 22001.0, 22002.0, 22001.5, 22003.0],
+                "size": [10, 20, 15, 5, 30],
+            }
+        )
         fake_df.to_parquet(date_dir / "mbp10.parquet")
 
         # Should read from cache without needing a client
@@ -119,11 +121,13 @@ class TestDatabentDataProvider:
         """Mock API call, verify Parquet file is written."""
         provider = DatabentDataProvider(api_key="test", data_dir=tmp_path)
 
-        mock_df = pd.DataFrame({
-            "ts_event": pd.date_range("2026-02-20", periods=3, freq="1s", tz="UTC"),
-            "price": [22000.0, 22001.0, 22002.0],
-            "size": [10, 20, 15],
-        })
+        mock_df = pd.DataFrame(
+            {
+                "ts_event": pd.date_range("2026-02-20", periods=3, freq="1s", tz="UTC"),
+                "price": [22000.0, 22001.0, 22002.0],
+                "size": [10, 20, 15],
+            }
+        )
         empty_df = pd.DataFrame(columns=["ts_event", "price", "size"])
 
         # First hour returns data, remaining hours return empty
@@ -133,9 +137,9 @@ class TestDatabentDataProvider:
         mock_data_empty.to_df.return_value = empty_df
 
         mock_client = MagicMock()
-        mock_client.timeseries.get_range.side_effect = (
-            [mock_data_with_rows] + [mock_data_empty] * 23
-        )
+        mock_client.timeseries.get_range.side_effect = [mock_data_with_rows] + [
+            mock_data_empty
+        ] * 23
         provider._client = mock_client
 
         result = provider._fetch_and_cache_ticks("NQ", dt.date(2026, 2, 20))
@@ -151,14 +155,16 @@ class TestDatabentDataProvider:
 
         provider = DatabentDataProvider(api_key="test", data_dir=tmp_path)
 
-        mock_df = pd.DataFrame({
-            "ts_event": pd.date_range("2026-02-20 09:30", periods=5, freq="1min", tz="UTC"),
-            "open": [22000.0, 22001.0, 22002.0, 22001.5, 22003.0],
-            "high": [22005.0, 22006.0, 22007.0, 22006.5, 22008.0],
-            "low": [21999.0, 22000.0, 22001.0, 22000.5, 22002.0],
-            "close": [22001.0, 22002.0, 22003.0, 22002.5, 22004.0],
-            "volume": [100, 200, 150, 80, 300],
-        })
+        mock_df = pd.DataFrame(
+            {
+                "ts_event": pd.date_range("2026-02-20 09:30", periods=5, freq="1min", tz="UTC"),
+                "open": [22000.0, 22001.0, 22002.0, 22001.5, 22003.0],
+                "high": [22005.0, 22006.0, 22007.0, 22006.5, 22008.0],
+                "low": [21999.0, 22000.0, 22001.0, 22000.5, 22002.0],
+                "close": [22001.0, 22002.0, 22003.0, 22002.5, 22004.0],
+                "volume": [100, 200, 150, 80, 300],
+            }
+        )
         mock_data = MagicMock()
         mock_data.to_df.return_value = mock_df
 
@@ -185,29 +191,34 @@ class TestDatabentFrontMonth:
     """Verify Databento provider uses same CME quarterly logic."""
 
     def test_january_resolves_to_march(self):
-        assert DatabentDataProvider.resolve_front_month_ticker(
-            "NQ", dt.datetime(2026, 1, 15)
-        ) == "NQH6"
+        assert (
+            DatabentDataProvider.resolve_front_month_ticker("NQ", dt.datetime(2026, 1, 15))
+            == "NQH6"
+        )
 
     def test_february_resolves_to_march(self):
-        assert DatabentDataProvider.resolve_front_month_ticker(
-            "NQ", dt.datetime(2026, 2, 10)
-        ) == "NQH6"
+        assert (
+            DatabentDataProvider.resolve_front_month_ticker("NQ", dt.datetime(2026, 2, 10))
+            == "NQH6"
+        )
 
     def test_march_late_resolves_to_june(self):
-        assert DatabentDataProvider.resolve_front_month_ticker(
-            "NQ", dt.datetime(2026, 3, 20)
-        ) == "NQM6"
+        assert (
+            DatabentDataProvider.resolve_front_month_ticker("NQ", dt.datetime(2026, 3, 20))
+            == "NQM6"
+        )
 
     def test_december_late_rolls_to_next_year(self):
-        assert DatabentDataProvider.resolve_front_month_ticker(
-            "NQ", dt.datetime(2026, 12, 20)
-        ) == "NQH7"
+        assert (
+            DatabentDataProvider.resolve_front_month_ticker("NQ", dt.datetime(2026, 12, 20))
+            == "NQH7"
+        )
 
     def test_es_ticker_format(self):
-        assert DatabentDataProvider.resolve_front_month_ticker(
-            "ES", dt.datetime(2026, 1, 15)
-        ) == "ESH6"
+        assert (
+            DatabentDataProvider.resolve_front_month_ticker("ES", dt.datetime(2026, 1, 15))
+            == "ESH6"
+        )
 
     def test_matches_polygon_provider(self):
         """Databento and Polygon should produce identical tickers."""

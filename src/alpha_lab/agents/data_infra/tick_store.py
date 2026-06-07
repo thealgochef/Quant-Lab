@@ -116,7 +116,7 @@ class TickStore:
         # trade path (keyed by the registered date set), so repeated trade-bar/event
         # queries don't re-read the parquet. ``_arrow_ns_tables`` keeps a strong ref to
         # the Arrow tables so DuckDB's zero-copy registration stays valid.
-        self._arrow_ns_relname: dict[str, str] = {}      # cache_key -> registered name
+        self._arrow_ns_relname: dict[str, str] = {}  # cache_key -> registered name
         self._arrow_ns_tables: dict[str, pa.Table] = {}  # cache_key -> Arrow table (keepalive)
         logger.info("TickStore opened (data_dir=%s)", self._data_dir)
 
@@ -147,9 +147,7 @@ class TickStore:
         logger.debug("Registered %s", view_name)
         return True
 
-    def register_date_range(
-        self, symbol: str, start: date, end: date
-    ) -> int:
+    def register_date_range(self, symbol: str, start: date, end: date) -> int:
         """Register all available dates in [start, end] for a symbol.
 
         Returns the number of dates successfully registered.
@@ -162,7 +160,10 @@ class TickStore:
             current += timedelta(days=1)
         logger.info(
             "Registered %d dates for %s (%s to %s)",
-            count, symbol, start, end,
+            count,
+            symbol,
+            start,
+            end,
         )
         return count
 
@@ -186,10 +187,7 @@ class TickStore:
 
         # Detect whether data has a symbol column (real Databento data does,
         # synthetic test data may not)
-        sample_sql = (
-            f"SELECT column_name FROM "
-            f"(DESCRIBE SELECT * FROM ({union_sql}) LIMIT 0)"
-        )
+        sample_sql = f"SELECT column_name FROM (DESCRIBE SELECT * FROM ({union_sql}) LIMIT 0)"
         cols = {r[0] for r in self._conn.execute(sample_sql).fetchall()}
         has_symbol = "symbol" in cols
 
@@ -201,10 +199,7 @@ class TickStore:
                 WHERE symbol NOT LIKE '%-%'
                 GROUP BY symbol ORDER BY n DESC LIMIT 1
             """).fetchone()
-            sym_filter = (
-                f"AND symbol = '{front[0]}'"
-                if front else "AND symbol NOT LIKE '%-%'"
-            )
+            sym_filter = f"AND symbol = '{front[0]}'" if front else "AND symbol NOT LIKE '%-%'"
         else:
             sym_filter = ""
 
@@ -214,9 +209,7 @@ class TickStore:
             f"{sym_filter} "
             f"ORDER BY ts_event ASC"
         )
-        return self._conn.execute(
-            sql, [pd.Timestamp(start), pd.Timestamp(end)]
-        ).fetchdf()
+        return self._conn.execute(sql, [pd.Timestamp(start), pd.Timestamp(end)]).fetchdf()
 
     def query_tick_prices(
         self,
@@ -238,10 +231,7 @@ class TickStore:
         union_sql = self._union_views_sql(views)
 
         # Detect columns
-        sample_sql = (
-            f"SELECT column_name FROM "
-            f"(DESCRIBE SELECT * FROM ({union_sql}) LIMIT 0)"
-        )
+        sample_sql = f"SELECT column_name FROM (DESCRIBE SELECT * FROM ({union_sql}) LIMIT 0)"
         cols = {r[0] for r in self._conn.execute(sample_sql).fetchall()}
         has_book = "bid_px_00" in cols and "ask_px_00" in cols
         has_symbol = "symbol" in cols
@@ -278,9 +268,7 @@ class TickStore:
                   {sym_f}
                 ORDER BY ts_event ASC
             """
-        return self._conn.execute(
-            sql, [pd.Timestamp(start), pd.Timestamp(end)]
-        ).fetchdf()
+        return self._conn.execute(sql, [pd.Timestamp(start), pd.Timestamp(end)]).fetchdf()
 
     def query_tick_feature_rows(
         self,
@@ -315,10 +303,7 @@ class TickStore:
             return pd.DataFrame(columns=["ts_event", "price", "size"])
 
         union_sql = self._union_views_sql(views)
-        sample_sql = (
-            f"SELECT column_name FROM "
-            f"(DESCRIBE SELECT * FROM ({union_sql}) LIMIT 0)"
-        )
+        sample_sql = f"SELECT column_name FROM (DESCRIBE SELECT * FROM ({union_sql}) LIMIT 0)"
         cols = {r[0] for r in self._conn.execute(sample_sql).fetchall()}
         has_symbol = "symbol" in cols
         has_book = "bid_px_00" in cols and "ask_px_00" in cols
@@ -352,7 +337,8 @@ class TickStore:
             select_cols.append("size" if has_size else "1.0 AS size")
             # Support variable-depth schemas (e.g. mbp1 vs mbp10).
             depth_levels = [
-                i for i in range(10)
+                i
+                for i in range(10)
                 if (
                     f"bid_px_{i:02d}" in cols
                     and f"ask_px_{i:02d}" in cols
@@ -361,12 +347,14 @@ class TickStore:
                 )
             ]
             for i in depth_levels:
-                select_cols.extend([
-                    f"bid_px_{i:02d}",
-                    f"ask_px_{i:02d}",
-                    f"bid_sz_{i:02d}",
-                    f"ask_sz_{i:02d}",
-                ])
+                select_cols.extend(
+                    [
+                        f"bid_px_{i:02d}",
+                        f"ask_px_{i:02d}",
+                        f"bid_sz_{i:02d}",
+                        f"ask_sz_{i:02d}",
+                    ]
+                )
             sql = f"""
                 SELECT {", ".join(select_cols)}
                 FROM ({union_sql}) AS t
@@ -389,9 +377,7 @@ class TickStore:
                 ORDER BY ts_event ASC
             """
 
-        return self._conn.execute(
-            sql, [pd.Timestamp(start), pd.Timestamp(end)]
-        ).fetchdf()
+        return self._conn.execute(sql, [pd.Timestamp(start), pd.Timestamp(end)]).fetchdf()
 
     def query_ohlcv(
         self,
@@ -408,10 +394,7 @@ class TickStore:
         dates = self._registered.get(symbol, [])
 
         for date_str in sorted(dates):
-            path = (
-                self._data_dir / symbol / date_str
-                / f"ohlcv_{timeframe}.parquet"
-            )
+            path = self._data_dir / symbol / date_str / f"ohlcv_{timeframe}.parquet"
             if path.exists():
                 frames.append(pd.read_parquet(path))
 
@@ -451,9 +434,7 @@ class TickStore:
         """
         views = self._get_views(symbol)
         if not views:
-            return pd.DataFrame(
-                columns=["open", "high", "low", "close", "volume"]
-            )
+            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
 
         union_sql = self._union_views_sql(views)
 
@@ -461,10 +442,7 @@ class TickStore:
         # If so, build OHLCV from top-of-book mid-price to avoid extreme
         # wicks caused by deep book levels (bid_px_09 / ask_px_09).
         sample_sql = f"SELECT column_name FROM (DESCRIBE SELECT * FROM ({union_sql}) LIMIT 0)"
-        cols = {
-            r[0]
-            for r in self._conn.execute(sample_sql).fetchall()
-        }
+        cols = {r[0] for r in self._conn.execute(sample_sql).fetchall()}
         has_book = "bid_px_00" in cols and "ask_px_00" in cols
 
         # Filter out calendar-spread symbols (e.g. "NQZ5-NQH6") and
@@ -478,10 +456,7 @@ class TickStore:
                 WHERE symbol NOT LIKE '%-%'
                 GROUP BY symbol ORDER BY n DESC LIMIT 1
             """).fetchone()
-            symbol_filter = (
-                f"AND symbol = '{front[0]}'"
-                if front else "AND symbol NOT LIKE '%-%'"
-            )
+            symbol_filter = f"AND symbol = '{front[0]}'" if front else "AND symbol NOT LIKE '%-%'"
         else:
             symbol_filter = ""
 
@@ -523,14 +498,10 @@ class TickStore:
                 GROUP BY bar_time
                 ORDER BY bar_time ASC
             """
-        df = self._conn.execute(
-            sql, [pd.Timestamp(start), pd.Timestamp(end)]
-        ).fetchdf()
+        df = self._conn.execute(sql, [pd.Timestamp(start), pd.Timestamp(end)]).fetchdf()
 
         if df.empty:
-            return pd.DataFrame(
-                columns=["open", "high", "low", "close", "volume"]
-            )
+            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
 
         df = df.set_index("bar_time")
         df.index.name = "timestamp"
@@ -613,9 +584,7 @@ class TickStore:
             GROUP BY trading_day, bar_index
             ORDER BY trading_day, bar_index
         """
-        df = self._conn.execute(
-            sql, [pd.Timestamp(start), pd.Timestamp(end)]
-        ).fetchdf()
+        df = self._conn.execute(sql, [pd.Timestamp(start), pd.Timestamp(end)]).fetchdf()
 
         if df.empty:
             return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
@@ -663,8 +632,14 @@ class TickStore:
         # symbol (front-month filter), action (trade filter), price (bar price), side
         # (side-signed order). Read just those that exist; ``_ns_keyed_relation`` adds
         # ts_event_ns. book_mid stays on the plain read_parquet view (us, unchanged).
-        _TRADE_NS_COLS = {
-            "ts_event", "sequence", "size", "symbol", "action", "price", "side",
+        trade_ns_cols = {
+            "ts_event",
+            "sequence",
+            "size",
+            "symbol",
+            "action",
+            "price",
+            "side",
         }
         if "sequence" not in cols:
             raise ValueError(
@@ -702,7 +677,7 @@ class TickStore:
             # ts_event itself is unchanged (still us TIMESTAMPTZ for the trading_day cast,
             # the window filter, and the open_time/bar_time outputs). The order key below
             # LEADS with ts_event_ns instead of ts_event -- ordering-only.
-            ns_rel = self._ns_keyed_relation(symbol, _TRADE_NS_COLS)
+            ns_rel = self._ns_keyed_relation(symbol, trade_ns_cols)
             if ns_rel is not None:
                 union_sql = f"SELECT * FROM {ns_rel}"
                 ts_order_key = "ts_event_ns"
@@ -788,9 +763,7 @@ class TickStore:
             {where_clause}
             ORDER BY {order_clause}
         """
-        return self._conn.execute(
-            sql, [pd.Timestamp(start), pd.Timestamp(end)]
-        ).fetchdf()
+        return self._conn.execute(sql, [pd.Timestamp(start), pd.Timestamp(end)]).fetchdf()
 
     # ── Replay iterator ───────────────────────────────────────────
 
@@ -800,7 +773,7 @@ class TickStore:
         start: datetime,
         end: datetime,
         step: timedelta = timedelta(minutes=1),
-    ) -> Generator[pd.DataFrame, None, None]:
+    ) -> Generator[pd.DataFrame]:
         """Yield tick batches in strict chronological order.
 
         Each yielded DataFrame contains only data in
@@ -819,9 +792,7 @@ class TickStore:
 
     # ── Book snapshot ─────────────────────────────────────────────
 
-    def get_book_snapshot(
-        self, symbol: str, as_of: datetime
-    ) -> pd.DataFrame:
+    def get_book_snapshot(self, symbol: str, as_of: datetime) -> pd.DataFrame:
         """Return the order book state (10 levels) at exact timestamp.
 
         Finds the most recent tick record at or before ``as_of`` and
@@ -833,9 +804,7 @@ class TickStore:
 
         union_sql = self._union_views_sql(views)
         sql = (
-            f"SELECT * FROM ({union_sql}) AS t "
-            f"WHERE ts_event <= $1 "
-            f"ORDER BY ts_event DESC LIMIT 1"
+            f"SELECT * FROM ({union_sql}) AS t WHERE ts_event <= $1 ORDER BY ts_event DESC LIMIT 1"
         )
         df = self._conn.execute(sql, [pd.Timestamp(as_of)]).fetchdf()
         if df.empty:
@@ -940,8 +909,8 @@ class TickStore:
                 pa.int64(),
             )
             tables.append(t.append_column("ts_event_ns", ns))
-        table = tables[0] if len(tables) == 1 else pa.concat_tables(
-            tables, promote_options="default"
+        table = (
+            tables[0] if len(tables) == 1 else pa.concat_tables(tables, promote_options="default")
         )
 
         relname = f"arrow_ns_{symbol}_{abs(hash(cache_key)) & 0xFFFFFFFF:08x}"

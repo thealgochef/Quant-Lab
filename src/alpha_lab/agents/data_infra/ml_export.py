@@ -160,8 +160,7 @@ class MLDatasetBuilder:
         ask_sz_col = "ask_sz_00"
 
         has_book = all(
-            c in ticks_df.columns
-            for c in [bid_px_col, ask_px_col, bid_sz_col, ask_sz_col]
+            c in ticks_df.columns for c in [bid_px_col, ask_px_col, bid_sz_col, ask_sz_col]
         )
 
         if has_book:
@@ -179,9 +178,7 @@ class MLDatasetBuilder:
             # Microprice
             total_sz = bid_sz + ask_sz
             if total_sz > 0:
-                features["microprice"] = (
-                    bid_sz * ask_px + ask_sz * bid_px
-                ) / total_sz
+                features["microprice"] = (bid_sz * ask_px + ask_sz * bid_px) / total_sz
 
             # Depth imbalance across all available levels
             total_bid_sz = 0.0
@@ -198,9 +195,7 @@ class MLDatasetBuilder:
 
             depth_total = total_bid_sz + total_ask_sz
             if depth_total > 0:
-                features["depth_imbalance"] = (
-                    (total_bid_sz - total_ask_sz) / depth_total
-                )
+                features["depth_imbalance"] = (total_bid_sz - total_ask_sz) / depth_total
 
             # Book pressure: volume-weighted mid across levels
             weighted_sum = 0.0
@@ -232,9 +227,7 @@ class MLDatasetBuilder:
             features["trade_flow"] = float(signed_vol.sum())
             total_vol = float(sizes.sum())
             if total_vol > 0:
-                features["trade_flow_ratio"] = (
-                    float(signed_vol.sum()) / total_vol
-                )
+                features["trade_flow_ratio"] = float(signed_vol.sum()) / total_vol
 
         return features
 

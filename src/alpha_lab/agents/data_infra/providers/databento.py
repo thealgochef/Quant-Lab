@@ -168,9 +168,7 @@ class DatabentDataProvider(DataProvider):
                 start_ts = start_ts.tz_localize("UTC")
             if end_ts.tz is None:
                 end_ts = end_ts.tz_localize("UTC")
-            result = result[
-                (result["ts_event"] >= start_ts) & (result["ts_event"] <= end_ts)
-            ]
+            result = result[(result["ts_event"] >= start_ts) & (result["ts_event"] <= end_ts)]
 
         return result.reset_index(drop=True)
 
@@ -219,7 +217,10 @@ class DatabentDataProvider(DataProvider):
             try:
                 logger.info(
                     "Fetching %s MBP-10 chunk %02d:00-%02d:00 on %s",
-                    symbol, h, h + 1, date_str,
+                    symbol,
+                    h,
+                    h + 1,
+                    date_str,
                 )
                 data = self._client.timeseries.get_range(
                     dataset="GLBX.MDP3",
@@ -233,12 +234,16 @@ class DatabentDataProvider(DataProvider):
                 if not chunk_df.empty:
                     chunks.append(chunk_df)
                     logger.info(
-                        "  → %d rows for hour %02d", len(chunk_df), h,
+                        "  → %d rows for hour %02d",
+                        len(chunk_df),
+                        h,
                     )
             except Exception:
                 logger.exception(
                     "Failed to fetch chunk %02d:00 for %s on %s",
-                    h, symbol, date_str,
+                    h,
+                    symbol,
+                    date_str,
                 )
 
         if not chunks:
@@ -251,7 +256,9 @@ class DatabentDataProvider(DataProvider):
         parquet_path.parent.mkdir(parents=True, exist_ok=True)
         df.to_parquet(parquet_path)
         logger.info(
-            "Cached %d ticks to %s", len(df), parquet_path.name,
+            "Cached %d ticks to %s",
+            len(df),
+            parquet_path.name,
         )
         return df
 
@@ -276,9 +283,7 @@ class DatabentDataProvider(DataProvider):
         # Build cache path
         start_str = start.strftime("%Y%m%d")
         end_str = end.strftime("%Y%m%d")
-        cache_path = (
-            self._data_dir / symbol / f"trades_{start_str}_{end_str}.parquet"
-        )
+        cache_path = self._data_dir / symbol / f"trades_{start_str}_{end_str}.parquet"
 
         if cache_path.exists():
             logger.info("Cache hit (trades): %s", cache_path.name)
@@ -313,19 +318,22 @@ class DatabentDataProvider(DataProvider):
                 df = df[df["symbol"] == front]
                 logger.info(
                     "Filtered trades to front-month %s (%d ticks)",
-                    front, len(df),
+                    front,
+                    len(df),
                 )
 
         # Normalize to standard columns
-        result = pd.DataFrame({
-            "price": df["price"].values,
-            "size": df["size"].values,
-            "timestamp": (
-                pd.to_datetime(df["ts_event"]).values
-                if "ts_event" in df.columns
-                else df.index.values
-            ),
-        })
+        result = pd.DataFrame(
+            {
+                "price": df["price"].values,
+                "size": df["size"].values,
+                "timestamp": (
+                    pd.to_datetime(df["ts_event"]).values
+                    if "ts_event" in df.columns
+                    else df.index.values
+                ),
+            }
+        )
 
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         result.to_parquet(cache_path)
@@ -396,7 +404,9 @@ class DatabentDataProvider(DataProvider):
                 if front in df["symbol"].values:
                     df = df[df["symbol"] == front]
                     logger.info(
-                        "Filtered to front-month %s (%d bars)", front, len(df),
+                        "Filtered to front-month %s (%d bars)",
+                        front,
+                        len(df),
                     )
 
             # Normalize column names to match project convention
@@ -538,8 +548,7 @@ class DatabentDataProvider(DataProvider):
 
             jobs = self._client.batch.list_jobs(states="done")
             job_ids = [
-                (j.get("job_id") or j.get("id") if isinstance(j, dict) else j.job_id)
-                for j in jobs
+                (j.get("job_id") or j.get("id") if isinstance(j, dict) else j.job_id) for j in jobs
             ]
             if job_id in job_ids:
                 break
@@ -602,6 +611,7 @@ class DatabentDataProvider(DataProvider):
 
         # Clean up temp files
         import shutil
+
         shutil.rmtree(download_dir, ignore_errors=True)
 
         if on_progress:
