@@ -1,0 +1,47 @@
+name: ci
+
+# Cold-install CI: pays the 9.6 NAMED DEBT (QL cold-install resolution check, the
+# analog of Trade-Lab's backend-ci.yml). Catches dependency/portability regressions
+# the editable/PYTHONPATH dev runs mask — e.g. a git+ssh strategy-core pin (no SSH
+# key on a fresh runner), a stale pin missing a symbol QL imports, or an undeclared
+# test dependency. Runs on pushes to main and on PRs.
+#
+# NOTE (E-window): authored before the E-window push; the FIRST green run can only
+# happen after the greenlight pin bump + push land — the committed pin (c615e40)
+# predates the PLATFORM_VERSION rename this tree imports, so a cold install from
+# this exact commit fails by design until the pin chore rides the greenlight.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quant-lab:
+    name: quant-lab (cold install + ruff + pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # Clean install from scratch. Resolves the strategy-core dependency from its
+      # git+https pin against the public Strategy-Core repo (anonymous, no key or
+      # token) and installs all runtime + dev dependencies — the pin goes from
+      # DECLARED to ENFORCED here (decision 9.6).
+      - name: Install (cold)
+        run: pip install -e ".[dev]"
+
+      - name: Lint (ruff)
+        run: ruff check src tests
+
+      - name: Test (pytest)
+        run: pytest -q

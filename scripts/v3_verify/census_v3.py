@@ -67,7 +67,7 @@ def _avail_dates(lo: str, hi: str) -> list[str]:
 def main() -> int:
     ev = json.load(open("models/NQ_20260602_232808/evaluation.json"))
     target = sorted(ev["dates_used"])
-    print(f"engine={sc.ENGINE_VERSION}  target dates={len(target)} [{target[0]} .. {target[-1]}]")
+    print(f"engine={sc.PLATFORM_VERSION}  target dates={len(target)} [{target[0]} .. {target[-1]}]")
     target_set = set(target)
     # FAITHFUL to the rebuild: build_utility_dataset(dates_in_range) carries from None
     # over the sorted dates with NO warm-up (date_range.start == dates_used[0]), so the
@@ -180,7 +180,7 @@ def main() -> int:
     OUT.write_text(
         json.dumps(
             {
-                "engine_version": sc.ENGINE_VERSION,
+                "engine_version": sc.PLATFORM_VERSION,
                 "n_target_dates": len(target),
                 "n_dates_with_touches": n_done,
                 "total_gated_touches": total_gated,

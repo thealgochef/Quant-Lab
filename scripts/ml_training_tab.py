@@ -1589,7 +1589,9 @@ def save_trained_model(
             if not selected:
                 selected = getattr(trained_model, "selected_features", None)
 
-            strategy = build_strategy_contract(config, selected, strategy_id=output_dir.name)
+            # E2: strategy_id is the REGISTRY ROUTER id (the plugin this bundle
+            # runs), not the bundle name; the bundle keeps its dir-name identity.
+            strategy = build_strategy_contract(config, selected, strategy_id="touch_reversal")
             if strategy is not None:
                 with open(output_dir / "strategy.json", "w") as f:
                     json.dump(strategy, f, indent=2, default=str)

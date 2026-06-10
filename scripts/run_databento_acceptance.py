@@ -4,8 +4,9 @@
 This wraps the dashboard session experiment CLI, audits the saved bundle, and
 optionally runs the focused Quant-Lab + Strategy-Core contract tests. It is a
 research-readiness check: weak models may be saved with an explicit failed-gate
-override, but saved bundles must remain ``supported_by_runtime=false`` until
-Trade-Lab v3 parity is proven.
+override. As of E2 the emitter stamps ``supported_by_runtime=true`` (Trade-Lab
+is repointed + parity-proven since the C/D windows), and the audit asserts the
+flag is True — Trade-Lab activation refuses False.
 """
 
 from __future__ import annotations
@@ -147,14 +148,14 @@ def _load_strategy_contract_summary(
     strategy_src = strategy_core_root / "src"
     if strategy_src.exists():
         sys.path.insert(0, str(strategy_src))
-    from strategy_core import CONTRACT_VERSION, ENGINE_VERSION  # noqa: PLC0415
+    from strategy_core import CONTRACT_VERSION, PLATFORM_VERSION  # noqa: PLC0415
     from strategy_core.contract.loader import load_strategy_contract  # noqa: PLC0415
 
-    contract = load_strategy_contract(strategy_json, expected_engine_version=ENGINE_VERSION)
+    contract = load_strategy_contract(strategy_json, expected_platform_version=PLATFORM_VERSION)
     return {
         "loader": "Strategy-Core",
         "expected_contract_version": CONTRACT_VERSION,
-        "expected_engine_version": ENGINE_VERSION,
+        "expected_platform_version": PLATFORM_VERSION,
         "loaded_type": type(contract).__name__,
         "feature_count": contract.feature_count,
         "feature_names": list(contract.feature_set.names),
@@ -179,8 +180,8 @@ def audit_bundle(
     metadata = _read_json(model_dir / "metadata.json")
     strategy = _read_json(model_dir / "strategy.json")
 
-    if strategy.get("supported_by_runtime") is not False:
-        msg = "Acceptance artifacts must fail closed with supported_by_runtime=false"
+    if strategy.get("supported_by_runtime") is not True:
+        msg = "Acceptance artifacts must be servable with supported_by_runtime=true (E2)"
         raise ValueError(msg)
 
     oos_file_name = evaluation.get("oos_predictions_file", "oos_predictions.parquet")
@@ -234,7 +235,9 @@ def audit_bundle(
         "gated_oos": evaluation.get("gated_oos"),
         "runtime": {
             "contract_version": strategy.get("contract_version"),
-            "engine_version": strategy.get("engine_version"),
+            "platform_version": strategy.get("platform_version"),
+            "strategy_id": strategy.get("strategy_id"),
+            "strategy_version": strategy.get("strategy_version"),
             "supported_by_runtime": strategy.get("supported_by_runtime"),
             "bar_type": strategy.get("touch_rule", {}).get("bar_type"),
             "decision_offset_minutes": strategy.get("label_policy", {}).get(

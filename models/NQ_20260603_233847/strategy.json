@@ -1,7 +1,8 @@
 {
-  "contract_version": "trade_lab_contract_v1",
-  "engine_version": "strategy_core_engine_v3",
-  "strategy_id": "NQ_20260603_233847",
+  "contract_version": "trade_lab_contract_v2",
+  "platform_version": "strategy_core_platform_v1",
+  "strategy_id": "touch_reversal",
+  "strategy_version": "1",
   "training_mode": "dashboard_utility",
   "supported_by_runtime": true,
   "instrument": "NQ",

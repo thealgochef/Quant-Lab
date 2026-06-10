@@ -2,8 +2,9 @@
 
 Proves ``build_strategy_contract`` no longer RESTATES the strategy literals but
 single-sources them from ``strategy_core.constants`` (the one place the engine
-computes with them), carries ``engine_version``, and round-trips cleanly through
-the shared ``strategy_core`` schema/loader with the engine-version binding.
+computes with them), carries the two-axis binding (``platform_version`` +
+registry-resolved ``strategy_version``, E1/E2), and round-trips cleanly through
+the shared ``strategy_core`` schema/loader with the platform-version binding.
 
 No data dependency: the emitter is pure config -> dict.
 """
@@ -15,7 +16,7 @@ from pathlib import Path
 
 import pytest
 import strategy_core as sc
-from strategy_core import ENGINE_VERSION
+from strategy_core import PLATFORM_VERSION
 from strategy_core.contract.loader import load_strategy_contract
 
 from alpha_lab.agents.data_infra.ml.config import DashboardUtilityConfig, MLPipelineConfig
@@ -52,13 +53,14 @@ def config():
 
 @pytest.fixture
 def contract(config):
-    return build_strategy_contract(config, MODEL_FEATURES, strategy_id="nq_repoint")
+    # E2: strategy_id must be a REGISTERED router id (unknown ids fail emission).
+    return build_strategy_contract(config, MODEL_FEATURES, strategy_id="touch_reversal")
 
 
 def test_dashboard_utility_default_bar_type_is_v3_production_147t():
     """Default dashboard-utility bundles should use the Strategy-Core v3 production bar."""
     cfg = MLPipelineConfig(training_mode="dashboard_utility", instrument="NQ")
-    c = build_strategy_contract(cfg, None, strategy_id="nq_default")
+    c = build_strategy_contract(cfg, None, strategy_id="touch_reversal")
 
     assert c is not None
     assert cfg.dashboard_utility.bar_type == "147t"
@@ -79,20 +81,22 @@ def test_decision_offset_tracks_configured_interaction_window():
             include_approach_features=True,
         ),
     )
-    c = build_strategy_contract(cfg, MODEL_FEATURES, strategy_id="nq_window_11m")
+    c = build_strategy_contract(cfg, MODEL_FEATURES, strategy_id="touch_reversal")
 
     assert c is not None
     assert c["feature_windows"]["interaction_window_minutes"] == 11
     assert c["label_policy"]["decision_offset_minutes"] == 11
 
 
-def test_contract_is_engine_version_stamped(contract):
-    assert contract["engine_version"] == ENGINE_VERSION
+def test_contract_is_platform_version_stamped(contract):
+    assert contract["platform_version"] == PLATFORM_VERSION
+    assert contract["strategy_id"] == "touch_reversal"
+    assert contract["strategy_version"] == "1"
 
 
-def test_dashboard_utility_contract_advertises_runtime_activation_blocked(contract):
-    """A full v3 strategy.json is emitted, but current Trade-Lab use remains blocked."""
-    assert contract["supported_by_runtime"] is False
+def test_dashboard_utility_contract_advertises_runtime_servable(contract):
+    """E2: the blocking condition cleared at C/D — full bundles are servable."""
+    assert contract["supported_by_runtime"] is True
 
 
 def test_contract_records_research_session_experiment(contract):
@@ -144,9 +148,10 @@ def test_contract_round_trips_through_engine_loader(contract, tmp_path: Path):
     path = tmp_path / "strategy.json"
     path.write_text(json.dumps(contract, default=str), encoding="utf-8")
 
-    loaded = load_strategy_contract(path, expected_engine_version=ENGINE_VERSION)
+    loaded = load_strategy_contract(path, expected_platform_version=PLATFORM_VERSION)
 
-    assert loaded.engine_version == ENGINE_VERSION
+    assert loaded.platform_version == PLATFORM_VERSION
+    assert loaded.strategy_version == "1"
     assert loaded.feature_count == 6
     assert loaded.research_session_experiment is not None
     assert loaded.research_session_experiment.production_gate_sessions == ("ny",)
@@ -157,8 +162,11 @@ def test_contract_round_trips_through_engine_loader(contract, tmp_path: Path):
     )
 
 
-def test_minimal_contract_is_engine_version_stamped():
+def test_minimal_contract_is_platform_version_stamped():
     cfg = MLPipelineConfig(training_mode="extrema_rebound_crossing", instrument="NQ")
-    c = build_strategy_contract(cfg, None, strategy_id="other")
-    assert c["engine_version"] == ENGINE_VERSION
+    c = build_strategy_contract(cfg, None, strategy_id="touch_reversal")
+    assert c["platform_version"] == PLATFORM_VERSION
+    assert c["strategy_version"] == "1"
+    # The minimal record stays non-servable by design (schema-incomplete; it
+    # cannot load) — the E2 flag flip applies to the FULL contract only.
     assert c["supported_by_runtime"] is False

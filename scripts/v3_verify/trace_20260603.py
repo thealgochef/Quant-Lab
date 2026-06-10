@@ -58,7 +58,7 @@ def _session_of(idx_et: pd.Timestamp) -> str:
 
 
 def main() -> int:
-    print(f"=== ENGINE v3 session-attribution trace: {DAY} (engine {sc.ENGINE_VERSION}) ===")
+    print(f"=== ENGINE v3 session-attribution trace: {DAY} (engine {sc.PLATFORM_VERSION}) ===")
     print(
         "scheme:",
         {

@@ -104,9 +104,11 @@ def test_audit_bundle_summarizes_fail_closed_artifact(tmp_path):
     (model_dir / "strategy.json").write_text(
         json.dumps(
             {
-                "contract_version": "trade_lab_contract_v1",
-                "engine_version": "strategy_core_engine_v3",
-                "supported_by_runtime": False,
+                "contract_version": "trade_lab_contract_v2",
+                "platform_version": "strategy_core_platform_v1",
+                "strategy_id": "touch_reversal",
+                "strategy_version": "1",
+                "supported_by_runtime": True,
                 "touch_rule": {"bar_type": "147t"},
                 "label_policy": {
                     "decision_offset_minutes": 5,
@@ -131,13 +133,16 @@ def test_audit_bundle_summarizes_fail_closed_artifact(tmp_path):
     assert summary["artifact"]["required_files_present"] is True
     assert summary["quality_gates"]["all_passed"] is False
     assert summary["quality_gates"]["allow_failed_gates"] is True
-    assert summary["runtime"]["supported_by_runtime"] is False
-    assert summary["runtime"]["engine_version"] == "strategy_core_engine_v3"
+    assert summary["runtime"]["supported_by_runtime"] is True
+    assert summary["runtime"]["platform_version"] == "strategy_core_platform_v1"
+    assert summary["runtime"]["strategy_id"] == "touch_reversal"
+    assert summary["runtime"]["strategy_version"] == "1"
     assert summary["oos_predictions"]["rows"] == 2
     assert summary["oos_predictions"]["gate_true_counts"] == {"gate_0_70_ny": 1}
 
 
-def test_audit_bundle_fails_open_runtime_flag_is_rejected(tmp_path):
+def test_audit_bundle_unservable_flag_is_rejected(tmp_path):
+    # E2 flip: the audit now asserts the bundle IS servable; False fails closed.
     cli = _load_acceptance_module()
     model_dir = tmp_path / "model"
     model_dir.mkdir()
@@ -149,11 +154,11 @@ def test_audit_bundle_fails_open_runtime_flag_is_rejected(tmp_path):
     (model_dir / "strategy.json").write_text(
         json.dumps(
             {
-                "engine_version": "strategy_core_engine_v3",
-                "supported_by_runtime": True,
+                "platform_version": "strategy_core_platform_v1",
+                "supported_by_runtime": False,
             },
         ),
     )
 
-    with pytest.raises(ValueError, match="supported_by_runtime=false"):
+    with pytest.raises(ValueError, match="supported_by_runtime=true"):
         cli.audit_bundle(model_dir, validate_contract=False)

@@ -399,9 +399,10 @@ class MLPipelineConfig(BaseModel):
         import json
 
         # Single-source the bar/label cutover key off the engine so the cache tag
-        # tracks the engine version (v1 book-mid level-entry -> v2 trade-price
-        # decision-entry) without restating a literal here.
-        from strategy_core import ENGINE_VERSION
+        # tracks the platform version (the engine axis: v1 book-mid level-entry ->
+        # v2 trade-price decision-entry) without restating a literal here. E1: the
+        # hash INPUT changes with the axis rename, so dataset cache tags roll.
+        from strategy_core import PLATFORM_VERSION
         from strategy_core.constants import BAR_PRICE_SOURCE, LABEL_ENTRY_REFERENCE
 
         payload = (
@@ -413,6 +414,6 @@ class MLPipelineConfig(BaseModel):
             + f"|tick_size={self.tick_size}"
             + f"|bar_price_source={BAR_PRICE_SOURCE}"
             + f"|label_entry_reference={LABEL_ENTRY_REFERENCE}"
-            + f"|engine_version={ENGINE_VERSION}"
+            + f"|platform_version={PLATFORM_VERSION}"
         )
         return hashlib.sha256(payload.encode()).hexdigest()[:8]

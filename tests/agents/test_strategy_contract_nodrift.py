@@ -10,7 +10,8 @@ This is the real closure of the contract drift surface. It proves:
    OR an explicit per-run config allow-list. A NEW contract field added with no
    constant/allow-listed source FAILS this test -- the drift surface cannot reopen.
 3. The emitted contract loads cleanly through the shared SC loader with the
-   engine-version binding (fail-closed on mismatch).
+   platform-version binding (fail-closed on mismatch; the engine axis renamed
+   at E1) and carries the registry-resolved strategy axis (E2).
 
 No data dependency: the emitter is pure config -> dict.
 """
@@ -22,10 +23,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from strategy_core import CONTRACT_VERSION, ENGINE_VERSION
+from strategy_core import CONTRACT_VERSION, PLATFORM_VERSION
 from strategy_core import constants as k
 from strategy_core.contract.loader import load_strategy_contract
 from strategy_core.contract.schema import StrategyContract
+from strategy_core.strategies.registry import get_strategy
 
 from alpha_lab.agents.data_infra.ml.config import MLPipelineConfig
 from alpha_lab.agents.data_infra.ml.strategy_contract import build_strategy_contract
@@ -63,7 +65,8 @@ def config() -> MLPipelineConfig:
 
 @pytest.fixture
 def contract(config: MLPipelineConfig) -> dict:
-    return build_strategy_contract(config, MODEL_FEATURES, strategy_id="nq_prod")
+    # E2: strategy_id is the REGISTRY ROUTER id; an unregistered id fail-closes.
+    return build_strategy_contract(config, MODEL_FEATURES, strategy_id="touch_reversal")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -90,9 +93,13 @@ def _structural_constant_map(config: MLPipelineConfig) -> dict[str, Any]:
         for side, direction in k.DIRECTION_FROM_SIDE.items()
     }
     return {
-        # top-level version + engine stamps
+        # top-level version stamps: the two-axis binding (decision 9.3). The
+        # platform axis is the package constant; the strategy axis is
+        # single-sourced from the REGISTERED plugin (registry-resolved), the one
+        # place that version is declared.
         "contract_version": CONTRACT_VERSION,
-        "engine_version": ENGINE_VERSION,
+        "platform_version": PLATFORM_VERSION,
+        "strategy_version": get_strategy("touch_reversal").strategy_version,
         # point_value is the engine table projected onto the run's instrument
         "point_value": k.POINT_VALUE[config.instrument],
         # feature_set structural descriptor
@@ -203,8 +210,8 @@ def _is_contract_section():
 # ─────────────────────────────────────────────────────────────────────────────
 # Tests
 # ─────────────────────────────────────────────────────────────────────────────
-def test_engine_version_is_stamped(contract: dict) -> None:
-    assert contract["engine_version"] == ENGINE_VERSION
+def test_platform_version_is_stamped(contract: dict) -> None:
+    assert contract["platform_version"] == PLATFORM_VERSION
     assert contract["contract_version"] == CONTRACT_VERSION
 
 
@@ -214,11 +221,21 @@ def test_mid_price_source_is_trade_price(contract: dict) -> None:
     assert contract["feature_windows"]["mid_price_source"] == k.MID_PRICE_SOURCE
 
 
-def test_engine_version_is_v3(contract: dict) -> None:
-    # The v2 -> v3 bump (session re-clock + enforced level availability + full-prior-day
-    # PDH/PDL + later flatten/cutoff) is stamped.
-    assert contract["engine_version"] == "strategy_core_engine_v3"
-    assert contract["engine_version"] == ENGINE_VERSION
+def test_platform_version_is_v1_and_strategy_axis_is_registry_sourced(contract: dict) -> None:
+    # E1: the platform axis renames engine v3; E2: the strategy axis comes from
+    # the registered plugin, and the flag flips servable.
+    assert contract["platform_version"] == "strategy_core_platform_v1"
+    assert contract["platform_version"] == PLATFORM_VERSION
+    assert contract["strategy_id"] == "touch_reversal"
+    assert contract["strategy_version"] == get_strategy("touch_reversal").strategy_version == "1"
+    assert contract["supported_by_runtime"] is True
+
+
+def test_unknown_strategy_id_fails_emission_closed(config: MLPipelineConfig) -> None:
+    from strategy_core.contract.schema import ContractError
+
+    with pytest.raises(ContractError, match="unknown strategy_id"):
+        build_strategy_contract(config, MODEL_FEATURES, strategy_id="not_a_registered_id")
 
 
 def test_label_policy_honest_entry_reanchor_tracks_config_window(
@@ -309,9 +326,10 @@ def test_contract_loads_through_engine_loader_with_version_binding(
     path = tmp_path / "strategy.json"
     path.write_text(json.dumps(contract, default=str), encoding="utf-8")
 
-    loaded = load_strategy_contract(path, expected_engine_version=ENGINE_VERSION)
+    loaded = load_strategy_contract(path, expected_platform_version=PLATFORM_VERSION)
 
-    assert loaded.engine_version == ENGINE_VERSION
+    assert loaded.platform_version == PLATFORM_VERSION
+    assert loaded.strategy_version == "1"
     assert loaded.contract_version == CONTRACT_VERSION
     assert loaded.feature_count == 6
     assert loaded.point_value == k.POINT_VALUE["NQ"]
@@ -323,34 +341,33 @@ def test_contract_loads_through_engine_loader_with_version_binding(
     )
 
 
-def test_loader_fails_closed_on_engine_version_mismatch(contract: dict, tmp_path: Path) -> None:
+def test_loader_fails_closed_on_platform_version_mismatch(contract: dict, tmp_path: Path) -> None:
     from strategy_core.contract.schema import ContractError
 
     path = tmp_path / "strategy.json"
     path.write_text(json.dumps(contract, default=str), encoding="utf-8")
 
     with pytest.raises(ContractError):
-        load_strategy_contract(path, expected_engine_version="strategy_core_engine_v999")
+        load_strategy_contract(path, expected_platform_version="strategy_core_platform_v999")
 
 
-def test_v3_bundle_loads_against_v3_and_rejects_v2(
+def test_platform_v1_bundle_loads_against_v1_and_rejects_old_engine_axis(
     contract: dict, config: MLPipelineConfig, tmp_path: Path
 ) -> None:
-    """The v2 -> v3 binding: a v3 bundle LOADS against v3 and is REJECTED against v2.
+    """The E1 axis rename is a real fail-close boundary.
 
-    Confirms the engine-version bump is a real fail-close boundary -- a runtime
-    pinned to the old v2 engine refuses this bundle (the session re-clock + enforced
-    level availability + full-prior-day PDH/PDL + later flatten/cutoff change the
-    labels, so a retrain is required), while a v3-pinned runtime accepts it.
+    A platform_v1 bundle LOADS against platform_v1 and is REJECTED against the
+    retired engine-axis literal (a runtime still expecting the old axis value
+    refuses it), exactly as the old v2->v3 engine bump was a boundary.
     """
     from strategy_core.contract.schema import ContractError
 
     path = tmp_path / "strategy.json"
     path.write_text(json.dumps(contract, default=str), encoding="utf-8")
 
-    # Loads against v3 (== ENGINE_VERSION).
-    loaded = load_strategy_contract(path, expected_engine_version="strategy_core_engine_v3")
-    assert loaded.engine_version == "strategy_core_engine_v3" == ENGINE_VERSION
+    # Loads against platform v1 (== PLATFORM_VERSION).
+    loaded = load_strategy_contract(path, expected_platform_version="strategy_core_platform_v1")
+    assert loaded.platform_version == "strategy_core_platform_v1" == PLATFORM_VERSION
     assert loaded.label_policy.entry_reference == k.LABEL_ENTRY_REFERENCE
     assert (
         loaded.label_policy.decision_offset_minutes
@@ -359,6 +376,6 @@ def test_v3_bundle_loads_against_v3_and_rejects_v2(
     assert loaded.level_scheme.pdh_pdl_source == k.PDH_PDL_SOURCE == "prior_day_full"
     assert loaded.inference.eligible_session == k.INFERENCE_ELIGIBLE_SESSION == "ny"
 
-    # Rejected against the old v2 engine version (the v2 -> v3 binding works).
+    # Rejected against the retired engine-axis literal (the rename is fail-closed).
     with pytest.raises(ContractError):
-        load_strategy_contract(path, expected_engine_version="strategy_core_engine_v2")
+        load_strategy_contract(path, expected_platform_version="strategy_core_engine_v3")

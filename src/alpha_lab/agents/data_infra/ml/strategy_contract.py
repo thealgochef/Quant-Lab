@@ -8,12 +8,13 @@ scheme, touch rule, level scheme, feature windows, and label policy are only
 implicit in how the dashboard-utility builder computed the dataset.
 
 `strategy.json` makes those semantics explicit and versioned so a downstream
-runtime can eventually be driven by the contract instead of hardcoding one
-strategy. Current Trade-Lab activation is deliberately blocked until that runtime
-is repointed to Strategy-Core v3 and end-to-end parity is proven.
+runtime can be driven by the contract instead of hardcoding one strategy.
 
-Contract version + engine version are imported from ``strategy_core`` (not
-restated here).
+Contract version + platform version are imported from ``strategy_core`` (not
+restated here). ``strategy_id`` is the REGISTRY ROUTER KEY (E2): it must resolve
+via ``strategy_core.strategies.registry.get_strategy``, which also supplies the
+plugin's ``strategy_version`` — an unknown id fail-closes EMISSION. Bundle
+identity remains the output directory name (passed separately by the caller).
 
 Only the production-aligned `dashboard_utility` training mode emits a full
 contract. Other modes emit a minimal record (the runtime is not expected to
@@ -35,8 +36,13 @@ from __future__ import annotations
 import logging
 from datetime import time
 
-from strategy_core import CONTRACT_VERSION, ENGINE_VERSION
+# The explicit registration import (touch_reversal/__init__ registers the plugin)
+# so get_strategy can route; the registry is intentionally empty on a bare
+# `import strategy_core`.
+import strategy_core.strategies.touch_reversal  # noqa: F401
+from strategy_core import CONTRACT_VERSION, PLATFORM_VERSION
 from strategy_core import constants as k
+from strategy_core.strategies.registry import get_strategy
 
 from alpha_lab.agents.data_infra.ml.config import (
     LIVE_APPROACH_FEATURES,
@@ -79,13 +85,23 @@ def build_strategy_contract(
         selected_features: Ordered feature names the model was trained on
             (RFECV-selected subset, contractual order). Falls back to the
             full live feature set when not provided.
-        strategy_id: Identifier for this bundle (typically the output dir name).
+        strategy_id: The REGISTRY ROUTER id of the strategy this bundle runs
+            (e.g. ``"touch_reversal"``) — resolved fail-closed via
+            ``get_strategy``; NOT the bundle/output-dir name.
 
     Returns:
         A JSON-serialisable contract dict, or None if the training mode is
         unknown/unsupported.
+
+    Raises:
+        ContractError: when ``strategy_id`` is unknown to the registry (the
+            emission fail-closes rather than stamping an unroutable contract).
     """
     mode = getattr(config, "training_mode", "unknown")
+
+    # E2: resolve the router id against the registry — an unknown id raises
+    # ContractError here, so an unroutable contract is never written to disk.
+    strategy_version = get_strategy(strategy_id).strategy_version
 
     feature_names = (
         list(selected_features) if selected_features else list(LIVE_INTERACTION_FEATURES)
@@ -94,11 +110,13 @@ def build_strategy_contract(
     if mode != "dashboard_utility":
         # Minimal record only; the runtime is not expected to serve non
         # dashboard-utility strategies. Keep enough to identify the bundle.
+        # (Still schema-incomplete by design — it is not loadable by the runtime.)
         logger.info("strategy.json: minimal contract for training_mode=%s", mode)
         return {
             "contract_version": CONTRACT_VERSION,
-            "engine_version": ENGINE_VERSION,
+            "platform_version": PLATFORM_VERSION,
             "strategy_id": strategy_id,
+            "strategy_version": strategy_version,
             "training_mode": mode,
             "supported_by_runtime": False,
             "instrument": config.instrument,
@@ -117,12 +135,14 @@ def build_strategy_contract(
 
     return {
         "contract_version": CONTRACT_VERSION,
-        "engine_version": ENGINE_VERSION,
+        "platform_version": PLATFORM_VERSION,
         "strategy_id": strategy_id,
+        "strategy_version": strategy_version,
         "training_mode": mode,
-        # Full v3 contract is emitted, but current Trade-Lab activation is blocked
-        # until Trade-Lab is repointed to Strategy-Core v3 and parity-tested.
-        "supported_by_runtime": False,
+        # The blocking condition was satisfied at the C/D windows: Trade-Lab is
+        # repointed onto Strategy-Core (C1) and serves the honest resolver (D1b),
+        # so a full-contract bundle is servable; TL activation REFUSES False (E2).
+        "supported_by_runtime": True,
         "instrument": config.instrument,
         "tick_size": config.tick_size,
         "point_value": k.POINT_VALUE.get(config.instrument),
@@ -176,7 +196,7 @@ def build_strategy_contract(
             "large_trade_threshold": k.LARGE_TRADE_THRESHOLD,
             # Engine-single-sourced. The engine standardizes the 3 interaction
             # features on the TRADE PRINT price ("trade_price"), which DIVERGES
-            # from the legacy book-mid training path; the engine_version binding
+            # from the legacy book-mid training path; the platform_version binding
             # above is what makes Trade-Lab fail-close on a model trained under the
             # old book-mid feature definition (a retrain is required, next phase).
             "mid_price_source": k.MID_PRICE_SOURCE,

@@ -66,7 +66,7 @@ def main() -> int:
     dates = sorted(ev["dates_used"])
     h = CFG.dataset_config_hash()
     print(
-        f"engine={sc.ENGINE_VERSION}  new dataset_config_hash={h}  "
+        f"engine={sc.PLATFORM_VERSION}  new dataset_config_hash={h}  "
         f"(v2 was 3d2f8466; differs={h != '3d2f8466'})"
     )
     print(
