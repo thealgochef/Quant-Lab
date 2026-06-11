@@ -12,7 +12,9 @@ name: ci
 # this exact commit fails by design until the pin chore rides the greenlight.
 on:
   push:
-    branches: [main]
+    # platform-refactor included so the 9.6-enforcing run fires on this branch's
+    # pushes rather than waiting for merge day; PRs still gate main only.
+    branches: [main, platform-refactor]
   pull_request:
     branches: [main]
 
