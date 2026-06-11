@@ -33,7 +33,7 @@ dependencies = [
     "fastapi>=0.100",
     "uvicorn>=0.20",
     "python-multipart>=0.0.5",
-    "strategy-core @ git+https://github.com/thealgochef/Strategy-Core.git@8e5c017aa7a10d9a2e70318de2c5bbd74f2ca653",
+    "strategy-core @ git+https://github.com/thealgochef/Strategy-Core.git@dc14652232510e61e1a0b6686a1824977b39babc",
 ]
 
 [project.optional-dependencies]
