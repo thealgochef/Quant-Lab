@@ -104,18 +104,23 @@ def test_audit_bundle_summarizes_fail_closed_artifact(tmp_path):
     (model_dir / "strategy.json").write_text(
         json.dumps(
             {
-                "contract_version": "trade_lab_contract_v2",
+                "contract_version": "trade_lab_contract_v3",
                 "platform_version": "strategy_core_platform_v1",
                 "strategy_id": "touch_reversal",
                 "strategy_version": "1",
                 "supported_by_runtime": True,
-                "touch_rule": {"bar_type": "147t"},
                 "label_policy": {
+                    "barrier_mode": "fixed_points",
                     "decision_offset_minutes": 5,
                     "forward_bar_type": "147t",
                 },
                 "inference": {"eligible_session": "ny", "confidence_gate": 0.7},
-                "research_session_experiment": SESSION_SCOPE,
+                # v3: the strategy-owned section subtree carries touch_rule +
+                # the research scope.
+                "section": {
+                    "touch_rule": {"bar_type": "147t"},
+                    "research_session_experiment": SESSION_SCOPE,
+                },
             },
         ),
     )

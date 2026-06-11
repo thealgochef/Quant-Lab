@@ -230,7 +230,8 @@ def audit_bundle(
         "session_experiment": {
             "evaluation": evaluation.get("session_experiment"),
             "metadata": metadata.get("session_experiment"),
-            "strategy": strategy.get("research_session_experiment"),
+            # v3: the research scope rides the strategy-owned section subtree.
+            "strategy": strategy.get("section", {}).get("research_session_experiment"),
         },
         "gated_oos": evaluation.get("gated_oos"),
         "runtime": {
@@ -239,7 +240,8 @@ def audit_bundle(
             "strategy_id": strategy.get("strategy_id"),
             "strategy_version": strategy.get("strategy_version"),
             "supported_by_runtime": strategy.get("supported_by_runtime"),
-            "bar_type": strategy.get("touch_rule", {}).get("bar_type"),
+            # v3: touch_rule is section-bound; forward_bar_type stays envelope.
+            "bar_type": strategy.get("section", {}).get("touch_rule", {}).get("bar_type"),
             "decision_offset_minutes": strategy.get("label_policy", {}).get(
                 "decision_offset_minutes",
             ),

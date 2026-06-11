@@ -64,7 +64,7 @@ def test_dashboard_utility_default_bar_type_is_v3_production_147t():
 
     assert c is not None
     assert cfg.dashboard_utility.bar_type == "147t"
-    assert c["touch_rule"]["bar_type"] == "147t"
+    assert c["section"]["touch_rule"]["bar_type"] == "147t"
     assert c["label_policy"]["forward_bar_type"] == "147t"
 
 
@@ -84,7 +84,7 @@ def test_decision_offset_tracks_configured_interaction_window():
     c = build_strategy_contract(cfg, MODEL_FEATURES, strategy_id="touch_reversal")
 
     assert c is not None
-    assert c["feature_windows"]["interaction_window_minutes"] == 11
+    assert c["section"]["feature_windows"]["interaction_window_minutes"] == 11
     assert c["label_policy"]["decision_offset_minutes"] == 11
 
 
@@ -100,8 +100,11 @@ def test_dashboard_utility_contract_advertises_runtime_servable(contract):
 
 
 def test_contract_records_research_session_experiment(contract):
-    """strategy.json should audit train/eval/gate session scope for experiments."""
-    scope = contract["research_session_experiment"]
+    """strategy.json should audit train/eval/gate session scope for experiments.
+
+    (v3: the research scope is plugin-section-bound — it rides the section.)
+    """
+    scope = contract["section"]["research_session_experiment"]
     assert scope["training_sessions"] == ["asia", "london", "ny"]
     assert scope["evaluation_sessions"] == ["asia", "london", "ny"]
     assert scope["production_gate_sessions"] == ["ny"]
@@ -109,26 +112,33 @@ def test_contract_records_research_session_experiment(contract):
 
 
 def test_literals_are_single_sourced_from_engine(contract):
-    """Every value the emitter used to restate now equals the engine constant."""
-    assert contract["touch_rule"]["zone_proximity_pts"] == sc.constants.ZONE_PROXIMITY_PTS
-    assert contract["feature_windows"]["within_band_pts"] == sc.constants.WITHIN_BAND_PTS
+    """Every value the emitter used to restate now equals the engine constant.
+
+    (v3: the section-bound values are read through the ``section`` subtree —
+    sourced from the plugin's SectionModel default, itself constants-sourced.)
+    """
+    section = contract["section"]
+    assert section["touch_rule"]["zone_proximity_pts"] == sc.constants.ZONE_PROXIMITY_PTS
+    assert section["feature_windows"]["within_band_pts"] == sc.constants.WITHIN_BAND_PTS
     assert (
-        contract["feature_windows"]["large_trade_threshold"] == sc.constants.LARGE_TRADE_THRESHOLD
+        section["feature_windows"]["large_trade_threshold"]
+        == sc.constants.LARGE_TRADE_THRESHOLD
     )
-    assert contract["feature_windows"]["mid_price_source"] == sc.constants.MID_PRICE_SOURCE
+    assert section["feature_windows"]["mid_price_source"] == sc.constants.MID_PRICE_SOURCE
     assert contract["point_value"] == sc.constants.POINT_VALUE["NQ"]
-    assert contract["session_scheme"]["timezone"] == sc.constants.SESSION_TIMEZONE
-    assert contract["session_scheme"][
+    assert section["session_scheme"]["timezone"] == sc.constants.SESSION_TIMEZONE
+    assert section["session_scheme"][
         "trading_day_boundary"
     ] == sc.constants.TRADING_DAY_BOUNDARY.strftime("%H:%M")
 
 
 def test_sessions_match_engine_scheme(contract):
-    sessions = contract["session_scheme"]["sessions"]
+    sessions = contract["section"]["session_scheme"]["sessions"]
     scheme = sc.constants.RESEARCH_SESSION_SCHEME.sessions
     for name in ("asia", "london", "ny"):
         assert sessions[name]["start"] == scheme[name].start.strftime("%H:%M")
         assert sessions[name]["end"] == scheme[name].end.strftime("%H:%M")
+        assert sessions[name]["crosses_midnight"] == scheme[name].crosses_midnight
 
 
 def test_class_map_matches_engine(contract):
@@ -141,20 +151,25 @@ def test_direction_from_side_matches_engine(contract):
         side.value.lower(): direction.value.lower()
         for side, direction in sc.constants.DIRECTION_FROM_SIDE.items()
     }
-    assert contract["touch_rule"]["direction_from_side"] == expected
+    assert contract["section"]["touch_rule"]["direction_from_side"] == expected
 
 
 def test_contract_round_trips_through_engine_loader(contract, tmp_path: Path):
     path = tmp_path / "strategy.json"
     path.write_text(json.dumps(contract, default=str), encoding="utf-8")
 
-    loaded = load_strategy_contract(path, expected_platform_version=PLATFORM_VERSION)
+    # v3: the section hook types the subtree against the plugin's SectionModel.
+    loaded = load_strategy_contract(
+        path,
+        expected_platform_version=PLATFORM_VERSION,
+        validate_section_via_registry=True,
+    )
 
     assert loaded.platform_version == PLATFORM_VERSION
     assert loaded.strategy_version == "1"
     assert loaded.feature_count == 6
-    assert loaded.research_session_experiment is not None
-    assert loaded.research_session_experiment.production_gate_sessions == ("ny",)
+    assert loaded.section_model.research_session_experiment is not None
+    assert loaded.section_model.research_session_experiment.production_gate_sessions == ("ny",)
     assert loaded.class_map.labels == (
         "tradeable_reversal",
         "trap_reversal",

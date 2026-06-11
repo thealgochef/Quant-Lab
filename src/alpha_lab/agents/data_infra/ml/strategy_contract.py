@@ -29,12 +29,22 @@ apart. The standing no-drift test
 (``tests/agents/test_strategy_contract_nodrift.py``) asserts each structural
 field equals its constant AND that no new contract field can appear without a
 constant or an allow-listed per-run config source.
+
+Contract v3 (E3 — the envelope/section split): the emitter builds the
+plugin-consumed ``section`` subtree FROM a configured instance of the plugin's
+own ``SectionModel`` (``TouchReversalSection``): the plugin's canonical
+``default_touch_reversal_section()`` supplies every structural value (already
+constants-sourced inside Strategy-Core) and ONLY the per-run config values are
+overridden onto it — so the section the runtime validates is the very model the
+plugin owns, not a restated dict. The envelope keeps the platform-consumed flat
+keys. The feature-partition cross-check (section partition == envelope
+``feature_set.names``) runs HERE at emission (the first of the two validation
+sites; TL activation is the second).
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import time
 
 # The explicit registration import (touch_reversal/__init__ registers the plugin)
 # so get_strategy can route; the registry is intentionally empty on a bare
@@ -43,6 +53,11 @@ import strategy_core.strategies.touch_reversal  # noqa: F401
 from strategy_core import CONTRACT_VERSION, PLATFORM_VERSION
 from strategy_core import constants as k
 from strategy_core.strategies.registry import get_strategy
+from strategy_core.strategies.touch_reversal.section import (
+    TouchReversalSection,
+    default_touch_reversal_section,
+    validate_feature_partition,
+)
 
 from alpha_lab.agents.data_infra.ml.config import (
     LIVE_APPROACH_FEATURES,
@@ -53,17 +68,48 @@ from alpha_lab.agents.data_infra.ml.config import (
 logger = logging.getLogger(__name__)
 
 
-def _hhmm(t: time) -> str:
-    return t.strftime("%H:%M")
+def _build_touch_reversal_section(
+    config: MLPipelineConfig,
+    interaction: list[str],
+    approach: list[str],
+) -> TouchReversalSection:
+    """Build the configured ``TouchReversalSection`` INSTANCE for this run (E3).
 
-
-def _session_block(name: str) -> dict:
-    """Emit a session's start/end (+crosses_midnight) from the engine scheme."""
-    w = k.RESEARCH_SESSION_SCHEME.sessions[name]
-    block = {"start": _hhmm(w.start), "end": _hhmm(w.end)}
-    if w.crosses_midnight:
-        block["crosses_midnight"] = True
-    return block
+    Starts from the plugin's canonical ``default_touch_reversal_section()`` —
+    every structural value is already single-sourced from ``strategy_core``
+    inside that builder — and overrides ONLY the per-run config values
+    (``du.bar_type``, the two windows, ``level_proximity_pts``, the selected
+    feature partition, and the run's session-experiment scope). One deliberate
+    projection is restated: ``direction_from_side`` keeps the lowercase
+    ``low->long / high->short`` form every shipped bundle carries (still sourced
+    from the engine's ``DIRECTION_FROM_SIDE``; the plugin default's uppercase
+    enum-value form is a recorded cosmetic divergence).
+    """
+    du = config.dashboard_utility
+    base = default_touch_reversal_section()
+    return TouchReversalSection(
+        session_scheme=base.session_scheme,
+        level_scheme=base.level_scheme,
+        touch_rule=base.touch_rule.model_copy(
+            update={
+                "bar_type": du.bar_type,
+                "direction_from_side": {
+                    side.value.lower(): direction.value.lower()
+                    for side, direction in k.DIRECTION_FROM_SIDE.items()
+                },
+            }
+        ),
+        feature_windows=base.feature_windows.model_copy(
+            update={
+                "interaction_window_minutes": du.interaction_window_minutes,
+                "approach_window_minutes": du.approach_window_minutes,
+                "level_proximity_pts": du.level_proximity_pts,
+            }
+        ),
+        interaction_features=tuple(interaction),
+        approach_features=tuple(approach),
+        research_session_experiment=config.session_experiment.model_dump(),
+    )
 
 
 def build_strategy_contract(
@@ -129,6 +175,13 @@ def build_strategy_contract(
     interaction = [f for f in feature_names if f in LIVE_INTERACTION_FEATURES]
     approach = [f for f in feature_names if f in LIVE_APPROACH_FEATURES]
 
+    # E3: the section subtree is generated FROM the plugin's SectionModel instance
+    # (structural values via the plugin's own default; per-run values overridden),
+    # then the emission-site feature-partition cross-check runs against the
+    # envelope's names — an inconsistent bundle is never written to disk.
+    section = _build_touch_reversal_section(config, interaction, approach)
+    validate_feature_partition(feature_names, section)
+
     # class_map keyed by stringified index for stable JSON (0/1/2 -> label),
     # single-sourced from the engine's CLASS_NAMES.
     class_map = {str(idx): name for idx, name in sorted(k.CLASS_NAMES.items())}
@@ -151,58 +204,21 @@ def build_strategy_contract(
             "loss_function": config.model.loss_function,
             "file": "model.cbm",
         },
+        "class_map": class_map,
         "feature_set": {
+            # The envelope SHELL (v3): the interaction/approach partition lives in
+            # the section (plugin semantics), cross-checked above.
             "names": feature_names,
             "order_is_contractual": True,
-            "interaction_features": interaction,
-            "approach_features": approach,
             # Missing feature values are passed through as NaN; the loaded
             # CatBoost model applies its trained nan_mode. (engine NAN_POLICY)
             "nan_policy": k.NAN_POLICY,
         },
-        "class_map": class_map,
-        "session_scheme": {
-            "timezone": k.SESSION_TIMEZONE,
-            "trading_day_boundary": _hhmm(k.TRADING_DAY_BOUNDARY),
-            "sessions": {
-                "asia": _session_block("asia"),
-                "london": _session_block("london"),
-                "ny": _session_block("ny"),
-            },
-        },
-        "level_scheme": {
-            "pdh_pdl_source": k.PDH_PDL_SOURCE,
-            "session_levels": list(k.SESSION_LEVELS),
-            "available_from_guard": k.LEVEL_AVAILABLE_FROM_GUARD,
-        },
-        "touch_rule": {
-            "type": k.TOUCH_TYPE,
-            "bar_type": du.bar_type,
-            "zone_proximity_pts": k.ZONE_PROXIMITY_PTS,
-            "zone_representative_price": k.ZONE_REPRESENTATIVE_PRICE,
-            "scope": k.TOUCH_SCOPE,
-            # low touch -> long, high touch -> short, single-sourced from the
-            # engine's DIRECTION_FROM_SIDE (Side enum -> Direction enum).
-            "direction_from_side": {
-                side.value.lower(): direction.value.lower()
-                for side, direction in k.DIRECTION_FROM_SIDE.items()
-            },
-        },
-        "feature_windows": {
-            "interaction_window_minutes": du.interaction_window_minutes,
-            "approach_window_minutes": du.approach_window_minutes,
-            "within_band_pts": k.WITHIN_BAND_PTS,
-            "level_proximity_pts": du.level_proximity_pts,
-            "large_trade_threshold": k.LARGE_TRADE_THRESHOLD,
-            # Engine-single-sourced. The engine standardizes the 3 interaction
-            # features on the TRADE PRINT price ("trade_price"), which DIVERGES
-            # from the legacy book-mid training path; the platform_version binding
-            # above is what makes Trade-Lab fail-close on a model trained under the
-            # old book-mid feature definition (a retrain is required, next phase).
-            "mid_price_source": k.MID_PRICE_SOURCE,
-        },
         "label_policy": {
             "resolution": k.LABEL_RESOLUTION,
+            # E3: how tp/sl/trap are interpreted — sourced from the PLUGIN's own
+            # label-policy declaration (LabelPolicySpec), not restated.
+            "barrier_mode": get_strategy(strategy_id).label_policy().barrier_mode,
             # Engine-single-sourced honest-entry re-anchor (engine v2/v3): the label
             # is measured from the realistic price at the DECISION INSTANT. The
             # decision offset is the configured interaction window because the
@@ -221,7 +237,6 @@ def build_strategy_contract(
             "eligible_session": k.INFERENCE_ELIGIBLE_SESSION,
             "confidence_gate": k.DEFAULT_CONFIDENCE_GATE,
         },
-        "research_session_experiment": config.session_experiment.model_dump(),
         "data_requirements": {
             "min_book_level": k.MIN_BOOK_LEVEL,
             "live_schemas": list(k.LIVE_SCHEMAS),
@@ -237,4 +252,8 @@ def build_strategy_contract(
                 "auto_class_weights": config.model.auto_class_weights,
             },
         },
+        # The ONE strategy-owned subtree (wire shape: flat envelope keys + this).
+        # Dumped from the typed instance built above; exclude_none drops the
+        # optional closed_window when absent (the research scheme has none).
+        "section": section.model_dump(mode="json", exclude_none=True),
     }

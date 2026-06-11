@@ -1,5 +1,5 @@
 {
-  "contract_version": "trade_lab_contract_v2",
+  "contract_version": "trade_lab_contract_v3",
   "platform_version": "strategy_core_platform_v1",
   "strategy_id": "touch_reversal",
   "strategy_version": "1",
@@ -22,15 +22,6 @@
       "app_max_spread"
     ],
     "order_is_contractual": true,
-    "interaction_features": [
-      "int_time_within_2pts",
-      "int_absorption_ratio"
-    ],
-    "approach_features": [
-      "app_avg_trade_size",
-      "app_large_trade_vol_pct",
-      "app_max_spread"
-    ],
     "nan_policy": "model_native"
   },
   "class_map": {
@@ -38,58 +29,9 @@
     "1": "trap_reversal",
     "2": "aggressive_blowthrough"
   },
-  "session_scheme": {
-    "timezone": "US/Eastern",
-    "trading_day_boundary": "18:00",
-    "sessions": {
-      "asia": {
-        "start": "19:00",
-        "end": "02:45",
-        "crosses_midnight": true
-      },
-      "london": {
-        "start": "03:00",
-        "end": "08:00"
-      },
-      "ny": {
-        "start": "09:00",
-        "end": "17:00"
-      }
-    }
-  },
-  "level_scheme": {
-    "pdh_pdl_source": "prior_day_full",
-    "session_levels": [
-      "asia_high",
-      "asia_low",
-      "london_high",
-      "london_low",
-      "pdh",
-      "pdl"
-    ],
-    "available_from_guard": true
-  },
-  "touch_rule": {
-    "type": "bar_intersect",
-    "bar_type": "147t",
-    "zone_proximity_pts": 3.0,
-    "zone_representative_price": "mean_of_constituent_levels",
-    "scope": "first_touch_per_zone_per_day",
-    "direction_from_side": {
-      "low": "long",
-      "high": "short"
-    }
-  },
-  "feature_windows": {
-    "interaction_window_minutes": 5,
-    "approach_window_minutes": 15,
-    "within_band_pts": 2.0,
-    "level_proximity_pts": 0.5,
-    "large_trade_threshold": 10,
-    "mid_price_source": "trade_price"
-  },
   "label_policy": {
     "resolution": "mae_first",
+    "barrier_mode": "fixed_points",
     "entry_reference": "realistic_at_decision",
     "decision_offset_minutes": 5,
     "tp_points": 15.0,
@@ -124,6 +66,67 @@
       "depth": 4,
       "learning_rate": 0.03,
       "auto_class_weights": "Balanced"
+    }
+  },
+  "section": {
+    "interaction_features": [
+      "int_time_within_2pts",
+      "int_absorption_ratio"
+    ],
+    "approach_features": [
+      "app_avg_trade_size",
+      "app_large_trade_vol_pct",
+      "app_max_spread"
+    ],
+    "session_scheme": {
+      "timezone": "US/Eastern",
+      "trading_day_boundary": "18:00",
+      "sessions": {
+        "asia": {
+          "start": "19:00",
+          "end": "02:45",
+          "crosses_midnight": true
+        },
+        "london": {
+          "start": "03:00",
+          "end": "08:00"
+        },
+        "ny": {
+          "start": "09:00",
+          "end": "17:00"
+        }
+      }
+    },
+    "level_scheme": {
+      "pdh_pdl_source": "prior_day_full",
+      "session_levels": [
+        "asia_high",
+        "asia_low",
+        "london_high",
+        "london_low",
+        "pdh",
+        "pdl"
+      ],
+      "available_from_guard": true
+    },
+    "touch_rule": {
+      "type": "bar_intersect",
+      "bar_type": "147t",
+      "zone_proximity_pts": 3.0,
+      "zone_representative_price": "mean_of_constituent_levels",
+      "scope": "first_touch_per_zone_per_day",
+      "direction_from_side": {
+        "low": "long",
+        "high": "short"
+      }
+    },
+    "feature_windows": {
+      "interaction_window_minutes": 5,
+      "approach_window_minutes": 15,
+      "within_band_pts": 2.0,
+      "level_proximity_pts": 0.5,
+      "large_trade_threshold": 10,
+      "mid_price_source": "trade_price"
     }
   }
 }
