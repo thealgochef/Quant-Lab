@@ -10,6 +10,7 @@ Data must be pre-downloaded into data/databento/{symbol}/{date}/mbp10.parquet.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from dataclasses import asdict
@@ -1098,6 +1099,19 @@ def build_oos_predictions_frame(
         1: "trap_reversal",
         2: "aggressive_blowthrough",
     }
+    base_columns = [
+        "fold",
+        "timestamp",
+        "session",
+        "binary_true_tradeable",
+        "label_encoded",
+        "label",
+        "pred_label_encoded",
+        "pred_label",
+        "prob_tradeable_reversal",
+        "gate_0_70_runtime_sessions",
+        "gate_0_70_ny",
+    ]
     for fold_data in fold_predictions:
         y_true = np.asarray(fold_data["y_true"]).flatten().astype(int)
         n = len(y_true)
@@ -1148,6 +1162,10 @@ def build_oos_predictions_frame(
                 if probs is not None and len(probs) == n:
                     row[f"prob_{name}"] = float(probs[i])
             rows.append(row)
+    if not rows:
+        # W2 P3a: an empty result still carries the canonical schema so the
+        # unconditional bundle writer can persist a typed (empty) parquet.
+        return pd.DataFrame(columns=base_columns)
     return pd.DataFrame(rows)
 
 
@@ -1434,10 +1452,32 @@ def save_trained_model(
         )
         raise ValueError(msg)
 
+    # W2 P3b: artifact honesty — a bundle without its training evidence or its
+    # strategy contract is a partial bundle; refuse up front instead of writing
+    # one (F27's silent-skip class). Any writer failure below aborts the save.
+    if training_result is None:
+        msg = (
+            "save_trained_model requires training_result; refusing to save a "
+            "bundle without its training evidence"
+        )
+        raise ValueError(msg)
+    if config is None:
+        msg = (
+            "save_trained_model requires config; refusing to save a bundle "
+            "without a strategy contract"
+        )
+        raise ValueError(msg)
+
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Save model + metadata
     ExtremaModelTrainer.save_model(trained_model, output_dir)
+
+    # W2 P3b: binary-integrity sidecar (Trade-Lab verifies it at activation;
+    # the store had none). Written unconditionally; failure aborts the save.
+    model_file = output_dir / "model.cbm"
+    digest = hashlib.sha256(model_file.read_bytes()).hexdigest()
+    (output_dir / "model.cbm.sha256").write_text(digest + "  model.cbm" + chr(10), encoding="utf-8")
 
     # Save evaluation — start with the EvaluationResult dataclass
     eval_dict = asdict(eval_result)
@@ -1495,11 +1535,19 @@ def save_trained_model(
         for key in ("gated_oos", "session_metrics", "oos_three_class_balance"):
             if training_result.get(key) is not None:
                 eval_dict[key] = _json_safe(training_result.get(key))
+        # W2 P3a (F27): the OOS writer is UNCONDITIONAL. An empty frame still
+        # writes the parquet WITH its schema; a missing/illtyped frame or a
+        # failed write fails the save loudly (no silent skip, no partial bundle).
         oos_predictions = training_result.get("oos_predictions")
-        if isinstance(oos_predictions, pd.DataFrame) and not oos_predictions.empty:
-            oos_predictions.to_parquet(output_dir / "oos_predictions.parquet", index=False)
-            eval_dict["oos_predictions_file"] = "oos_predictions.parquet"
-            eval_dict["oos_predictions_rows"] = int(len(oos_predictions))
+        if not isinstance(oos_predictions, pd.DataFrame):
+            msg = (
+                "training_result lacks an oos_predictions DataFrame; refusing to "
+                "save a bundle without its row-level OOS evidence"
+            )
+            raise ValueError(msg)
+        oos_predictions.to_parquet(output_dir / "oos_predictions.parquet", index=False)
+        eval_dict["oos_predictions_file"] = "oos_predictions.parquet"
+        eval_dict["oos_predictions_rows"] = int(len(oos_predictions))
 
         confidence_stats = training_result.get("confidence_threshold_stats")
         oos_for_conf = training_result.get("oos_summary") or {}
@@ -1555,48 +1603,48 @@ def save_trained_model(
     # Augment model metadata with the full pipeline/session scope. The trainer's
     # own metadata only knows ModelConfig; session experiments live at pipeline
     # scope and must remain auditable from the saved bundle.
+    # W2 P3b: metadata augmentation is part of the bundle contract — a failure
+    # here aborts the save (it previously logged and shipped a partial bundle).
     metadata_path = output_dir / "metadata.json"
-    try:
-        metadata = {}
-        if metadata_path.exists():
-            with open(metadata_path) as f:
-                metadata = json.load(f)
-        if pipeline_config_payload is not None:
-            metadata["pipeline_config"] = _json_safe(pipeline_config_payload)
-        if session_experiment_payload is not None:
-            metadata["session_experiment"] = _json_safe(session_experiment_payload)
-        if session_filter_payload is not None:
-            metadata["session_filter"] = _json_safe(session_filter_payload)
-        if metadata:
-            with open(metadata_path, "w") as f:
-                json.dump(_json_safe(metadata), f, indent=2, default=str)
-    except Exception as exc:  # noqa: BLE001 - metadata augmentation should not break saves
-        logger.warning("Failed to augment metadata.json with pipeline config: %s", exc)
+    metadata = {}
+    if metadata_path.exists():
+        with open(metadata_path) as f:
+            metadata = json.load(f)
+    if pipeline_config_payload is not None:
+        metadata["pipeline_config"] = _json_safe(pipeline_config_payload)
+    if session_experiment_payload is not None:
+        metadata["session_experiment"] = _json_safe(session_experiment_payload)
+    if session_filter_payload is not None:
+        metadata["session_filter"] = _json_safe(session_filter_payload)
+    with open(metadata_path, "w") as f:
+        json.dump(_json_safe(metadata), f, indent=2, default=str)
 
     # ── Strategy contract for runtime (Trade-Lab) consumption ─────
     # Emits strategy.json describing the full strategy semantics (sessions,
-    # touch rule, feature windows, label policy) so a runtime can be driven
-    # by the contract instead of hardcoding semantics. Never fail the save.
-    if config is not None:
-        try:
-            from alpha_lab.agents.data_infra.ml.strategy_contract import (
-                build_strategy_contract,
-            )
+    # touch rule, feature windows, label policy) so a runtime can be driven by
+    # the contract instead of hardcoding semantics. W2 P3b: emission is
+    # UNCONDITIONAL and a failure ABORTS the save — the old "never fail the
+    # save" swallow was the partial-bundle generator.
+    from alpha_lab.agents.data_infra.ml.strategy_contract import (
+        build_strategy_contract,
+    )
 
-            selected = None
-            if training_result is not None:
-                selected = training_result.get("selected_features")
-            if not selected:
-                selected = getattr(trained_model, "selected_features", None)
+    selected = training_result.get("selected_features")
+    if not selected:
+        selected = getattr(trained_model, "selected_features", None)
 
-            # E2: strategy_id is the REGISTRY ROUTER id (the plugin this bundle
-            # runs), not the bundle name; the bundle keeps its dir-name identity.
-            strategy = build_strategy_contract(config, selected, strategy_id="touch_reversal")
-            if strategy is not None:
-                with open(output_dir / "strategy.json", "w") as f:
-                    json.dump(strategy, f, indent=2, default=str)
-        except Exception as exc:  # noqa: BLE001 - emission must never break saves
-            logger.warning("Failed to emit strategy.json: %s", exc)
+    # E2: strategy_id is the REGISTRY ROUTER id (the plugin this bundle
+    # runs), not the bundle name; the bundle keeps its dir-name identity.
+    strategy = build_strategy_contract(config, selected, strategy_id="touch_reversal")
+    if strategy is None:
+        msg = (
+            f"build_strategy_contract returned no contract for training_mode "
+            f"{getattr(config, 'training_mode', 'unknown')!r}; refusing to save "
+            "an unservable bundle"
+        )
+        raise ValueError(msg)
+    with open(output_dir / "strategy.json", "w") as f:
+        json.dump(strategy, f, indent=2, default=str)
 
     return output_dir
 

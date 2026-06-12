@@ -218,9 +218,11 @@ def test_save_override_persists_quality_gates_confidence_and_purge_metadata(
     saved = ml_training_tab.save_trained_model(
         trained_model=object(),
         eval_result=_failed_eval_result(),
-        config=None,
+        config=MLPipelineConfig(training_mode="dashboard_utility"),
         output_dir=output_dir,
         training_result={
+            # W2 P3a/P3b: saves refuse to omit the OOS frame; empty still writes.
+            "oos_predictions": ml_training_tab.build_oos_predictions_frame([]),
             "confidence_threshold_stats": {
                 "0.70": {
                     "threshold": 0.70,
@@ -260,6 +262,18 @@ def test_save_override_persists_quality_gates_confidence_and_purge_metadata(
     assert payload["label_purge"]["method"] == "label_window_end"
     assert payload["label_purge"]["used_label_window_end"] is True
     assert payload["label_purge"]["n_purged_total"] == 3
+
+    # W2 P3a/P3b: the empty OOS frame still writes with its schema; the bundle
+    # carries the strategy contract and the binary-integrity sidecar.
+    oos = pd.read_parquet(output_dir / "oos_predictions.parquet")
+    assert len(oos) == 0
+    assert "prob_tradeable_reversal" in oos.columns
+    assert payload["oos_predictions_rows"] == 0
+    assert (output_dir / "strategy.json").exists()
+    sidecar = (output_dir / "model.cbm.sha256").read_text(encoding="utf-8").split()[0]
+    import hashlib
+
+    assert sidecar == hashlib.sha256((output_dir / "model.cbm").read_bytes()).hexdigest()
 
 
 def test_compute_confidence_threshold_stats_reports_threshold_070_trade_count():
@@ -474,7 +488,7 @@ def test_save_persists_gated_session_and_row_level_oos_artifacts(monkeypatch, tm
     saved = ml_training_tab.save_trained_model(
         trained_model=object(),
         eval_result=_failed_eval_result(),
-        config=None,
+        config=MLPipelineConfig(training_mode="dashboard_utility"),
         output_dir=output_dir,
         training_result={
             "gated_oos": {"trade_count": 1, "precision": 1.0},
@@ -524,6 +538,7 @@ def test_save_persists_session_experiment_to_evaluation_and_metadata(monkeypatch
         config=config,
         output_dir=output_dir,
         training_result={
+            "oos_predictions": ml_training_tab.build_oos_predictions_frame([]),
             "session_experiment": config.session_experiment.model_dump(),
             "session_filter": {
                 "training_sessions": ["ny"],
@@ -545,3 +560,63 @@ def test_save_persists_session_experiment_to_evaluation_and_metadata(monkeypatch
     assert evaluation["full_config"]["session_experiment"]["evaluation_sessions"] == ["ny"]
     assert metadata["session_experiment"]["production_gate_sessions"] == ["ny"]
     assert metadata["pipeline_config"]["session_experiment"]["training_sessions"] == ["ny"]
+
+
+def test_save_refuses_missing_oos_frame_training_result_and_config(monkeypatch, tmp_path):
+    """W2 P3a/P3b: a bundle without its OOS evidence, training result, or
+    strategy contract is a partial bundle — the save fails loudly."""
+
+    def fake_save_model(_trained_model, model_dir):
+        Path(model_dir).mkdir(parents=True, exist_ok=True)
+        (Path(model_dir) / "model.cbm").write_text("fake model")
+
+    monkeypatch.setattr(ExtremaModelTrainer, "save_model", staticmethod(fake_save_model))
+    config = MLPipelineConfig(training_mode="dashboard_utility")
+
+    with pytest.raises(ValueError, match="oos_predictions"):
+        ml_training_tab.save_trained_model(
+            trained_model=object(),
+            eval_result=_failed_eval_result(),
+            config=config,
+            output_dir=tmp_path / "no_oos",
+            training_result={},
+            allow_failed_gates=True,
+        )
+
+    with pytest.raises(ValueError, match="training_result"):
+        ml_training_tab.save_trained_model(
+            trained_model=object(),
+            eval_result=_failed_eval_result(),
+            config=config,
+            output_dir=tmp_path / "no_result",
+            training_result=None,
+            allow_failed_gates=True,
+        )
+
+    with pytest.raises(ValueError, match="config"):
+        ml_training_tab.save_trained_model(
+            trained_model=object(),
+            eval_result=_failed_eval_result(),
+            config=None,
+            output_dir=tmp_path / "no_config",
+            training_result={"oos_predictions": ml_training_tab.build_oos_predictions_frame([])},
+            allow_failed_gates=True,
+        )
+
+
+def test_build_oos_predictions_frame_empty_carries_canonical_schema():
+    frame = ml_training_tab.build_oos_predictions_frame([])
+    assert frame.empty
+    assert list(frame.columns) == [
+        "fold",
+        "timestamp",
+        "session",
+        "binary_true_tradeable",
+        "label_encoded",
+        "label",
+        "pred_label_encoded",
+        "pred_label",
+        "prob_tradeable_reversal",
+        "gate_0_70_runtime_sessions",
+        "gate_0_70_ny",
+    ]

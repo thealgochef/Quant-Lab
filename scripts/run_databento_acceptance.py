@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 """One-command Databento/Quant-Lab/Strategy-Core acceptance check.
 
+W2 P3c: THE W3 ACCEPTANCE ENTRYPOINT. The W3 greenlight runs a fresh
+train -> emit -> discover -> activate -> replay acceptance through this
+script: bundle and data paths come from ``QL_ACCEPTANCE_BUNDLE`` and
+``QL_ACCEPTANCE_DATA_DIR`` (CLI flags override; the script exits loudly when
+neither names a bundle), and the bundle's contract is validated through the
+Strategy-Core REGISTRY SECTION HOOK (``validate_section_via_registry=True``)
+— the typed plugin SectionModel, never a hand-built section.
+
 This wraps the dashboard session experiment CLI, audits the saved bundle, and
 optionally runs the focused Quant-Lab + Strategy-Core contract tests. It is a
 research-readiness check: weak models may be saved with an explicit failed-gate
@@ -13,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
@@ -148,12 +157,21 @@ def _load_strategy_contract_summary(
     strategy_src = strategy_core_root / "src"
     if strategy_src.exists():
         sys.path.insert(0, str(strategy_src))
+    # W2 P3c: register the production plugin so the loader's registry hook can
+    # type the section — the acceptance path consumes the plugin SectionModel,
+    # never a hand-built section.
+    import strategy_core.strategies.touch_reversal  # noqa: F401, PLC0415
     from strategy_core import CONTRACT_VERSION, PLATFORM_VERSION  # noqa: PLC0415
     from strategy_core.contract.loader import load_strategy_contract  # noqa: PLC0415
 
-    contract = load_strategy_contract(strategy_json, expected_platform_version=PLATFORM_VERSION)
+    contract = load_strategy_contract(
+        strategy_json,
+        expected_platform_version=PLATFORM_VERSION,
+        validate_section_via_registry=True,
+    )
     return {
         "loader": "Strategy-Core",
+        "section_via_registry_hook": True,
         "expected_contract_version": CONTRACT_VERSION,
         "expected_platform_version": PLATFORM_VERSION,
         "loaded_type": type(contract).__name__,
@@ -272,10 +290,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run/audit the Quant-Lab Databento acceptance workflow.",
     )
-    parser.add_argument("--model-name", required=True)
+    # W2 P3c: bundle + data paths come from env vars (CLI flags override).
+    parser.add_argument("--model-name", default=os.environ.get("QL_ACCEPTANCE_BUNDLE"))
     parser.add_argument("--preset", default="all_to_ny")
     parser.add_argument("--symbol", default="NQ")
-    parser.add_argument("--data-dir", default="data/databento")
+    parser.add_argument(
+        "--data-dir", default=os.environ.get("QL_ACCEPTANCE_DATA_DIR", "data/databento")
+    )
     parser.add_argument("--start")
     parser.add_argument("--end")
     parser.add_argument("--bar-type", default="147t")
@@ -321,7 +342,13 @@ def _config_from_args(args: argparse.Namespace) -> AcceptanceConfig:
 
 
 def main() -> int:
-    args = _build_parser().parse_args()
+    parser = _build_parser()
+    args = parser.parse_args()
+    if not args.model_name:
+        parser.error(
+            "no bundle named: set QL_ACCEPTANCE_BUNDLE or pass --model-name "
+            "(the W3 acceptance entrypoint refuses to guess a bundle)"
+        )
     config = _config_from_args(args)
     model_dir = DEFAULT_MODEL_DIR / config.model_name
     acceptance: dict[str, Any] = {"config": asdict(config), "commands": {}}
