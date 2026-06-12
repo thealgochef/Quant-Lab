@@ -302,3 +302,21 @@ This prevents re-litigating settled questions across sessions.
 ---
 
 *Add new decisions below this line.*
+
+## D-036: W3 Training Configuration (Ratified; Execution Stop-Gated in W3a)
+**Date**: 2026-06-12
+**Context**: W3 PROVE needs one explicit, owner-ratified training configuration — no defaults trusted — for the fresh proof bundle (W3a) and the parity gate (W3b). The W3-CONFIG recon (W3_CONFIG_RECON.md) inventoried the store, current defaults, and the fixture-vs-production label divergence.
+**Decision**: The W3 proof-bundle configuration is: `training_mode=dashboard_utility`; session preset `all_to_ny` (train/eval [asia, london, ny], production gate [ny]); `bar_type=147t`; instrument NQ, tick 0.25. Window: 2025-11-21 → 2026-02-13 inclusive, valid store days only (2025-11-20 is an empty day dir and self-skips at date discovery). Folds: purged walk-forward over TRADING days, TRAIN=40 / TEST=5 / STEP=5 / PURGE=2, MIN_TRAIN_EVENTS=30 (the `train_dashboard_model` scheme, now a first-class `--fold-scheme purged-days` path). Label policy (explicit overrides where config defaults differ): `tp_points=15.0`, `sl_points=15.0` (override — config default 30.0), `trap_mfe_min=5.0`, `interaction_window_minutes=5`, `approach_window_minutes=15` (override — default 90), `include_approach_features=True` (override — default False); `entry_reference`/`forward_cutoff`/flatten ride the SC constants (`realistic_at_decision` / `17:00_US/Eastern_ny_close` / 16:40 ET). Features PINNED: `[int_time_within_2pts, int_absorption_ratio, app_avg_trade_size, app_large_trade_vol_pct, app_max_spread]`, `rfecv_enabled=False`. Model: CatBoost 1000 iterations / depth 6 / lr 0.03 / Balanced / seed 42, MultiClass. Model quality is NOT a save gate (explicit `allow_failed_gates` with honest metrics). Bundle name `NQ_W3_<timestamp>` through the W2-hardened save path.
+**Rationale**: Every value is explicit so the proof bundle is reproducible and the W3b gate tests exactly what production would serve; sl=15/aw=15 match the bundle convention the audits established rather than the stale config defaults.
+**Trade-off / Status**: W3a's compute stop-gate measured the post-vectorization per-day pipeline at 1447.1s for 2026-02-12 (fresh, config hash 7850272e) → ×60 ≈ 24.1 h >> the 90-minute gate, with ~2×513s of that being the SC canonical reader's two full-day event decodes (15.3M events/pass). The TRAIN DID NOT RUN; this configuration stands ratified and waits on an owner ruling on the reader cost (SC-side change — out of W3a's bounds).
+
+---
+
+## D-037: Quote Feature Rides the Gate — Stub-Exclusion Pre-Ruling Superseded
+**Date**: 2026-06-12
+**Context**: An earlier pre-ruling leaned toward excluding quote-derived features from the W3 train because `quotes_in_window` is stubbed. The W3-CONFIG recon made the stub's blast radius exact: the stub is the SC `PlatformContext.quotes_in_window` accessor only (`strategy_core/runtime/context.py:103-109`, returns `()`, §9.10 retention window open).
+**Decision**: `app_max_spread` STAYS in the pinned W3 feature set. The stub affects only a future SC-plugin-path consumer; Quant-Lab training computes quotes from the canonical store (deduped L1 via the SC reader), and Trade-Lab serving computes the feature over its own retained quote window — both real. The feature deliberately rides the W3b parity gate, which is exactly where a serving-side divergence would surface.
+**Rationale**: Excluding a live-computable, production-served feature because an unrelated accessor is stubbed would have widened the research/serving gap instead of testing it.
+**Trade-off**: If §9.10 lands later and a plugin-path consumer appears, that path needs its own parity evidence before serving.
+
+---
