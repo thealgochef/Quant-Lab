@@ -14,7 +14,7 @@ from __future__ import annotations
 import math
 import os
 import sys
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -89,15 +89,24 @@ def test_stream_drive_labels_one_hour_slice() -> None:
         level_proximity_pts=0.5,
     )
     # Seed PDH at the hour's midpoint (PDL far below): available from the day
-    # start, so the touch fires inside the slice.
-    df = process_single_date_stream(
-        DAY,
-        DATA_DIR,
-        SYMBOL,
-        config,
-        prev_day_hl=(mid_on_grid, low - 50.0),
-        events_until_utc=cap_utc,
-    )
+    # start, so the touch fires inside the slice. Pop the legacy module first so
+    # the post-drive assertion is a TRUE call-graph check even when another test
+    # in the session (the parity regression) already imported it.
+    removed_legacy = sys.modules.pop(LEGACY_MODULE, None)
+    try:
+        df = process_single_date_stream(
+            DAY,
+            DATA_DIR,
+            SYMBOL,
+            config,
+            prev_day_hl=(mid_on_grid, low - 50.0),
+            events_until_utc=cap_utc,
+        )
+        # The W1 P4b guarantee: the legacy decision stages are NOT in the call graph.
+        assert LEGACY_MODULE not in sys.modules
+    finally:
+        if removed_legacy is not None:
+            sys.modules[LEGACY_MODULE] = removed_legacy
 
     assert not df.empty, "stream drive produced no labeled rows in the slice"
     expected_columns = {
@@ -125,8 +134,6 @@ def test_stream_drive_labels_one_hour_slice() -> None:
     assert (df["date"] == DAY).all()
     assert set(df["direction"]) <= {"LONG", "SHORT"}
     assert df["label"].notna().all()
-    # The W1 P4b guarantee: the legacy decision stages are NOT in the call graph.
-    assert LEGACY_MODULE not in sys.modules
 
 
 def test_build_utility_dataset_refuses_legacy_mode() -> None:
