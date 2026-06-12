@@ -41,6 +41,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import strategy_core as sc
 from strategy_core import (
@@ -87,6 +88,11 @@ DECISION_OFFSET_MINUTES = sc.constants.DECISION_OFFSET_MINUTES
 assert TRADE_TICK == DEFAULT_TICK_SIZE  # the contract/constant the trade path threads
 
 _ET = "US/Eastern"
+
+#: Quote-window assignment chunk (process_single_date_stream): bounds the
+#: chunk x touches membership matrix (~64Ki x touches bools) regardless of the
+#: day's quote count.
+_QUOTE_CHUNK_EVENTS = 65536
 
 
 # ── Conversions: CQL representations -> engine neutral types ────────────────
@@ -692,21 +698,45 @@ def process_single_date_stream(
     if config.include_approach_features:
         # Bounded second pass: only quotes inside some touch's approach window are
         # retained (full-day L1 retention would dominate memory for no reader).
-        spans = sorted(
-            (touch.bar_ts_utc - approach_window, touch.bar_ts_utc, idx)
-            for idx, touch in enumerate(touches)
+        # Window membership is computed VECTORIZED (numpy over epoch-ns) on
+        # bounded chunks; quotes outside the hull of all windows are dropped at
+        # the stream, so retention matches the per-window bound.
+        starts_ns = np.array(
+            [pd.Timestamp(t.bar_ts_utc - approach_window).value for t in touches],
+            dtype=np.int64,
         )
+        ends_ns = np.array(
+            [pd.Timestamp(t.bar_ts_utc).value for t in touches], dtype=np.int64
+        )
+        hull_start = min(t.bar_ts_utc - approach_window for t in touches)
+        hull_end = max(t.bar_ts_utc for t in touches)
+        chunk: list[Quote] = []
+
+        def _assign_chunk() -> None:
+            ts_ns = pd.DatetimeIndex([q.event_ts_utc for q in chunk]).asi8
+            inside = (ts_ns[:, None] >= starts_ns[None, :]) & (
+                ts_ns[:, None] < ends_ns[None, :]
+            )
+            for touch_idx in np.flatnonzero(inside.any(axis=0)):
+                approach_quotes.setdefault(int(touch_idx), []).extend(
+                    chunk[pos] for pos in np.flatnonzero(inside[:, touch_idx])
+                )
+            chunk.clear()
+
         for event in source.events():
             if not isinstance(event, Quote):
                 continue
             ts = event.event_ts_utc
             if events_until_utc is not None and ts > events_until_utc:
                 break
-            for span_start, span_end, idx in spans:
-                if span_start <= ts < span_end:
-                    approach_quotes.setdefault(idx, []).append(event)
-                elif ts < span_start:
-                    break
+            if ts < hull_start or ts >= hull_end:
+                # Outside every approach window — never retained.
+                continue
+            chunk.append(event)
+            if len(chunk) >= _QUOTE_CHUNK_EVENTS:
+                _assign_chunk()
+        if chunk:
+            _assign_chunk()
 
     rows: list[dict] = []
     for idx, touch in enumerate(touches):
