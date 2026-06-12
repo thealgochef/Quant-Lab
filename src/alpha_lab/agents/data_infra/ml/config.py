@@ -415,5 +415,10 @@ class MLPipelineConfig(BaseModel):
             + f"|bar_price_source={BAR_PRICE_SOURCE}"
             + f"|label_entry_reference={LABEL_ENTRY_REFERENCE}"
             + f"|platform_version={PLATFORM_VERSION}"
+            # W1 P4a: the labeling pipeline became a batch drive of the SC runtime
+            # (per-trade level fold, plugin zones/touches per bar-close, stream
+            # features). Folding the pipeline identity rolls the cache tag so
+            # pre-W1 ml_utility_* caches are invalidated, never silently reused.
+            + "|decision_pipeline=sc_runtime_stream_v1"
         )
         return hashlib.sha256(payload.encode()).hexdigest()[:8]

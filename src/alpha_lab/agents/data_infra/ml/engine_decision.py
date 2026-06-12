@@ -576,3 +576,215 @@ def _query_quotes(store: TickStore, symbol, start_utc, end_utc) -> pd.DataFrame:
         ORDER BY ts_event ASC
     """
     return store._conn.execute(sql, [pd.Timestamp(start_utc), pd.Timestamp(end_utc)]).fetchdf()
+
+
+# ── W1 P4a: the production labeling path as a batch drive of the SC runtime ──
+
+
+def process_single_date_stream(
+    date_str: str,
+    data_dir: Path,
+    symbol: str,
+    config: DashboardUtilityConfig,
+    *,
+    prev_day_hl: tuple[float, float] | None = None,
+    events_until_utc: datetime | None = None,
+) -> pd.DataFrame:
+    """W1 P4a: research labeling = a batch drive of the SAME engine Trade-Lab serves.
+
+    Canonical SC day-mode stream (``DatabentoParquetSource.for_trading_day``:
+    [prev 18:00 ET, day 18:00 ET), two-file composition, count-based front month,
+    TOB-deduped quotes) -> ``StrategyRuntime``/``TouchReversalPlugin`` exactly as
+    Trade-Lab wires it (decision bar = the configured tick count, default section,
+    auto-attached plugin) -> touches harvested per bar-close -> the 6 SC feature
+    formulas over the SAME trade stream -> ``resolve_honest_outcome`` (unchanged)
+    -> dataset rows in the existing column schema.
+
+    ``prev_day_hl`` is the FULL prior trading-day (high, low) in points — the
+    PDH/PDL cold-start seed (``load_prior_day_summary``), exactly the external
+    seed path Trade-Lab uses. The organic day-roll banking covers multi-day
+    streams; one-day batch drives need the seed.
+
+    Interaction/approach feature windows are half-open ``[start, end)`` over the
+    in-memory stream (the Trade-Lab serving convention). The research
+    ``< 5 interaction trades -> drop row`` rule is preserved. The entry accessor
+    is the wire-LAST trade at-or-before the decision instant with a 30-minute
+    lookback — ring semantics identical to the serving runtime, off the same
+    stream.
+
+    ``events_until_utc`` truncates the drive (test knob: real-data tests cap at a
+    one-hour slice).
+    """
+    from bisect import bisect_left, bisect_right
+
+    from strategy_core.data.databento_parquet import DatabentoParquetSource
+    from strategy_core.data.events import DataQualityWarning as ScDataQualityWarning
+    from strategy_core.runtime.state import StrategyRuntime
+
+    td = date.fromisoformat(date_str)
+    bar_type = str(config.bar_type)
+    if not bar_type.endswith("t"):
+        raise ValueError(
+            f"stream labeling requires a tick-count bar_type, got {bar_type!r}"
+        )
+    tick_count = int(bar_type[:-1])
+
+    source = DatabentoParquetSource.for_trading_day(
+        Path(data_dir) / symbol, td, requested_symbol=symbol
+    )
+    for warning in source.pending_warnings:
+        # Degraded window (missing prior-day file): same single-file fallback the
+        # serving replay applies, surfaced in the build log.
+        print(f"[stream-labeling] {date_str}: {warning.message}")
+
+    runtime = StrategyRuntime(timeframes=(tick_count,), requested_symbol=symbol)
+    if prev_day_hl is not None:
+        runtime.load_prior_day_summary(
+            td - timedelta(days=1),
+            high_ticks=_round_to_ticks(prev_day_hl[0], TRADE_TICK),
+            low_ticks=_round_to_ticks(prev_day_hl[1], TRADE_TICK),
+        )
+
+    trades: list[Trade] = []
+    trade_ts: list[datetime] = []
+    day_bars: list[Bar] = []
+    touches: list = []
+    for event in source.events():
+        if isinstance(event, ScDataQualityWarning):
+            continue
+        if events_until_utc is not None and event.event_ts_utc > events_until_utc:
+            break
+        if not isinstance(event, Trade):
+            # Quotes do not move bars/levels/touches; the approach quotes are
+            # collected in the bounded second pass below.
+            continue
+        trades.append(event)
+        trade_ts.append(event.event_ts_utc)
+        update = runtime.process_event(event)
+        for bar in update.closed_bars:
+            if bar.timeframe_ticks == tick_count:
+                day_bars.append(bar)
+        touches.extend(update.touches)
+
+    if not touches:
+        return pd.DataFrame()
+
+    window_minutes = config.interaction_window_minutes
+    decision_offset = window_minutes
+    interaction_window = timedelta(minutes=window_minutes)
+    approach_window = timedelta(minutes=config.approach_window_minutes)
+
+    def _price_at(ts_utc: datetime) -> float | None:
+        # Wire-LAST trade at-or-before the instant, 30-min bounded — the serving
+        # runtime's trade-ring semantics, off the same stream.
+        index = bisect_right(trade_ts, ts_utc)
+        if index == 0:
+            return None
+        trade = trades[index - 1]
+        if (ts_utc - trade.event_ts_utc) > timedelta(minutes=30):
+            return None
+        return trade.price_points(TRADE_TICK)
+
+    def _trades_in(start: datetime, end: datetime) -> list[Trade]:
+        return trades[bisect_left(trade_ts, start) : bisect_left(trade_ts, end)]
+
+    approach_quotes: dict[int, list[Quote]] = {}
+    if config.include_approach_features:
+        # Bounded second pass: only quotes inside some touch's approach window are
+        # retained (full-day L1 retention would dominate memory for no reader).
+        spans = sorted(
+            (touch.bar_ts_utc - approach_window, touch.bar_ts_utc, idx)
+            for idx, touch in enumerate(touches)
+        )
+        for event in source.events():
+            if not isinstance(event, Quote):
+                continue
+            ts = event.event_ts_utc
+            if events_until_utc is not None and ts > events_until_utc:
+                break
+            for span_start, span_end, idx in spans:
+                if span_start <= ts < span_end:
+                    approach_quotes.setdefault(idx, []).append(event)
+                elif ts < span_start:
+                    break
+
+    rows: list[dict] = []
+    for idx, touch in enumerate(touches):
+        result = resolve_honest_outcome(
+            touch,
+            day_bars,
+            _price_at,
+            tick_size=TRADE_TICK,
+            tp_points=config.tp_points,
+            sl_points=config.sl_points,
+            trap_mfe_min=config.trap_mfe_min,
+            decision_offset_minutes=decision_offset,
+        )
+        if isinstance(result, HonestEntryDrop):
+            continue
+        if result.label == sc.constants.NO_RESOLUTION:
+            continue
+
+        interaction_trades = _trades_in(
+            touch.bar_ts_utc, touch.bar_ts_utc + interaction_window
+        )
+        if len(interaction_trades) < 5:
+            # Research drop rule: too few prints to characterize the interaction.
+            continue
+        level_points = float(touch.representative_price)
+        features = {
+            "int_time_beyond_level": int_time_beyond_level(
+                interaction_trades, level_points, touch.direction, TRADE_TICK
+            ),
+            "int_time_within_2pts": int_time_within_2pts(
+                interaction_trades, level_points, TRADE_TICK
+            ),
+            "int_absorption_ratio": int_absorption_ratio(
+                interaction_trades, level_points, touch.direction, TRADE_TICK,
+                proximity_pts=config.level_proximity_pts,
+            ),
+        }
+
+        bar_ts_et = pd.Timestamp(touch.bar_ts_utc).tz_convert(_ET)
+        session_info = classify_session(touch.bar_ts_utc)
+        decision_time_et = pd.Timestamp(
+            touch.bar_ts_utc + timedelta(minutes=decision_offset)
+        ).tz_convert(_ET)
+        row = {
+            "event_ts": bar_ts_et,
+            "date": date_str,
+            "timestamp": bar_ts_et,
+            "session": session_info.session,
+            "decision_time": decision_time_et,
+            "label_window_end": pd.Timestamp(
+                f"{date_str} {RTH_END.strftime('%H:%M:%S')}", tz=_ET
+            ),
+            "direction": touch.direction.value,
+            "representative_price": touch.representative_price,
+            "level_type": touch.level_type,
+            "label": result.label,
+            "label_encoded": result.label_encoded,
+            "max_mfe": result.max_mfe,
+            "max_mae": result.max_mae,
+        }
+        row.update(features)
+
+        if config.include_approach_features:
+            approach_trades = _trades_in(
+                touch.bar_ts_utc - approach_window, touch.bar_ts_utc
+            )
+            row.update(
+                {
+                    "app_large_trade_vol_pct": app_large_trade_vol_pct(approach_trades),
+                    "app_avg_trade_size": app_avg_trade_size(approach_trades),
+                    "app_max_spread": app_max_spread(
+                        approach_quotes.get(idx, ()), TRADE_TICK
+                    ),
+                }
+            )
+
+        rows.append(row)
+
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows)

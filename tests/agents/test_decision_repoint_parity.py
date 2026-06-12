@@ -130,7 +130,7 @@ def cfg():
 @pytest.fixture(scope="module")
 def carry(cfg):
     """Session H/L carry advanced from the warmup day (PDH/PDL for sample day 0)."""
-    from alpha_lab.agents.data_infra.ml import dashboard_utility_builder as B
+    from alpha_lab.agents.data_infra.ml import legacy_decision as B  # W1 P4b: legacy stages moved
 
     prev_ny = prev_asia = prev_london = None
     prev_ny, prev_asia, prev_london = B._get_session_hl_for_date(
@@ -237,7 +237,7 @@ def _legacy_decision_rows(B, bars_et, levels, date_str, cfg):
 @pytest.mark.parametrize("date_str", SAMPLE_DAYS)
 def test_engine_decision_matches_legacy(date_str, cfg, carry):
     """zones + touches + labels + 6 features: engine == legacy, EXACTLY."""
-    from alpha_lab.agents.data_infra.ml import dashboard_utility_builder as B
+    from alpha_lab.agents.data_infra.ml import legacy_decision as B  # W1 P4b: legacy stages moved
     from alpha_lab.agents.data_infra.ml import engine_decision as E
     from alpha_lab.agents.data_infra.ml.dashboard_utility_labeling import (
         label_touch_event,
@@ -347,7 +347,7 @@ def test_integrated_dataset_rows_match(date_str, cfg, carry):
     (price_source="book_mid", tick_size=0.125, honest_entry=False) and compares to
     the legacy book-mid decision path.
     """
-    from alpha_lab.agents.data_infra.ml import dashboard_utility_builder as B
+    from alpha_lab.agents.data_infra.ml import legacy_decision as B  # W1 P4b: legacy stages moved
     from alpha_lab.agents.data_infra.ml import engine_decision as E
 
     prev_ny, prev_asia, prev_london = carry[date_str]
@@ -409,7 +409,7 @@ def test_engine_trade_path_cutover(date_str, cfg, carry):
         (no kept touch could have a decision at/after the flatten).
       * Classes/thresholds unchanged: labels are within the canonical 3-class set.
     """
-    from alpha_lab.agents.data_infra.ml import dashboard_utility_builder as B
+    from alpha_lab.agents.data_infra.ml import legacy_decision as B  # W1 P4b: legacy stages moved
     from alpha_lab.agents.data_infra.ml import engine_decision as E
 
     prev_ny, prev_asia, prev_london = carry[date_str]
