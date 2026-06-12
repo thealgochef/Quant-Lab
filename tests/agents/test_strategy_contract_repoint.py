@@ -147,11 +147,15 @@ def test_class_map_matches_engine(contract):
 
 
 def test_direction_from_side_matches_engine(contract):
-    expected = {
-        side.value.lower(): direction.value.lower()
-        for side, direction in sc.constants.DIRECTION_FROM_SIDE.items()
-    }
+    # W1 P4c (ratified §3): sourced from the plugin section verbatim — the plugin
+    # owns the lowercase wire vocabulary; the platform constant is gone.
+    from strategy_core.strategies.touch_reversal.section import (
+        default_touch_reversal_section,
+    )
+
+    expected = default_touch_reversal_section().touch_rule.direction_from_side
     assert contract["section"]["touch_rule"]["direction_from_side"] == expected
+    assert expected == {"low": "long", "high": "short"}
 
 
 def test_contract_round_trips_through_engine_loader(contract, tmp_path: Path):

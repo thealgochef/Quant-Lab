@@ -79,11 +79,10 @@ def _build_touch_reversal_section(
     every structural value is already single-sourced from ``strategy_core``
     inside that builder — and overrides ONLY the per-run config values
     (``du.bar_type``, the two windows, ``level_proximity_pts``, the selected
-    feature partition, and the run's session-experiment scope). One deliberate
-    projection is restated: ``direction_from_side`` keeps the lowercase
-    ``low->long / high->short`` form every shipped bundle carries (still sourced
-    from the engine's ``DIRECTION_FROM_SIDE``; the plugin default's uppercase
-    enum-value form is a recorded cosmetic divergence).
+    feature partition, and the run's session-experiment scope).
+    ``direction_from_side`` is sourced from the plugin section VERBATIM
+    (ratified §3, honored in W1 P4c: the plugin owns the lowercase wire
+    vocabulary; the platform-constants re-derivation is gone).
     """
     du = config.dashboard_utility
     base = default_touch_reversal_section()
@@ -93,10 +92,6 @@ def _build_touch_reversal_section(
         touch_rule=base.touch_rule.model_copy(
             update={
                 "bar_type": du.bar_type,
-                "direction_from_side": {
-                    side.value.lower(): direction.value.lower()
-                    for side, direction in k.DIRECTION_FROM_SIDE.items()
-                },
             }
         ),
         feature_windows=base.feature_windows.model_copy(

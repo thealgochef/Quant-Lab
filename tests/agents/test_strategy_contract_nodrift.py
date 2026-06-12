@@ -249,11 +249,9 @@ def test_section_is_sourced_from_the_plugin_section_model(
         == base.feature_windows.large_trade_threshold
     )
     assert typed.feature_windows.mid_price_source == base.feature_windows.mid_price_source
-    # The recorded lowercase projection of the engine's DIRECTION_FROM_SIDE.
-    assert typed.touch_rule.direction_from_side == {
-        side.value.lower(): direction.value.lower()
-        for side, direction in k.DIRECTION_FROM_SIDE.items()
-    }
+    # W1 P4c (ratified §3): the emitter ships the PLUGIN's wire vocabulary verbatim.
+    assert typed.touch_rule.direction_from_side == base.touch_rule.direction_from_side
+    assert typed.touch_rule.direction_from_side == {"low": "long", "high": "short"}
 
     # Per-run values come from config, not the default.
     du = config.dashboard_utility
