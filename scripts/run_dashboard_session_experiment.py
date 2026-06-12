@@ -2,8 +2,14 @@
 """Run dashboard-utility ML session-scope experiments from the CLI.
 
 This is the non-Streamlit path for the same configuration surfaced in the ML
-Training Workbench. It is intentionally research-only: saved bundles still carry
-``supported_by_runtime=false`` until Trade-Lab v3 parity is proven.
+Training Workbench. Saved bundles carry ``supported_by_runtime=true`` since E2
+(Trade-Lab is repointed onto Strategy-Core and gates activation itself).
+
+W3a riders: ``--fold-scheme purged-days`` swaps the calendar-day
+``WalkForwardSplitter`` for the purged TRADING-day scheme
+(train/test/step/purge days + min-train-events, the train_dashboard_model
+fold logic); ``--pin-features`` trains/serves an exact feature list
+(disables RFECV selection).
 """
 
 from __future__ import annotations
@@ -68,6 +74,27 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--train-days", type=int, default=30)
     parser.add_argument("--test-days", type=int, default=7)
     parser.add_argument("--gap-days", type=int, default=1)
+    parser.add_argument(
+        "--fold-scheme",
+        choices=["calendar", "purged-days"],
+        default="calendar",
+        help=(
+            "calendar = WalkForwardSplitter over --train/test/gap-days; "
+            "purged-days = purged TRADING-day folds over --fold-*-days (W3a)"
+        ),
+    )
+    parser.add_argument("--fold-train-days", type=int, default=40)
+    parser.add_argument("--fold-test-days", type=int, default=5)
+    parser.add_argument("--fold-step-days", type=int, default=5)
+    parser.add_argument("--fold-purge-days", type=int, default=2)
+    parser.add_argument("--min-train-events", type=int, default=30)
+    parser.add_argument(
+        "--pin-features",
+        help=(
+            "Comma-separated EXACT feature list to train/serve "
+            "(disables RFECV selection)"
+        ),
+    )
     parser.add_argument("--iterations", type=int, default=500)
     parser.add_argument("--depth", type=int, default=6)
     parser.add_argument("--rfecv", action="store_true")
@@ -130,6 +157,16 @@ def main() -> int:
     config = _resolve_config(args)
     available = get_available_dates(args.symbol, args.data_dir)
     dates = _date_slice(available, args.start, args.end)
+    day_folds = None
+    if args.fold_scheme == "purged-days":
+        day_folds = {
+            "train_days": args.fold_train_days,
+            "test_days": args.fold_test_days,
+            "step_days": args.fold_step_days,
+            "purge_days": args.fold_purge_days,
+            "min_train_events": args.min_train_events,
+        }
+    pinned_features = _parse_sessions(args.pin_features)
     summary = {
         "phase": "resolved_config",
         "symbol": args.symbol,
@@ -142,6 +179,9 @@ def main() -> int:
         "bar_type": config.dashboard_utility.bar_type,
         "include_approach_features": config.dashboard_utility.include_approach_features,
         "approach_window_minutes": config.dashboard_utility.approach_window_minutes,
+        "fold_scheme": args.fold_scheme,
+        "day_folds": day_folds,
+        "pinned_features": pinned_features,
         "walk_forward": config.walk_forward.model_dump(),
         "model": config.model.model_dump(),
     }
@@ -155,7 +195,13 @@ def main() -> int:
     if dataset.empty:
         raise SystemExit("No touch events detected for selected dates")
 
-    result = run_walk_forward_training(dataset, config, "label_encoded")
+    result = run_walk_forward_training(
+        dataset,
+        config,
+        "label_encoded",
+        day_folds=day_folds,
+        pinned_features=pinned_features,
+    )
     ev = result["eval_result"]
     report = {
         "phase": "trained",

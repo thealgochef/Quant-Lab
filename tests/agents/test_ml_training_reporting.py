@@ -620,3 +620,141 @@ def test_build_oos_predictions_frame_empty_carries_canonical_schema():
         "gate_0_70_runtime_sessions",
         "gate_0_70_ny",
     ]
+
+
+# ── W3a: purged trading-day folds + pinned features ─────────────────────────
+
+
+def _day_fold_frame(n_dates: int, rows_per_day: int) -> pd.DataFrame:
+    dates = [
+        str(d.date())
+        for d in pd.bdate_range("2026-01-01", periods=n_dates, freq="B")
+    ]
+    rows = []
+    for date_str in dates:
+        for i in range(rows_per_day):
+            rows.append(
+                {
+                    "date": date_str,
+                    "timestamp": pd.Timestamp(f"{date_str} 14:{i:02d}:00", tz="UTC"),
+                    "session": "ny",
+                    "label_encoded": i % 3,
+                    "int_time_within_2pts": float((i * 7) % 60),
+                    "int_absorption_ratio": float((i % 10) / 10.0),
+                    "app_max_spread": 0.25 + 0.25 * (i % 4),
+                },
+            )
+    return pd.DataFrame(rows)
+
+
+def test_purged_trading_day_splits_match_train_dashboard_model_scheme():
+    """40/5/5/2 over 52 trading days = 2 folds with a 2-trading-day purge gap."""
+    frame = _day_fold_frame(n_dates=52, rows_per_day=2)
+    splits = ml_training_tab._purged_trading_day_splits(
+        frame,
+        train_days=40,
+        test_days=5,
+        step_days=5,
+        purge_days=2,
+        min_train_events=30,
+    )
+    dates = sorted(frame["date"].unique())
+
+    assert [s.fold for s in splits] == [0, 1]
+
+    fold0 = splits[0]
+    assert str(fold0.train_start.date()) == dates[0]
+    assert str(fold0.train_end.date()) == dates[39]
+    assert str(fold0.test_start.date()) == dates[42]
+    assert str(fold0.test_end.date()) == dates[46]
+    train_dates_0 = set(frame.iloc[fold0.train_indices]["date"])
+    test_dates_0 = set(frame.iloc[fold0.test_indices]["date"])
+    assert train_dates_0 == set(dates[0:40])
+    assert test_dates_0 == set(dates[42:47])
+    # The purge gap days belong to NEITHER side.
+    assert dates[40] not in train_dates_0 | test_dates_0
+    assert dates[41] not in train_dates_0 | test_dates_0
+
+    fold1 = splits[1]
+    assert str(fold1.train_start.date()) == dates[5]
+    assert str(fold1.test_end.date()) == dates[51]
+
+
+def test_purged_trading_day_splits_min_train_events_skips_thin_folds():
+    frame = _day_fold_frame(n_dates=6, rows_per_day=1)
+    splits = ml_training_tab._purged_trading_day_splits(
+        frame,
+        train_days=2,
+        test_days=1,
+        step_days=1,
+        purge_days=1,
+        min_train_events=3,  # 2 train days x 1 row < 3 -> every fold skipped
+    )
+    assert splits == []
+
+
+def test_run_walk_forward_training_day_folds_and_pinned_features():
+    """The day-fold scheme + pinned list flow through training to the result."""
+    frame = _day_fold_frame(n_dates=14, rows_per_day=12)
+    config = MLPipelineConfig(
+        training_mode="dashboard_utility",
+        model={"rfecv_enabled": False, "iterations": 25, "depth": 3,
+               "loss_function": "MultiClass"},
+        tick_size=0.25,
+        instrument="NQ",
+    )
+    pinned = ["int_time_within_2pts", "app_max_spread"]
+    day_folds = {
+        "train_days": 4,
+        "test_days": 2,
+        "step_days": 2,
+        "purge_days": 1,
+        "min_train_events": 10,
+    }
+
+    result = ml_training_tab.run_walk_forward_training(
+        frame,
+        config,
+        "label_encoded",
+        day_folds=day_folds,
+        pinned_features=pinned,
+    )
+
+    assert result["selected_features"] == pinned
+    assert result["n_valid_folds"] >= 2
+    # Train/test windows in the fold details follow the TRADING-day scheme:
+    # 4 train days, a 1-day purge gap, 2 test days.
+    dates = sorted(frame["date"].unique())
+    first = result["fold_details"][0]
+    assert first["train_start"] == dates[0]
+    assert first["train_end"] == dates[3]
+    assert first["test_start"] == dates[5]
+    assert first["test_end"] == dates[6]
+    # The pinned list is what the refit model was trained on.
+    assert result["trained_model"].selected_features == pinned
+    assert not result["oos_predictions"].empty
+
+
+def test_run_walk_forward_training_rejects_unknown_pinned_feature():
+    frame = _day_fold_frame(n_dates=14, rows_per_day=12)
+    config = MLPipelineConfig(
+        training_mode="dashboard_utility",
+        model={"rfecv_enabled": False, "iterations": 25, "depth": 3,
+               "loss_function": "MultiClass"},
+        tick_size=0.25,
+        instrument="NQ",
+    )
+    with pytest.raises(ValueError, match="pinned_features not in dataset"):
+        ml_training_tab.run_walk_forward_training(
+            frame,
+            config,
+            "label_encoded",
+            day_folds={
+                "train_days": 4,
+                "test_days": 2,
+                "step_days": 2,
+                "purge_days": 1,
+                "min_train_events": 10,
+            },
+            pinned_features=["app_avg_tob_imbalance"],
+        )

@@ -165,15 +165,71 @@ def build_training_dataset(
     return pd.concat(frames, ignore_index=True)
 
 
+def _purged_trading_day_splits(
+    frame: pd.DataFrame,
+    *,
+    train_days: int,
+    test_days: int,
+    step_days: int,
+    purge_days: int,
+    min_train_events: int,
+) -> list:
+    """Purged walk-forward folds over TRADING days (the train_dashboard_model
+    scheme): contiguous blocks of distinct ``date`` values, a ``purge_days``
+    trading-day gap between train and test, stepping ``step_days`` days. Folds
+    with fewer than ``min_train_events`` training rows (or zero test rows) are
+    skipped, exactly as in scripts/train_dashboard_model.py.
+    """
+    from alpha_lab.agents.data_infra.ml.walk_forward import WalkForwardSplit
+
+    date_values = frame["date"].astype(str)
+    trading_dates = sorted(date_values.unique())
+    n_dates = len(trading_dates)
+    splits: list[WalkForwardSplit] = []
+    fold = 0
+    start = 0
+    while start + train_days + purge_days + test_days <= n_dates:
+        train_dates = trading_dates[start : start + train_days]
+        test_start_pos = start + train_days + purge_days
+        test_dates = trading_dates[test_start_pos : test_start_pos + test_days]
+        train_idx = np.where(date_values.isin(train_dates))[0]
+        test_idx = np.where(date_values.isin(test_dates))[0]
+        if len(train_idx) >= min_train_events and len(test_idx) > 0:
+            splits.append(
+                WalkForwardSplit(
+                    fold=fold,
+                    train_start=pd.Timestamp(train_dates[0]),
+                    train_end=pd.Timestamp(train_dates[-1]),
+                    test_start=pd.Timestamp(test_dates[0]),
+                    test_end=pd.Timestamp(test_dates[-1]),
+                    train_indices=train_idx,
+                    test_indices=test_idx,
+                )
+            )
+            fold += 1
+        start += step_days
+    return splits
+
+
 def run_walk_forward_training(
     dataset: pd.DataFrame,
     config,
     label_column: str = "label_20t",
+    *,
+    day_folds: dict | None = None,
+    pinned_features: list[str] | None = None,
 ) -> dict:
     """Walk-forward train + evaluate.
 
     Returns dict with the refit runtime model, out-of-sample evaluation
     result, and per-fold diagnostics.
+
+    ``day_folds`` (W3a): optional purged TRADING-day fold scheme — a dict of
+    train_days/test_days/step_days/purge_days/min_train_events passed to
+    ``_purged_trading_day_splits`` INSTEAD of the calendar-day
+    ``WalkForwardSplitter``. ``pinned_features`` (W3a): exact feature list to
+    train/serve (must be a subset of the dataset's feature columns); pinning
+    wins over RFECV.
     """
     from alpha_lab.agents.data_infra.ml.model_evaluator import ModelEvaluator
     from alpha_lab.agents.data_infra.ml.model_trainer import ExtremaModelTrainer
@@ -237,10 +293,27 @@ def run_walk_forward_training(
         raise ValueError(msg)
 
     # Walk-forward splits
-    splitter = WalkForwardSplitter(config.walk_forward)
-    splits = splitter.split(timestamps)
+    if day_folds is not None:
+        splits = _purged_trading_day_splits(valid, **day_folds)
+    else:
+        splitter = WalkForwardSplitter(config.walk_forward)
+        splits = splitter.split(timestamps)
 
     if len(splits) < 2:
+        if day_folds is not None:
+            need_for_two = (
+                day_folds["train_days"]
+                + day_folds["purge_days"]
+                + day_folds["test_days"]
+                + day_folds["step_days"]
+            )
+            msg = (
+                f"Only {len(splits)} purged trading-day fold(s). Need at least 2.\n"
+                f"Your data covers {valid['date'].nunique()} trading days; the "
+                f"scheme {day_folds} needs {need_for_two} days for 2 folds.\n"
+                f"Fix: use a longer date range, or reduce the fold windows."
+            )
+            raise ValueError(msg)
         data_span = (timestamps.max() - timestamps.min()).days
         wf = config.walk_forward
         min_for_1 = wf.train_days + wf.gap_days + wf.test_days
@@ -283,8 +356,18 @@ def run_walk_forward_training(
 
     # RFECV: run ONCE before the walk-forward loop so the same feature
     # subset is used for every per-fold model AND the final saved model.
+    # W3a: an explicit pinned list wins over RFECV (and validates up front).
     selected_features = feature_cols
-    if config.model.rfecv_enabled and len(preliminary_cv) >= 2:
+    if pinned_features is not None:
+        missing_pins = [f for f in pinned_features if f not in feature_cols]
+        if missing_pins:
+            msg = (
+                f"pinned_features not in dataset feature columns: {missing_pins} "
+                f"(available: {sorted(feature_cols)})"
+            )
+            raise ValueError(msg)
+        selected_features = list(pinned_features)
+    elif config.model.rfecv_enabled and len(preliminary_cv) >= 2:
         rfecv_trainer = ExtremaModelTrainer(config.model)
         rfecv_result = rfecv_trainer.train(features, y, cv_splits=preliminary_cv)
         selected_features = rfecv_result.selected_features
