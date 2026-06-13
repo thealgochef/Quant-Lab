@@ -695,7 +695,10 @@ def process_single_date_stream(
         return trades[bisect_left(trade_ts, start) : bisect_left(trade_ts, end)]
 
     approach_quotes: dict[int, list[Quote]] = {}
-    if config.include_approach_features:
+    if config.include_approach_features and touches:
+        # Zero-touch guard: with no touches the window arrays would be empty and
+        # the hull min()/max() would raise — skip the pass, approach_quotes stays
+        # empty (the old per-touch loop's natural no-op).
         # Bounded second pass: only quotes inside some touch's approach window are
         # retained (full-day L1 retention would dominate memory for no reader).
         # Window membership is computed VECTORIZED (numpy over epoch-ns) on

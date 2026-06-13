@@ -1,10 +1,11 @@
 """W1 P4d: end-to-end stream labeling through the SC drive on real data.
 
-ONE real-data test, capped at a ONE-HOUR slice of one trading day (the W1 test
-policy). It proves the production labeling path — the canonical SC day stream
-driving the same StrategyRuntime/TouchReversalPlugin wiring Trade-Lab serves
-with — produces touches, features, and labels end to end, with the dataset
-schema intact and the legacy decision stages absent from the call graph.
+Real-data tests, each capped at a ONE-HOUR slice of one trading day (the W1
+test policy). They prove the production labeling path — the canonical SC day
+stream driving the same StrategyRuntime/TouchReversalPlugin wiring Trade-Lab
+serves with — produces touches, features, and labels end to end, with the
+dataset schema intact and the legacy decision stages absent from the call
+graph; plus the zero-touch no-op (W3A-READER P0).
 
 Skips cleanly when the Databento NQ store is absent (CI without the data mount).
 """
@@ -134,6 +135,37 @@ def test_stream_drive_labels_one_hour_slice() -> None:
     assert (df["date"] == DAY).all()
     assert set(df["direction"]) <= {"LONG", "SHORT"}
     assert df["label"].notna().all()
+
+
+def test_stream_drive_zero_touch_day_is_empty_noop() -> None:
+    """W3A-READER P0: a day whose levels are never approached yields an empty
+    frame without error — the vectorized approach-quote pass must stay a no-op
+    on zero touches (its window arrays would be empty and the hull min()/max()
+    would raise if entered)."""
+    from alpha_lab.agents.data_infra.ml.config import DashboardUtilityConfig
+    from alpha_lab.agents.data_infra.ml.engine_decision import process_single_date_stream
+
+    config = DashboardUtilityConfig(
+        bar_type="147t",
+        interaction_window_minutes=5,
+        tp_points=2.0,
+        sl_points=2.0,
+        trap_mfe_min=1.0,
+        include_approach_features=True,  # the guarded pass must be configured ON
+        approach_window_minutes=15,
+    )
+    # Seed PDH/PDL absurdly far above any price in the frozen store (NQ never
+    # trades near 200k points): levels EXIST but cannot be touched, so the
+    # zero-touch path runs with the approach pass enabled.
+    df = process_single_date_stream(
+        DAY,
+        DATA_DIR,
+        SYMBOL,
+        config,
+        prev_day_hl=(200_000.0, 199_900.0),
+        events_until_utc=_hour_one_cap_utc(),
+    )
+    assert df.empty
 
 
 def test_build_utility_dataset_refuses_legacy_mode() -> None:
