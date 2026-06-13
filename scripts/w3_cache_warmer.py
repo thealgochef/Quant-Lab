@@ -321,6 +321,17 @@ def main() -> int:
     parser.add_argument(
         "--limit", type=int, help="process at most this many uncached days (smoke)"
     )
+    parser.add_argument(
+        "--max-tasks-per-child",
+        type=int,
+        default=6,
+        help=(
+            "recycle each pool worker after this many days so per-worker RSS stays "
+            "near a single-day peak instead of creeping over a long run "
+            "(0 = never recycle). The day build is event-decode-bound (~3-5GB) and "
+            "long-lived workers accumulate ~0.1GB/day; recycling bounds the aggregate."
+        ),
+    )
     args = parser.parse_args()
 
     cache_tag, util_kwargs, symbol, data_dir, window_dates = _resolve_window()
@@ -366,7 +377,10 @@ def main() -> int:
         peak_overall = 0.0
         peak_day = None
         done = 0
-        with ProcessPoolExecutor(max_workers=args.workers) as ex:
+        # max_tasks_per_child=None means "never recycle"; a positive value caps each
+        # worker's lifetime so native (DuckDB/Arrow) memory is reclaimed periodically.
+        mtpc = args.max_tasks_per_child if args.max_tasks_per_child > 0 else None
+        with ProcessPoolExecutor(max_workers=args.workers, max_tasks_per_child=mtpc) as ex:
             futs = {ex.submit(warm_one_day, t): t[0] for t in tasks}
             for fut in as_completed(futs):
                 day = futs[fut]
