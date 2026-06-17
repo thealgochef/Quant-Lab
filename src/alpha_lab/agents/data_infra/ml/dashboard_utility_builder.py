@@ -43,6 +43,69 @@ DASHBOARD_FEATURES = [
 
 _ET = _SCHEME.timezone  # "US/Eastern"
 
+# ── Cache seed provenance (guard against seedless / wrong-seed caches) ────────
+# A per-day cache is built by driving the engine with a ``prev_full_hl`` PDH/PDL
+# seed. A cache built with the WRONG seed (notably ``None`` on a day that has a
+# prior window day — the W3a-P2 standalone-timing-build class of bug) is
+# path-correct but content-WRONG: it silently omits PDH/PDL touches. Touched
+# levels leave rows but UNtouched PDH/PDL leave none, so the seed cannot be
+# recovered from content. We therefore stamp the seed the cache was built with
+# into the parquet file metadata and verify it on the trust-existing-cache path.
+_SEED_META_KEY = b"ml_utility_prev_full_hl"
+
+
+def _seed_meta_bytes(seed: tuple[float, float] | None) -> bytes:
+    """Serialize a ``prev_full_hl`` seed for parquet metadata (repr → exact float
+    round-trip)."""
+    if seed is None:
+        return b"none"
+    return f"{seed[0]!r},{seed[1]!r}".encode()
+
+
+def _write_day_cache(
+    frame: pd.DataFrame, cache_path: Path, seed: tuple[float, float] | None
+) -> None:
+    """Write a per-day utility cache, stamping the ``prev_full_hl`` seed it was
+    built with into parquet file metadata (alongside pandas metadata)."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    table = pa.Table.from_pandas(frame, preserve_index=False)
+    meta = dict(table.schema.metadata or {})
+    meta[_SEED_META_KEY] = _seed_meta_bytes(seed)
+    table = table.replace_schema_metadata(meta)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(table, cache_path)
+
+
+def _cache_seed_matches(
+    cache_path: Path, expected_seed: tuple[float, float] | None
+) -> bool:
+    """True iff the cache was stamped with a seed equal to ``expected_seed``.
+
+    An UNSTAMPED (legacy) or ``none``-stamped cache matches ONLY when no seed is
+    expected (``expected_seed is None``). So when a prior window day exists (the
+    seed is non-None), a seedless/legacy cache is NOT trusted and is rebuilt —
+    exactly the 2026-02-12 stale-cache case.
+    """
+    import pyarrow.parquet as pq
+
+    try:
+        md = pq.read_metadata(cache_path).metadata or {}
+    except Exception:
+        return False
+    stamp = md.get(_SEED_META_KEY)
+    if stamp is None or stamp == b"none":
+        return expected_seed is None
+    try:
+        high, low = (float(x) for x in stamp.decode().split(","))
+    except Exception:
+        return False
+    return expected_seed is not None and (high, low) == (
+        float(expected_seed[0]),
+        float(expected_seed[1]),
+    )
+
 
 def build_utility_dataset(
     dates: list[str],
@@ -91,7 +154,11 @@ def build_utility_dataset(
 
         cache_path = data_dir / symbol / date_str / f"ml_utility_{cache_tag}.parquet"
 
-        if cache_path.exists():
+        # Trust an existing cache ONLY if it was built with the same seed entering
+        # this day. A seedless/wrong-seed cache (e.g. a standalone timing build
+        # with prev_full_hl=None on a day that HAS a prior window day) is silently
+        # missing PDH/PDL touches — rebuild it instead of trusting it.
+        if cache_path.exists() and _cache_seed_matches(cache_path, prev_full_hl):
             df = pd.read_parquet(cache_path)
             cached_count += 1
             if not df.empty:
@@ -101,6 +168,14 @@ def build_utility_dataset(
                 data_dir, symbol, date_str, util_cfg, prev_full_hl
             )
             continue
+        if cache_path.exists():
+            logger.warning(
+                "Rebuilding %s cache for %s: seed stamp does not match prev_full_hl=%s "
+                "(stale/seedless cache guard)",
+                cache_tag,
+                date_str,
+                prev_full_hl,
+            )
 
         # Build fresh for this date
         df = _process_single_date(
@@ -117,8 +192,7 @@ def build_utility_dataset(
         )
 
         if not df.empty:
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
-            df.to_parquet(cache_path, index=False)
+            _write_day_cache(df, cache_path, prev_full_hl)
             frames.append(df)
 
     if progress_fn:

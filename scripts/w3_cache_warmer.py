@@ -213,27 +213,31 @@ def warm_one_day(task: tuple) -> dict:
 
         from alpha_lab.agents.data_infra.ml.config import DashboardUtilityConfig
         from alpha_lab.agents.data_infra.ml.dashboard_utility_builder import (
+            _cache_seed_matches,
             _process_single_date,
+            _write_day_cache,
         )
 
         util_cfg = DashboardUtilityConfig(**util_kwargs)
+        seed = _seed_for_day(data_dir, symbol, window_dates, date_str, util_cfg)
 
-        # Resumable: skip a day whose cache already exists AND loads.
+        # Resumable: skip a day whose cache already exists, loads, AND was built
+        # with the same seed. A seedless/wrong-seed cache is rebuilt (the stale
+        # 2026-02-12 class of bug), never silently skipped.
         if cache_path.exists():
             try:
                 df = pd.read_parquet(cache_path)
-                return _result(date_str, len(df), 0.0, pid, "SKIP")
+                if _cache_seed_matches(cache_path, seed):
+                    return _result(date_str, len(df), 0.0, pid, "SKIP")
+                _quiet_unlink(cache_path)
             except Exception:
                 # Corrupt cache — drop it and rebuild below.
                 _quiet_unlink(cache_path)
 
-        seed = _seed_for_day(data_dir, symbol, window_dates, date_str, util_cfg)
-
         def _build_and_write():
             frame = _process_single_date(date_str, data_dir, symbol, util_cfg, seed)
             if not frame.empty:
-                cache_path.parent.mkdir(parents=True, exist_ok=True)
-                frame.to_parquet(cache_path, index=False)
+                _write_day_cache(frame, cache_path, seed)
             return frame
 
         df = _build_and_write()
