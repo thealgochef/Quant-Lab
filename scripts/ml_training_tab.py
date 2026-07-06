@@ -2328,6 +2328,10 @@ def render_ml_training_tab() -> None:
                     # Clear stale training results from previous dataset
                     st.session_state.pop("ml_training_result", None)
                     st.session_state.pop("ml_train_config", None)
+                    # Re-render so dataset-gated Train-step controls (the pin
+                    # multiselect) pick up the new dataset on this page view
+                    # (mirrors the Clear Cache handler).
+                    st.rerun()
             else:
                 build_config = MLPipelineConfig(
                     training_mode="extrema_rebound_crossing",
@@ -2353,6 +2357,9 @@ def render_ml_training_tab() -> None:
                     # Clear stale training results from previous dataset
                     st.session_state.pop("ml_training_result", None)
                     st.session_state.pop("ml_train_config", None)
+                    # Re-render so dataset-gated Train-step controls pick up
+                    # the new dataset (mirrors the Clear Cache handler).
+                    st.rerun()
 
         if "ml_dataset" in st.session_state:
             dataset = st.session_state["ml_dataset"]
