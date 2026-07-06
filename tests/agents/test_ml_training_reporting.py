@@ -758,3 +758,74 @@ def test_run_walk_forward_training_rejects_unknown_pinned_feature():
             },
             pinned_features=["app_avg_tob_imbalance"],
         )
+
+
+def test_resolve_training_kwargs_empty_pin_selection_means_no_pinning():
+    resolved = ml_training_tab.resolve_training_kwargs([], "calendar", {}, False)
+    assert resolved["pinned_features"] is None
+    resolved_none = ml_training_tab.resolve_training_kwargs(None, "calendar", {}, False)
+    assert resolved_none["pinned_features"] is None
+
+
+def test_resolve_training_kwargs_preserves_user_selection_order():
+    pins = ["app_max_spread", "int_absorption_ratio", "app_avg_trade_size"]
+    resolved = ml_training_tab.resolve_training_kwargs(pins, "calendar", {}, False)
+    # Verbatim, in the user's selection order — NOT sorted, NOT deduplicated.
+    assert resolved["pinned_features"] == pins
+
+
+def test_resolve_training_kwargs_pin_forces_rfecv_off_regardless_of_checkbox():
+    resolved = ml_training_tab.resolve_training_kwargs(
+        ["int_time_within_2pts"], "calendar", {}, True,
+    )
+    assert resolved["rfecv_enabled"] is False
+
+
+def test_resolve_training_kwargs_checkbox_honored_when_no_pin():
+    on = ml_training_tab.resolve_training_kwargs([], "calendar", {}, True)
+    off = ml_training_tab.resolve_training_kwargs([], "calendar", {}, False)
+    assert on["rfecv_enabled"] is True
+    assert off["rfecv_enabled"] is False
+
+
+def test_resolve_training_kwargs_calendar_scheme_has_no_day_folds():
+    resolved = ml_training_tab.resolve_training_kwargs(
+        [], "calendar", {"train_days": 40}, False,
+    )
+    assert resolved["day_folds"] is None
+
+
+def test_resolve_training_kwargs_purged_days_builds_exact_int_dict():
+    params = {
+        "train_days": "40",
+        "test_days": 5.0,
+        "step_days": 5,
+        "purge_days": 2,
+        "min_train_events": 30,
+    }
+    resolved = ml_training_tab.resolve_training_kwargs([], "purged-days", params, False)
+    assert resolved["day_folds"] == {
+        "train_days": 40,
+        "test_days": 5,
+        "step_days": 5,
+        "purge_days": 2,
+        "min_train_events": 30,
+    }
+    assert all(type(v) is int for v in resolved["day_folds"].values())
+
+
+def test_resolve_training_kwargs_threads_min_train_events():
+    params = {
+        "train_days": 40,
+        "test_days": 5,
+        "step_days": 5,
+        "purge_days": 2,
+        "min_train_events": 77,
+    }
+    resolved = ml_training_tab.resolve_training_kwargs([], "purged-days", params, False)
+    assert resolved["day_folds"]["min_train_events"] == 77
+
+
+def test_resolve_training_kwargs_rejects_unknown_fold_scheme():
+    with pytest.raises(ValueError, match="fold_scheme"):
+        ml_training_tab.resolve_training_kwargs([], "bogus", {}, False)
