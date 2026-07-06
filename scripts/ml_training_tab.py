@@ -211,6 +211,43 @@ def _purged_trading_day_splits(
     return splits
 
 
+def resolve_training_kwargs(
+    pinned_selection: list[str] | None,
+    fold_scheme: str,
+    fold_params: dict | None,
+    rfecv_checkbox: bool,
+) -> dict:
+    """Resolve Train-step widget state into ``run_walk_forward_training``
+    kwargs (QL-UI-PARITY). Pure — no Streamlit; unit-testable.
+
+    An empty/None pin selection means no pinning; a non-empty selection is
+    passed verbatim in the user's selection order and FORCES RFECV off
+    (pinning wins over selection — mirrors the core's if/elif at the RFECV
+    branch). ``fold_scheme`` "calendar" keeps the calendar
+    ``WalkForwardSplitter`` (``day_folds`` None); "purged-days" builds the
+    purged trading-day dict from ``fold_params``.
+    """
+    pinned_features = list(pinned_selection) if pinned_selection else None
+    if fold_scheme == "purged-days":
+        day_folds = {
+            "train_days": int(fold_params["train_days"]),
+            "test_days": int(fold_params["test_days"]),
+            "step_days": int(fold_params["step_days"]),
+            "purge_days": int(fold_params["purge_days"]),
+            "min_train_events": int(fold_params["min_train_events"]),
+        }
+    elif fold_scheme == "calendar":
+        day_folds = None
+    else:
+        msg = f"Unknown fold_scheme {fold_scheme!r} (expected 'calendar' or 'purged-days')"
+        raise ValueError(msg)
+    return {
+        "pinned_features": pinned_features,
+        "day_folds": day_folds,
+        "rfecv_enabled": bool(rfecv_checkbox) and pinned_features is None,
+    }
+
+
 def run_walk_forward_training(
     dataset: pd.DataFrame,
     config,
@@ -1973,6 +2010,11 @@ def render_ml_training_tab() -> None:
                 key="ml_label",
             )
 
+    # QL-UI-PARITY training controls (utility mode): resolved into
+    # run_walk_forward_training kwargs via resolve_training_kwargs.
+    ml_pinned_features: list[str] = []
+    ml_fold_scheme = "calendar"
+    ml_fold_params: dict[str, int] = {}
     with col_cfg3:
         st.markdown("**CatBoost**")
         ml_iterations = st.slider(
@@ -1984,12 +2026,113 @@ def render_ml_training_tab() -> None:
             key="ml_iterations",
         )
         ml_depth = st.slider("Tree depth", 3, 10, 6, key="ml_depth")
-        ml_rfecv = st.checkbox(
-            "RFECV feature selection",
-            value=False,
-            key="ml_rfecv",
-            help="Recursive feature elimination — slower but may improve.",
-        )
+        if is_utility_mode:
+            if "ml_dataset" in st.session_state:
+                # Same feature-universe derivation as the dataset preview;
+                # the core validates the subset and bypasses RFECV when a
+                # pin list is present.
+                _pin_universe = [
+                    c
+                    for c in st.session_state["ml_dataset"].columns
+                    if c.startswith(("int_", "app_"))
+                ]
+                ml_pinned_features = st.multiselect(
+                    "Pin features (exact model feature_set)",
+                    _pin_universe,
+                    default=[],
+                    key="ml_pin_features",
+                    help=(
+                        "Exact feature list to train/serve, in selection "
+                        "order. Leave empty to train on all features (or "
+                        "RFECV selection when enabled)."
+                    ),
+                )
+                if ml_pinned_features:
+                    st.caption(
+                        "Pinned: RFECV bypassed; these features become the "
+                        "model + contract feature_set verbatim."
+                    )
+            else:
+                st.multiselect(
+                    "Pin features (exact model feature_set)",
+                    [],
+                    key="ml_pin_features_placeholder",
+                    disabled=True,
+                )
+                st.caption("Build the dataset first")
+        if ml_pinned_features:
+            # Forced-off display: pinning bypasses RFECV in the core.
+            st.checkbox(
+                "RFECV feature selection",
+                value=False,
+                key="ml_rfecv_pinned_off",
+                disabled=True,
+                help="Pinned features bypass RFECV; selection is forced off.",
+            )
+            ml_rfecv = False
+        else:
+            ml_rfecv = st.checkbox(
+                "RFECV feature selection",
+                value=False,
+                key="ml_rfecv",
+                help="Recursive feature elimination — slower but may improve.",
+            )
+        if is_utility_mode:
+            ml_fold_choice = st.selectbox(
+                "Fold scheme",
+                ["calendar (walk-forward)", "purged trading days"],
+                index=0,
+                key="ml_fold_scheme",
+                help=(
+                    "calendar = WalkForwardSplitter over the train/test/gap "
+                    "sliders; purged trading days = contiguous TRADING-day "
+                    "folds with a purge gap (the D-036 CLI scheme)."
+                ),
+            )
+            if ml_fold_choice == "purged trading days":
+                ml_fold_scheme = "purged-days"
+                ml_fold_params = {
+                    "train_days": int(
+                        st.number_input(
+                            "Fold train days",
+                            min_value=1,
+                            value=40,
+                            key="ml_fold_train_days",
+                        )
+                    ),
+                    "test_days": int(
+                        st.number_input(
+                            "Fold test days",
+                            min_value=1,
+                            value=5,
+                            key="ml_fold_test_days",
+                        )
+                    ),
+                    "step_days": int(
+                        st.number_input(
+                            "Fold step days",
+                            min_value=1,
+                            value=5,
+                            key="ml_fold_step_days",
+                        )
+                    ),
+                    "purge_days": int(
+                        st.number_input(
+                            "Fold purge days",
+                            min_value=0,
+                            value=2,
+                            key="ml_fold_purge_days",
+                        )
+                    ),
+                    "min_train_events": int(
+                        st.number_input(
+                            "Min train events",
+                            min_value=1,
+                            value=30,
+                            key="ml_min_train_events",
+                        )
+                    ),
+                }
 
     ml_session_preset = "all_to_ny"
     ml_train_sessions = ["asia", "london", "ny"]
@@ -2311,6 +2454,13 @@ def render_ml_training_tab() -> None:
                 WalkForwardConfig,
             )
 
+            train_kwargs = resolve_training_kwargs(
+                ml_pinned_features,
+                ml_fold_scheme,
+                ml_fold_params,
+                ml_rfecv,
+            )
+
             if is_utility_mode:
                 train_config = MLPipelineConfig(
                     training_mode="dashboard_utility",
@@ -2330,7 +2480,7 @@ def render_ml_training_tab() -> None:
                     model=ModelConfig(
                         iterations=ml_iterations,
                         depth=ml_depth,
-                        rfecv_enabled=ml_approach,  # RFECV useful when approach features present
+                        rfecv_enabled=train_kwargs["rfecv_enabled"],
                         loss_function="MultiClass",
                     ),
                     session_experiment=SessionExperimentConfig(
@@ -2366,6 +2516,8 @@ def render_ml_training_tab() -> None:
                         st.session_state["ml_dataset"],
                         train_config,
                         label_col,
+                        day_folds=train_kwargs["day_folds"],
+                        pinned_features=train_kwargs["pinned_features"],
                     )
                     st.session_state["ml_training_result"] = result
                     st.session_state["ml_train_config"] = train_config
