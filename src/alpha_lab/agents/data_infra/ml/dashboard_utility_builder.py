@@ -177,13 +177,18 @@ def build_utility_dataset(
                 prev_full_hl,
             )
 
-        # Build fresh for this date
+        # Build fresh for this date. Capture the seed ENTERING this day: the cache must
+        # be stamped with the seed it was BUILT with (what the :161 trust check compares
+        # against on the next run, and the warmer's stamp convention) — stamping the
+        # post-update carry (this day's own H/L) made every builder-written cache
+        # self-invalidate on the next run (SEED_PARITY_RECON §3(d) rebuild churn).
+        entering_seed = prev_full_hl
         df = _process_single_date(
             date_str,
             data_dir,
             symbol,
             util_cfg,
-            prev_full_hl,
+            entering_seed,
         )
 
         # Update the PDH/PDL carry for the next day
@@ -192,7 +197,7 @@ def build_utility_dataset(
         )
 
         if not df.empty:
-            _write_day_cache(df, cache_path, prev_full_hl)
+            _write_day_cache(df, cache_path, entering_seed)
             frames.append(df)
 
     if progress_fn:

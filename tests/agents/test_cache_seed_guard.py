@@ -10,10 +10,13 @@ from __future__ import annotations
 import pandas as pd
 import pyarrow.parquet as pq
 
+from alpha_lab.agents.data_infra.ml import dashboard_utility_builder as dub
+from alpha_lab.agents.data_infra.ml.config import MLPipelineConfig
 from alpha_lab.agents.data_infra.ml.dashboard_utility_builder import (
     _SEED_META_KEY,
     _cache_seed_matches,
     _write_day_cache,
+    build_utility_dataset,
 )
 
 _FRAME = pd.DataFrame({"date": ["2026-02-12"], "representative_price": [25058.25]})
@@ -60,3 +63,46 @@ def test_missing_or_corrupt_file_not_trusted(tmp_path):
     corrupt = tmp_path / "corrupt.parquet"
     corrupt.write_bytes(b"not a parquet file")
     assert _cache_seed_matches(corrupt, _SEED) is False
+
+
+def test_builder_stamps_entering_seed_and_second_run_cache_hits(tmp_path, monkeypatch):
+    """SEED P3 (SEED_PARITY_RECON §3(d)): the builder must stamp each day-D cache with
+    the seed ENTERING D — the value the :161 trust check compares against on the next
+    run and the warmer's convention. Pre-fix the builder stamped the post-update carry
+    (day D's OWN H/L), so every builder-written cache self-invalidated on re-run."""
+    config = MLPipelineConfig()
+    symbol = config.instrument
+    cache_tag = config.dataset_config_hash()
+    dates = ["2026-01-05", "2026-01-06"]
+    own_hl = {"2026-01-05": (100.0, 90.0), "2026-01-06": (110.0, 95.0)}
+    build_calls: list[str] = []
+
+    def fake_process(date_str, data_dir, sym, util_cfg, prev_full_hl):
+        build_calls.append(date_str)
+        return pd.DataFrame({"date": [date_str], "representative_price": [100.0]})
+
+    def fake_hl(data_dir, sym, date_str, util_cfg, prev_full_hl):
+        return own_hl[date_str]
+
+    monkeypatch.setattr(dub, "_process_single_date", fake_process)
+    monkeypatch.setattr(dub, "_get_session_hl_for_date", fake_hl)
+
+    first = build_utility_dataset(dates, tmp_path, config)
+    assert build_calls == dates
+    assert len(first) == 2
+
+    # Stamps carry the seed each day was BUILT with: None for the first window day,
+    # day-1's own H/L for day 2 — NOT each day's own H/L.
+    stamp = {
+        d: pq.read_metadata(
+            tmp_path / symbol / d / f"ml_utility_{cache_tag}.parquet"
+        ).metadata[_SEED_META_KEY]
+        for d in dates
+    }
+    assert stamp["2026-01-05"] == b"none"
+    assert stamp["2026-01-06"] == b"100.0,90.0"
+
+    # Second run over the same window: both days take the cache-hit path — no rebuild.
+    second = build_utility_dataset(dates, tmp_path, config)
+    assert build_calls == dates  # unchanged: _process_single_date never ran again
+    assert len(second) == 2
