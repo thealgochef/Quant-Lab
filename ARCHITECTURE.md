@@ -81,6 +81,10 @@ Key modules:
 
 Session-scope experiments are explicit research config. The default is to train/evaluate on `asia`, `london`, and `ny`, while production-gate diagnostics remain NY-only. Presets such as `ny_only`, `asia_only`, `london_only`, `asia_london_only`, and `all_sessions_all_gates` apply after dataset generation so caches stay reusable while fold training, OOS metrics, final refit, and gate reporting stay auditable.
 
+### 2b. Prop-firm evaluation walker (`alpha_lab.propsim`) — model-selection consumer
+
+Purpose: pass-probability for prop-firm evaluations (TopStep 50K is preset one) from per-trade equity paths — the PROP-SIM window's barrier-options walker. Pure simulation core (no Strategy-Core dependency): `models.py` (TradePath/Ruleset/WalkResult), `presets.py` (registry; presets are data), `engine.py` (the EOD-ratcheted trailing floor with real-time breach, soft/hard daily-loss limit, consistency rule; breach modes `realized_only` and `unrealized_adverse_first` are both always computed), `bootstrap.py` (seeded day-level block bootstrap Monte Carlo), `loaders.py` (Trade-Lab executions+journal join / journal-outcomes evidence mode / bundle `oos_predictions.parquet`), `report.py` + CLI `python -m alpha_lab.propsim`. OOS parquets predating PROP-SIM P1 (no `max_mfe_pts`/`max_mae_pts`) degrade the unrealized mode to realized-only with a stated reason (D-038).
+
 ### 3. Retained legacy compatibility/export path
 
 The older `src/alpha_lab/experiment/`, `scripts/experiment_tab.py`, and `scripts/train_dashboard_model.py` path is retained as historical/compatibility tooling. It is **not** the canonical Strategy-Core v3 bundle path.
