@@ -9,6 +9,10 @@ neither names a bundle), and the bundle's contract is validated through the
 Strategy-Core REGISTRY SECTION HOOK (``validate_section_via_registry=True``)
 — the typed plugin SectionModel, never a hand-built section.
 
+ENV-FIX: the contract loader imports the INSTALLED strategy-core package by
+default; set ``QL_ACCEPTANCE_USE_LIVE_SC=1`` to opt in to the live sibling
+checkout's ``src`` (``--strategy-core-root``) instead.
+
 This wraps the dashboard session experiment CLI, audits the saved bundle, and
 optionally runs the focused Quant-Lab + Strategy-Core contract tests. It is a
 research-readiness check: weak models may be saved with an explicit failed-gate
@@ -148,18 +152,35 @@ def _run_command(command: list[str], *, cwd: Path) -> dict[str, Any]:
     }
 
 
+def _maybe_insert_live_strategy_core(strategy_core_root: Path) -> bool:
+    """Prepend the live checkout's src ONLY when QL_ACCEPTANCE_USE_LIVE_SC=1.
+
+    ENV-FIX: the default is the installed strategy-core package — the same
+    import the consumers serve from — so acceptance results describe the pin,
+    not whatever commit the sibling checkout happens to sit on. Returns True
+    iff the live checkout was inserted.
+    """
+
+    if os.environ.get("QL_ACCEPTANCE_USE_LIVE_SC") != "1":
+        return False
+    strategy_src = strategy_core_root / "src"
+    if strategy_src.exists():
+        sys.path.insert(0, str(strategy_src))
+        return True
+    return False
+
+
 def _load_strategy_contract_summary(
     strategy_json: Path,
     strategy_core_root: Path,
 ) -> dict[str, Any]:
     """Validate strategy.json through Strategy-Core's fail-closed loader."""
 
-    strategy_src = strategy_core_root / "src"
-    if strategy_src.exists():
-        sys.path.insert(0, str(strategy_src))
+    live_checkout = _maybe_insert_live_strategy_core(strategy_core_root)
     # W2 P3c: register the production plugin so the loader's registry hook can
     # type the section — the acceptance path consumes the plugin SectionModel,
     # never a hand-built section.
+    import strategy_core  # noqa: PLC0415
     import strategy_core.strategies.touch_reversal  # noqa: F401, PLC0415
     from strategy_core import CONTRACT_VERSION, PLATFORM_VERSION  # noqa: PLC0415
     from strategy_core.contract.loader import load_strategy_contract  # noqa: PLC0415
@@ -171,6 +192,8 @@ def _load_strategy_contract_summary(
     )
     return {
         "loader": "Strategy-Core",
+        "strategy_core_source": "live_checkout_src" if live_checkout else "installed_package",
+        "strategy_core_file": strategy_core.__file__,
         "section_via_registry_hook": True,
         "expected_contract_version": CONTRACT_VERSION,
         "expected_platform_version": PLATFORM_VERSION,

@@ -146,6 +146,36 @@ def test_audit_bundle_summarizes_fail_closed_artifact(tmp_path):
     assert summary["oos_predictions"]["gate_true_counts"] == {"gate_0_70_ny": 1}
 
 
+def test_contract_loader_defaults_to_installed_strategy_core(monkeypatch, tmp_path):
+    # ENV-FIX: without the opt-in env var the live checkout must NOT be
+    # inserted, even when its src directory exists — acceptance describes the
+    # installed (pinned) package by default.
+    cli = _load_acceptance_module()
+    monkeypatch.delenv("QL_ACCEPTANCE_USE_LIVE_SC", raising=False)
+    live_src = tmp_path / "Strategy-Core" / "src"
+    live_src.mkdir(parents=True)
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    before = list(sys.path)
+
+    inserted = cli._maybe_insert_live_strategy_core(tmp_path / "Strategy-Core")
+
+    assert inserted is False
+    assert sys.path == before
+
+
+def test_contract_loader_live_checkout_is_opt_in(monkeypatch, tmp_path):
+    cli = _load_acceptance_module()
+    monkeypatch.setenv("QL_ACCEPTANCE_USE_LIVE_SC", "1")
+    live_src = tmp_path / "Strategy-Core" / "src"
+    live_src.mkdir(parents=True)
+    monkeypatch.setattr(sys, "path", list(sys.path))
+
+    inserted = cli._maybe_insert_live_strategy_core(tmp_path / "Strategy-Core")
+
+    assert inserted is True
+    assert sys.path[0] == str(live_src)
+
+
 def test_audit_bundle_unservable_flag_is_rejected(tmp_path):
     # E2 flip: the audit now asserts the bundle IS servable; False fails closed.
     cli = _load_acceptance_module()
