@@ -167,7 +167,7 @@ The UI reports metrics from concatenated OOS fold predictions:
 - Utility summaries for OOS predictions; interpret these as model diagnostics, not production PnL proof.
 - Dashboard-utility production-gate OOS diagnostics: configured gate sessions, defaulting to `session == ny`, and `P(tradeable_reversal) >= 0.70` trade count, precision, coverage, eligible-session coverage, and idealized 15/30 expectancy.
 - Session-filtered OOS diagnostics so the NY execution population can be separated from aggregate all-session metrics.
-- Optional `oos_predictions.parquet` with fold, timestamp, session, raw class, prediction, probabilities, a configured runtime-session gate flag, and the `0.70/ny` gate flag for offline error analysis.
+- Optional `oos_predictions.parquet` with fold, timestamp, session, raw class, prediction, probabilities, a configured runtime-session gate flag, and the `0.70/ny` gate flag for offline error analysis. Since PROP-SIM P1 fresh saves also carry per-row labeler outcome columns — `max_mfe_pts`, `max_mae_pts`, `entry_price` (threaded from the training frame, never recomputed; NaN when the source frame/cache predates the column) and `resolution_type` (the ratified label mapping: tradeable_reversal → tp_hit, trap/blowthrough → sl_hit) — the prop-firm walker's inputs. Existing bundles are NOT retrofitted.
 
 Quality gates:
 

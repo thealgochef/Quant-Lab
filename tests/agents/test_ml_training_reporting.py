@@ -619,7 +619,53 @@ def test_build_oos_predictions_frame_empty_carries_canonical_schema():
         "prob_tradeable_reversal",
         "gate_0_70_runtime_sessions",
         "gate_0_70_ny",
+        "max_mfe_pts",
+        "max_mae_pts",
+        "entry_price",
+        "resolution_type",
     ]
+
+
+def test_build_oos_predictions_frame_degrades_missing_outcome_columns():
+    """PROP-SIM P1: pre-P1 fold dicts (no outcome passthroughs) yield NaN columns;
+    resolution_type still derives from the true label via the ratified mapping."""
+    fold = {
+        "fold": 0,
+        "y_true": np.array([1, 0, 0]),
+        "y_pred": np.array([1, 0, 0]),
+        "y_prob": np.array([0.9, 0.2, 0.4]),
+        "timestamp": np.array([pd.Timestamp("2026-01-05 14:00", tz="UTC")] * 3),
+        "session": np.array(["ny", "ny", "ny"], dtype=object),
+        "raw_y": np.array([0, 1, 2]),
+        "raw_pred": np.array([0, 1, 1]),
+    }
+    frame = ml_training_tab.build_oos_predictions_frame([fold])
+    assert frame["max_mfe_pts"].isna().all()
+    assert frame["max_mae_pts"].isna().all()
+    assert frame["entry_price"].isna().all()
+    assert list(frame["resolution_type"]) == ["tp_hit", "sl_hit", "sl_hit"]
+
+
+def test_build_oos_predictions_frame_threads_outcome_passthroughs():
+    """PROP-SIM P1: fold-level outcome arrays land per-row, verbatim."""
+    fold = {
+        "fold": 2,
+        "y_true": np.array([1, 0]),
+        "y_pred": np.array([1, 0]),
+        "y_prob": np.array([0.9, 0.2]),
+        "timestamp": np.array([pd.Timestamp("2026-01-05 14:00", tz="UTC")] * 2),
+        "session": np.array(["ny", "london"], dtype=object),
+        "raw_y": np.array([0, 2]),
+        "raw_pred": np.array([0, 2]),
+        "max_mfe": np.array([17.5, 3.25]),
+        "max_mae": np.array([2.25, 30.0]),
+        "entry_price": np.array([15971.5, 16002.25]),
+    }
+    frame = ml_training_tab.build_oos_predictions_frame([fold])
+    assert list(frame["max_mfe_pts"]) == [17.5, 3.25]
+    assert list(frame["max_mae_pts"]) == [2.25, 30.0]
+    assert list(frame["entry_price"]) == [15971.5, 16002.25]
+    assert list(frame["resolution_type"]) == ["tp_hit", "sl_hit"]
 
 
 # ── W3a: purged trading-day folds + pinned features ─────────────────────────
@@ -631,7 +677,7 @@ def _day_fold_frame(n_dates: int, rows_per_day: int) -> pd.DataFrame:
         for d in pd.bdate_range("2026-01-01", periods=n_dates, freq="B")
     ]
     rows = []
-    for date_str in dates:
+    for day_idx, date_str in enumerate(dates):
         for i in range(rows_per_day):
             rows.append(
                 {
@@ -642,6 +688,10 @@ def _day_fold_frame(n_dates: int, rows_per_day: int) -> pd.DataFrame:
                     "int_time_within_2pts": float((i * 7) % 60),
                     "int_absorption_ratio": float((i % 10) / 10.0),
                     "app_max_spread": 0.25 + 0.25 * (i % 4),
+                    # PROP-SIM P1: labeler outcome columns the OOS writer threads.
+                    "max_mfe": float(day_idx) * 10.0 + i + 0.5,
+                    "max_mae": float(day_idx) + 0.25 * (i % 3),
+                    "entry_price": 15000.0 + day_idx * 100.0 + i,
                 },
             )
     return pd.DataFrame(rows)
@@ -733,6 +783,91 @@ def test_run_walk_forward_training_day_folds_and_pinned_features():
     # The pinned list is what the refit model was trained on.
     assert result["trained_model"].selected_features == pinned
     assert not result["oos_predictions"].empty
+
+
+def test_run_walk_forward_training_oos_frame_threads_labeler_outcome_columns():
+    """PROP-SIM P1: a small train writes max_mfe_pts / max_mae_pts / entry_price /
+    resolution_type into the OOS frame, values equal to the training frame's."""
+    frame = _day_fold_frame(n_dates=14, rows_per_day=12)
+    config = MLPipelineConfig(
+        training_mode="dashboard_utility",
+        model={"rfecv_enabled": False, "iterations": 25, "depth": 3,
+               "loss_function": "MultiClass"},
+        tick_size=0.25,
+        instrument="NQ",
+    )
+    day_folds = {
+        "train_days": 4,
+        "test_days": 2,
+        "step_days": 2,
+        "purge_days": 1,
+        "min_train_events": 10,
+    }
+
+    result = ml_training_tab.run_walk_forward_training(
+        frame,
+        config,
+        "label_encoded",
+        day_folds=day_folds,
+        pinned_features=["int_time_within_2pts", "app_max_spread"],
+    )
+
+    oos = result["oos_predictions"]
+    assert not oos.empty
+    for column in ("max_mfe_pts", "max_mae_pts", "entry_price", "resolution_type"):
+        assert column in oos.columns
+
+    # Timestamps are unique in the fixture -> join OOS rows back to their source
+    # training-frame rows and demand exact value equality (threaded, not derived).
+    source = frame.set_index("timestamp")
+    for _, row in oos.iterrows():
+        src = source.loc[row["timestamp"]]
+        assert row["max_mfe_pts"] == src["max_mfe"]
+        assert row["max_mae_pts"] == src["max_mae"]
+        assert row["entry_price"] == src["entry_price"]
+    # resolution_type is the ratified label mapping of the TRUE label.
+    expected_resolution = {
+        "tradeable_reversal": "tp_hit",
+        "trap_reversal": "sl_hit",
+        "aggressive_blowthrough": "sl_hit",
+    }
+    assert list(oos["resolution_type"]) == [
+        expected_resolution[label] for label in oos["label"]
+    ]
+
+
+def test_run_walk_forward_training_tolerates_frames_without_outcome_columns():
+    """PROP-SIM P1 degradation: a frame lacking the labeler outcome columns still
+    trains; the OOS columns exist and are NaN (resolution_type still derived)."""
+    frame = _day_fold_frame(n_dates=14, rows_per_day=12).drop(
+        columns=["max_mfe", "max_mae", "entry_price"]
+    )
+    config = MLPipelineConfig(
+        training_mode="dashboard_utility",
+        model={"rfecv_enabled": False, "iterations": 25, "depth": 3,
+               "loss_function": "MultiClass"},
+        tick_size=0.25,
+        instrument="NQ",
+    )
+    result = ml_training_tab.run_walk_forward_training(
+        frame,
+        config,
+        "label_encoded",
+        day_folds={
+            "train_days": 4,
+            "test_days": 2,
+            "step_days": 2,
+            "purge_days": 1,
+            "min_train_events": 10,
+        },
+        pinned_features=["int_time_within_2pts", "app_max_spread"],
+    )
+    oos = result["oos_predictions"]
+    assert not oos.empty
+    assert oos["max_mfe_pts"].isna().all()
+    assert oos["max_mae_pts"].isna().all()
+    assert oos["entry_price"].isna().all()
+    assert oos["resolution_type"].notna().all()
 
 
 def test_run_walk_forward_training_rejects_unknown_pinned_feature():

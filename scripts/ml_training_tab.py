@@ -311,6 +311,19 @@ def run_walk_forward_training(
     y = valid[label_column].astype(int)
     timestamps = pd.to_datetime(timestamps).reset_index(drop=True)
     sessions = pd.Series(sessions, dtype="object").reset_index(drop=True)
+    # PROP-SIM P1: per-row outcome passthroughs for the OOS writer, threaded from
+    # the training frame (the labeler computes them; never recomputed here).
+    # Positional arrays so fold test_idx indexing matches timestamps/sessions.
+    # Frames/caches predating a column (e.g. warm D-036 caches lack entry_price)
+    # yield None -> the writer degrades that column to NaN.
+    outcome_passthrough: dict[str, np.ndarray | None] = {
+        col: (
+            pd.to_numeric(valid[col], errors="coerce").to_numpy(dtype=float)
+            if col in valid.columns
+            else None
+        )
+        for col in ("max_mfe", "max_mae", "entry_price")
+    }
     if config.training_mode == "dashboard_utility":
         training_session_mask = sessions.isin(
             session_scope.training_sessions,
@@ -517,6 +530,11 @@ def run_walk_forward_training(
                 "raw_pred": raw_preds.astype(int),
                 "prob_by_class": {
                     str(cls): np.asarray(prob).flatten() for cls, prob in prob_by_class.items()
+                },
+                # PROP-SIM P1: outcome passthroughs at the fold's test rows.
+                **{
+                    key: (arr[test_idx] if arr is not None else None)
+                    for key, arr in outcome_passthrough.items()
                 },
             }
         )
@@ -1204,6 +1222,18 @@ def compute_oos_three_class_balance(
     return {name: int(np.sum(raw_y == idx)) for idx, name in names.items()}
 
 
+#: The ratified label -> resolution-type mapping, mirrored from Trade-Lab serving
+#: (trade_lab.services.inference.resolution_adapter._RESOLUTION_TYPE_BY_LABEL):
+#: the tradeable reversal is the target (TP); both loss shapes (blowthrough, trap)
+#: are the stop (SL). The honest resolver never force-labels, so no other
+#: resolution type exists in the batch frame.
+RESOLUTION_TYPE_BY_LABEL = {
+    "tradeable_reversal": "tp_hit",
+    "trap_reversal": "sl_hit",
+    "aggressive_blowthrough": "sl_hit",
+}
+
+
 def build_oos_predictions_frame(
     fold_predictions: list[dict[str, object]],
     *,
@@ -1231,6 +1261,10 @@ def build_oos_predictions_frame(
         "prob_tradeable_reversal",
         "gate_0_70_runtime_sessions",
         "gate_0_70_ny",
+        "max_mfe_pts",
+        "max_mae_pts",
+        "entry_price",
+        "resolution_type",
     ]
     for fold_data in fold_predictions:
         y_true = np.asarray(fold_data["y_true"]).flatten().astype(int)
@@ -1245,6 +1279,19 @@ def build_oos_predictions_frame(
             int(cls): np.asarray(prob).flatten().astype(float)
             for cls, prob in dict(prob_by_class_raw).items()
         }
+
+        # PROP-SIM P1: per-row outcome passthroughs (NaN when the training frame
+        # lacked the column — pre-P1 folds, warm caches without entry_price).
+        def _outcome_field(name: str, *, fold_data=fold_data, n=n) -> np.ndarray:
+            vals = fold_data.get(name)
+            if vals is None:
+                return np.full(n, np.nan)
+            arr = np.asarray(vals, dtype=float).flatten()
+            return arr if len(arr) == n else np.full(n, np.nan)
+
+        max_mfe_vals = _outcome_field("max_mfe")
+        max_mae_vals = _outcome_field("max_mae")
+        entry_price_vals = _outcome_field("entry_price")
         for i in range(n):
             raw_label = raw_y[i]
             try:
@@ -1258,13 +1305,14 @@ def build_oos_predictions_frame(
                 raw_pred_int = None
             session = str(sessions[i])
             prob_tradeable = float(prob_by_class.get(0, y_prob)[i]) if n else 0.0
+            label_name = class_names.get(raw_label_int)
             row = {
                 "fold": int(fold_data.get("fold", 0)),
                 "timestamp": timestamps[i],
                 "session": session,
                 "binary_true_tradeable": int(y_true[i]),
                 "label_encoded": raw_label_int,
-                "label": class_names.get(raw_label_int),
+                "label": label_name,
                 "pred_label_encoded": raw_pred_int,
                 "pred_label": class_names.get(raw_pred_int),
                 "prob_tradeable_reversal": prob_tradeable,
@@ -1276,6 +1324,10 @@ def build_oos_predictions_frame(
                     and "ny" in gate_sessions
                     and prob_tradeable >= float(confidence_gate)
                 ),
+                "max_mfe_pts": float(max_mfe_vals[i]),
+                "max_mae_pts": float(max_mae_vals[i]),
+                "entry_price": float(entry_price_vals[i]),
+                "resolution_type": RESOLUTION_TYPE_BY_LABEL.get(label_name),
             }
             for cls, name in class_names.items():
                 probs = prob_by_class.get(cls)

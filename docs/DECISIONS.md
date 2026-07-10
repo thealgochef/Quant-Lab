@@ -320,3 +320,12 @@ This prevents re-litigating settled questions across sessions.
 **Trade-off**: If §9.10 lands later and a plugin-path consumer appears, that path needs its own parity evidence before serving.
 
 ---
+
+## D-038: OOS Predictions Carry Per-Row Labeler Outcome Columns (PROP-SIM P1)
+**Date**: 2026-07-10
+**Context**: The prop-firm walker (`alpha_lab.propsim`) needs per-trade excursions (MFE/MAE) and resolution metadata to simulate intraday equity paths from a bundle's OOS rows. The labeler already computes all of it; the OOS writer dropped it at the fold-assembly seam.
+**Decision**: `oos_predictions.parquet` gains four per-row columns on FRESH saves: `max_mfe_pts` / `max_mae_pts` (threaded verbatim from the training frame's `max_mfe`/`max_mae` — engine `OutcomeResult` values, never recomputed), `entry_price` (the honest decision-time fill; the stream builder now writes it into the dataset row using the SAME injected trade-price accessor at the SAME decision instant the engine used), and `resolution_type` (the ratified label mapping mirrored from Trade-Lab serving: tradeable_reversal → tp_hit, trap_reversal/aggressive_blowthrough → sl_hit). Existing bundles are NOT retrofitted; consumers requiring these columns must degrade to realized-only behavior with a stated reason when they are absent. Warm dataset caches predating `entry_price` (including the ratified D-036 `ml_utility_7850272e` fleet) yield NaN for that column until a day is rebuilt — the cache tag hashes config, not row schema, so caches are deliberately not invalidated.
+**Rationale**: Threading beats recomputation (zero drift risk for MFE/MAE); the entry accessor call is the one expression the engine's honest-entry contract documents, and the label mapping is the exact serving-side convention, so neither introduces a second definition.
+**Trade-off**: `entry_price` on warm-cache trains is NaN-degraded until caches roll; a batch `resolution_type` beyond the three-class mapping (e.g. session_end) does not exist by construction — the honest resolver never force-labels.
+
+---

@@ -783,6 +783,11 @@ def process_single_date_stream(
         decision_time_et = pd.Timestamp(
             touch.bar_ts_utc + timedelta(minutes=decision_offset)
         ).tz_convert(_ET)
+        # PROP-SIM P1: the honest decision-time fill the excursions were anchored
+        # on — the SAME injected accessor at the SAME instant the engine used
+        # (strategy_core honest_entry: entry_price = trade_price_at(decision_ts));
+        # non-None here because a None fill would have dropped (no_fill) above.
+        entry_price = _price_at(touch.bar_ts_utc + timedelta(minutes=decision_offset))
         row = {
             "event_ts": bar_ts_et,
             "date": date_str,
@@ -799,6 +804,7 @@ def process_single_date_stream(
             "label_encoded": result.label_encoded,
             "max_mfe": result.max_mfe,
             "max_mae": result.max_mae,
+            "entry_price": None if entry_price is None else float(entry_price),
         }
         row.update(features)
 
