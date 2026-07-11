@@ -8,6 +8,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 
 def _load_module():
@@ -90,40 +92,55 @@ def test_sanity_problems_gates_day_window_and_empty():
     assert fatal == ["0 rows after filtering"]
 
 
-def _exact_frame(mod) -> pd.DataFrame:
-    ts = pd.to_datetime([datetime(2026, 1, 12, 12, tzinfo=UTC)], utc=True)
-    data: dict[str, object] = {}
-    for name, arrow_type in mod.EXPECTED_MBP1_SCHEMA:
-        if name == "ts_recv":
-            continue
-        if arrow_type == "timestamp[ns, tz=UTC]":
-            data[name] = ts
-        elif arrow_type == "string":
-            data[name] = pd.array(["T"], dtype=str)
-        elif arrow_type == "double":
-            data[name] = pd.array([25000.0], dtype="float64")
+def _arrow_type(type_str: str) -> pa.DataType:
+    if type_str == "timestamp[ns, tz=UTC]":
+        return pa.timestamp("ns", tz="UTC")
+    if type_str == "double":
+        return pa.float64()
+    return getattr(pa, type_str)()  # string, uint8, uint16, uint32, int32
+
+
+def _exact_table(mod) -> pa.Table:
+    # Built with explicit arrow types: the pin is about what schema_problems
+    # accepts, not about pandas->arrow conversion defaults (pandas 3 /
+    # pyarrow 25 cold installs drift to large_string / timestamp[us]).
+    ts = [datetime(2026, 1, 12, 12, tzinfo=UTC)]
+    fields = []
+    arrays = []
+    for name, type_str in mod.EXPECTED_MBP1_SCHEMA:
+        typ = _arrow_type(type_str)
+        if type_str.startswith("timestamp"):
+            values: list[object] = ts
+        elif type_str == "string":
+            values = ["T"]
+        elif type_str == "double":
+            values = [25000.0]
         else:
-            data[name] = pd.array([1], dtype=arrow_type)
-    df = pd.DataFrame(data)
-    df.index = pd.DatetimeIndex(ts, name="ts_recv")
-    return df
+            values = [1]
+        fields.append(pa.field(name, typ))
+        arrays.append(pa.array(values, type=typ))
+    return pa.table(arrays, schema=pa.schema(fields))
 
 
 def test_schema_problems_pins_store_fingerprint(tmp_path: Path):
     mod = _load_module()
-    df = _exact_frame(mod)
+    table = _exact_table(mod)
 
     exact = tmp_path / "exact.parquet"
-    df.to_parquet(exact)
+    pq.write_table(table, exact)
     assert mod.schema_problems(exact) == []
 
     wrong = tmp_path / "wrong.parquet"
-    df.drop(columns=["symbol"]).to_parquet(wrong)
+    pq.write_table(table.drop_columns(["symbol"]), wrong)
     problems = mod.schema_problems(wrong)
     assert problems and "symbol" in problems[0]
 
     retyped = tmp_path / "retyped.parquet"
-    df.assign(price=pd.array([25000], dtype="int64")).to_parquet(retyped)
+    price_at = table.column_names.index("price")
+    int_price = table.set_column(
+        price_at, pa.field("price", pa.int64()), pa.array([25000], type=pa.int64())
+    )
+    pq.write_table(int_price, retyped)
     problems = mod.schema_problems(retyped)
     assert problems and "price" in problems[0]
 
@@ -132,13 +149,13 @@ def test_schema_problems_reports_pure_order_mismatch(tmp_path: Path):
     # Same name:type multiset, different physical order -> its own finding
     # (close-verify fix: this case previously produced an empty message).
     mod = _load_module()
-    df = _exact_frame(mod)
+    table = _exact_table(mod)
     reordered = tmp_path / "reordered.parquet"
-    df[list(df.columns[::-1])].to_parquet(reordered)
+    pq.write_table(table.select(table.column_names[::-1]), reordered)
     assert mod.schema_problems(reordered) == ["column order differs"]
 
     missing = tmp_path / "missing.parquet"
-    df.drop(columns=["symbol"]).to_parquet(missing)
+    pq.write_table(table.drop_columns(["symbol"]), missing)
     problems = mod.schema_problems(missing)
     assert "column order differs" not in problems[0]
 
