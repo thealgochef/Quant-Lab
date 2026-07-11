@@ -90,8 +90,7 @@ def test_sanity_problems_gates_day_window_and_empty():
     assert fatal == ["0 rows after filtering"]
 
 
-def test_schema_problems_pins_store_fingerprint(tmp_path: Path):
-    mod = _load_module()
+def _exact_frame(mod) -> pd.DataFrame:
     ts = pd.to_datetime([datetime(2026, 1, 12, 12, tzinfo=UTC)], utc=True)
     data: dict[str, object] = {}
     for name, arrow_type in mod.EXPECTED_MBP1_SCHEMA:
@@ -107,6 +106,12 @@ def test_schema_problems_pins_store_fingerprint(tmp_path: Path):
             data[name] = pd.array([1], dtype=arrow_type)
     df = pd.DataFrame(data)
     df.index = pd.DatetimeIndex(ts, name="ts_recv")
+    return df
+
+
+def test_schema_problems_pins_store_fingerprint(tmp_path: Path):
+    mod = _load_module()
+    df = _exact_frame(mod)
 
     exact = tmp_path / "exact.parquet"
     df.to_parquet(exact)
@@ -121,6 +126,21 @@ def test_schema_problems_pins_store_fingerprint(tmp_path: Path):
     df.assign(price=pd.array([25000], dtype="int64")).to_parquet(retyped)
     problems = mod.schema_problems(retyped)
     assert problems and "price" in problems[0]
+
+
+def test_schema_problems_reports_pure_order_mismatch(tmp_path: Path):
+    # Same name:type multiset, different physical order -> its own finding
+    # (close-verify fix: this case previously produced an empty message).
+    mod = _load_module()
+    df = _exact_frame(mod)
+    reordered = tmp_path / "reordered.parquet"
+    df[list(df.columns[::-1])].to_parquet(reordered)
+    assert mod.schema_problems(reordered) == ["column order differs"]
+
+    missing = tmp_path / "missing.parquet"
+    df.drop(columns=["symbol"]).to_parquet(missing)
+    problems = mod.schema_problems(missing)
+    assert "column order differs" not in problems[0]
 
 
 def test_format_log_line_carries_day_rows_seconds():

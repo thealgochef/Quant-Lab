@@ -142,8 +142,10 @@ def filter_spreads(df):
 def sanity_problems(df, date_str: str) -> tuple[list[str], list[str]]:
     """(fatal, warnings). Fatal: empty frame; ts_recv outside the UTC calendar
     day (the batch files are split by ts_recv at UTC midnight — ts_event may
-    legitimately reach back via snapshot seed rows). Warnings mirror
-    process_batch_download.py's non-fatal checks."""
+    legitimately reach back via snapshot seed rows). Warnings carry over
+    process_batch_download.py's low-row-count and price-range checks; its
+    non-monotonic/duplicate-ts_event warnings are intentionally dropped —
+    the data is ts_recv-ordered, so they fire on every real file (pure noise)."""
     fatal: list[str] = []
     warns: list[str] = []
     if df.empty:
@@ -177,20 +179,16 @@ def schema_problems(path: Path) -> list[str]:
             for name in set(got) & set(expected)
             if got[name] != expected[name]
         )
-        order = [] if sorted(written) == sorted(EXPECTED_MBP1_SCHEMA) else ["column order differs"]
-        return [
-            "; ".join(
-                filter(
-                    None,
-                    [
-                        f"missing={missing}" if missing else "",
-                        f"extra={extra}" if extra else "",
-                        f"type={wrong}" if wrong else "",
-                        *order,
-                    ],
-                )
-            )
+        parts = [
+            f"missing={missing}" if missing else "",
+            f"extra={extra}" if extra else "",
+            f"type={wrong}" if wrong else "",
         ]
+        # Same name:type multiset but a different physical order is its own
+        # (and possibly the only) finding.
+        if not missing and not extra and not wrong:
+            parts.append("column order differs")
+        return ["; ".join(filter(None, parts))]
     return []
 
 
