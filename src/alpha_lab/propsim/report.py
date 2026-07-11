@@ -146,7 +146,9 @@ def format_human(report: dict) -> str:
     ]
     for column in report["matrix"]:
         stats = pool.get(column) or {}
-        if stats.get("win_rate") is not None:
+        # mean/total can sanitize to None (NaN points) even when win_rate is a
+        # valid float — guard every formatted field, not just win_rate.
+        if stats.get("win_rate") is not None and stats.get("mean_points") is not None:
             ci = stats.get("win_rate_ci95") or [None, None]
             lines.append(
                 f"  [{column}] win rate {stats['wins']}/{pool['n_trades']} = "

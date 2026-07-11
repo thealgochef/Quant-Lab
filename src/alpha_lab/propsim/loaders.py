@@ -76,6 +76,17 @@ def _parse_ts(value: object) -> datetime | None:
         return None
 
 
+def _finite(value: object) -> float | None:
+    """A finite float, or None (rejects NaN/inf/non-numeric)."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
 def _iter_jsonl_rows(directory: Path) -> list[dict]:
     rows: list[dict] = []
     for path in sorted(directory.glob("*.jsonl")):
@@ -123,29 +134,45 @@ def load_executions_trades(
         elif row_type == "reset":
             resets += 1
 
+    # Executions files are append-only across replay re-runs: replaying the same
+    # day again journals the SAME physical trades under fresh uuids (reset rows
+    # mark run boundaries but carry no epoch key). Dedup closes by their physical
+    # fill signature, last-write-wins, and surface the drop count.
+    deduped_closes: dict[tuple, dict] = {}
+    for row in closes:
+        signature = (
+            row.get("entry_ts_utc"),
+            row.get("entry_price"),
+            row.get("exit_price"),
+            row.get("direction"),
+            row.get("reason"),
+        )
+        deduped_closes[signature] = row
+    duplicate_closes = len(closes) - len(deduped_closes)
+
     trades: list[TradePath] = []
     skipped_unparseable = 0
     missing_excursions = 0
-    for row in closes:
+    for row in deduped_closes.values():
         entry_ts = _parse_ts(row.get("entry_ts_utc")) or _parse_ts(row.get("ts_utc"))
-        points = row.get("points")
-        points_cons = row.get("points_conservative")
+        points = _finite(row.get("points"))
+        points_cons = _finite(row.get("points_conservative"))
         if entry_ts is None or points is None or points_cons is None:
             skipped_unparseable += 1
             continue
         outcome = outcomes.get(str(row.get("prediction_id") or ""))
-        mfe = outcome.get("max_mfe_pts") if outcome else None
-        mae = outcome.get("max_mae_pts") if outcome else None
+        mfe = _finite(outcome.get("max_mfe_pts")) if outcome else None
+        mae = _finite(outcome.get("max_mae_pts")) if outcome else None
         if mfe is None or mae is None:
             missing_excursions += 1
         trades.append(
             TradePath(
                 day=trading_day_for(entry_ts),
                 entry_ts=entry_ts,
-                points_optimistic=float(points),
-                points_conservative=float(points_cons),
-                mfe_pts=None if mfe is None else float(mfe),
-                mae_pts=None if mae is None else float(mae),
+                points_optimistic=points,
+                points_conservative=points_cons,
+                mfe_pts=mfe,
+                mae_pts=mae,
                 resolution=row.get("reason"),
             )
         )
@@ -156,8 +183,10 @@ def load_executions_trades(
     notes = [
         f"executions dir: {executions_dir}",
         f"rows: {len(rows)} total, {len(closes)} closes, {len(opens)} opens, {resets} resets",
+        f"replay re-run duplicate closes dropped (fill-signature dedup, "
+        f"last-write-wins): {duplicate_closes}",
         f"opens without a close (skipped — never completed): {len(unmatched_opens)}",
-        f"closes skipped as unparseable: {skipped_unparseable}",
+        f"closes skipped as unparseable (missing/non-finite fields): {skipped_unparseable}",
     ]
     degradation: str | None = None
     if journal_dir is None:
@@ -206,11 +235,32 @@ def load_journal_trades(
         elif row.get("type") == "outcome":
             outcome_rows.append(row)
 
+    # Warm restarts re-predict the SAME physical touch under fresh
+    # prediction_ids/touch_ids (the WARM-PERF journal-dupe class; files were not
+    # retroactively cleaned) — a 1-contract account cannot fill one touch N
+    # times. Dedup outcomes by the physical touch signature (the prediction's
+    # instant + level + direction), last-write-wins, and surface the drop count.
+    deduped_outcomes: dict[tuple, dict] = {}
+    for row in outcome_rows:
+        prediction = predictions.get(str(row.get("prediction_id") or ""))
+        if prediction is not None:
+            signature = (
+                "prediction",
+                prediction.get("ts_utc"),
+                prediction.get("level_kind"),
+                prediction.get("level_price_ticks"),
+                prediction.get("direction"),
+            )
+        else:
+            signature = ("outcome", row.get("ts_utc"), row.get("entry_price"), None, None)
+        deduped_outcomes[signature] = row
+    duplicates_dropped = len(outcome_rows) - len(deduped_outcomes)
+
     trades: list[TradePath] = []
     skipped = 0
     eligible = 0
     missing_prediction = 0
-    for row in outcome_rows:
+    for row in deduped_outcomes.values():
         resolution = row.get("resolution_type")
         if resolution == "tp_hit":
             points = tp_points
@@ -232,16 +282,14 @@ def load_journal_trades(
         if entry_ts is None:
             skipped += 1
             continue
-        mfe = row.get("max_mfe_pts")
-        mae = row.get("max_mae_pts")
         trades.append(
             TradePath(
                 day=trading_day_for(entry_ts),
                 entry_ts=entry_ts,
                 points_optimistic=float(points),
                 points_conservative=float(points_cons),
-                mfe_pts=None if mfe is None else float(mfe),
-                mae_pts=None if mae is None else float(mae),
+                mfe_pts=_finite(row.get("max_mfe_pts")),
+                mae_pts=_finite(row.get("max_mae_pts")),
                 resolution=str(resolution),
             )
         )
@@ -249,6 +297,8 @@ def load_journal_trades(
         f"journal dir: {journal_dir}",
         "EVIDENCE MODE: every resolved journal outcome treated as a 1-contract "
         "trade — includes outcomes of serving-INELIGIBLE predictions",
+        f"warm-restart duplicate outcomes dropped (touch-signature dedup, "
+        f"last-write-wins): {duplicates_dropped}",
         f"outcomes: {len(outcome_rows)} rows -> {len(trades)} trades "
         f"({skipped} skipped: unresolved/unparseable)",
         f"eligible predictions among trades: {eligible}; outcomes without a "

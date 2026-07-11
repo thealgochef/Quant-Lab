@@ -135,6 +135,82 @@ def test_trading_day_roll_dates_evening_entries_to_the_next_day():
     )
 
 
+def test_executions_loader_dedups_replay_rerun_closes(tmp_path):
+    """PROPSIM-L2: re-running a replay appends the SAME physical trade under a
+    fresh uuid — the loader dedups by fill signature and surfaces the count."""
+    executions, journal = _executions_fixture(tmp_path)
+    day_file = executions / "2026-01-05.jsonl"
+    rows = [json.loads(line) for line in day_file.read_text(encoding="utf-8").splitlines()]
+    rerun = [dict(row) for row in rows]
+    for row in rerun:
+        if row.get("prediction_id"):
+            row["prediction_id"] = row["prediction_id"].replace("0000", "1111")
+    with day_file.open("a", encoding="utf-8") as handle:
+        for row in rerun:
+            handle.write(json.dumps(row) + "\n")
+
+    loaded = load_executions_trades(executions, journal_dir=journal)
+    assert len(loaded.trades) == 1
+    assert any(
+        "duplicate closes dropped" in note and note.endswith(": 1")
+        for note in loaded.notes
+    )
+
+
+def test_executions_loader_skips_non_finite_points(tmp_path):
+    """PS-1 boundary: NaN points on a close row is unparseable, not a trade."""
+    executions = tmp_path / "executions"
+    _write_jsonl(
+        executions / "2026-01-05.jsonl",
+        [
+            {"type": "close", "ts_utc": "2026-01-05T14:45:00+00:00",
+             "prediction_id": PRED_A, "reason": "tp_hit",
+             "entry_ts_utc": "2026-01-05T14:30:00+00:00",
+             "points": float("nan"), "points_conservative": float("nan")},
+        ],
+    )
+    loaded = load_executions_trades(executions, journal_dir=None)
+    assert loaded.trades == []
+    assert any("unparseable" in note and note.endswith(": 1") for note in loaded.notes)
+
+
+def test_journal_loader_dedups_warm_restart_duplicate_outcomes(tmp_path):
+    """PROPSIM-L1: warm restarts re-predict the same physical touch under fresh
+    ids — outcomes dedup by touch signature (last-write-wins), count surfaced."""
+    journal = tmp_path / "journal"
+    touch = {
+        "ts_utc": "2026-06-16T08:10:55.294315+00:00",
+        "level_kind": "asia_high",
+        "level_price_ticks": 123440,
+        "direction": "short",
+    }
+    rows = []
+    for suffix in ("1", "2", "3"):
+        pid = f"dddddddd-0000-0000-0000-00000000000{suffix}"
+        rows.append({"type": "prediction", "prediction_id": pid,
+                     "is_eligible": False, **touch})
+        rows.append({"type": "outcome", "ts_utc": "2026-06-16T08:20:00+00:00",
+                     "prediction_id": pid, "resolution_type": "tp_hit",
+                     "max_mfe_pts": 16.0, "max_mae_pts": 3.0,
+                     "entry_price": 30860.0})
+    # A genuinely distinct touch on the same day survives.
+    rows.append({"type": "prediction", "prediction_id": PRED_B,
+                 "ts_utc": "2026-06-16T10:00:00+00:00", "level_kind": "pdl",
+                 "level_price_ticks": 123000, "direction": "long",
+                 "is_eligible": False})
+    rows.append({"type": "outcome", "ts_utc": "2026-06-16T10:15:00+00:00",
+                 "prediction_id": PRED_B, "resolution_type": "sl_hit",
+                 "max_mfe_pts": 2.0, "max_mae_pts": 15.0, "entry_price": 30750.0})
+    _write_jsonl(journal / "2026-06-16.jsonl", rows)
+
+    loaded = load_journal_trades(journal, tp_points=15.0, sl_points=15.0)
+    assert len(loaded.trades) == 2  # 4 outcomes -> 1 deduped touch + 1 distinct
+    assert any(
+        "duplicate outcomes dropped" in note and note.endswith(": 2")
+        for note in loaded.notes
+    )
+
+
 def test_journal_loader_treats_outcomes_as_trades(tmp_path):
     journal = tmp_path / "journal"
     _write_jsonl(
