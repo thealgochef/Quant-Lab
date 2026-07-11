@@ -17,9 +17,10 @@ def _ruleset(**overrides) -> Ruleset:
         "trail_style": "eod_floor_realtime_breach",
         "trail_locks_at_start": True,
         "dll_amount": None,
-        "dll_soft": True,
+        "dll_hard": False,
         "consistency_pct": None,
         "min_days": None,
+        "max_eval_days": None,
         "point_value": 20.0,
     }
     base.update(overrides)
@@ -109,6 +110,25 @@ def test_max_days_guard_yields_incomplete_runs():
         max_days=25,
     )
     assert summary.p_incomplete == 1.0
+    assert summary.p_expired == 0.0
+
+
+def test_ruleset_expiry_yields_expired_runs_not_incomplete():
+    """With a max_eval_days budget the zero-P&L pool EXPIRES every run —
+    distinct from the max_days runaway guard's incomplete."""
+    pool = _pool([[0.0]])
+    summary = run_bootstrap(
+        pool,
+        _ruleset(max_eval_days=10),
+        column="optimistic",
+        breach_mode="realized_only",
+        n_runs=50,
+        seed=42,
+        max_days=25,
+    )
+    assert summary.p_expired == 1.0
+    assert summary.p_incomplete == 0.0
+    assert summary.p_pass + summary.p_bust + summary.p_expired + summary.p_incomplete == 1.0
 
 
 def test_empty_pool_raises():

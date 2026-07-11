@@ -129,9 +129,9 @@ def format_human(report: dict) -> str:
             f"  ruleset: start {rs['starting_balance']:.0f} / target "
             f"{rs['profit_target']:.0f} / trail {rs['trail_amount']:.0f} "
             f"({rs['trail_style']}, locks_at_start={rs['trail_locks_at_start']}) / "
-            f"DLL {rs['dll_amount']} (soft={rs['dll_soft']}) / consistency "
+            f"DLL {rs['dll_amount']} (hard={rs['dll_hard']}) / consistency "
             f"{rs['consistency_pct']}% / min_days {rs['min_days']} / "
-            f"point_value {rs['point_value']}"
+            f"max_eval_days {rs['max_eval_days']} / point_value {rs['point_value']}"
         ),
         (
             f"  pool: {pool['n_trades']} trades over {pool['n_days']} days "
@@ -158,7 +158,7 @@ def format_human(report: dict) -> str:
             )
     header = (
         f"  {'column':<12} {'breach mode':<25} {'hist':<10} "
-        f"{'P(pass)':>8} {'95% CI':>15} {'P(bust)':>8} {'P(inc)':>7} "
+        f"{'P(pass)':>8} {'95% CI':>15} {'P(bust)':>8} {'P(exp)':>7} {'P(inc)':>7} "
         f"{'d2p med':>8} {'p10':>6} {'p90':>6} {'d2b med':>8}  notes"
     )
     lines.append("")
@@ -177,7 +177,8 @@ def format_human(report: dict) -> str:
             lines.append(
                 f"  {column:<12} {mode:<25} {str(hist.get('verdict', '-')):<10} "
                 f"{_fmt(boot.get('p_pass'), 8, 4)} {ci_text:>15} "
-                f"{_fmt(boot.get('p_bust'), 8, 4)} {_fmt(boot.get('p_incomplete'), 7, 3)} "
+                f"{_fmt(boot.get('p_bust'), 8, 4)} {_fmt(boot.get('p_expired'), 7, 3)} "
+                f"{_fmt(boot.get('p_incomplete'), 7, 3)} "
                 f"{_fmt(boot.get('days_to_pass_median'), 8, 1)} "
                 f"{_fmt(boot.get('days_to_pass_p10'), 6, 1)} "
                 f"{_fmt(boot.get('days_to_pass_p90'), 6, 1)} "

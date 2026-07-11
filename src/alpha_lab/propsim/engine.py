@@ -1,9 +1,13 @@
 """The evaluation walk: barrier-options semantics over per-trade equity paths.
 
 Walks days in order, trades in intra-day order, at 1 contract. Balance updates
-on realized points (fill column selectable). The trailing floor ratchets on EOD
-balance highs (capped at the starting balance when the ruleset locks); breach
-is checked in real time at every equity observation the breach mode provides:
+on realized points (fill column selectable). The trailing floor mechanic is the
+ruleset's ``trail_style`` — EOD-balance ratchet (``eod_floor_realtime_breach``),
+peak-equity trail including unrealized (``intraday_peak_trail``: the favorable
+leg entry + MFE raises the peak in the unrealized modes; realized closes + EOD
+otherwise), or a floor fixed at start − trail (``static_floor``) — capped at
+the starting balance when the ruleset locks; breach is checked in real time at
+every equity observation the breach mode provides:
 
 - ``realized_only`` — equity observed at trade closes and EOD.
 - ``unrealized_adverse_first`` — each trade's path first visits
@@ -11,12 +15,15 @@ is checked in real time at every equity observation the breach mode provides:
   adverse leg the floor and the daily-loss level are BARRIERS on one
   monotonically falling equity path: whichever level is higher is touched
   first. A soft-DLL touch force-closes the trade AT the DLL level (day halted,
-  not a bust); a floor touch is a bust. Trades without excursions (``mae_pts``
-  is None/NaN) contribute realized-only observations.
+  not a bust); a floor touch is a bust; a hard-DLL touch is a bust. Trades
+  without excursions (``mae_pts`` is None/NaN) contribute realized-only
+  observations.
 
 PASS is evaluated at EOD: total profit ≥ target, min-days satisfied, and (when
 a consistency rule exists) best single day ≤ pct × total — otherwise the walk
-keeps going and later days can dilute the ratio.
+keeps going and later days can dilute the ratio. A ruleset ``max_eval_days``
+budget expires the walk on day max+1 (verdict ``"expired"`` — the first day the
+eval may no longer trade).
 """
 
 from __future__ import annotations
@@ -30,7 +37,11 @@ from alpha_lab.propsim.models import Ruleset, TradePath, WalkResult
 BREACH_MODES = ("realized_only", "unrealized_adverse_first")
 FILL_COLUMNS = ("optimistic", "conservative")
 
-_SUPPORTED_TRAIL_STYLES = ("eod_floor_realtime_breach",)
+_SUPPORTED_TRAIL_STYLES = (
+    "eod_floor_realtime_breach",
+    "intraday_peak_trail",
+    "static_floor",
+)
 
 
 def _excursion(value: float | None) -> float | None:
@@ -63,9 +74,10 @@ class EvaluationWalk:
         self._column = column
         self._mode = breach_mode
         self.balance = ruleset.starting_balance
-        # The starting balance counts as the day-0 EOD: day 1's floor is
-        # start − trail.
-        self._eod_peak = ruleset.starting_balance
+        # The starting balance counts as the day-0 peak (EOD peak for the EOD
+        # style, equity peak for the intraday style): day 1's floor is
+        # start − trail. static_floor never updates the peak.
+        self._peak = ruleset.starting_balance
         self.floor = self._compute_floor()
         self._day_pnls: list[float] = []
         self._days = 0
@@ -77,10 +89,18 @@ class EvaluationWalk:
         self._min_floor_distance = ruleset.starting_balance - self.floor
 
     def _compute_floor(self) -> float:
-        floor = self._eod_peak - self._rs.trail_amount
+        floor = self._peak - self._rs.trail_amount
         if self._rs.trail_locks_at_start:
             floor = min(floor, self._rs.starting_balance)
         return floor
+
+    def _raise_peak(self, equity: float) -> None:
+        """Intraday style only: a new equity peak ratchets the floor NOW."""
+        if self._rs.trail_style != "intraday_peak_trail":
+            return
+        if equity > self._peak:
+            self._peak = equity
+            self.floor = max(self.floor, self._compute_floor())
 
     def _points(self, trade: TradePath) -> float:
         if self._column == "conservative":
@@ -105,6 +125,11 @@ class EvaluationWalk:
             msg = f"walk already terminated with verdict {self._verdict!r}"
             raise RuntimeError(msg)
         rs = self._rs
+        if rs.max_eval_days is not None and self._days >= rs.max_eval_days:
+            # The day budget is spent: this day (max+1) may not be traded.
+            self._verdict = "expired"
+            self._days_to_outcome = self._days + 1
+            return "expired"
         day_start = self.balance
         halted = False
         for trade in trades:
@@ -129,20 +154,28 @@ class EvaluationWalk:
                     # the deeper excursion never happens because we are flat.
                     self._observe(dll_level)
                     self.balance = dll_level
-                    if not rs.dll_soft:
+                    if rs.dll_hard:
                         return self._bust("daily_loss_limit", day_start)
                     halted = True
                     continue
                 self._observe(adverse_equity)
+            if self._mode == "unrealized_adverse_first":
+                # Favorable leg (after the adverse leg): under the intraday
+                # style a new unrealized peak ratchets the floor before the
+                # trade settles back down.
+                mfe = _excursion(trade.mfe_pts)
+                if mfe is not None:
+                    self._raise_peak(self.balance + mfe * rs.point_value)
             # Settle at the realized points.
             self.balance += pnl
             self._observe(self.balance)
             if self.balance <= self.floor:
                 return self._bust("trailing_floor", day_start)
             if rs.dll_amount is not None and (self.balance - day_start) <= -rs.dll_amount:
-                if not rs.dll_soft:
+                if rs.dll_hard:
                     return self._bust("daily_loss_limit", day_start)
                 halted = True
+            self._raise_peak(self.balance)
         # End of day.
         self._days += 1
         if halted:
@@ -161,9 +194,15 @@ class EvaluationWalk:
                 self._verdict = "pass"
                 self._days_to_outcome = self._days
                 return "pass"
-        # Ratchet the floor on the EOD balance (never moves down).
-        self._eod_peak = max(self._eod_peak, self.balance)
-        self.floor = max(self.floor, self._compute_floor())
+        # Ratchet the floor (never moves down): the EOD style banks the EOD
+        # balance here; the intraday style already trailed in real time (the
+        # EOD observation is one more realized-equity peak candidate); the
+        # static floor never ratchets.
+        if rs.trail_style == "eod_floor_realtime_breach":
+            self._peak = max(self._peak, self.balance)
+            self.floor = max(self.floor, self._compute_floor())
+        else:
+            self._raise_peak(self.balance)
         self._observe(self.balance)
         return None
 

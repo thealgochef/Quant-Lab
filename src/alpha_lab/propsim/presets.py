@@ -18,9 +18,10 @@ PRESETS: dict[str, Ruleset] = {
         trail_style="eod_floor_realtime_breach",
         trail_locks_at_start=True,
         dll_amount=1_000.0,
-        dll_soft=True,
+        dll_hard=False,
         consistency_pct=50.0,
         min_days=None,
+        max_eval_days=None,
         point_value=20.0,
     ),
 }

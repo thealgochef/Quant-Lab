@@ -43,9 +43,10 @@ def _ruleset(**overrides) -> Ruleset:
         "trail_style": "eod_floor_realtime_breach",
         "trail_locks_at_start": True,
         "dll_amount": 1_000.0,
-        "dll_soft": True,
+        "dll_hard": False,
         "consistency_pct": 50.0,
         "min_days": None,
+        "max_eval_days": None,
         "point_value": 20.0,
     }
     base.update(overrides)
@@ -138,7 +139,7 @@ def test_dll_soft_excursion_force_closes_at_the_dll_level():
 
 
 def test_dll_hard_is_a_bust():
-    rs = _ruleset(dll_soft=False, trail_amount=10_000.0, consistency_pct=None,
+    rs = _ruleset(dll_hard=True, trail_amount=10_000.0, consistency_pct=None,
                   profit_target=1e9)
     result = walk_days(
         _days([_trade("2026-01-05", -60.0)]),  # -1200 <= -1000 at the close
@@ -162,6 +163,160 @@ def test_floor_beats_dll_when_both_barriers_cross_on_the_adverse_leg():
     )
     assert result.verdict == "bust"
     assert result.bust_reason == "trailing_floor"
+
+
+def test_intraday_peak_trail_mfe_then_retrace_busts_where_eod_floor_survives():
+    """THE separating case: an identical day — a run-up trade, then a trade
+    whose path pokes +20pts (MFE) before retracing to −85pts. The unrealized
+    peak trails the floor to $49,900; the retrace settles at $49,800 → bust.
+    The EOD-floor style never ratchets intraday ($48,000 all day) → survives.
+    """
+    day_blocks = _days(
+        [
+            _trade("2026-01-05", 75.0, mae=5.0, mfe=75.0),  # 51_500; peak trail
+            _trade("2026-01-05", -85.0, mae=85.0, mfe=20.0),  # +400 peak, then retrace
+        ]
+    )
+    base = {"dll_amount": None, "consistency_pct": None, "profit_target": 1e9}
+
+    intraday = walk_days(
+        day_blocks,
+        _ruleset(trail_style="intraday_peak_trail", **base),
+        column="optimistic",
+        breach_mode="unrealized_adverse_first",
+    )
+    # t2's favorable leg: peak 51_900 -> floor 49_900; settle 49_800 <= floor.
+    assert intraday.verdict == "bust"
+    assert intraday.bust_reason == "trailing_floor"
+    assert intraday.days_to_outcome == 1
+    assert intraday.final_balance == 49_800.0
+
+    eod = walk_days(
+        day_blocks,
+        _ruleset(**base),
+        column="optimistic",
+        breach_mode="unrealized_adverse_first",
+    )
+    assert eod.verdict == "incomplete"
+    assert eod.final_balance == 49_800.0
+
+    # realized_only intraday trail: the peak comes from CLOSES (51_500 ->
+    # floor 49_500); without the unrealized +20pt leg the same settle survives.
+    realized = walk_days(
+        day_blocks,
+        _ruleset(trail_style="intraday_peak_trail", **base),
+        column="optimistic",
+        breach_mode="realized_only",
+    )
+    assert realized.verdict == "incomplete"
+    assert realized.final_balance == 49_800.0
+
+
+def test_intraday_peak_trail_floor_locks_at_starting_balance():
+    """The intraday peak trail still caps the floor at start when locking."""
+    rs = _ruleset(
+        trail_style="intraday_peak_trail",
+        dll_amount=None, consistency_pct=None, profit_target=1e9,
+    )
+    walk = EvaluationWalk(rs, column="optimistic", breach_mode="realized_only")
+    walk.play_day([_trade("2026-01-05", 120.0)])  # close 52_400; uncapped 50_400
+    assert walk.floor == 50_000.0
+
+
+def test_static_floor_never_ratchets():
+    """start − trail forever: the run-up that locks the EOD floor at start
+    does NOT move the static floor, and the drawdown that busts the EOD walk
+    leaves the static walk alive."""
+    day_blocks = _days(
+        [_trade("2026-01-05", 100.0)],  # 52_000
+        [_trade("2026-01-06", -150.0)],  # 49_000
+    )
+    base = {"dll_amount": None, "consistency_pct": None, "profit_target": 1e9}
+
+    rs_static = _ruleset(trail_style="static_floor", **base)
+    walk = EvaluationWalk(rs_static, column="optimistic", breach_mode="realized_only")
+    assert walk.floor == 48_000.0
+    walk.play_day(day_blocks[0][1])
+    assert walk.floor == 48_000.0  # never ratchets, even after a new high
+    walk.play_day(day_blocks[1][1])
+    assert walk.floor == 48_000.0
+    result = walk.result()
+    assert result.verdict == "incomplete"
+    assert result.final_balance == 49_000.0
+
+    eod = walk_days(
+        day_blocks, _ruleset(**base), column="optimistic", breach_mode="realized_only"
+    )
+    assert eod.verdict == "bust"  # floor locked at 50_000 after day 1
+    assert eod.days_to_outcome == 2
+
+
+def test_expiry_lands_expired_on_day_max_plus_one():
+    """Day max+1 may not be traded: the attempt lands "expired" untraded."""
+    rs = _ruleset(dll_amount=None, consistency_pct=None, max_eval_days=2)
+    walk = EvaluationWalk(rs, column="optimistic", breach_mode="realized_only")
+    assert walk.play_day([_trade("2026-01-05", 10.0)]) is None
+    assert walk.play_day([_trade("2026-01-06", 10.0)]) is None
+    assert walk.play_day([_trade("2026-01-07", 10.0)]) == "expired"
+    result = walk.result()
+    assert result.verdict == "expired"
+    assert result.days_to_outcome == 3  # day max+1
+    assert result.days_walked == 2
+    assert result.final_balance == 50_400.0  # the day-3 trade never happened
+    with pytest.raises(RuntimeError, match="already terminated"):
+        walk.play_day([_trade("2026-01-08", 1.0)])
+
+
+def test_verdicts_on_the_last_budget_day_still_land():
+    """Expiry only fires on day max+1 — day max itself can pass or bust."""
+    passing = walk_days(
+        _days([_trade("2026-01-05", 200.0)]),
+        _ruleset(dll_amount=None, consistency_pct=None, max_eval_days=1),
+        column="optimistic",
+        breach_mode="realized_only",
+    )
+    assert passing.verdict == "pass"
+    assert passing.days_to_outcome == 1
+
+    busting = walk_days(
+        _days([_trade("2026-01-05", -200.0)]),
+        _ruleset(dll_amount=None, consistency_pct=None, max_eval_days=1),
+        column="optimistic",
+        breach_mode="realized_only",
+    )
+    assert busting.verdict == "bust"
+    assert busting.days_to_outcome == 1
+
+
+def test_hard_dll_busts_where_soft_halts_the_same_sequence():
+    """THE SAME day sequence: -1,200 running crosses the 1,000 DLL — soft
+    halts the day and walks on; hard is a bust at the crossing close."""
+    day_blocks = _days(
+        [
+            _trade("2026-01-05", -30.0),
+            _trade("2026-01-05", -30.0),  # running -1_200 <= -1_000
+            _trade("2026-01-05", 50.0),
+        ]
+    )
+    base = {"trail_amount": 10_000.0, "consistency_pct": None, "profit_target": 1e9}
+
+    soft = walk_days(
+        day_blocks, _ruleset(dll_hard=False, **base),
+        column="optimistic", breach_mode="realized_only",
+    )
+    assert soft.verdict == "incomplete"
+    assert soft.final_balance == 48_800.0
+    assert soft.halted_days == 1
+    assert soft.skipped_trades == 1
+
+    hard = walk_days(
+        day_blocks, _ruleset(dll_hard=True, **base),
+        column="optimistic", breach_mode="realized_only",
+    )
+    assert hard.verdict == "bust"
+    assert hard.bust_reason == "daily_loss_limit"
+    assert hard.days_to_outcome == 1
+    assert hard.final_balance == 48_800.0  # the +50pt trade never traded
 
 
 def test_realized_bust_on_the_trailing_floor_uses_lte():

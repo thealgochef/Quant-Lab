@@ -1,10 +1,11 @@
 """Day-level block bootstrap Monte Carlo over the evaluation walk.
 
 Whole trading days are resampled with replacement (a day's trades stay
-together, in their intra-day order) and each run walks until PASS or BUST —
-an evaluation has no calendar limit — bounded by ``max_days`` as a runaway
-guard (runs that hit it count as ``incomplete``). Seeded and deterministic:
-one ``numpy`` generator drawn sequentially.
+together, in their intra-day order) and each run walks until a verdict — PASS,
+BUST, or EXPIRED when the ruleset carries a ``max_eval_days`` budget — bounded
+by ``max_days`` as a runaway guard (runs that hit it count as ``incomplete``;
+distinct from ruleset expiry). Seeded and deterministic: one ``numpy``
+generator drawn sequentially.
 """
 
 from __future__ import annotations
@@ -48,6 +49,7 @@ class BootstrapSummary:
     max_days: int
     p_pass: float
     p_bust: float
+    p_expired: float
     p_incomplete: float
     pass_ci95_low: float
     pass_ci95_high: float
@@ -79,6 +81,7 @@ def run_bootstrap(
     n_days = len(day_blocks)
     passes = 0
     busts = 0
+    expired = 0
     days_to_pass: list[int] = []
     days_to_bust: list[int] = []
     bust_reasons: Counter[str] = Counter()
@@ -98,7 +101,9 @@ def run_bootstrap(
             busts += 1
             days_to_bust.append(result.days_to_outcome or 0)
             bust_reasons[result.bust_reason or "unknown"] += 1
-    incomplete = n_runs - passes - busts
+        elif verdict == "expired":
+            expired += 1
+    incomplete = n_runs - passes - busts - expired
     ci_low, ci_high = wilson_interval(passes, n_runs)
 
     def _pct(values: list[int], q: float) -> float | None:
@@ -110,6 +115,7 @@ def run_bootstrap(
         max_days=max_days,
         p_pass=passes / n_runs,
         p_bust=busts / n_runs,
+        p_expired=expired / n_runs,
         p_incomplete=incomplete / n_runs,
         pass_ci95_low=ci_low,
         pass_ci95_high=ci_high,

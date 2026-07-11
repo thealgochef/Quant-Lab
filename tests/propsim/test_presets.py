@@ -15,9 +15,10 @@ def test_topstep_50k_ratified_parameters():
     assert rs.trail_style == "eod_floor_realtime_breach"
     assert rs.trail_locks_at_start is True
     assert rs.dll_amount == 1_000.0
-    assert rs.dll_soft is True
+    assert rs.dll_hard is False  # soft: a DLL touch halts the day
     assert rs.consistency_pct == 50.0
     assert rs.min_days is None
+    assert rs.max_eval_days is None
     assert rs.point_value == 20.0
 
 
