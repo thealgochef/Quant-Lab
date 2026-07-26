@@ -41,7 +41,10 @@ dev = [
     "pytest>=7.4",
     "pytest-asyncio>=0.23",
     "pytest-cov>=4.1",
-    "ruff>=0.3",
+    # Ceiling matches SC/TL: ruff 0.16.0's default-rule expansion reds cold installs. This
+    # tree is clean under 0.16 today (the explicit lint.select below shields it), so the
+    # ceiling is prophylactic — it keeps all three repos on one linter across cold runs.
+    "ruff>=0.3,<0.16",
     "mypy>=1.8",
     "pandas-stubs>=2.1",
     "aiosqlite>=0.20",
