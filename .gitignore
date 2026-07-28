@@ -45,3 +45,18 @@ data/processed/
 *~
 .DS_Store
 Thumbs.db
+
+# (2026-07 cleanup) window artifacts at the repo root; archived copies live under docs/archive/windows/
+/*_RECON.md
+/*_DIFF.txt
+/*_REPORT.md
+/*_BASELINE.md
+/*_CENSUS.md
+/*_REVIEW.txt
+/scratch_*
+/*.out
+/_*.out
+/route_seam_report*.json
+/.w3_new_bundle_name
+*.code-workspace
+/.pytest_tmp/
