@@ -1,0 +1,2700 @@
+PROP-SIM QL DIFF — 76546b0..1ef0ebe (platform-refactor, LOCAL, not pushed)
+NOTE: includes f247046 (ENV-FIX, committed pre-window) — it RIDES this window's greenlight.
+Commits (oldest first):
+  f247046 fix(acceptance): live Strategy-Core sys.path becomes opt-in (ENV-FIX)
+  86654c7 feat(oos): per-row labeler outcome columns on fresh saves - max_mfe_pts/max_mae_pts/entry_price/resolution_type (PROP-SIM P1, D-038)
+  dbf73d8 feat(propsim): prop-firm evaluation walker - engine, presets, bootstrap MC, loaders, CLI (PROP-SIM P2)
+  1ef0ebe fix(propsim): dedup restart-duplicated trades in both loaders + NaN-points guards (PROP-SIM P4 verify: PROPSIM-L1 major, PROPSIM-L2, PS-1)
+
+ ARCHITECTURE.md                                    |   4 +
+ docs/DECISIONS.md                                  |   9 +
+ docs/ML_TRAINING_WORKBENCH.md                      |   2 +-
+ scripts/ml_training_tab.py                         |  54 ++-
+ scripts/run_databento_acceptance.py                |  29 +-
+ .../agents/data_infra/ml/engine_decision.py        |   6 +
+ src/alpha_lab/propsim/__init__.py                  |  32 ++
+ src/alpha_lab/propsim/__main__.py                  |   7 +
+ src/alpha_lab/propsim/bootstrap.py                 | 121 ++++++
+ src/alpha_lab/propsim/cli.py                       | 138 +++++++
+ src/alpha_lab/propsim/engine.py                    | 216 +++++++++++
+ src/alpha_lab/propsim/loaders.py                   | 411 +++++++++++++++++++++
+ src/alpha_lab/propsim/models.py                    |  78 ++++
+ src/alpha_lab/propsim/presets.py                   |  36 ++
+ src/alpha_lab/propsim/report.py                    | 190 ++++++++++
+ tests/agents/test_databento_acceptance_cli.py      |  30 ++
+ tests/agents/test_ml_training_reporting.py         | 137 ++++++-
+ tests/propsim/__init__.py                          |   0
+ tests/propsim/test_bootstrap.py                    | 117 ++++++
+ tests/propsim/test_cli.py                          | 102 +++++
+ tests/propsim/test_engine.py                       | 269 ++++++++++++++
+ tests/propsim/test_loaders.py                      | 320 ++++++++++++++++
+ tests/propsim/test_presets.py                      |  28 ++
+ tests/propsim/test_report.py                       |  50 +++
+ 24 files changed, 2380 insertions(+), 6 deletions(-)
+
+diff --git a/ARCHITECTURE.md b/ARCHITECTURE.md
+index b430b6f..5e77408 100644
+--- a/ARCHITECTURE.md
++++ b/ARCHITECTURE.md
+@@ -81,6 +81,10 @@ Key modules:
+ 
+ Session-scope experiments are explicit research config. The default is to train/evaluate on `asia`, `london`, and `ny`, while production-gate diagnostics remain NY-only. Presets such as `ny_only`, `asia_only`, `london_only`, `asia_london_only`, and `all_sessions_all_gates` apply after dataset generation so caches stay reusable while fold training, OOS metrics, final refit, and gate reporting stay auditable.
+ 
++### 2b. Prop-firm evaluation walker (`alpha_lab.propsim`) — model-selection consumer
++
++Purpose: pass-probability for prop-firm evaluations (TopStep 50K is preset one) from per-trade equity paths — the PROP-SIM window's barrier-options walker. Pure simulation core (no Strategy-Core dependency): `models.py` (TradePath/Ruleset/WalkResult), `presets.py` (registry; presets are data), `engine.py` (the EOD-ratcheted trailing floor with real-time breach, soft/hard daily-loss limit, consistency rule; breach modes `realized_only` and `unrealized_adverse_first` are both always computed), `bootstrap.py` (seeded day-level block bootstrap Monte Carlo), `loaders.py` (Trade-Lab executions+journal join / journal-outcomes evidence mode / bundle `oos_predictions.parquet`), `report.py` + CLI `python -m alpha_lab.propsim`. OOS parquets predating PROP-SIM P1 (no `max_mfe_pts`/`max_mae_pts`) degrade the unrealized mode to realized-only with a stated reason (D-038).
++
+ ### 3. Retained legacy compatibility/export path
+ 
+ The older `src/alpha_lab/experiment/`, `scripts/experiment_tab.py`, and `scripts/train_dashboard_model.py` path is retained as historical/compatibility tooling. It is **not** the canonical Strategy-Core v3 bundle path.
+diff --git a/docs/DECISIONS.md b/docs/DECISIONS.md
+index 491ee95..25ef9aa 100644
+--- a/docs/DECISIONS.md
++++ b/docs/DECISIONS.md
+@@ -320,3 +320,12 @@ This prevents re-litigating settled questions across sessions.
+ **Trade-off**: If §9.10 lands later and a plugin-path consumer appears, that path needs its own parity evidence before serving.
+ 
+ ---
++
++## D-038: OOS Predictions Carry Per-Row Labeler Outcome Columns (PROP-SIM P1)
++**Date**: 2026-07-10
++**Context**: The prop-firm walker (`alpha_lab.propsim`) needs per-trade excursions (MFE/MAE) and resolution metadata to simulate intraday equity paths from a bundle's OOS rows. The labeler already computes all of it; the OOS writer dropped it at the fold-assembly seam.
++**Decision**: `oos_predictions.parquet` gains four per-row columns on FRESH saves: `max_mfe_pts` / `max_mae_pts` (threaded verbatim from the training frame's `max_mfe`/`max_mae` — engine `OutcomeResult` values, never recomputed), `entry_price` (the honest decision-time fill; the stream builder now writes it into the dataset row using the SAME injected trade-price accessor at the SAME decision instant the engine used), and `resolution_type` (the ratified label mapping mirrored from Trade-Lab serving: tradeable_reversal → tp_hit, trap_reversal/aggressive_blowthrough → sl_hit). Existing bundles are NOT retrofitted; consumers requiring these columns must degrade to realized-only behavior with a stated reason when they are absent. Warm dataset caches predating `entry_price` (including the ratified D-036 `ml_utility_7850272e` fleet) yield NaN for that column until a day is rebuilt — the cache tag hashes config, not row schema, so caches are deliberately not invalidated.
++**Rationale**: Threading beats recomputation (zero drift risk for MFE/MAE); the entry accessor call is the one expression the engine's honest-entry contract documents, and the label mapping is the exact serving-side convention, so neither introduces a second definition.
++**Trade-off**: `entry_price` on warm-cache trains is NaN-degraded until caches roll; a batch `resolution_type` beyond the three-class mapping (e.g. session_end) does not exist by construction — the honest resolver never force-labels.
++
++---
+diff --git a/docs/ML_TRAINING_WORKBENCH.md b/docs/ML_TRAINING_WORKBENCH.md
+index 4a279d1..f83e1ab 100644
+--- a/docs/ML_TRAINING_WORKBENCH.md
++++ b/docs/ML_TRAINING_WORKBENCH.md
+@@ -167,7 +167,7 @@ The UI reports metrics from concatenated OOS fold predictions:
+ - Utility summaries for OOS predictions; interpret these as model diagnostics, not production PnL proof.
+ - Dashboard-utility production-gate OOS diagnostics: configured gate sessions, defaulting to `session == ny`, and `P(tradeable_reversal) >= 0.70` trade count, precision, coverage, eligible-session coverage, and idealized 15/30 expectancy.
+ - Session-filtered OOS diagnostics so the NY execution population can be separated from aggregate all-session metrics.
+-- Optional `oos_predictions.parquet` with fold, timestamp, session, raw class, prediction, probabilities, a configured runtime-session gate flag, and the `0.70/ny` gate flag for offline error analysis.
++- Optional `oos_predictions.parquet` with fold, timestamp, session, raw class, prediction, probabilities, a configured runtime-session gate flag, and the `0.70/ny` gate flag for offline error analysis. Since PROP-SIM P1 fresh saves also carry per-row labeler outcome columns — `max_mfe_pts`, `max_mae_pts`, `entry_price` (threaded from the training frame, never recomputed; NaN when the source frame/cache predates the column) and `resolution_type` (the ratified label mapping: tradeable_reversal → tp_hit, trap/blowthrough → sl_hit) — the prop-firm walker's inputs. Existing bundles are NOT retrofitted.
+ 
+ Quality gates:
+ 
+diff --git a/scripts/ml_training_tab.py b/scripts/ml_training_tab.py
+index 547901e..caa220d 100644
+--- a/scripts/ml_training_tab.py
++++ b/scripts/ml_training_tab.py
+@@ -311,6 +311,19 @@ def run_walk_forward_training(
+     y = valid[label_column].astype(int)
+     timestamps = pd.to_datetime(timestamps).reset_index(drop=True)
+     sessions = pd.Series(sessions, dtype="object").reset_index(drop=True)
++    # PROP-SIM P1: per-row outcome passthroughs for the OOS writer, threaded from
++    # the training frame (the labeler computes them; never recomputed here).
++    # Positional arrays so fold test_idx indexing matches timestamps/sessions.
++    # Frames/caches predating a column (e.g. warm D-036 caches lack entry_price)
++    # yield None -> the writer degrades that column to NaN.
++    outcome_passthrough: dict[str, np.ndarray | None] = {
++        col: (
++            pd.to_numeric(valid[col], errors="coerce").to_numpy(dtype=float)
++            if col in valid.columns
++            else None
++        )
++        for col in ("max_mfe", "max_mae", "entry_price")
++    }
+     if config.training_mode == "dashboard_utility":
+         training_session_mask = sessions.isin(
+             session_scope.training_sessions,
+@@ -518,6 +531,11 @@ def run_walk_forward_training(
+                 "prob_by_class": {
+                     str(cls): np.asarray(prob).flatten() for cls, prob in prob_by_class.items()
+                 },
++                # PROP-SIM P1: outcome passthroughs at the fold's test rows.
++                **{
++                    key: (arr[test_idx] if arr is not None else None)
++                    for key, arr in outcome_passthrough.items()
++                },
+             }
+         )
+         fold_details.append(
+@@ -1204,6 +1222,18 @@ def compute_oos_three_class_balance(
+     return {name: int(np.sum(raw_y == idx)) for idx, name in names.items()}
+ 
+ 
++#: The ratified label -> resolution-type mapping, mirrored from Trade-Lab serving
++#: (trade_lab.services.inference.resolution_adapter._RESOLUTION_TYPE_BY_LABEL):
++#: the tradeable reversal is the target (TP); both loss shapes (blowthrough, trap)
++#: are the stop (SL). The honest resolver never force-labels, so no other
++#: resolution type exists in the batch frame.
++RESOLUTION_TYPE_BY_LABEL = {
++    "tradeable_reversal": "tp_hit",
++    "trap_reversal": "sl_hit",
++    "aggressive_blowthrough": "sl_hit",
++}
++
++
+ def build_oos_predictions_frame(
+     fold_predictions: list[dict[str, object]],
+     *,
+@@ -1231,6 +1261,10 @@ def build_oos_predictions_frame(
+         "prob_tradeable_reversal",
+         "gate_0_70_runtime_sessions",
+         "gate_0_70_ny",
++        "max_mfe_pts",
++        "max_mae_pts",
++        "entry_price",
++        "resolution_type",
+     ]
+     for fold_data in fold_predictions:
+         y_true = np.asarray(fold_data["y_true"]).flatten().astype(int)
+@@ -1245,6 +1279,19 @@ def build_oos_predictions_frame(
+             int(cls): np.asarray(prob).flatten().astype(float)
+             for cls, prob in dict(prob_by_class_raw).items()
+         }
++
++        # PROP-SIM P1: per-row outcome passthroughs (NaN when the training frame
++        # lacked the column — pre-P1 folds, warm caches without entry_price).
++        def _outcome_field(name: str, *, fold_data=fold_data, n=n) -> np.ndarray:
++            vals = fold_data.get(name)
++            if vals is None:
++                return np.full(n, np.nan)
++            arr = np.asarray(vals, dtype=float).flatten()
++            return arr if len(arr) == n else np.full(n, np.nan)
++
++        max_mfe_vals = _outcome_field("max_mfe")
++        max_mae_vals = _outcome_field("max_mae")
++        entry_price_vals = _outcome_field("entry_price")
+         for i in range(n):
+             raw_label = raw_y[i]
+             try:
+@@ -1258,13 +1305,14 @@ def build_oos_predictions_frame(
+                 raw_pred_int = None
+             session = str(sessions[i])
+             prob_tradeable = float(prob_by_class.get(0, y_prob)[i]) if n else 0.0
++            label_name = class_names.get(raw_label_int)
+             row = {
+                 "fold": int(fold_data.get("fold", 0)),
+                 "timestamp": timestamps[i],
+                 "session": session,
+                 "binary_true_tradeable": int(y_true[i]),
+                 "label_encoded": raw_label_int,
+-                "label": class_names.get(raw_label_int),
++                "label": label_name,
+                 "pred_label_encoded": raw_pred_int,
+                 "pred_label": class_names.get(raw_pred_int),
+                 "prob_tradeable_reversal": prob_tradeable,
+@@ -1276,6 +1324,10 @@ def build_oos_predictions_frame(
+                     and "ny" in gate_sessions
+                     and prob_tradeable >= float(confidence_gate)
+                 ),
++                "max_mfe_pts": float(max_mfe_vals[i]),
++                "max_mae_pts": float(max_mae_vals[i]),
++                "entry_price": float(entry_price_vals[i]),
++                "resolution_type": RESOLUTION_TYPE_BY_LABEL.get(label_name),
+             }
+             for cls, name in class_names.items():
+                 probs = prob_by_class.get(cls)
+diff --git a/scripts/run_databento_acceptance.py b/scripts/run_databento_acceptance.py
+index 52983d2..8f34ab9 100644
+--- a/scripts/run_databento_acceptance.py
++++ b/scripts/run_databento_acceptance.py
+@@ -9,6 +9,10 @@ neither names a bundle), and the bundle's contract is validated through the
+ Strategy-Core REGISTRY SECTION HOOK (``validate_section_via_registry=True``)
+ — the typed plugin SectionModel, never a hand-built section.
+ 
++ENV-FIX: the contract loader imports the INSTALLED strategy-core package by
++default; set ``QL_ACCEPTANCE_USE_LIVE_SC=1`` to opt in to the live sibling
++checkout's ``src`` (``--strategy-core-root``) instead.
++
+ This wraps the dashboard session experiment CLI, audits the saved bundle, and
+ optionally runs the focused Quant-Lab + Strategy-Core contract tests. It is a
+ research-readiness check: weak models may be saved with an explicit failed-gate
+@@ -148,18 +152,35 @@ def _run_command(command: list[str], *, cwd: Path) -> dict[str, Any]:
+     }
+ 
+ 
++def _maybe_insert_live_strategy_core(strategy_core_root: Path) -> bool:
++    """Prepend the live checkout's src ONLY when QL_ACCEPTANCE_USE_LIVE_SC=1.
++
++    ENV-FIX: the default is the installed strategy-core package — the same
++    import the consumers serve from — so acceptance results describe the pin,
++    not whatever commit the sibling checkout happens to sit on. Returns True
++    iff the live checkout was inserted.
++    """
++
++    if os.environ.get("QL_ACCEPTANCE_USE_LIVE_SC") != "1":
++        return False
++    strategy_src = strategy_core_root / "src"
++    if strategy_src.exists():
++        sys.path.insert(0, str(strategy_src))
++        return True
++    return False
++
++
+ def _load_strategy_contract_summary(
+     strategy_json: Path,
+     strategy_core_root: Path,
+ ) -> dict[str, Any]:
+     """Validate strategy.json through Strategy-Core's fail-closed loader."""
+ 
+-    strategy_src = strategy_core_root / "src"
+-    if strategy_src.exists():
+-        sys.path.insert(0, str(strategy_src))
++    live_checkout = _maybe_insert_live_strategy_core(strategy_core_root)
+     # W2 P3c: register the production plugin so the loader's registry hook can
+     # type the section — the acceptance path consumes the plugin SectionModel,
+     # never a hand-built section.
++    import strategy_core  # noqa: PLC0415
+     import strategy_core.strategies.touch_reversal  # noqa: F401, PLC0415
+     from strategy_core import CONTRACT_VERSION, PLATFORM_VERSION  # noqa: PLC0415
+     from strategy_core.contract.loader import load_strategy_contract  # noqa: PLC0415
+@@ -171,6 +192,8 @@ def _load_strategy_contract_summary(
+     )
+     return {
+         "loader": "Strategy-Core",
++        "strategy_core_source": "live_checkout_src" if live_checkout else "installed_package",
++        "strategy_core_file": strategy_core.__file__,
+         "section_via_registry_hook": True,
+         "expected_contract_version": CONTRACT_VERSION,
+         "expected_platform_version": PLATFORM_VERSION,
+diff --git a/src/alpha_lab/agents/data_infra/ml/engine_decision.py b/src/alpha_lab/agents/data_infra/ml/engine_decision.py
+index d0562e3..dadc900 100644
+--- a/src/alpha_lab/agents/data_infra/ml/engine_decision.py
++++ b/src/alpha_lab/agents/data_infra/ml/engine_decision.py
+@@ -783,6 +783,11 @@ def process_single_date_stream(
+         decision_time_et = pd.Timestamp(
+             touch.bar_ts_utc + timedelta(minutes=decision_offset)
+         ).tz_convert(_ET)
++        # PROP-SIM P1: the honest decision-time fill the excursions were anchored
++        # on — the SAME injected accessor at the SAME instant the engine used
++        # (strategy_core honest_entry: entry_price = trade_price_at(decision_ts));
++        # non-None here because a None fill would have dropped (no_fill) above.
++        entry_price = _price_at(touch.bar_ts_utc + timedelta(minutes=decision_offset))
+         row = {
+             "event_ts": bar_ts_et,
+             "date": date_str,
+@@ -799,6 +804,7 @@ def process_single_date_stream(
+             "label_encoded": result.label_encoded,
+             "max_mfe": result.max_mfe,
+             "max_mae": result.max_mae,
++            "entry_price": None if entry_price is None else float(entry_price),
+         }
+         row.update(features)
+ 
+diff --git a/src/alpha_lab/propsim/__init__.py b/src/alpha_lab/propsim/__init__.py
+new file mode 100644
+index 0000000..da10528
+--- /dev/null
++++ b/src/alpha_lab/propsim/__init__.py
+@@ -0,0 +1,32 @@
++"""Prop-firm evaluation walker (PROP-SIM): pass-probability from equity paths.
++
++Pure simulation core (`engine`, `bootstrap`) + source loaders (`loaders`) +
++preset registry (`presets`) + CLI (`python -m alpha_lab.propsim`). Presets are
++data — adding a firm needs no code (D-038 window; TopStep 50K is preset one).
++"""
++
++from alpha_lab.propsim.bootstrap import BootstrapSummary, run_bootstrap
++from alpha_lab.propsim.engine import (
++    BREACH_MODES,
++    FILL_COLUMNS,
++    EvaluationWalk,
++    group_by_day,
++    walk_days,
++)
++from alpha_lab.propsim.models import Ruleset, TradePath, WalkResult
++from alpha_lab.propsim.presets import PRESETS, ruleset_from_preset
++
++__all__ = [
++    "BREACH_MODES",
++    "FILL_COLUMNS",
++    "PRESETS",
++    "BootstrapSummary",
++    "EvaluationWalk",
++    "Ruleset",
++    "TradePath",
++    "WalkResult",
++    "group_by_day",
++    "ruleset_from_preset",
++    "run_bootstrap",
++    "walk_days",
++]
+diff --git a/src/alpha_lab/propsim/__main__.py b/src/alpha_lab/propsim/__main__.py
+new file mode 100644
+index 0000000..bfc934a
+--- /dev/null
++++ b/src/alpha_lab/propsim/__main__.py
+@@ -0,0 +1,7 @@
++"""Entry point: ``python -m alpha_lab.propsim``."""
++
++import sys
++
++from alpha_lab.propsim.cli import main
++
++sys.exit(main())
+diff --git a/src/alpha_lab/propsim/bootstrap.py b/src/alpha_lab/propsim/bootstrap.py
+new file mode 100644
+index 0000000..b1af93d
+--- /dev/null
++++ b/src/alpha_lab/propsim/bootstrap.py
+@@ -0,0 +1,121 @@
++"""Day-level block bootstrap Monte Carlo over the evaluation walk.
++
++Whole trading days are resampled with replacement (a day's trades stay
++together, in their intra-day order) and each run walks until PASS or BUST —
++an evaluation has no calendar limit — bounded by ``max_days`` as a runaway
++guard (runs that hit it count as ``incomplete``). Seeded and deterministic:
++one ``numpy`` generator drawn sequentially.
++"""
++
++from __future__ import annotations
++
++import math
++from collections import Counter
++from collections.abc import Sequence
++from dataclasses import dataclass
++from datetime import date
++
++import numpy as np
++
++from alpha_lab.propsim.engine import EvaluationWalk
++from alpha_lab.propsim.models import Ruleset, TradePath
++
++_WILSON_Z = 1.959963984540054  # 95%
++
++
++def wilson_interval(successes: int, trials: int) -> tuple[float, float]:
++    """95% Wilson score interval for a binomial proportion."""
++    if trials <= 0:
++        return (0.0, 1.0)
++    z2 = _WILSON_Z * _WILSON_Z
++    phat = successes / trials
++    denom = 1.0 + z2 / trials
++    center = (phat + z2 / (2.0 * trials)) / denom
++    half = (
++        _WILSON_Z
++        * math.sqrt(phat * (1.0 - phat) / trials + z2 / (4.0 * trials * trials))
++        / denom
++    )
++    return (max(0.0, center - half), min(1.0, center + half))
++
++
++@dataclass(frozen=True)
++class BootstrapSummary:
++    """Monte Carlo summary for one (fill column × breach mode) cell."""
++
++    n_runs: int
++    seed: int
++    max_days: int
++    p_pass: float
++    p_bust: float
++    p_incomplete: float
++    pass_ci95_low: float
++    pass_ci95_high: float
++    days_to_pass_median: float | None
++    days_to_pass_p10: float | None
++    days_to_pass_p90: float | None
++    days_to_bust_median: float | None
++    bust_reasons: dict[str, int]
++
++
++def run_bootstrap(
++    day_blocks: Sequence[tuple[date, Sequence[TradePath]]],
++    ruleset: Ruleset,
++    *,
++    column: str,
++    breach_mode: str,
++    n_runs: int = 10_000,
++    seed: int = 42,
++    max_days: int = 1_000,
++) -> BootstrapSummary:
++    """Bootstrap P(pass)/P(bust) and days-to-outcome quantiles."""
++    if not day_blocks:
++        msg = "day-level bootstrap requires at least one trading day of trades"
++        raise ValueError(msg)
++    if n_runs <= 0:
++        msg = f"n_runs must be positive, got {n_runs}"
++        raise ValueError(msg)
++    rng = np.random.default_rng(seed)
++    n_days = len(day_blocks)
++    passes = 0
++    busts = 0
++    days_to_pass: list[int] = []
++    days_to_bust: list[int] = []
++    bust_reasons: Counter[str] = Counter()
++    for _ in range(n_runs):
++        walk = EvaluationWalk(ruleset, column=column, breach_mode=breach_mode)
++        verdict: str | None = None
++        for _day in range(max_days):
++            _, day_trades = day_blocks[int(rng.integers(0, n_days))]
++            verdict = walk.play_day(day_trades)
++            if verdict is not None:
++                break
++        result = walk.result()
++        if verdict == "pass":
++            passes += 1
++            days_to_pass.append(result.days_to_outcome or 0)
++        elif verdict == "bust":
++            busts += 1
++            days_to_bust.append(result.days_to_outcome or 0)
++            bust_reasons[result.bust_reason or "unknown"] += 1
++    incomplete = n_runs - passes - busts
++    ci_low, ci_high = wilson_interval(passes, n_runs)
++
++    def _pct(values: list[int], q: float) -> float | None:
++        return float(np.percentile(np.asarray(values), q)) if values else None
++
++    return BootstrapSummary(
++        n_runs=n_runs,
++        seed=seed,
++        max_days=max_days,
++        p_pass=passes / n_runs,
++        p_bust=busts / n_runs,
++        p_incomplete=incomplete / n_runs,
++        pass_ci95_low=ci_low,
++        pass_ci95_high=ci_high,
++        days_to_pass_median=_pct(days_to_pass, 50),
++        days_to_pass_p10=_pct(days_to_pass, 10),
++        days_to_pass_p90=_pct(days_to_pass, 90),
++        days_to_bust_median=_pct(days_to_bust, 50),
++        bust_reasons=dict(sorted(bust_reasons.items())),
++    )
+diff --git a/src/alpha_lab/propsim/cli.py b/src/alpha_lab/propsim/cli.py
+new file mode 100644
+index 0000000..8404295
+--- /dev/null
++++ b/src/alpha_lab/propsim/cli.py
+@@ -0,0 +1,138 @@
++"""CLI for the prop-firm evaluation walker.
++
++Usage (spec form)::
++
++    python -m alpha_lab.propsim --source executions <dir> [--journal <dir>] \
++        --preset topstep_50k --column conservative --n 10000 --seed 42 --json out.json
++    python -m alpha_lab.propsim --oos <parquet> --preset topstep_50k ...
++    python -m alpha_lab.propsim --source journal <dir> --tp-points 15 --sl-points 15 ...
++
++For ``--oos`` the TP/SL barrier points resolve from (in order) the
++``--tp-points``/``--sl-points`` flags, then a ``strategy.json`` next to the
++parquet (``label_policy.tp_points``/``sl_points``); ``--source journal``
++requires the flags explicitly.
++"""
++
++from __future__ import annotations
++
++import argparse
++import json
++import sys
++from pathlib import Path
++
++from alpha_lab.propsim.engine import FILL_COLUMNS
++from alpha_lab.propsim.loaders import (
++    LoadedTrades,
++    load_executions_trades,
++    load_journal_trades,
++    load_oos_trades,
++)
++from alpha_lab.propsim.presets import PRESETS, ruleset_from_preset
++from alpha_lab.propsim.report import build_report, format_human
++
++_SOURCE_KINDS = ("executions", "journal")
++
++
++def build_parser() -> argparse.ArgumentParser:
++    parser = argparse.ArgumentParser(
++        prog="python -m alpha_lab.propsim",
++        description="Prop-firm evaluation walker: pass-probability from equity paths.",
++    )
++    parser.add_argument(
++        "--source",
++        nargs=2,
++        metavar=("KIND", "DIR"),
++        help=f"trade source: KIND in {{{', '.join(_SOURCE_KINDS)}}} + its directory",
++    )
++    parser.add_argument("--journal", type=Path, default=None,
++                        help="journal dir joined for MFE/MAE (executions source)")
++    parser.add_argument("--oos", type=Path, default=None,
++                        help="a bundle's oos_predictions.parquet")
++    parser.add_argument("--preset", default="topstep_50k", choices=sorted(PRESETS),
++                        help="ruleset preset (default: topstep_50k)")
++    parser.add_argument("--column", choices=[*FILL_COLUMNS, "both"], default="both",
++                        help="fill column(s) to evaluate (default: both)")
++    parser.add_argument("--n", type=int, default=10_000, dest="n_runs",
++                        help="bootstrap runs (default: 10000)")
++    parser.add_argument("--seed", type=int, default=42)
++    parser.add_argument("--max-days", type=int, default=1_000,
++                        help="runaway guard per bootstrap run (default: 1000)")
++    parser.add_argument("--json", type=Path, default=None, dest="json_out",
++                        help="write the full JSON payload here")
++    parser.add_argument("--tp-points", type=float, default=None)
++    parser.add_argument("--sl-points", type=float, default=None)
++    parser.add_argument("--tick-size", type=float, default=0.25,
++                        help="tick size for the journal conservative fill model")
++    parser.add_argument("--gate-column", default=None,
++                        help="OOS boolean gate column (default: all labeled rows)")
++    return parser
++
++
++def _resolve_tp_sl(args: argparse.Namespace) -> tuple[float, float]:
++    if args.tp_points is not None and args.sl_points is not None:
++        return float(args.tp_points), float(args.sl_points)
++    if args.oos is not None:
++        contract = args.oos.parent / "strategy.json"
++        if contract.is_file():
++            policy = json.loads(contract.read_text(encoding="utf-8")).get(
++                "label_policy", {}
++            )
++            tp = args.tp_points if args.tp_points is not None else policy.get("tp_points")
++            sl = args.sl_points if args.sl_points is not None else policy.get("sl_points")
++            if tp is not None and sl is not None:
++                return float(tp), float(sl)
++    msg = (
++        "TP/SL barrier points unresolved: pass --tp-points/--sl-points "
++        "(or point --oos at a bundle whose strategy.json carries label_policy)"
++    )
++    raise ValueError(msg)
++
++
++def _load(args: argparse.Namespace) -> LoadedTrades:
++    if (args.source is None) == (args.oos is None):
++        msg = "exactly one trade source required: --source KIND DIR | --oos PARQUET"
++        raise ValueError(msg)
++    if args.oos is not None:
++        tp, sl = _resolve_tp_sl(args)
++        return load_oos_trades(
++            args.oos, tp_points=tp, sl_points=sl, gate_column=args.gate_column
++        )
++    kind, path = args.source
++    if kind not in _SOURCE_KINDS:
++        msg = f"unknown --source kind {kind!r}; expected one of {', '.join(_SOURCE_KINDS)}"
++        raise ValueError(msg)
++    directory = Path(path)
++    if kind == "executions":
++        return load_executions_trades(directory, journal_dir=args.journal)
++    tp, sl = _resolve_tp_sl(args)
++    return load_journal_trades(
++        directory, tp_points=tp, sl_points=sl, tick_size=args.tick_size
++    )
++
++
++def main(argv: list[str] | None = None) -> int:
++    parser = build_parser()
++    args = parser.parse_args(argv)
++    try:
++        loaded = _load(args)
++        ruleset = ruleset_from_preset(args.preset)
++        columns = FILL_COLUMNS if args.column == "both" else (args.column,)
++        report = build_report(
++            loaded,
++            args.preset,
++            ruleset,
++            columns=columns,
++            n_runs=args.n_runs,
++            seed=args.seed,
++            max_days=args.max_days,
++        )
++    except (ValueError, FileNotFoundError) as exc:
++        print(f"propsim: {exc}", file=sys.stderr)
++        return 2
++    print(format_human(report))
++    if args.json_out is not None:
++        args.json_out.write_text(
++            json.dumps(report, indent=2, sort_keys=False), encoding="utf-8"
++        )
++        print(f"\nJSON written: {args.json_out}")
++    return 0
+diff --git a/src/alpha_lab/propsim/engine.py b/src/alpha_lab/propsim/engine.py
+new file mode 100644
+index 0000000..2339bab
+--- /dev/null
++++ b/src/alpha_lab/propsim/engine.py
+@@ -0,0 +1,216 @@
++"""The evaluation walk: barrier-options semantics over per-trade equity paths.
++
++Walks days in order, trades in intra-day order, at 1 contract. Balance updates
++on realized points (fill column selectable). The trailing floor ratchets on EOD
++balance highs (capped at the starting balance when the ruleset locks); breach
++is checked in real time at every equity observation the breach mode provides:
++
++- ``realized_only`` — equity observed at trade closes and EOD.
++- ``unrealized_adverse_first`` — each trade's path first visits
++  entry − MAE, then entry + MFE, then settles at its realized points. On the
++  adverse leg the floor and the daily-loss level are BARRIERS on one
++  monotonically falling equity path: whichever level is higher is touched
++  first. A soft-DLL touch force-closes the trade AT the DLL level (day halted,
++  not a bust); a floor touch is a bust. Trades without excursions (``mae_pts``
++  is None/NaN) contribute realized-only observations.
++
++PASS is evaluated at EOD: total profit ≥ target, min-days satisfied, and (when
++a consistency rule exists) best single day ≤ pct × total — otherwise the walk
++keeps going and later days can dilute the ratio.
++"""
++
++from __future__ import annotations
++
++import math
++from collections.abc import Iterable, Sequence
++from datetime import date
++
++from alpha_lab.propsim.models import Ruleset, TradePath, WalkResult
++
++BREACH_MODES = ("realized_only", "unrealized_adverse_first")
++FILL_COLUMNS = ("optimistic", "conservative")
++
++_SUPPORTED_TRAIL_STYLES = ("eod_floor_realtime_breach",)
++
++
++def _excursion(value: float | None) -> float | None:
++    """A usable non-negative excursion magnitude, or None (NaN-safe)."""
++    if value is None:
++        return None
++    value = float(value)
++    if math.isnan(value):
++        return None
++    return abs(value)
++
++
++class EvaluationWalk:
++    """Stateful walk over trading days; feed days until a verdict lands."""
++
++    def __init__(self, ruleset: Ruleset, *, column: str, breach_mode: str) -> None:
++        if ruleset.trail_style not in _SUPPORTED_TRAIL_STYLES:
++            msg = (
++                f"Unsupported trail_style {ruleset.trail_style!r}. "
++                f"Supported: {', '.join(_SUPPORTED_TRAIL_STYLES)}"
++            )
++            raise ValueError(msg)
++        if column not in FILL_COLUMNS:
++            msg = f"Unknown fill column {column!r}. Known: {', '.join(FILL_COLUMNS)}"
++            raise ValueError(msg)
++        if breach_mode not in BREACH_MODES:
++            msg = f"Unknown breach mode {breach_mode!r}. Known: {', '.join(BREACH_MODES)}"
++            raise ValueError(msg)
++        self._rs = ruleset
++        self._column = column
++        self._mode = breach_mode
++        self.balance = ruleset.starting_balance
++        # The starting balance counts as the day-0 EOD: day 1's floor is
++        # start − trail.
++        self._eod_peak = ruleset.starting_balance
++        self.floor = self._compute_floor()
++        self._day_pnls: list[float] = []
++        self._days = 0
++        self._halted_days = 0
++        self._skipped_trades = 0
++        self._verdict: str | None = None
++        self._bust_reason: str | None = None
++        self._days_to_outcome: int | None = None
++        self._min_floor_distance = ruleset.starting_balance - self.floor
++
++    def _compute_floor(self) -> float:
++        floor = self._eod_peak - self._rs.trail_amount
++        if self._rs.trail_locks_at_start:
++            floor = min(floor, self._rs.starting_balance)
++        return floor
++
++    def _points(self, trade: TradePath) -> float:
++        if self._column == "conservative":
++            return trade.points_conservative
++        return trade.points_optimistic
++
++    def _observe(self, equity: float) -> None:
++        self._min_floor_distance = min(self._min_floor_distance, equity - self.floor)
++
++    def _bust(self, reason: str, day_start_balance: float) -> str:
++        self._verdict = "bust"
++        self._bust_reason = reason
++        self._days_to_outcome = self._days + 1
++        # Bank the partial day so best-day bookkeeping stays coherent.
++        self._day_pnls.append(self.balance - day_start_balance)
++        self._days += 1
++        return "bust"
++
++    def play_day(self, trades: Sequence[TradePath]) -> str | None:
++        """Play one trading day; returns the verdict if it lands, else None."""
++        if self._verdict is not None:
++            msg = f"walk already terminated with verdict {self._verdict!r}"
++            raise RuntimeError(msg)
++        rs = self._rs
++        day_start = self.balance
++        halted = False
++        for trade in trades:
++            if halted:
++                self._skipped_trades += 1
++                continue
++            pnl = self._points(trade) * rs.point_value
++            mae = _excursion(trade.mae_pts) if self._mode == "unrealized_adverse_first" else None
++            if mae is not None:
++                adverse_equity = self.balance - mae * rs.point_value
++                dll_level = (
++                    day_start - rs.dll_amount if rs.dll_amount is not None else None
++                )
++                floor_crossed = adverse_equity <= self.floor
++                dll_crossed = dll_level is not None and adverse_equity <= dll_level
++                if floor_crossed and (not dll_crossed or self.floor >= dll_level):
++                    # The floor is the first (highest) barrier on the falling leg.
++                    self._observe(adverse_equity)
++                    return self._bust("trailing_floor", day_start)
++                if dll_crossed:
++                    # The DLL is touched first: force-close AT the DLL level —
++                    # the deeper excursion never happens because we are flat.
++                    self._observe(dll_level)
++                    self.balance = dll_level
++                    if not rs.dll_soft:
++                        return self._bust("daily_loss_limit", day_start)
++                    halted = True
++                    continue
++                self._observe(adverse_equity)
++            # Settle at the realized points.
++            self.balance += pnl
++            self._observe(self.balance)
++            if self.balance <= self.floor:
++                return self._bust("trailing_floor", day_start)
++            if rs.dll_amount is not None and (self.balance - day_start) <= -rs.dll_amount:
++                if not rs.dll_soft:
++                    return self._bust("daily_loss_limit", day_start)
++                halted = True
++        # End of day.
++        self._days += 1
++        if halted:
++            self._halted_days += 1
++        self._day_pnls.append(self.balance - day_start)
++        self._observe(self.balance)
++        if self.balance <= self.floor:
++            self._verdict = "bust"
++            self._bust_reason = "trailing_floor"
++            self._days_to_outcome = self._days
++            return "bust"
++        total = self.balance - rs.starting_balance
++        if total >= rs.profit_target and (rs.min_days is None or self._days >= rs.min_days):
++            best_day = max(self._day_pnls)
++            if rs.consistency_pct is None or best_day <= (rs.consistency_pct / 100.0) * total:
++                self._verdict = "pass"
++                self._days_to_outcome = self._days
++                return "pass"
++        # Ratchet the floor on the EOD balance (never moves down).
++        self._eod_peak = max(self._eod_peak, self.balance)
++        self.floor = max(self.floor, self._compute_floor())
++        self._observe(self.balance)
++        return None
++
++    @property
++    def verdict(self) -> str | None:
++        return self._verdict
++
++    def result(self) -> WalkResult:
++        total = self.balance - self._rs.starting_balance
++        best_day_ratio: float | None = None
++        if self._day_pnls and total > 0:
++            best_day_ratio = max(self._day_pnls) / total
++        verdict = self._verdict or ("incomplete" if self._days else "no_trades")
++        return WalkResult(
++            verdict=verdict,
++            days_to_outcome=self._days_to_outcome,
++            bust_reason=self._bust_reason,
++            best_day_ratio=best_day_ratio,
++            min_floor_distance=self._min_floor_distance if self._days else None,
++            final_balance=self.balance,
++            days_walked=self._days,
++            halted_days=self._halted_days,
++            skipped_trades=self._skipped_trades,
++        )
++
++
++def group_by_day(trades: Iterable[TradePath]) -> list[tuple[date, list[TradePath]]]:
++    """Chronological (day, trades-in-entry-order) blocks for walking/resampling."""
++    by_day: dict[date, list[TradePath]] = {}
++    for trade in trades:
++        by_day.setdefault(trade.day, []).append(trade)
++    return [
++        (day, sorted(day_trades, key=lambda t: t.entry_ts))
++        for day, day_trades in sorted(by_day.items())
++    ]
++
++
++def walk_days(
++    day_blocks: Sequence[tuple[date, Sequence[TradePath]]],
++    ruleset: Ruleset,
++    *,
++    column: str,
++    breach_mode: str,
++) -> WalkResult:
++    """The as-sequenced historical walk over the given day blocks."""
++    walk = EvaluationWalk(ruleset, column=column, breach_mode=breach_mode)
++    for _, day_trades in day_blocks:
++        if walk.play_day(day_trades) is not None:
++            break
++    return walk.result()
+diff --git a/src/alpha_lab/propsim/loaders.py b/src/alpha_lab/propsim/loaders.py
+new file mode 100644
+index 0000000..70af29d
+--- /dev/null
++++ b/src/alpha_lab/propsim/loaders.py
+@@ -0,0 +1,411 @@
++"""Source loaders normalizing trades into ``TradePath`` rows.
++
++Three sources:
++
++- ``load_executions_trades`` — a Trade-Lab executions directory (per-trading-day
++  JSONL written by the paper-execution tracker; ``close`` rows are
++  self-contained and carry BOTH fill columns) joined with prediction-journal
++  ``outcome`` rows on ``prediction_id`` for MFE/MAE.
++- ``load_journal_trades`` — EVIDENCE MODE: every resolved prediction-journal
++  outcome treated as a 1-contract trade (includes outcomes whose predictions
++  were serving-ineligible — stated in the notes). Points derive from the
++  resolution barriers (tp_hit → +tp, sl_hit → −sl); the conservative column
++  mirrors the Trade-Lab tracker's fill model (entry 1 tick adverse; SL exit 1
++  tick worse; TP exits at the barrier in both columns).
++- ``load_oos_trades`` — a bundle's ``oos_predictions.parquet``. Post-P1 files
++  carry ``max_mfe_pts``/``max_mae_pts``/``entry_price``/``resolution_type``;
++  pre-P1 files degrade to realized-only with a stated reason. OOS fills are
++  idealized: the conservative column EQUALS the optimistic one (no synthetic
++  slippage model is invented), which the notes state.
++
++Trading-day dating mirrors Trade-Lab's canonical 18:00 America/New_York roll
++(``trade_lab.domain.trading_day``); trades are dated by ENTRY.
++"""
++
++from __future__ import annotations
++
++import json
++import math
++from dataclasses import dataclass, field
++from datetime import date, datetime, time, timedelta
++from pathlib import Path
++from zoneinfo import ZoneInfo
++
++import pandas as pd
++
++from alpha_lab.propsim.models import TradePath
++
++_ET = ZoneInfo("America/New_York")
++_TRADING_DAY_BOUNDARY = time(18, 0)
++
++#: The ratified label -> resolution mapping (mirrors Trade-Lab serving and the
++#: PROP-SIM P1 OOS writer) for pre-P1 parquets lacking ``resolution_type``.
++_RESOLUTION_TYPE_BY_LABEL = {
++    "tradeable_reversal": "tp_hit",
++    "trap_reversal": "sl_hit",
++    "aggressive_blowthrough": "sl_hit",
++}
++
++
++def trading_day_for(ts_utc: datetime) -> date:
++    """The trading day a UTC instant belongs to: ``[prev 18:00 ET, 18:00 ET)``."""
++    local = ts_utc.astimezone(_ET)
++    day = local.date()
++    if local.time() >= _TRADING_DAY_BOUNDARY:
++        day += timedelta(days=1)
++    return day
++
++
++@dataclass(frozen=True)
++class LoadedTrades:
++    """Normalized trades + provenance for the report layer."""
++
++    trades: list[TradePath]
++    source: str
++    excursions_available: bool
++    degradation_reason: str | None
++    notes: list[str] = field(default_factory=list)
++
++
++def _parse_ts(value: object) -> datetime | None:
++    if not value or not isinstance(value, str):
++        return None
++    try:
++        return datetime.fromisoformat(value)
++    except ValueError:
++        return None
++
++
++def _finite(value: object) -> float | None:
++    """A finite float, or None (rejects NaN/inf/non-numeric)."""
++    if value is None or isinstance(value, bool):
++        return None
++    try:
++        number = float(value)  # type: ignore[arg-type]
++    except (TypeError, ValueError):
++        return None
++    return number if math.isfinite(number) else None
++
++
++def _iter_jsonl_rows(directory: Path) -> list[dict]:
++    rows: list[dict] = []
++    for path in sorted(directory.glob("*.jsonl")):
++        with path.open(encoding="utf-8") as handle:
++            for line in handle:
++                line = line.strip()
++                if not line:
++                    continue
++                try:
++                    rows.append(json.loads(line))
++                except json.JSONDecodeError:
++                    continue
++    return rows
++
++
++def _journal_outcomes(journal_dir: Path) -> dict[str, dict]:
++    """``prediction_id`` -> outcome row (last write wins)."""
++    outcomes: dict[str, dict] = {}
++    for row in _iter_jsonl_rows(journal_dir):
++        if row.get("type") == "outcome" and row.get("prediction_id"):
++            outcomes[str(row["prediction_id"])] = row
++    return outcomes
++
++
++def load_executions_trades(
++    executions_dir: Path,
++    journal_dir: Path | None = None,
++) -> LoadedTrades:
++    """Trades from tracker ``close`` rows, excursions joined from the journal."""
++    if not executions_dir.is_dir():
++        msg = f"executions directory not found: {executions_dir}"
++        raise FileNotFoundError(msg)
++    rows = _iter_jsonl_rows(executions_dir)
++    outcomes = _journal_outcomes(journal_dir) if journal_dir is not None else {}
++
++    opens: set[str] = set()
++    closes: list[dict] = []
++    resets = 0
++    for row in rows:
++        row_type = row.get("type")
++        if row_type == "open" and row.get("prediction_id"):
++            opens.add(str(row["prediction_id"]))
++        elif row_type == "close":
++            closes.append(row)
++        elif row_type == "reset":
++            resets += 1
++
++    # Executions files are append-only across replay re-runs: replaying the same
++    # day again journals the SAME physical trades under fresh uuids (reset rows
++    # mark run boundaries but carry no epoch key). Dedup closes by their physical
++    # fill signature, last-write-wins, and surface the drop count.
++    deduped_closes: dict[tuple, dict] = {}
++    for row in closes:
++        signature = (
++            row.get("entry_ts_utc"),
++            row.get("entry_price"),
++            row.get("exit_price"),
++            row.get("direction"),
++            row.get("reason"),
++        )
++        deduped_closes[signature] = row
++    duplicate_closes = len(closes) - len(deduped_closes)
++
++    trades: list[TradePath] = []
++    skipped_unparseable = 0
++    missing_excursions = 0
++    for row in deduped_closes.values():
++        entry_ts = _parse_ts(row.get("entry_ts_utc")) or _parse_ts(row.get("ts_utc"))
++        points = _finite(row.get("points"))
++        points_cons = _finite(row.get("points_conservative"))
++        if entry_ts is None or points is None or points_cons is None:
++            skipped_unparseable += 1
++            continue
++        outcome = outcomes.get(str(row.get("prediction_id") or ""))
++        mfe = _finite(outcome.get("max_mfe_pts")) if outcome else None
++        mae = _finite(outcome.get("max_mae_pts")) if outcome else None
++        if mfe is None or mae is None:
++            missing_excursions += 1
++        trades.append(
++            TradePath(
++                day=trading_day_for(entry_ts),
++                entry_ts=entry_ts,
++                points_optimistic=points,
++                points_conservative=points_cons,
++                mfe_pts=mfe,
++                mae_pts=mae,
++                resolution=row.get("reason"),
++            )
++        )
++
++    unmatched_opens = opens - {
++        str(row.get("prediction_id") or "") for row in closes
++    }
++    notes = [
++        f"executions dir: {executions_dir}",
++        f"rows: {len(rows)} total, {len(closes)} closes, {len(opens)} opens, {resets} resets",
++        f"replay re-run duplicate closes dropped (fill-signature dedup, "
++        f"last-write-wins): {duplicate_closes}",
++        f"opens without a close (skipped — never completed): {len(unmatched_opens)}",
++        f"closes skipped as unparseable (missing/non-finite fields): {skipped_unparseable}",
++    ]
++    degradation: str | None = None
++    if journal_dir is None:
++        degradation = (
++            "no --journal directory supplied — MFE/MAE unavailable; "
++            "unrealized_adverse_first degrades to realized-only"
++        )
++        notes.append(degradation)
++    else:
++        notes.append(
++            f"journal join: {len(trades) - missing_excursions}/{len(trades)} trades "
++            f"carry MFE/MAE from journal outcomes"
++        )
++        if trades and missing_excursions == len(trades):
++            degradation = (
++                "no execution close matched a journal outcome — "
++                "unrealized_adverse_first degrades to realized-only"
++            )
++    excursions_available = bool(trades) and missing_excursions < len(trades)
++    return LoadedTrades(
++        trades=trades,
++        source="executions",
++        excursions_available=excursions_available,
++        degradation_reason=degradation,
++        notes=notes,
++    )
++
++
++def load_journal_trades(
++    journal_dir: Path,
++    *,
++    tp_points: float,
++    sl_points: float,
++    tick_size: float = 0.25,
++) -> LoadedTrades:
++    """EVIDENCE MODE: every resolved journal outcome as a 1-contract trade."""
++    if not journal_dir.is_dir():
++        msg = f"journal directory not found: {journal_dir}"
++        raise FileNotFoundError(msg)
++    rows = _iter_jsonl_rows(journal_dir)
++    predictions: dict[str, dict] = {}
++    outcome_rows: list[dict] = []
++    for row in rows:
++        if row.get("type") == "prediction" and row.get("prediction_id"):
++            predictions[str(row["prediction_id"])] = row
++        elif row.get("type") == "outcome":
++            outcome_rows.append(row)
++
++    # Warm restarts re-predict the SAME physical touch under fresh
++    # prediction_ids/touch_ids (the WARM-PERF journal-dupe class; files were not
++    # retroactively cleaned) — a 1-contract account cannot fill one touch N
++    # times. Dedup outcomes by the physical touch signature (the prediction's
++    # instant + level + direction), last-write-wins, and surface the drop count.
++    deduped_outcomes: dict[tuple, dict] = {}
++    for row in outcome_rows:
++        prediction = predictions.get(str(row.get("prediction_id") or ""))
++        if prediction is not None:
++            signature = (
++                "prediction",
++                prediction.get("ts_utc"),
++                prediction.get("level_kind"),
++                prediction.get("level_price_ticks"),
++                prediction.get("direction"),
++            )
++        else:
++            signature = ("outcome", row.get("ts_utc"), row.get("entry_price"), None, None)
++        deduped_outcomes[signature] = row
++    duplicates_dropped = len(outcome_rows) - len(deduped_outcomes)
++
++    trades: list[TradePath] = []
++    skipped = 0
++    eligible = 0
++    missing_prediction = 0
++    for row in deduped_outcomes.values():
++        resolution = row.get("resolution_type")
++        if resolution == "tp_hit":
++            points = tp_points
++            points_cons = tp_points - tick_size
++        elif resolution == "sl_hit":
++            points = -sl_points
++            points_cons = -(sl_points + 2.0 * tick_size)
++        else:
++            skipped += 1
++            continue
++        prediction = predictions.get(str(row.get("prediction_id") or ""))
++        if prediction is None:
++            missing_prediction += 1
++            entry_ts = _parse_ts(row.get("ts_utc"))
++        else:
++            entry_ts = _parse_ts(prediction.get("ts_utc")) or _parse_ts(row.get("ts_utc"))
++            if prediction.get("is_eligible"):
++                eligible += 1
++        if entry_ts is None:
++            skipped += 1
++            continue
++        trades.append(
++            TradePath(
++                day=trading_day_for(entry_ts),
++                entry_ts=entry_ts,
++                points_optimistic=float(points),
++                points_conservative=float(points_cons),
++                mfe_pts=_finite(row.get("max_mfe_pts")),
++                mae_pts=_finite(row.get("max_mae_pts")),
++                resolution=str(resolution),
++            )
++        )
++    notes = [
++        f"journal dir: {journal_dir}",
++        "EVIDENCE MODE: every resolved journal outcome treated as a 1-contract "
++        "trade — includes outcomes of serving-INELIGIBLE predictions",
++        f"warm-restart duplicate outcomes dropped (touch-signature dedup, "
++        f"last-write-wins): {duplicates_dropped}",
++        f"outcomes: {len(outcome_rows)} rows -> {len(trades)} trades "
++        f"({skipped} skipped: unresolved/unparseable)",
++        f"eligible predictions among trades: {eligible}; outcomes without a "
++        f"prediction row (dated by resolved ts): {missing_prediction}",
++        f"points model: tp_hit -> +{tp_points}, sl_hit -> -{sl_points}; "
++        f"conservative mirrors the tracker fill model (entry 1 tick adverse, "
++        f"SL exit 1 tick worse, tick={tick_size})",
++    ]
++    with_excursions = sum(1 for t in trades if t.mae_pts is not None)
++    degradation = None
++    if trades and with_excursions == 0:
++        degradation = (
++            "journal outcomes carry no MFE/MAE — unrealized_adverse_first "
++            "degrades to realized-only"
++        )
++    return LoadedTrades(
++        trades=trades,
++        source="journal",
++        excursions_available=with_excursions > 0,
++        degradation_reason=degradation,
++        notes=notes,
++    )
++
++
++def load_oos_trades(
++    parquet_path: Path,
++    *,
++    tp_points: float,
++    sl_points: float,
++    gate_column: str | None = None,
++) -> LoadedTrades:
++    """Trades from a bundle's OOS predictions parquet."""
++    if not parquet_path.is_file():
++        msg = f"OOS parquet not found: {parquet_path}"
++        raise FileNotFoundError(msg)
++    frame = pd.read_parquet(parquet_path)
++    total_rows = len(frame)
++    if gate_column is not None:
++        if gate_column not in frame.columns:
++            msg = (
++                f"gate column {gate_column!r} not in {parquet_path.name} "
++                f"(columns: {', '.join(frame.columns)})"
++            )
++            raise ValueError(msg)
++        frame = frame[frame[gate_column].astype(bool)]
++    frame = frame[frame["label"].notna()]
++
++    has_excursions = (
++        "max_mfe_pts" in frame.columns
++        and "max_mae_pts" in frame.columns
++        and bool(frame["max_mae_pts"].notna().any())
++    )
++    degradation = None
++    if not has_excursions:
++        degradation = (
++            "pre-P1 OOS parquet: max_mfe_pts/max_mae_pts absent or empty — "
++            "unrealized_adverse_first degrades to realized-only"
++        )
++
++    trades: list[TradePath] = []
++    skipped = 0
++    for row in frame.itertuples(index=False):
++        label = str(row.label)
++        resolution = getattr(row, "resolution_type", None)
++        if not isinstance(resolution, str) or not resolution:
++            resolution = _RESOLUTION_TYPE_BY_LABEL.get(label)
++        if resolution == "tp_hit":
++            points = tp_points
++        elif resolution == "sl_hit":
++            points = -sl_points
++        else:
++            skipped += 1
++            continue
++        ts = pd.Timestamp(row.timestamp)
++        if ts.tzinfo is None:
++            ts = ts.tz_localize("UTC")
++        entry_ts = ts.to_pydatetime()
++        mfe = getattr(row, "max_mfe_pts", None)
++        mae = getattr(row, "max_mae_pts", None)
++        mfe = None if mfe is None or (isinstance(mfe, float) and math.isnan(mfe)) else float(mfe)
++        mae = None if mae is None or (isinstance(mae, float) and math.isnan(mae)) else float(mae)
++        trades.append(
++            TradePath(
++                day=trading_day_for(entry_ts),
++                entry_ts=entry_ts,
++                points_optimistic=points,
++                points_conservative=points,
++                mfe_pts=mfe,
++                mae_pts=mae,
++                resolution=resolution,
++            )
++        )
++    notes = [
++        f"OOS parquet: {parquet_path}",
++        f"rows: {total_rows} total; gate: "
++        + (f"{gate_column}" if gate_column else "none (all labeled rows are trades)")
++        + f"; trades: {len(trades)} ({skipped} skipped: unmapped label/resolution)",
++        f"points model: idealized barrier fills, tp_hit -> +{tp_points}, "
++        f"sl_hit -> -{sl_points}; conservative column EQUALS optimistic "
++        "(no synthetic slippage model)",
++    ]
++    if degradation:
++        notes.append(degradation)
++    return LoadedTrades(
++        trades=trades,
++        source="oos",
++        excursions_available=has_excursions,
++        degradation_reason=degradation,
++        notes=notes,
++    )
+diff --git a/src/alpha_lab/propsim/models.py b/src/alpha_lab/propsim/models.py
+new file mode 100644
+index 0000000..89a21f8
+--- /dev/null
++++ b/src/alpha_lab/propsim/models.py
+@@ -0,0 +1,78 @@
++"""Typed containers for the prop-firm evaluation walker."""
++
++from __future__ import annotations
++
++from dataclasses import dataclass
++from datetime import date, datetime
++
++
++@dataclass(frozen=True)
++class TradePath:
++    """One completed trade, normalized from any source.
++
++    Points are per-contract instrument points (signed: positive = profit on the
++    trade). ``mfe_pts``/``mae_pts`` are the trade's maximum favorable/adverse
++    excursions as non-negative point magnitudes relative to entry; ``None`` when
++    the source cannot supply them — the unrealized breach mode then treats that
++    trade realized-only. ``day`` uses the 18:00 ET trading-day roll (a close
++    after the roll still belongs to its OPEN's trading day: trades are dated by
++    entry).
++    """
++
++    day: date
++    entry_ts: datetime
++    points_optimistic: float
++    points_conservative: float
++    mfe_pts: float | None
++    mae_pts: float | None
++    resolution: str | None
++
++
++@dataclass(frozen=True)
++class Ruleset:
++    """A prop-firm evaluation ruleset. Presets are data (see ``presets``).
++
++    ``trail_style`` currently supports only ``"eod_floor_realtime_breach"``:
++    the drawdown floor ratchets on END-OF-DAY balance highs (floor = max of all
++    prior EOD balances − ``trail_amount``) but a BREACH of the floor is checked
++    in real time. ``trail_locks_at_start`` caps the floor at the starting
++    balance (it never trails above it). ``dll_amount`` is the daily loss limit;
++    ``dll_soft`` means a DLL hit halts the day (remaining trades skipped) and is
++    NOT a bust. ``consistency_pct`` blocks a pass while the best single day
++    exceeds ``pct`` × total profit. ``point_value`` is dollars per instrument
++    point per contract.
++    """
++
++    starting_balance: float
++    profit_target: float
++    trail_amount: float
++    trail_style: str
++    trail_locks_at_start: bool
++    dll_amount: float | None
++    dll_soft: bool
++    consistency_pct: float | None
++    min_days: int | None
++    point_value: float
++
++
++@dataclass(frozen=True)
++class WalkResult:
++    """Outcome of one evaluation walk over a day sequence.
++
++    ``verdict``: ``"pass"`` | ``"bust"`` | ``"incomplete"`` (data exhausted
++    before either) | ``"no_trades"`` (empty input). ``days_to_outcome`` counts
++    the day the verdict landed on (1-based); ``None`` while incomplete.
++    ``best_day_ratio`` = best single-day P&L / total profit (``None`` when the
++    total is not positive). ``min_floor_distance`` is the closest equity ever
++    came to the active floor, in dollars (``None`` for an empty walk).
++    """
++
++    verdict: str
++    days_to_outcome: int | None
++    bust_reason: str | None
++    best_day_ratio: float | None
++    min_floor_distance: float | None
++    final_balance: float
++    days_walked: int
++    halted_days: int
++    skipped_trades: int
+diff --git a/src/alpha_lab/propsim/presets.py b/src/alpha_lab/propsim/presets.py
+new file mode 100644
+index 0000000..f05c5f9
+--- /dev/null
++++ b/src/alpha_lab/propsim/presets.py
+@@ -0,0 +1,36 @@
++"""Prop-firm ruleset presets. Presets are DATA — additions need no code.
++
++Preset one (ratified in the PROP-SIM window; recorded in the SC PROGRESS
++ledger): TopStep 50K. Consistency is best day ≤ pct × TOTAL profit — this
++supersedes the alpha_lab-era ``config/prop_firms.yaml`` comment ("50% of
++profit target").
++"""
++
++from __future__ import annotations
++
++from alpha_lab.propsim.models import Ruleset
++
++PRESETS: dict[str, Ruleset] = {
++    "topstep_50k": Ruleset(
++        starting_balance=50_000.0,
++        profit_target=3_000.0,
++        trail_amount=2_000.0,
++        trail_style="eod_floor_realtime_breach",
++        trail_locks_at_start=True,
++        dll_amount=1_000.0,
++        dll_soft=True,
++        consistency_pct=50.0,
++        min_days=None,
++        point_value=20.0,
++    ),
++}
++
++
++def ruleset_from_preset(name: str) -> Ruleset:
++    """Look up a preset ruleset by name; unknown names fail loud."""
++    try:
++        return PRESETS[name]
++    except KeyError as exc:
++        known = ", ".join(sorted(PRESETS))
++        msg = f"Unknown propsim preset {name!r}. Known presets: {known}"
++        raise ValueError(msg) from exc
+diff --git a/src/alpha_lab/propsim/report.py b/src/alpha_lab/propsim/report.py
+new file mode 100644
+index 0000000..cd0ceff
+--- /dev/null
++++ b/src/alpha_lab/propsim/report.py
+@@ -0,0 +1,190 @@
++"""Report assembly: the (fill column × breach mode) matrix + human table + JSON."""
++
++from __future__ import annotations
++
++import math
++from dataclasses import asdict
++from datetime import date, datetime
++from typing import Any
++
++from alpha_lab.propsim.bootstrap import run_bootstrap, wilson_interval
++from alpha_lab.propsim.engine import BREACH_MODES, FILL_COLUMNS, group_by_day, walk_days
++from alpha_lab.propsim.loaders import LoadedTrades
++from alpha_lab.propsim.models import Ruleset
++
++
++def _sanitize(value: Any) -> Any:
++    """JSON-safe: NaN/inf -> None, dates -> ISO strings, recursively."""
++    if isinstance(value, dict):
++        return {k: _sanitize(v) for k, v in value.items()}
++    if isinstance(value, (list, tuple)):
++        return [_sanitize(v) for v in value]
++    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
++        return None
++    if isinstance(value, (datetime, date)):
++        return value.isoformat()
++    return value
++
++
++def build_report(
++    loaded: LoadedTrades,
++    preset_name: str,
++    ruleset: Ruleset,
++    *,
++    columns: tuple[str, ...] = FILL_COLUMNS,
++    n_runs: int = 10_000,
++    seed: int = 42,
++    max_days: int = 1_000,
++) -> dict:
++    """Run the full matrix (both breach modes always) and assemble the payload."""
++    day_blocks = group_by_day(loaded.trades)
++    trades = loaded.trades
++
++    pool: dict[str, Any] = {
++        "n_trades": len(trades),
++        "n_days": len(day_blocks),
++        "first_day": day_blocks[0][0] if day_blocks else None,
++        "last_day": day_blocks[-1][0] if day_blocks else None,
++        "trades_per_day": {str(day): len(dt) for day, dt in day_blocks},
++        "excursions_available": loaded.excursions_available,
++        "trades_with_excursions": sum(1 for t in trades if t.mae_pts is not None),
++    }
++    for column in columns:
++        pts = [
++            t.points_conservative if column == "conservative" else t.points_optimistic
++            for t in trades
++        ]
++        wins = sum(1 for p in pts if p > 0)
++        ci_low, ci_high = wilson_interval(wins, len(pts))
++        pool[column] = {
++            "wins": wins,
++            "win_rate": (wins / len(pts)) if pts else None,
++            # The DATA-level binomial interval — with a tiny trade pool this is
++            # the dominant uncertainty, not the Monte Carlo error.
++            "win_rate_ci95": [ci_low, ci_high] if pts else None,
++            "total_points": sum(pts),
++            "mean_points": (sum(pts) / len(pts)) if pts else None,
++        }
++
++    matrix: dict[str, dict[str, Any]] = {}
++    for column in columns:
++        matrix[column] = {}
++        for mode in BREACH_MODES:
++            degraded = (
++                mode == "unrealized_adverse_first" and not loaded.excursions_available
++            )
++            cell: dict[str, Any] = {
++                "degraded_to_realized_only": degraded,
++                "degradation_reason": loaded.degradation_reason if degraded else None,
++                "historical": None,
++                "bootstrap": None,
++            }
++            if day_blocks:
++                cell["historical"] = asdict(
++                    walk_days(day_blocks, ruleset, column=column, breach_mode=mode)
++                )
++                cell["bootstrap"] = asdict(
++                    run_bootstrap(
++                        day_blocks,
++                        ruleset,
++                        column=column,
++                        breach_mode=mode,
++                        n_runs=n_runs,
++                        seed=seed,
++                        max_days=max_days,
++                    )
++                )
++            matrix[column][mode] = cell
++
++    return _sanitize(
++        {
++            "source": loaded.source,
++            "preset": preset_name,
++            "ruleset": asdict(ruleset),
++            "monte_carlo": {"n_runs": n_runs, "seed": seed, "max_days": max_days},
++            "pool": pool,
++            "matrix": matrix,
++            "notes": list(loaded.notes),
++        }
++    )
++
++
++def _fmt(value: Any, width: int, precision: int | None = None) -> str:
++    if value is None:
++        text = "-"
++    elif precision is not None and isinstance(value, (int, float)):
++        text = f"{value:.{precision}f}"
++    else:
++        text = str(value)
++    return text.rjust(width)
++
++
++def format_human(report: dict) -> str:
++    """A fixed-width summary table of the full matrix."""
++    rs = report["ruleset"]
++    pool = report["pool"]
++    lines = [
++        f"PROP-SIM walker — preset {report['preset']} (source: {report['source']})",
++        (
++            f"  ruleset: start {rs['starting_balance']:.0f} / target "
++            f"{rs['profit_target']:.0f} / trail {rs['trail_amount']:.0f} "
++            f"({rs['trail_style']}, locks_at_start={rs['trail_locks_at_start']}) / "
++            f"DLL {rs['dll_amount']} (soft={rs['dll_soft']}) / consistency "
++            f"{rs['consistency_pct']}% / min_days {rs['min_days']} / "
++            f"point_value {rs['point_value']}"
++        ),
++        (
++            f"  pool: {pool['n_trades']} trades over {pool['n_days']} days "
++            f"({pool['first_day']} .. {pool['last_day']}); excursions on "
++            f"{pool['trades_with_excursions']}/{pool['n_trades']} trades"
++        ),
++        (
++            f"  monte carlo: N={report['monte_carlo']['n_runs']} "
++            f"seed={report['monte_carlo']['seed']} "
++            f"max_days={report['monte_carlo']['max_days']}"
++        ),
++    ]
++    for column in report["matrix"]:
++        stats = pool.get(column) or {}
++        # mean/total can sanitize to None (NaN points) even when win_rate is a
++        # valid float — guard every formatted field, not just win_rate.
++        if stats.get("win_rate") is not None and stats.get("mean_points") is not None:
++            ci = stats.get("win_rate_ci95") or [None, None]
++            lines.append(
++                f"  [{column}] win rate {stats['wins']}/{pool['n_trades']} = "
++                f"{stats['win_rate']:.3f} (binomial 95% CI "
++                f"{ci[0]:.3f}..{ci[1]:.3f}); mean {stats['mean_points']:.2f} pts, "
++                f"total {stats['total_points']:.2f} pts"
++            )
++    header = (
++        f"  {'column':<12} {'breach mode':<25} {'hist':<10} "
++        f"{'P(pass)':>8} {'95% CI':>15} {'P(bust)':>8} {'P(inc)':>7} "
++        f"{'d2p med':>8} {'p10':>6} {'p90':>6} {'d2b med':>8}  notes"
++    )
++    lines.append("")
++    lines.append(header)
++    lines.append("  " + "-" * (len(header) - 2))
++    for column, cells in report["matrix"].items():
++        for mode, cell in cells.items():
++            hist = cell.get("historical") or {}
++            boot = cell.get("bootstrap") or {}
++            note = "DEGRADED->realized" if cell.get("degraded_to_realized_only") else ""
++            ci_text = (
++                f"{boot.get('pass_ci95_low'):.3f}..{boot.get('pass_ci95_high'):.3f}"
++                if boot.get("pass_ci95_low") is not None
++                else "-"
++            )
++            lines.append(
++                f"  {column:<12} {mode:<25} {str(hist.get('verdict', '-')):<10} "
++                f"{_fmt(boot.get('p_pass'), 8, 4)} {ci_text:>15} "
++                f"{_fmt(boot.get('p_bust'), 8, 4)} {_fmt(boot.get('p_incomplete'), 7, 3)} "
++                f"{_fmt(boot.get('days_to_pass_median'), 8, 1)} "
++                f"{_fmt(boot.get('days_to_pass_p10'), 6, 1)} "
++                f"{_fmt(boot.get('days_to_pass_p90'), 6, 1)} "
++                f"{_fmt(boot.get('days_to_bust_median'), 8, 1)}  {note}"
++            )
++    if report.get("notes"):
++        lines.append("")
++        lines.append("  notes:")
++        lines.extend(f"    - {note}" for note in report["notes"])
++    return "\n".join(lines)
+diff --git a/tests/agents/test_databento_acceptance_cli.py b/tests/agents/test_databento_acceptance_cli.py
+index 6c05a4c..12ce6af 100644
+--- a/tests/agents/test_databento_acceptance_cli.py
++++ b/tests/agents/test_databento_acceptance_cli.py
+@@ -146,6 +146,36 @@ def test_audit_bundle_summarizes_fail_closed_artifact(tmp_path):
+     assert summary["oos_predictions"]["gate_true_counts"] == {"gate_0_70_ny": 1}
+ 
+ 
++def test_contract_loader_defaults_to_installed_strategy_core(monkeypatch, tmp_path):
++    # ENV-FIX: without the opt-in env var the live checkout must NOT be
++    # inserted, even when its src directory exists — acceptance describes the
++    # installed (pinned) package by default.
++    cli = _load_acceptance_module()
++    monkeypatch.delenv("QL_ACCEPTANCE_USE_LIVE_SC", raising=False)
++    live_src = tmp_path / "Strategy-Core" / "src"
++    live_src.mkdir(parents=True)
++    monkeypatch.setattr(sys, "path", list(sys.path))
++    before = list(sys.path)
++
++    inserted = cli._maybe_insert_live_strategy_core(tmp_path / "Strategy-Core")
++
++    assert inserted is False
++    assert sys.path == before
++
++
++def test_contract_loader_live_checkout_is_opt_in(monkeypatch, tmp_path):
++    cli = _load_acceptance_module()
++    monkeypatch.setenv("QL_ACCEPTANCE_USE_LIVE_SC", "1")
++    live_src = tmp_path / "Strategy-Core" / "src"
++    live_src.mkdir(parents=True)
++    monkeypatch.setattr(sys, "path", list(sys.path))
++
++    inserted = cli._maybe_insert_live_strategy_core(tmp_path / "Strategy-Core")
++
++    assert inserted is True
++    assert sys.path[0] == str(live_src)
++
++
+ def test_audit_bundle_unservable_flag_is_rejected(tmp_path):
+     # E2 flip: the audit now asserts the bundle IS servable; False fails closed.
+     cli = _load_acceptance_module()
+diff --git a/tests/agents/test_ml_training_reporting.py b/tests/agents/test_ml_training_reporting.py
+index 561ed6a..a77a918 100644
+--- a/tests/agents/test_ml_training_reporting.py
++++ b/tests/agents/test_ml_training_reporting.py
+@@ -619,9 +619,55 @@ def test_build_oos_predictions_frame_empty_carries_canonical_schema():
+         "prob_tradeable_reversal",
+         "gate_0_70_runtime_sessions",
+         "gate_0_70_ny",
++        "max_mfe_pts",
++        "max_mae_pts",
++        "entry_price",
++        "resolution_type",
+     ]
+ 
+ 
++def test_build_oos_predictions_frame_degrades_missing_outcome_columns():
++    """PROP-SIM P1: pre-P1 fold dicts (no outcome passthroughs) yield NaN columns;
++    resolution_type still derives from the true label via the ratified mapping."""
++    fold = {
++        "fold": 0,
++        "y_true": np.array([1, 0, 0]),
++        "y_pred": np.array([1, 0, 0]),
++        "y_prob": np.array([0.9, 0.2, 0.4]),
++        "timestamp": np.array([pd.Timestamp("2026-01-05 14:00", tz="UTC")] * 3),
++        "session": np.array(["ny", "ny", "ny"], dtype=object),
++        "raw_y": np.array([0, 1, 2]),
++        "raw_pred": np.array([0, 1, 1]),
++    }
++    frame = ml_training_tab.build_oos_predictions_frame([fold])
++    assert frame["max_mfe_pts"].isna().all()
++    assert frame["max_mae_pts"].isna().all()
++    assert frame["entry_price"].isna().all()
++    assert list(frame["resolution_type"]) == ["tp_hit", "sl_hit", "sl_hit"]
++
++
++def test_build_oos_predictions_frame_threads_outcome_passthroughs():
++    """PROP-SIM P1: fold-level outcome arrays land per-row, verbatim."""
++    fold = {
++        "fold": 2,
++        "y_true": np.array([1, 0]),
++        "y_pred": np.array([1, 0]),
++        "y_prob": np.array([0.9, 0.2]),
++        "timestamp": np.array([pd.Timestamp("2026-01-05 14:00", tz="UTC")] * 2),
++        "session": np.array(["ny", "london"], dtype=object),
++        "raw_y": np.array([0, 2]),
++        "raw_pred": np.array([0, 2]),
++        "max_mfe": np.array([17.5, 3.25]),
++        "max_mae": np.array([2.25, 30.0]),
++        "entry_price": np.array([15971.5, 16002.25]),
++    }
++    frame = ml_training_tab.build_oos_predictions_frame([fold])
++    assert list(frame["max_mfe_pts"]) == [17.5, 3.25]
++    assert list(frame["max_mae_pts"]) == [2.25, 30.0]
++    assert list(frame["entry_price"]) == [15971.5, 16002.25]
++    assert list(frame["resolution_type"]) == ["tp_hit", "sl_hit"]
++
++
+ # ── W3a: purged trading-day folds + pinned features ─────────────────────────
+ 
+ 
+@@ -631,7 +677,7 @@ def _day_fold_frame(n_dates: int, rows_per_day: int) -> pd.DataFrame:
+         for d in pd.bdate_range("2026-01-01", periods=n_dates, freq="B")
+     ]
+     rows = []
+-    for date_str in dates:
++    for day_idx, date_str in enumerate(dates):
+         for i in range(rows_per_day):
+             rows.append(
+                 {
+@@ -642,6 +688,10 @@ def _day_fold_frame(n_dates: int, rows_per_day: int) -> pd.DataFrame:
+                     "int_time_within_2pts": float((i * 7) % 60),
+                     "int_absorption_ratio": float((i % 10) / 10.0),
+                     "app_max_spread": 0.25 + 0.25 * (i % 4),
++                    # PROP-SIM P1: labeler outcome columns the OOS writer threads.
++                    "max_mfe": float(day_idx) * 10.0 + i + 0.5,
++                    "max_mae": float(day_idx) + 0.25 * (i % 3),
++                    "entry_price": 15000.0 + day_idx * 100.0 + i,
+                 },
+             )
+     return pd.DataFrame(rows)
+@@ -735,6 +785,91 @@ def test_run_walk_forward_training_day_folds_and_pinned_features():
+     assert not result["oos_predictions"].empty
+ 
+ 
++def test_run_walk_forward_training_oos_frame_threads_labeler_outcome_columns():
++    """PROP-SIM P1: a small train writes max_mfe_pts / max_mae_pts / entry_price /
++    resolution_type into the OOS frame, values equal to the training frame's."""
++    frame = _day_fold_frame(n_dates=14, rows_per_day=12)
++    config = MLPipelineConfig(
++        training_mode="dashboard_utility",
++        model={"rfecv_enabled": False, "iterations": 25, "depth": 3,
++               "loss_function": "MultiClass"},
++        tick_size=0.25,
++        instrument="NQ",
++    )
++    day_folds = {
++        "train_days": 4,
++        "test_days": 2,
++        "step_days": 2,
++        "purge_days": 1,
++        "min_train_events": 10,
++    }
++
++    result = ml_training_tab.run_walk_forward_training(
++        frame,
++        config,
++        "label_encoded",
++        day_folds=day_folds,
++        pinned_features=["int_time_within_2pts", "app_max_spread"],
++    )
++
++    oos = result["oos_predictions"]
++    assert not oos.empty
++    for column in ("max_mfe_pts", "max_mae_pts", "entry_price", "resolution_type"):
++        assert column in oos.columns
++
++    # Timestamps are unique in the fixture -> join OOS rows back to their source
++    # training-frame rows and demand exact value equality (threaded, not derived).
++    source = frame.set_index("timestamp")
++    for _, row in oos.iterrows():
++        src = source.loc[row["timestamp"]]
++        assert row["max_mfe_pts"] == src["max_mfe"]
++        assert row["max_mae_pts"] == src["max_mae"]
++        assert row["entry_price"] == src["entry_price"]
++    # resolution_type is the ratified label mapping of the TRUE label.
++    expected_resolution = {
++        "tradeable_reversal": "tp_hit",
++        "trap_reversal": "sl_hit",
++        "aggressive_blowthrough": "sl_hit",
++    }
++    assert list(oos["resolution_type"]) == [
++        expected_resolution[label] for label in oos["label"]
++    ]
++
++
++def test_run_walk_forward_training_tolerates_frames_without_outcome_columns():
++    """PROP-SIM P1 degradation: a frame lacking the labeler outcome columns still
++    trains; the OOS columns exist and are NaN (resolution_type still derived)."""
++    frame = _day_fold_frame(n_dates=14, rows_per_day=12).drop(
++        columns=["max_mfe", "max_mae", "entry_price"]
++    )
++    config = MLPipelineConfig(
++        training_mode="dashboard_utility",
++        model={"rfecv_enabled": False, "iterations": 25, "depth": 3,
++               "loss_function": "MultiClass"},
++        tick_size=0.25,
++        instrument="NQ",
++    )
++    result = ml_training_tab.run_walk_forward_training(
++        frame,
++        config,
++        "label_encoded",
++        day_folds={
++            "train_days": 4,
++            "test_days": 2,
++            "step_days": 2,
++            "purge_days": 1,
++            "min_train_events": 10,
++        },
++        pinned_features=["int_time_within_2pts", "app_max_spread"],
++    )
++    oos = result["oos_predictions"]
++    assert not oos.empty
++    assert oos["max_mfe_pts"].isna().all()
++    assert oos["max_mae_pts"].isna().all()
++    assert oos["entry_price"].isna().all()
++    assert oos["resolution_type"].notna().all()
++
++
+ def test_run_walk_forward_training_rejects_unknown_pinned_feature():
+     frame = _day_fold_frame(n_dates=14, rows_per_day=12)
+     config = MLPipelineConfig(
+diff --git a/tests/propsim/__init__.py b/tests/propsim/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/tests/propsim/test_bootstrap.py b/tests/propsim/test_bootstrap.py
+new file mode 100644
+index 0000000..cc0b472
+--- /dev/null
++++ b/tests/propsim/test_bootstrap.py
+@@ -0,0 +1,117 @@
++"""Bootstrap determinism + degenerate-pool sanity."""
++
++from __future__ import annotations
++
++from datetime import UTC, date, datetime, timedelta
++
++import pytest
++
++from alpha_lab.propsim import Ruleset, TradePath, group_by_day, run_bootstrap
++
++
++def _ruleset(**overrides) -> Ruleset:
++    base = {
++        "starting_balance": 50_000.0,
++        "profit_target": 3_000.0,
++        "trail_amount": 2_000.0,
++        "trail_style": "eod_floor_realtime_breach",
++        "trail_locks_at_start": True,
++        "dll_amount": None,
++        "dll_soft": True,
++        "consistency_pct": None,
++        "min_days": None,
++        "point_value": 20.0,
++    }
++    base.update(overrides)
++    return Ruleset(**base)
++
++
++def _pool(day_points: list[list[float]]) -> list:
++    trades = []
++    start = date(2026, 1, 5)
++    for i, points_list in enumerate(day_points):
++        day = start + timedelta(days=i)
++        for j, points in enumerate(points_list):
++            trades.append(
++                TradePath(
++                    day=day,
++                    entry_ts=datetime(day.year, day.month, day.day, 14, j, tzinfo=UTC),
++                    points_optimistic=points,
++                    points_conservative=points,
++                    mfe_pts=abs(points) + 2.0,
++                    mae_pts=abs(points) / 2.0,
++                    resolution=None,
++                )
++            )
++    return group_by_day(trades)
++
++
++def test_bootstrap_is_deterministic_under_the_seed():
++    pool = _pool([[15.0, -15.0], [30.0], [-25.0, 10.0], [50.0], [-40.0]])
++    rs = _ruleset()
++    kwargs = {
++        "column": "optimistic",
++        "breach_mode": "unrealized_adverse_first",
++        "n_runs": 400,
++        "max_days": 300,
++    }
++    first = run_bootstrap(pool, rs, seed=42, **kwargs)
++    second = run_bootstrap(pool, rs, seed=42, **kwargs)
++    assert first == second
++    different = run_bootstrap(pool, rs, seed=43, **kwargs)
++    assert different != first
++
++
++def test_always_pass_pool():
++    """A single +200pt day (= +$4,000) passes on day 1, every run."""
++    pool = _pool([[200.0]])
++    summary = run_bootstrap(
++        pool,
++        _ruleset(),
++        column="optimistic",
++        breach_mode="realized_only",
++        n_runs=200,
++        seed=42,
++    )
++    assert summary.p_pass == 1.0
++    assert summary.p_bust == 0.0
++    assert summary.days_to_pass_median == 1.0
++    assert summary.pass_ci95_low <= summary.p_pass <= summary.pass_ci95_high
++
++
++def test_always_bust_pool():
++    """A single -200pt day (= -$4,000) busts the 2k trail on day 1, every run."""
++    pool = _pool([[-200.0]])
++    summary = run_bootstrap(
++        pool,
++        _ruleset(),
++        column="optimistic",
++        breach_mode="realized_only",
++        n_runs=200,
++        seed=42,
++    )
++    assert summary.p_bust == 1.0
++    assert summary.p_pass == 0.0
++    assert summary.days_to_bust_median == 1.0
++    assert summary.bust_reasons == {"trailing_floor": 200}
++
++
++def test_max_days_guard_yields_incomplete_runs():
++    """A zero-P&L pool can never pass nor bust: every run hits max_days."""
++    pool = _pool([[0.0]])
++    summary = run_bootstrap(
++        pool,
++        _ruleset(),
++        column="optimistic",
++        breach_mode="realized_only",
++        n_runs=50,
++        seed=42,
++        max_days=25,
++    )
++    assert summary.p_incomplete == 1.0
++
++
++def test_empty_pool_raises():
++    with pytest.raises(ValueError, match="at least one trading day"):
++        run_bootstrap([], _ruleset(), column="optimistic",
++                      breach_mode="realized_only", n_runs=10, seed=42)
+diff --git a/tests/propsim/test_cli.py b/tests/propsim/test_cli.py
+new file mode 100644
+index 0000000..9101f7c
+--- /dev/null
++++ b/tests/propsim/test_cli.py
+@@ -0,0 +1,102 @@
++"""CLI: argument contract, JSON output, degradation surfacing, exit codes."""
++
++from __future__ import annotations
++
++import json
++
++import pandas as pd
++
++from alpha_lab.propsim.cli import main
++
++
++def _write_oos(tmp_path, with_outcome_columns: bool = True):
++    frame = pd.DataFrame(
++        {
++            "timestamp": pd.to_datetime(
++                ["2025-11-21 09:31:00", "2025-11-21 10:02:00", "2025-11-24 09:45:00"]
++            ).tz_localize("US/Eastern"),
++            "session": ["ny", "ny", "ny"],
++            "label": ["tradeable_reversal", "trap_reversal", "tradeable_reversal"],
++        }
++    )
++    if with_outcome_columns:
++        frame["max_mfe_pts"] = [17.5, 4.0, 16.0]
++        frame["max_mae_pts"] = [2.25, 15.0, 5.0]
++        frame["entry_price"] = [15000.0, 15010.0, 15020.0]
++        frame["resolution_type"] = ["tp_hit", "sl_hit", "tp_hit"]
++    path = tmp_path / "oos_predictions.parquet"
++    frame.to_parquet(path, index=False)
++    return path
++
++
++def test_cli_oos_run_writes_json(tmp_path, capsys):
++    oos = _write_oos(tmp_path)
++    out = tmp_path / "out.json"
++    code = main(
++        [
++            "--oos", str(oos),
++            "--preset", "topstep_50k",
++            "--column", "both",
++            "--tp-points", "15", "--sl-points", "15",
++            "--n", "50", "--seed", "42", "--max-days", "50",
++            "--json", str(out),
++        ]
++    )
++    assert code == 0
++    stdout = capsys.readouterr().out
++    assert "topstep_50k" in stdout
++    assert "unrealized_adverse_first" in stdout
++    payload = json.loads(out.read_text(encoding="utf-8"))
++    assert payload["preset"] == "topstep_50k"
++    assert payload["monte_carlo"] == {"n_runs": 50, "seed": 42, "max_days": 50}
++    assert set(payload["matrix"]) == {"optimistic", "conservative"}
++    for column_cells in payload["matrix"].values():
++        assert set(column_cells) == {"realized_only", "unrealized_adverse_first"}
++        for cell in column_cells.values():
++            assert cell["historical"] is not None
++            assert cell["bootstrap"] is not None
++
++
++def test_cli_strategy_json_sidecar_resolves_tp_sl(tmp_path, capsys):
++    oos = _write_oos(tmp_path)
++    (tmp_path / "strategy.json").write_text(
++        json.dumps({"label_policy": {"tp_points": 15.0, "sl_points": 15.0}}),
++        encoding="utf-8",
++    )
++    code = main(["--oos", str(oos), "--n", "10", "--max-days", "20"])
++    assert code == 0
++    assert "tp_hit -> +15.0" in capsys.readouterr().out
++
++
++def test_cli_pre_p1_parquet_states_the_degradation(tmp_path, capsys):
++    oos = _write_oos(tmp_path, with_outcome_columns=False)
++    code = main(
++        ["--oos", str(oos), "--tp-points", "15", "--sl-points", "15",
++         "--n", "10", "--max-days", "20"]
++    )
++    assert code == 0
++    stdout = capsys.readouterr().out
++    assert "DEGRADED->realized" in stdout
++    assert "pre-P1" in stdout
++
++
++def test_cli_requires_exactly_one_source(tmp_path, capsys):
++    assert main(["--preset", "topstep_50k"]) == 2
++    oos = _write_oos(tmp_path)
++    assert main(
++        ["--oos", str(oos), "--source", "executions", str(tmp_path)]
++    ) == 2
++    err = capsys.readouterr().err
++    assert "exactly one trade source" in err
++
++
++def test_cli_journal_source_requires_tp_sl(tmp_path, capsys):
++    journal = tmp_path / "journal"
++    journal.mkdir()
++    assert main(["--source", "journal", str(journal)]) == 2
++    assert "TP/SL barrier points unresolved" in capsys.readouterr().err
++
++
++def test_cli_unknown_source_kind(tmp_path, capsys):
++    assert main(["--source", "carrier-pigeon", str(tmp_path)]) == 2
++    assert "unknown --source kind" in capsys.readouterr().err
+diff --git a/tests/propsim/test_engine.py b/tests/propsim/test_engine.py
+new file mode 100644
+index 0000000..3ed4d8d
+--- /dev/null
++++ b/tests/propsim/test_engine.py
+@@ -0,0 +1,269 @@
++"""Oracle tests: hand-built day sequences with hand-computed outcomes."""
++
++from __future__ import annotations
++
++from datetime import UTC, date, datetime, timedelta
++
++import pytest
++
++from alpha_lab.propsim import EvaluationWalk, Ruleset, TradePath, walk_days
++
++
++def _trade(
++    day_str: str,
++    points: float,
++    *,
++    hour: int = 14,
++    minute: int = 0,
++    mae: float | None = None,
++    mfe: float | None = None,
++) -> TradePath:
++    day = date.fromisoformat(day_str)
++    return TradePath(
++        day=day,
++        entry_ts=datetime(day.year, day.month, day.day, hour, minute, tzinfo=UTC),
++        points_optimistic=points,
++        points_conservative=points,
++        mfe_pts=mfe,
++        mae_pts=mae,
++        resolution=None,
++    )
++
++
++def _days(*day_trades: list[TradePath]) -> list[tuple[date, list[TradePath]]]:
++    start = date(2026, 1, 5)
++    return [(start + timedelta(days=i), trades) for i, trades in enumerate(day_trades)]
++
++
++def _ruleset(**overrides) -> Ruleset:
++    base = {
++        "starting_balance": 50_000.0,
++        "profit_target": 3_000.0,
++        "trail_amount": 2_000.0,
++        "trail_style": "eod_floor_realtime_breach",
++        "trail_locks_at_start": True,
++        "dll_amount": 1_000.0,
++        "dll_soft": True,
++        "consistency_pct": 50.0,
++        "min_days": None,
++        "point_value": 20.0,
++    }
++    base.update(overrides)
++    return Ruleset(**base)
++
++
++def test_floor_locks_at_starting_balance():
++    """Once EOD peaks exceed start + trail, the floor caps AT the start — never above."""
++    rs = _ruleset(dll_amount=None, consistency_pct=None, profit_target=1e9)
++    walk = EvaluationWalk(rs, column="optimistic", breach_mode="realized_only")
++    assert walk.floor == 48_000.0  # day 1: start - trail
++    walk.play_day([_trade("2026-01-05", 100.0)])  # EOD 52_000
++    assert walk.floor == 50_000.0  # min(52k - 2k, start) -> locked at start
++    walk.play_day([_trade("2026-01-06", 100.0)])  # EOD 54_000
++    assert walk.floor == 50_000.0  # never above the starting balance
++
++
++def test_eod_floor_never_moves_down():
++    """The floor ratchets on EOD highs and holds through losing days."""
++    rs = _ruleset(
++        dll_amount=None, consistency_pct=None, profit_target=1e9,
++        trail_locks_at_start=False,
++    )
++    walk = EvaluationWalk(rs, column="optimistic", breach_mode="realized_only")
++    floors = [walk.floor]
++    walk.play_day([_trade("2026-01-05", 100.0)])  # EOD 52_000 -> floor 50_000
++    floors.append(walk.floor)
++    walk.play_day([_trade("2026-01-06", -40.0)])  # EOD 51_200 -> peak still 52k
++    floors.append(walk.floor)
++    assert floors == [48_000.0, 50_000.0, 50_000.0]
++
++
++def test_mae_excursion_busts_unrealized_but_realized_survives_same_sequence():
++    """THE SAME day: a +10pt winner whose path first dipped 120pts (= $2,400)."""
++    rs = _ruleset(dll_amount=None, consistency_pct=None, profit_target=1e9)
++    day_blocks = _days([_trade("2026-01-05", 10.0, mae=120.0, mfe=12.0)])
++
++    realized = walk_days(day_blocks, rs, column="optimistic", breach_mode="realized_only")
++    assert realized.verdict == "incomplete"
++    assert realized.final_balance == 50_200.0
++
++    unrealized = walk_days(
++        day_blocks, rs, column="optimistic", breach_mode="unrealized_adverse_first"
++    )
++    assert unrealized.verdict == "bust"
++    assert unrealized.bust_reason == "trailing_floor"
++    assert unrealized.days_to_outcome == 1
++    assert unrealized.min_floor_distance == pytest.approx(-400.0)  # 47.6k vs 48k
++
++
++def test_dll_soft_halt_skips_remaining_trades_without_busting():
++    """Realized: the halting close stands; remaining trades are skipped; no bust."""
++    rs = _ruleset(trail_amount=10_000.0, consistency_pct=None, profit_target=1e9)
++    walk = EvaluationWalk(rs, column="optimistic", breach_mode="realized_only")
++    verdict = walk.play_day(
++        [
++            _trade("2026-01-05", -30.0),  # -600, running -600
++            _trade("2026-01-05", -30.0),  # -600, running -1200 <= -1000 -> halt
++            _trade("2026-01-05", 50.0),  # skipped
++        ]
++    )
++    assert verdict is None
++    result = walk.result()
++    assert result.verdict == "incomplete"
++    assert result.final_balance == 48_800.0  # both closes stand, third skipped
++    assert result.skipped_trades == 1
++    assert result.halted_days == 1
++    # The next day trades again.
++    walk.play_day([_trade("2026-01-06", 50.0)])
++    assert walk.result().final_balance == 49_800.0
++
++
++def test_dll_soft_excursion_force_closes_at_the_dll_level():
++    """Unrealized: the adverse leg touches the DLL barrier first -> flat AT it."""
++    rs = _ruleset(trail_amount=10_000.0, consistency_pct=None, profit_target=1e9)
++    walk = EvaluationWalk(rs, column="optimistic", breach_mode="unrealized_adverse_first")
++    verdict = walk.play_day(
++        [
++            _trade("2026-01-05", 25.0, mae=60.0, mfe=30.0),  # dip -1200 crosses -1000
++            _trade("2026-01-05", 50.0),  # skipped: day halted
++        ]
++    )
++    assert verdict is None
++    result = walk.result()
++    assert result.verdict == "incomplete"
++    # Force-closed AT the DLL level: the +25pt settle never happens.
++    assert result.final_balance == 49_000.0
++    assert result.skipped_trades == 1
++    assert result.halted_days == 1
++
++
++def test_dll_hard_is_a_bust():
++    rs = _ruleset(dll_soft=False, trail_amount=10_000.0, consistency_pct=None,
++                  profit_target=1e9)
++    result = walk_days(
++        _days([_trade("2026-01-05", -60.0)]),  # -1200 <= -1000 at the close
++        rs,
++        column="optimistic",
++        breach_mode="realized_only",
++    )
++    assert result.verdict == "bust"
++    assert result.bust_reason == "daily_loss_limit"
++
++
++def test_floor_beats_dll_when_both_barriers_cross_on_the_adverse_leg():
++    """If the floor sits ABOVE the DLL level, the falling path hits it first: bust."""
++    rs = _ruleset(trail_amount=500.0, consistency_pct=None, profit_target=1e9)
++    # floor = 49_500; dll level = 49_000; adverse dip to 48_800 crosses both.
++    result = walk_days(
++        _days([_trade("2026-01-05", 10.0, mae=60.0)]),
++        rs,
++        column="optimistic",
++        breach_mode="unrealized_adverse_first",
++    )
++    assert result.verdict == "bust"
++    assert result.bust_reason == "trailing_floor"
++
++
++def test_realized_bust_on_the_trailing_floor_uses_lte():
++    """Equity EXACTLY at the floor is a breach."""
++    rs = _ruleset(dll_amount=None, consistency_pct=None, profit_target=1e9)
++    result = walk_days(
++        _days([_trade("2026-01-05", -50.0)], [_trade("2026-01-06", -50.0)]),
++        rs,
++        column="optimistic",
++        breach_mode="realized_only",
++    )
++    # 50k -> 49k (floor 48k holds) -> 48k == floor -> bust on day 2.
++    assert result.verdict == "bust"
++    assert result.bust_reason == "trailing_floor"
++    assert result.days_to_outcome == 2
++    assert result.min_floor_distance == 0.0
++
++
++def test_consistency_blocks_pass_until_later_days_dilute():
++    rs = _ruleset(dll_amount=None)
++    walk = EvaluationWalk(rs, column="optimistic", breach_mode="realized_only")
++    assert walk.play_day([_trade("2026-01-05", 100.0)]) is None  # +2000; total 2000
++    assert walk.play_day([_trade("2026-01-06", 45.0)]) is None  # +900; total 2900 < target
++    # Total 3100 >= 3000 BUT best day 2000 > 0.5 * 3100 -> blocked.
++    assert walk.play_day([_trade("2026-01-07", 10.0)]) is None
++    # Total 3600; best 2000 > 1800 -> still blocked.
++    assert walk.play_day([_trade("2026-01-08", 25.0)]) is None
++    # Total 4100; best 2000 <= 2050 -> PASS.
++    assert walk.play_day([_trade("2026-01-09", 25.0)]) == "pass"
++    result = walk.result()
++    assert result.verdict == "pass"
++    assert result.days_to_outcome == 5
++    assert result.best_day_ratio == pytest.approx(2000.0 / 4100.0)
++
++
++def test_min_days_delays_the_pass():
++    rs = _ruleset(dll_amount=None, consistency_pct=None, min_days=3)
++    walk = EvaluationWalk(rs, column="optimistic", breach_mode="realized_only")
++    assert walk.play_day([_trade("2026-01-05", 200.0)]) is None  # +4000 >= target
++    assert walk.play_day([_trade("2026-01-06", 0.0)]) is None
++    assert walk.play_day([_trade("2026-01-07", 0.0)]) == "pass"
++    assert walk.result().days_to_outcome == 3
++
++
++def test_conservative_column_is_selectable():
++    rs = _ruleset(dll_amount=None, consistency_pct=None, profit_target=1e9)
++    trade = TradePath(
++        day=date(2026, 1, 5),
++        entry_ts=datetime(2026, 1, 5, 14, tzinfo=UTC),
++        points_optimistic=15.0,
++        points_conservative=14.75,
++        mfe_pts=None,
++        mae_pts=None,
++        resolution="tp_hit",
++    )
++    optimistic = walk_days(
++        [(trade.day, [trade])], rs, column="optimistic", breach_mode="realized_only"
++    )
++    conservative = walk_days(
++        [(trade.day, [trade])], rs, column="conservative", breach_mode="realized_only"
++    )
++    assert optimistic.final_balance == 50_300.0
++    assert conservative.final_balance == 50_295.0
++
++
++def test_trades_without_excursions_are_realized_only_in_unrealized_mode():
++    rs = _ruleset(dll_amount=None, consistency_pct=None, profit_target=1e9)
++    result = walk_days(
++        _days([_trade("2026-01-05", -50.0, mae=None)]),
++        rs,
++        column="optimistic",
++        breach_mode="unrealized_adverse_first",
++    )
++    assert result.verdict == "incomplete"
++    assert result.final_balance == 49_000.0
++
++
++def test_empty_walk_reports_no_trades():
++    rs = _ruleset()
++    result = walk_days([], rs, column="optimistic", breach_mode="realized_only")
++    assert result.verdict == "no_trades"
++    assert result.days_to_outcome is None
++    assert result.min_floor_distance is None
++
++
++def test_engine_validates_inputs():
++    rs = _ruleset()
++    with pytest.raises(ValueError, match="Unknown fill column"):
++        EvaluationWalk(rs, column="middle", breach_mode="realized_only")
++    with pytest.raises(ValueError, match="Unknown breach mode"):
++        EvaluationWalk(rs, column="optimistic", breach_mode="psychic")
++    with pytest.raises(ValueError, match="Unsupported trail_style"):
++        EvaluationWalk(
++            _ruleset(trail_style="intraday_trail"),
++            column="optimistic",
++            breach_mode="realized_only",
++        )
++
++
++def test_terminated_walk_refuses_more_days():
++    rs = _ruleset(dll_amount=None, consistency_pct=None)
++    walk = EvaluationWalk(rs, column="optimistic", breach_mode="realized_only")
++    assert walk.play_day([_trade("2026-01-05", 200.0)]) == "pass"
++    with pytest.raises(RuntimeError, match="already terminated"):
++        walk.play_day([_trade("2026-01-06", 1.0)])
+diff --git a/tests/propsim/test_loaders.py b/tests/propsim/test_loaders.py
+new file mode 100644
+index 0000000..6f3d800
+--- /dev/null
++++ b/tests/propsim/test_loaders.py
+@@ -0,0 +1,320 @@
++"""Loader tests over synthetic on-disk fixtures mirroring the real writers."""
++
++from __future__ import annotations
++
++import json
++from datetime import UTC, datetime
++from pathlib import Path
++
++import pandas as pd
++import pytest
++
++from alpha_lab.propsim.loaders import (
++    load_executions_trades,
++    load_journal_trades,
++    load_oos_trades,
++    trading_day_for,
++)
++
++PRED_A = "aaaaaaaa-0000-0000-0000-000000000001"
++PRED_B = "bbbbbbbb-0000-0000-0000-000000000002"
++PRED_C = "cccccccc-0000-0000-0000-000000000003"
++
++
++def _write_jsonl(path: Path, rows: list[dict]) -> None:
++    path.parent.mkdir(parents=True, exist_ok=True)
++    with path.open("w", encoding="utf-8") as handle:
++        for row in rows:
++            handle.write(json.dumps(row) + "\n")
++
++
++def _executions_fixture(root: Path) -> tuple[Path, Path]:
++    """One closed trade (A), one dangling open (B), resets; journal outcome for A."""
++    executions = root / "executions"
++    journal = root / "journal"
++    _write_jsonl(
++        executions / "2026-01-05.jsonl",
++        [
++            {"type": "reset", "mode": "replay", "ts_utc": "2026-01-05T08:35:19+00:00",
++             "reason": "replay_reset", "cleared": 0, "cleared_prediction_ids": []},
++            {"type": "open", "mode": "replay", "bundle_id": "B",
++             "ts_utc": "2026-01-05T14:30:00+00:00", "prediction_id": PRED_A,
++             "touch_id": "t-1", "direction": "long", "contracts": 1,
++             "point_value": 20.0, "tick_size": 0.25, "entry_price": 15000.0,
++             "entry_price_conservative": 15000.25, "tp_price": 15015.0,
++             "sl_price": 14985.0, "session": "ny", "level_kind": "pdl",
++             "source": "open_setups"},
++            {"type": "close", "mode": "replay", "bundle_id": "B",
++             "ts_utc": "2026-01-05T14:45:00+00:00", "prediction_id": PRED_A,
++             "touch_id": "t-1", "reason": "tp_hit", "direction": "long",
++             "contracts": 1, "point_value": 20.0,
++             "entry_ts_utc": "2026-01-05T14:30:00+00:00", "entry_price": 15000.0,
++             "entry_price_conservative": 15000.25, "exit_price": 15015.0,
++             "exit_price_conservative": 15015.0, "points": 15.0,
++             "points_conservative": 14.75, "dollars": 300.0,
++             "dollars_conservative": 295.0, "session": "ny", "level_kind": "pdl"},
++            {"type": "open", "mode": "replay", "bundle_id": "B",
++             "ts_utc": "2026-01-05T15:00:00+00:00", "prediction_id": PRED_B,
++             "touch_id": "t-2", "direction": "short", "contracts": 1,
++             "point_value": 20.0, "tick_size": 0.25, "entry_price": 15020.0,
++             "entry_price_conservative": 15019.75, "tp_price": 15005.0,
++             "sl_price": 15035.0, "session": "ny", "level_kind": "pdh",
++             "source": "open_setups"},
++        ],
++    )
++    _write_jsonl(
++        journal / "2026-01-05.jsonl",
++        [
++            {"type": "prediction", "mode": "replay", "bundle_id": "B",
++             "ts_utc": "2026-01-05T14:29:00+00:00", "prediction_id": PRED_A,
++             "touch_id": "t-1", "predicted_class": "tradeable_reversal",
++             "is_eligible": True, "direction": "long", "session": "ny",
++             "level_kind": "pdl"},
++            {"type": "outcome", "mode": "replay", "bundle_id": "B",
++             "ts_utc": "2026-01-05T14:45:00+00:00", "outcome_id": "o-1",
++             "prediction_id": PRED_A, "touch_id": "t-1",
++             "resolution_type": "tp_hit", "actual_class": "tradeable_reversal",
++             "predicted_class": "tradeable_reversal", "correct": True,
++             "max_mfe_pts": 17.5, "max_mae_pts": 2.25, "bars_to_resolution": 3,
++             "entry_price": 15000.0},
++        ],
++    )
++    return executions, journal
++
++
++def test_executions_loader_joins_journal_excursions(tmp_path):
++    executions, journal = _executions_fixture(tmp_path)
++    loaded = load_executions_trades(executions, journal_dir=journal)
++    assert loaded.source == "executions"
++    assert len(loaded.trades) == 1  # the dangling open never completed
++    trade = loaded.trades[0]
++    assert trade.points_optimistic == 15.0
++    assert trade.points_conservative == 14.75
++    assert trade.mfe_pts == 17.5
++    assert trade.mae_pts == 2.25
++    assert trade.resolution == "tp_hit"
++    assert trade.day.isoformat() == "2026-01-05"
++    assert trade.entry_ts == datetime(2026, 1, 5, 14, 30, tzinfo=UTC)
++    assert loaded.excursions_available
++    assert loaded.degradation_reason is None
++    assert any("opens without a close" in note and note.endswith(": 1") for note in loaded.notes)
++
++
++def test_executions_loader_without_journal_degrades(tmp_path):
++    executions, _ = _executions_fixture(tmp_path)
++    loaded = load_executions_trades(executions, journal_dir=None)
++    assert len(loaded.trades) == 1
++    assert loaded.trades[0].mae_pts is None
++    assert not loaded.excursions_available
++    assert "MFE/MAE unavailable" in (loaded.degradation_reason or "")
++
++
++def test_executions_loader_empty_dir_yields_zero_trades(tmp_path):
++    executions = tmp_path / "executions"
++    executions.mkdir()
++    _write_jsonl(
++        executions / "undated.jsonl",
++        [{"type": "reset", "mode": "unknown", "ts_utc": None,
++          "reason": "live_reset", "cleared": 0, "cleared_prediction_ids": []}],
++    )
++    loaded = load_executions_trades(executions, journal_dir=None)
++    assert loaded.trades == []
++    assert not loaded.excursions_available
++
++
++def test_trading_day_roll_dates_evening_entries_to_the_next_day():
++    # 23:30 UTC on Jan 5 = 18:30 ET -> trading day 2026-01-06.
++    assert (
++        trading_day_for(datetime(2026, 1, 5, 23, 30, tzinfo=UTC)).isoformat()
++        == "2026-01-06"
++    )
++    # 22:59 UTC on Jan 5 = 17:59 ET -> still 2026-01-05.
++    assert (
++        trading_day_for(datetime(2026, 1, 5, 22, 59, tzinfo=UTC)).isoformat()
++        == "2026-01-05"
++    )
++
++
++def test_executions_loader_dedups_replay_rerun_closes(tmp_path):
++    """PROPSIM-L2: re-running a replay appends the SAME physical trade under a
++    fresh uuid — the loader dedups by fill signature and surfaces the count."""
++    executions, journal = _executions_fixture(tmp_path)
++    day_file = executions / "2026-01-05.jsonl"
++    rows = [json.loads(line) for line in day_file.read_text(encoding="utf-8").splitlines()]
++    rerun = [dict(row) for row in rows]
++    for row in rerun:
++        if row.get("prediction_id"):
++            row["prediction_id"] = row["prediction_id"].replace("0000", "1111")
++    with day_file.open("a", encoding="utf-8") as handle:
++        for row in rerun:
++            handle.write(json.dumps(row) + "\n")
++
++    loaded = load_executions_trades(executions, journal_dir=journal)
++    assert len(loaded.trades) == 1
++    assert any(
++        "duplicate closes dropped" in note and note.endswith(": 1")
++        for note in loaded.notes
++    )
++
++
++def test_executions_loader_skips_non_finite_points(tmp_path):
++    """PS-1 boundary: NaN points on a close row is unparseable, not a trade."""
++    executions = tmp_path / "executions"
++    _write_jsonl(
++        executions / "2026-01-05.jsonl",
++        [
++            {"type": "close", "ts_utc": "2026-01-05T14:45:00+00:00",
++             "prediction_id": PRED_A, "reason": "tp_hit",
++             "entry_ts_utc": "2026-01-05T14:30:00+00:00",
++             "points": float("nan"), "points_conservative": float("nan")},
++        ],
++    )
++    loaded = load_executions_trades(executions, journal_dir=None)
++    assert loaded.trades == []
++    assert any("unparseable" in note and note.endswith(": 1") for note in loaded.notes)
++
++
++def test_journal_loader_dedups_warm_restart_duplicate_outcomes(tmp_path):
++    """PROPSIM-L1: warm restarts re-predict the same physical touch under fresh
++    ids — outcomes dedup by touch signature (last-write-wins), count surfaced."""
++    journal = tmp_path / "journal"
++    touch = {
++        "ts_utc": "2026-06-16T08:10:55.294315+00:00",
++        "level_kind": "asia_high",
++        "level_price_ticks": 123440,
++        "direction": "short",
++    }
++    rows = []
++    for suffix in ("1", "2", "3"):
++        pid = f"dddddddd-0000-0000-0000-00000000000{suffix}"
++        rows.append({"type": "prediction", "prediction_id": pid,
++                     "is_eligible": False, **touch})
++        rows.append({"type": "outcome", "ts_utc": "2026-06-16T08:20:00+00:00",
++                     "prediction_id": pid, "resolution_type": "tp_hit",
++                     "max_mfe_pts": 16.0, "max_mae_pts": 3.0,
++                     "entry_price": 30860.0})
++    # A genuinely distinct touch on the same day survives.
++    rows.append({"type": "prediction", "prediction_id": PRED_B,
++                 "ts_utc": "2026-06-16T10:00:00+00:00", "level_kind": "pdl",
++                 "level_price_ticks": 123000, "direction": "long",
++                 "is_eligible": False})
++    rows.append({"type": "outcome", "ts_utc": "2026-06-16T10:15:00+00:00",
++                 "prediction_id": PRED_B, "resolution_type": "sl_hit",
++                 "max_mfe_pts": 2.0, "max_mae_pts": 15.0, "entry_price": 30750.0})
++    _write_jsonl(journal / "2026-06-16.jsonl", rows)
++
++    loaded = load_journal_trades(journal, tp_points=15.0, sl_points=15.0)
++    assert len(loaded.trades) == 2  # 4 outcomes -> 1 deduped touch + 1 distinct
++    assert any(
++        "duplicate outcomes dropped" in note and note.endswith(": 2")
++        for note in loaded.notes
++    )
++
++
++def test_journal_loader_treats_outcomes_as_trades(tmp_path):
++    journal = tmp_path / "journal"
++    _write_jsonl(
++        journal / "2026-01-05.jsonl",
++        [
++            {"type": "prediction", "ts_utc": "2026-01-05T14:29:00+00:00",
++             "prediction_id": PRED_A, "is_eligible": False, "direction": "short"},
++            {"type": "outcome", "ts_utc": "2026-01-05T14:45:00+00:00",
++             "prediction_id": PRED_A, "resolution_type": "tp_hit",
++             "max_mfe_pts": 17.5, "max_mae_pts": 2.25, "entry_price": 15000.0},
++            # An outcome with no prediction row: dated by its resolved ts.
++            {"type": "outcome", "ts_utc": "2026-01-05T15:45:00+00:00",
++             "prediction_id": PRED_C, "resolution_type": "sl_hit",
++             "max_mfe_pts": 3.0, "max_mae_pts": 15.0, "entry_price": 15100.0},
++        ],
++    )
++    loaded = load_journal_trades(journal, tp_points=15.0, sl_points=15.0)
++    assert loaded.source == "journal"
++    assert len(loaded.trades) == 2
++    winner, loser = loaded.trades
++    assert winner.points_optimistic == 15.0
++    assert winner.points_conservative == 14.75  # entry 1 tick adverse
++    assert winner.entry_ts == datetime(2026, 1, 5, 14, 29, tzinfo=UTC)  # prediction ts
++    assert loser.points_optimistic == -15.0
++    assert loser.points_conservative == -15.5  # + entry tick + SL exit tick
++    assert loser.entry_ts == datetime(2026, 1, 5, 15, 45, tzinfo=UTC)  # outcome ts
++    assert loaded.excursions_available
++    assert any("INELIGIBLE" in note for note in loaded.notes)
++
++
++def _oos_frame(with_outcome_columns: bool) -> pd.DataFrame:
++    rows = {
++        "fold": [0, 0, 1, 1],
++        "timestamp": pd.to_datetime(
++            [
++                "2025-11-21 09:31:00",
++                "2025-11-21 10:02:00",
++                "2025-11-24 09:45:00",
++                "2025-11-24 13:10:00",
++            ]
++        ).tz_localize("US/Eastern"),
++        "session": ["ny", "ny", "ny", "ny"],
++        "label": [
++            "tradeable_reversal",
++            "trap_reversal",
++            "aggressive_blowthrough",
++            "tradeable_reversal",
++        ],
++        "prob_tradeable_reversal": [0.8, 0.4, 0.2, 0.75],
++        "gate_0_70_runtime_sessions": [True, False, False, True],
++    }
++    if with_outcome_columns:
++        rows["max_mfe_pts"] = [17.5, 4.0, 2.0, 16.0]
++        rows["max_mae_pts"] = [2.25, 15.0, 15.0, 5.0]
++        rows["entry_price"] = [15000.0, 15010.0, 15020.0, 15030.0]
++        rows["resolution_type"] = ["tp_hit", "sl_hit", "sl_hit", "tp_hit"]
++    return pd.DataFrame(rows)
++
++
++def test_oos_loader_post_p1_columns(tmp_path):
++    path = tmp_path / "oos_predictions.parquet"
++    _oos_frame(with_outcome_columns=True).to_parquet(path, index=False)
++    loaded = load_oos_trades(path, tp_points=15.0, sl_points=15.0)
++    assert loaded.source == "oos"
++    assert len(loaded.trades) == 4
++    assert loaded.excursions_available
++    assert loaded.degradation_reason is None
++    first = loaded.trades[0]
++    assert first.points_optimistic == 15.0
++    assert first.points_conservative == 15.0  # idealized: EQUALS optimistic
++    assert first.mfe_pts == 17.5
++    assert first.mae_pts == 2.25
++    assert first.day.isoformat() == "2025-11-21"
++    losses = [t for t in loaded.trades if t.resolution == "sl_hit"]
++    assert all(t.points_optimistic == -15.0 for t in losses)
++
++
++def test_oos_loader_pre_p1_degrades_to_realized_only(tmp_path):
++    path = tmp_path / "oos_predictions.parquet"
++    _oos_frame(with_outcome_columns=False).to_parquet(path, index=False)
++    loaded = load_oos_trades(path, tp_points=15.0, sl_points=15.0)
++    assert len(loaded.trades) == 4
++    assert not loaded.excursions_available
++    assert "pre-P1" in (loaded.degradation_reason or "")
++    assert all(t.mae_pts is None for t in loaded.trades)
++    # resolution still derives from the label via the ratified mapping.
++    assert [t.resolution for t in loaded.trades] == [
++        "tp_hit", "sl_hit", "sl_hit", "tp_hit",
++    ]
++
++
++def test_oos_loader_gate_column_filters(tmp_path):
++    path = tmp_path / "oos_predictions.parquet"
++    _oos_frame(with_outcome_columns=True).to_parquet(path, index=False)
++    loaded = load_oos_trades(
++        path, tp_points=15.0, sl_points=15.0,
++        gate_column="gate_0_70_runtime_sessions",
++    )
++    assert len(loaded.trades) == 2
++    assert all(t.resolution == "tp_hit" for t in loaded.trades)
++
++
++def test_oos_loader_unknown_gate_column_fails_loud(tmp_path):
++    path = tmp_path / "oos_predictions.parquet"
++    _oos_frame(with_outcome_columns=True).to_parquet(path, index=False)
++    with pytest.raises(ValueError, match="gate column 'nope'"):
++        load_oos_trades(path, tp_points=15.0, sl_points=15.0, gate_column="nope")
+diff --git a/tests/propsim/test_presets.py b/tests/propsim/test_presets.py
+new file mode 100644
+index 0000000..0208930
+--- /dev/null
++++ b/tests/propsim/test_presets.py
+@@ -0,0 +1,28 @@
++"""Preset registry: presets are data; unknown names fail loud."""
++
++from __future__ import annotations
++
++import pytest
++
++from alpha_lab.propsim import PRESETS, ruleset_from_preset
++
++
++def test_topstep_50k_ratified_parameters():
++    rs = ruleset_from_preset("topstep_50k")
++    assert rs.starting_balance == 50_000.0
++    assert rs.profit_target == 3_000.0
++    assert rs.trail_amount == 2_000.0
++    assert rs.trail_style == "eod_floor_realtime_breach"
++    assert rs.trail_locks_at_start is True
++    assert rs.dll_amount == 1_000.0
++    assert rs.dll_soft is True
++    assert rs.consistency_pct == 50.0
++    assert rs.min_days is None
++    assert rs.point_value == 20.0
++
++
++def test_unknown_preset_lists_known_names():
++    with pytest.raises(ValueError, match="Unknown propsim preset 'nope'") as excinfo:
++        ruleset_from_preset("nope")
++    for known in sorted(PRESETS):
++        assert known in str(excinfo.value)
+diff --git a/tests/propsim/test_report.py b/tests/propsim/test_report.py
+new file mode 100644
+index 0000000..9413bda
+--- /dev/null
++++ b/tests/propsim/test_report.py
+@@ -0,0 +1,50 @@
++"""Report layer: NaN-poisoned pools must degrade, never crash (PS-1)."""
++
++from __future__ import annotations
++
++from datetime import UTC, date, datetime
++
++from alpha_lab.propsim import Ruleset, TradePath
++from alpha_lab.propsim.loaders import LoadedTrades
++from alpha_lab.propsim.report import build_report, format_human
++
++_RULESET = Ruleset(
++    starting_balance=50_000.0,
++    profit_target=3_000.0,
++    trail_amount=2_000.0,
++    trail_style="eod_floor_realtime_breach",
++    trail_locks_at_start=True,
++    dll_amount=1_000.0,
++    dll_soft=True,
++    consistency_pct=50.0,
++    min_days=None,
++    point_value=20.0,
++)
++
++
++def test_format_human_survives_nan_points_pool():
++    """A NaN points value (bypassing loader guards) sanitizes to None in the
++    pool stats; format_human must omit the stats line instead of crashing."""
++    nan_trade = TradePath(
++        day=date(2026, 1, 5),
++        entry_ts=datetime(2026, 1, 5, 14, tzinfo=UTC),
++        points_optimistic=float("nan"),
++        points_conservative=float("nan"),
++        mfe_pts=None,
++        mae_pts=None,
++        resolution=None,
++    )
++    loaded = LoadedTrades(
++        trades=[nan_trade],
++        source="executions",
++        excursions_available=False,
++        degradation_reason="test",
++        notes=[],
++    )
++    report = build_report(
++        loaded, "topstep_50k", _RULESET, n_runs=5, seed=42, max_days=10
++    )
++    assert report["pool"]["optimistic"]["mean_points"] is None
++    text = format_human(report)
++    assert isinstance(text, str)
++    assert "win rate" not in text

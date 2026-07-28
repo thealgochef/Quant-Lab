@@ -1,0 +1,1685 @@
+diff --git a/src/alpha_lab/agents/data_infra/ml/config.py b/src/alpha_lab/agents/data_infra/ml/config.py
+index 9b7cf12..2e782e4 100644
+--- a/src/alpha_lab/agents/data_infra/ml/config.py
++++ b/src/alpha_lab/agents/data_infra/ml/config.py
+@@ -415,5 +415,10 @@ class MLPipelineConfig(BaseModel):
+             + f"|bar_price_source={BAR_PRICE_SOURCE}"
+             + f"|label_entry_reference={LABEL_ENTRY_REFERENCE}"
+             + f"|platform_version={PLATFORM_VERSION}"
++            # W1 P4a: the labeling pipeline became a batch drive of the SC runtime
++            # (per-trade level fold, plugin zones/touches per bar-close, stream
++            # features). Folding the pipeline identity rolls the cache tag so
++            # pre-W1 ml_utility_* caches are invalidated, never silently reused.
++            + "|decision_pipeline=sc_runtime_stream_v1"
+         )
+         return hashlib.sha256(payload.encode()).hexdigest()[:8]
+diff --git a/src/alpha_lab/agents/data_infra/ml/dashboard_utility_builder.py b/src/alpha_lab/agents/data_infra/ml/dashboard_utility_builder.py
+index 2eccae7..ab3be45 100644
+--- a/src/alpha_lab/agents/data_infra/ml/dashboard_utility_builder.py
++++ b/src/alpha_lab/agents/data_infra/ml/dashboard_utility_builder.py
+@@ -1,16 +1,16 @@
+ """
+ Self-contained dashboard-utility dataset builder.
+ 
+-Builds labeled feature matrices for the dashboard 3-class model directly
+-from raw tick data — no dependency on pre-built experiment artifacts.
++W1 P4a: the production labeling path is a BATCH DRIVE OF THE SHARED ENGINE —
++the canonical Strategy-Core day stream feeds the same StrategyRuntime /
++TouchReversalPlugin wiring Trade-Lab serves with; touches are harvested per
++bar-close, the 6 SC feature formulas run over the same stream, and
++``resolve_honest_outcome`` labels each touch
++(``engine_decision.process_single_date_stream``).
+ 
+-Pipeline per date:
+-  1. Build bars (tick-count or 1m time bars) from tick data
+-  2. Compute key levels from prior-date session highs/lows
+-  3. Detect touch events (bar range intersects level, first-touch per zone)
+-  4. Label with configurable TP/SL (MAE-first, conservative)
+-  5. Compute 3 interaction features from raw ticks
+-  6. Optionally compute 27 approach features from pre-touch order flow
++The retired legacy stages (bar-close session slicing, builder-local zones /
++touches, zones-from-final-levels, DuckDB feature windows) live in
++``legacy_decision`` — imported by parity/regression tests only, never here.
+ 
+ All parameters (bar_type, interaction window, approach window, TP/SL)
+ are configurable via DashboardUtilityConfig and included in the cache hash.
+@@ -19,31 +19,17 @@ are configurable via DashboardUtilityConfig and included in the cache hash.
+ from __future__ import annotations
+ 
+ import logging
+-from datetime import date, datetime, time, timedelta
++from datetime import date, timedelta
+ from pathlib import Path
+ 
+-import numpy as np
+ import pandas as pd
+ 
+-# Session boundaries (Eastern Time) — SINGLE-SOURCED from the shared engine scheme
+-# (strategy_core.constants.RESEARCH_SESSION_SCHEME) so research slicing can never drift
+-# from the engine's classify_session. Engine v3 re-clock: asia 19:00->02:45 (crosses
+-# midnight), london 03:00->08:00, ny 09:00->17:00; 18:00 ET trading-day boundary.
++# Timezone — SINGLE-SOURCED from the shared engine scheme.
+ from strategy_core.constants import (
+     RESEARCH_SESSION_SCHEME as _SCHEME,
+ )
+-from strategy_core.constants import (
+-    TRADING_DAY_BOUNDARY as _TRADING_DAY_BOUNDARY,
+-)
+-from strategy_core.constants import (
+-    ZONE_PROXIMITY_PTS as _ZONE_PROXIMITY,
+-)
+ 
+ from alpha_lab.agents.data_infra.ml.config import DashboardUtilityConfig, MLPipelineConfig
+-from alpha_lab.agents.data_infra.ml.dashboard_utility_labeling import (
+-    NO_RESOLUTION,
+-    label_touch_event,
+-)
+ from alpha_lab.agents.data_infra.tick_store import TickStore
+ 
+ logger = logging.getLogger(__name__)
+@@ -56,9 +42,6 @@ DASHBOARD_FEATURES = [
+ ]
+ 
+ _ET = _SCHEME.timezone  # "US/Eastern"
+-_ASIA = _SCHEME.sessions["asia"]
+-_LONDON = _SCHEME.sessions["london"]
+-_NY = _SCHEME.sessions["ny"]
+ 
+ 
+ def build_utility_dataset(
+@@ -79,18 +62,18 @@ def build_utility_dataset(
+         data_dir: Root databento data directory.
+         config: Pipeline config (uses dashboard_utility sub-config).
+         progress_fn: Optional callable(fraction, text) for progress.
+-        use_engine: When True (default, phase-5 repoint), the DECISION LAYER
+-            (zones -> touches -> labels -> 6 features) is single-sourced onto the
+-            shared ``strategy_core`` engine via ``engine_decision``. When False,
+-            the legacy duplicate CQL decision code runs. Bars and levels are
+-            identical in both paths (book-mid, unchanged); only the decision layer
+-            differs, so the two paths are parity-diffable. The engine path is
+-            proven to reproduce the legacy/4a-canonical output EXACTLY (see
+-            ``tests/agents/test_decision_repoint_parity.py``).
++        use_engine: W1 P4a — the production path IS the engine stream drive; the
++            legacy decision layer left this module (``legacy_decision``, tests
++            only). ``False`` raises.
+ 
+     Returns:
+         DataFrame with one row per labeled touch event.
+     """
++    if not use_engine:
++        raise ValueError(
++            "use_engine=False was retired in W1: the legacy decision path moved to "
++            "alpha_lab.agents.data_infra.ml.legacy_decision (parity tests only)"
++        )
+     util_cfg = config.dashboard_utility
+     symbol = config.instrument
+     cache_tag = config.dataset_config_hash()
+@@ -98,11 +81,9 @@ def build_utility_dataset(
+     frames: list[pd.DataFrame] = []
+     cached_count = 0
+ 
+-    # Track the prior FULL trading day's high/low for PDH/PDL (engine v3); asia/london
+-    # carry kept for signature stability (levels recompute them from the current day).
++    # Track the prior FULL trading day's high/low for PDH/PDL (engine v3) — the
++    # cold-start seed for each single-day stream drive.
+     prev_full_hl: tuple[float, float] | None = None
+-    prev_asia_hl: tuple[float, float] | None = None
+-    prev_london_hl: tuple[float, float] | None = None
+ 
+     for i, date_str in enumerate(sorted(dates)):
+         if progress_fn:
+@@ -115,22 +96,9 @@ def build_utility_dataset(
+             cached_count += 1
+             if not df.empty:
+                 frames.append(df)
+-            # Still need to compute session H/L for next day's levels
+-            _update_session_levels_from_cache(
+-                df,
+-                prev_full_hl,
+-                prev_asia_hl,
+-                prev_london_hl,
+-            )
+-            # Read session levels from bars if we need them for next day
+-            prev_full_hl, prev_asia_hl, prev_london_hl = _get_session_hl_for_date(
+-                data_dir,
+-                symbol,
+-                date_str,
+-                util_cfg,
+-                prev_full_hl,
+-                prev_asia_hl,
+-                prev_london_hl,
++            # Still need this date's full H/L as the next day's PDH/PDL seed.
++            prev_full_hl = _get_session_hl_for_date(
++                data_dir, symbol, date_str, util_cfg, prev_full_hl
+             )
+             continue
+ 
+@@ -141,20 +109,11 @@ def build_utility_dataset(
+             symbol,
+             util_cfg,
+             prev_full_hl,
+-            prev_asia_hl,
+-            prev_london_hl,
+-            use_engine=use_engine,
+         )
+ 
+-        # Update session levels for next day
+-        prev_full_hl, prev_asia_hl, prev_london_hl = _get_session_hl_for_date(
+-            data_dir,
+-            symbol,
+-            date_str,
+-            util_cfg,
+-            prev_full_hl,
+-            prev_asia_hl,
+-            prev_london_hl,
++        # Update the PDH/PDL carry for the next day
++        prev_full_hl = _get_session_hl_for_date(
++            data_dir, symbol, date_str, util_cfg, prev_full_hl
+         )
+ 
+         if not df.empty:
+@@ -199,37 +158,21 @@ def _get_session_hl_for_date(
+     symbol: str,
+     date_str: str,
+     util_cfg: DashboardUtilityConfig,
+-    prev_full_hl,
+-    prev_asia_hl,
+-    prev_london_hl,
+-):
+-    """Compute this date's carry state for the NEXT day's levels.
+-
+-    Engine v3 PDH/PDL change: the FIRST element is now the FULL prior-trading-day H/L
+-    (max-high / min-low over the entire [18:00, 18:00) ET window — the daily-candle
+-    extremes), which becomes the next day's PDH/PDL. (Was the prior NY-RTH slice.) The
+-    asia/london elements are retained for signature stability; ``_compute_levels_for_date``
+-    recomputes asia/london from the CURRENT day's bars, so they are not consumed.
++    prev_full_hl: tuple[float, float] | None,
++) -> tuple[float, float] | None:
++    """This date's FULL trading-day H/L — the NEXT day's PDH/PDL seed.
++
++    Engine v3: max-high / min-low over the entire [18:00, 18:00) ET window (the
++    daily-candle extremes). W1 P4b: the asia/london carry is gone — session
++    extremes are folded per-trade inside the engine's level state during the
++    stream drive, never sliced from bar closes here.
+     """
+     bars = _build_bars_for_date(data_dir, symbol, date_str, util_cfg)
+     if bars.empty:
+-        return prev_full_hl, prev_asia_hl, prev_london_hl
++        return prev_full_hl
+ 
+     bars_et = _ensure_et_index(bars)
+-    # FULL trading-day high/low (the entire 18:00->18:00 ET window) -> next day PDH/PDL.
+-    new_full = (float(bars_et["high"].max()), float(bars_et["low"].min()))
+-    asia = _slice_session(bars_et, "asia")
+-    london = _slice_session(bars_et, "london")
+-
+-    new_asia = _session_hl(asia) if not asia.empty else prev_asia_hl
+-    new_london = _session_hl(london) if not london.empty else prev_london_hl
+-
+-    return new_full, new_asia, new_london
+-
+-
+-def _update_session_levels_from_cache(df, prev_ny, prev_asia, prev_london):
+-    """No-op placeholder — session levels must be computed from bars."""
+-    pass
++    return (float(bars_et["high"].max()), float(bars_et["low"].min()))
+ 
+ 
+ def _process_single_date(
+@@ -238,124 +181,23 @@ def _process_single_date(
+     symbol: str,
+     util_cfg: DashboardUtilityConfig,
+     prev_full_hl: tuple[float, float] | None,
+-    prev_asia_hl: tuple[float, float] | None,
+-    prev_london_hl: tuple[float, float] | None,
+-    *,
+-    use_engine: bool = True,
+ ) -> pd.DataFrame:
+-    """Process a single date: bars -> levels -> touches -> label -> features.
+-
+-    The bars (TRADE-price after the Part-1 cutover) and the level set are computed
+-    here regardless of ``use_engine``. When ``use_engine`` is True (default) the
+-    decision/label/feature stage is single-sourced onto the shared ``strategy_core``
+-    engine (``engine_decision.process_single_date_engine``) in its PRODUCTION mode
+-    (trade-print interaction features at 0.25 + the decision-time honest outcome).
+-    When False the legacy duplicate CQL decision code below runs (book-mid-era
+-    level-entry labeling); the two are NO LONGER expected to match after the cutover
+-    (the engine path is trade-print + honest-entry by design), but both remain
+-    importable, and the book-mid-equivalence regression is exercised via
+-    ``process_single_date_engine(price_source="book_mid", tick_size=0.125,
+-    honest_entry=False)`` in the repoint-parity test.
+-    """
++    """Process a single date — W1 P4a: a batch drive of the shared SC runtime.
+ 
+-    # 1. Build bars (TRADE-price after the Part-1 cutover — identical input for both
+-    # paths; the legacy path's book-mid-era labeler now sees trade bars).
+-    bars = _build_bars_for_date(data_dir, symbol, date_str, util_cfg)
+-    if bars.empty:
+-        return pd.DataFrame()
++    The canonical day stream feeds the SAME StrategyRuntime/TouchReversalPlugin
++    wiring Trade-Lab serves with; ``prev_full_hl`` seeds PDH/PDL exactly like the
++    serving cold-start path (``load_prior_day_summary``).
++    """
+ 
+-    bars_et = _ensure_et_index(bars)
++    from alpha_lab.agents.data_infra.ml.engine_decision import process_single_date_stream
+ 
+-    # 2. Compute key levels available for this date (identical for both paths)
+-    levels = _compute_levels_for_date(
+-        bars_et,
++    return process_single_date_stream(
+         date_str,
+-        prev_full_hl,
+-        prev_asia_hl,
+-        prev_london_hl,
++        data_dir,
++        symbol,
++        util_cfg,
++        prev_day_hl=prev_full_hl,
+     )
+-    if not levels:
+-        return pd.DataFrame()
+-
+-    # 2b. Phase-5 repoint: run the engine decision layer on the SAME bars+levels.
+-    if use_engine:
+-        from alpha_lab.agents.data_infra.ml.engine_decision import (
+-            process_single_date_engine,
+-        )
+-
+-        return process_single_date_engine(
+-            bars_et,
+-            levels,
+-            date_str,
+-            data_dir,
+-            symbol,
+-            util_cfg,
+-        )
+-
+-    # ── Legacy CQL decision path (kept intact for the parity diff) ──────────
+-    # 3. Build zones and detect touches
+-    zones = _build_zones(levels)
+-    touches = _detect_touches(bars_et, zones)
+-    if not touches:
+-        return pd.DataFrame()
+-
+-    # 4. Label each touch and compute features
+-    rows: list[dict] = []
+-    for touch in touches:
+-        # Forward bars for MFE/MAE labeling
+-        forward = bars_et[bars_et.index > touch["bar_ts"]]
+-        # Limit to RTH close
+-        rth_cutoff = pd.Timestamp(f"{date_str} 16:15:00", tz=_ET)
+-        forward = forward[forward.index < rth_cutoff]
+-
+-        if forward.empty:
+-            continue
+-
+-        label_result = label_touch_event(touch, forward, util_cfg)
+-        if label_result["label"] == NO_RESOLUTION:
+-            continue
+-
+-        # Compute interaction features from raw ticks
+-        features = _compute_interaction_features(
+-            touch,
+-            data_dir,
+-            symbol,
+-            util_cfg,
+-        )
+-        if features is None:
+-            continue
+-
+-        row = {
+-            "event_ts": touch["bar_ts"],
+-            "date": date_str,
+-            "timestamp": touch["bar_ts"],
+-            "direction": touch["direction"],
+-            "representative_price": touch["representative_price"],
+-            "level_type": touch["level_type"],
+-            "label": label_result["label"],
+-            "label_encoded": label_result["label_encoded"],
+-            "max_mfe": label_result["max_mfe"],
+-            "max_mae": label_result["max_mae"],
+-        }
+-        row.update(features)
+-
+-        # Optionally compute approach features
+-        if util_cfg.include_approach_features:
+-            approach = _compute_approach_features(
+-                touch,
+-                data_dir,
+-                symbol,
+-                util_cfg,
+-            )
+-            if approach:
+-                row.update(approach)
+-
+-        rows.append(row)
+-
+-    if not rows:
+-        return pd.DataFrame()
+-
+-    return pd.DataFrame(rows)
+ 
+ 
+ # ── Bar Building ──────────────────────────────────────────────────
+@@ -442,348 +284,3 @@ def _ensure_et_index(bars: pd.DataFrame) -> pd.DataFrame:
+     elif str(bars.index.tz) != _ET:
+         bars.index = bars.index.tz_convert(_ET)
+     return bars
+-
+-
+-# ── Level Computation ─────────────────────────────────────────────
+-
+-
+-def _session_hl(bars: pd.DataFrame) -> tuple[float, float]:
+-    return float(bars["high"].max()), float(bars["low"].min())
+-
+-
+-def _slice_session(bars: pd.DataFrame, session: str) -> pd.DataFrame:
+-    if bars.empty:
+-        return bars
+-    times = bars.index.time
+-    if session == "asia":
+-        # crosses midnight: t >= 19:00 OR t < 02:45 (engine SessionWindow.contains)
+-        mask = (times >= _ASIA.start) | (times < _ASIA.end)
+-    elif session == "london":
+-        mask = (times >= _LONDON.start) & (times < _LONDON.end)
+-    elif session == "ny":
+-        mask = (times >= _NY.start) & (times < _NY.end)
+-    else:
+-        return pd.DataFrame(columns=bars.columns)
+-    return bars[mask]
+-
+-
+-def _compute_levels_for_date(
+-    bars_et: pd.DataFrame,
+-    date_str: str,
+-    prev_full_hl: tuple[float, float] | None,
+-    prev_asia_hl: tuple[float, float] | None,
+-    prev_london_hl: tuple[float, float] | None,
+-) -> list[dict]:
+-    """Compute key levels available for this trading date.
+-
+-    Engine v3: each level carries ``available_from`` — the UTC instant at/after which
+-    it may first be touched (its defining session's CLOSE) — so the engine's enforced
+-    look-ahead guard can gate detect_touches. PDH/PDL are the FULL prior trading day's
+-    high/low (``prev_full_hl``, the daily-candle extremes), available from the
+-    trading-day start (prior 18:00 ET). asia/london H/L come from THIS day's session
+-    slices and are available from the Asia close (02:45 ET) / London close (08:00 ET).
+-    Availability instants are single-sourced from the engine session scheme.
+-    """
+-    td = date.fromisoformat(date_str)
+-    prev_day = td - timedelta(days=1)
+-
+-    def _avail(d: date, t: time) -> datetime:
+-        # ET wall-clock instant -> tz-aware UTC (DST-aware), matching how the engine
+-        # bars' close_ts_utc are produced, so the detect_touches gate compares like
+-        # for like. DST-safe: on a spring-forward day the 02:45 ET asia-close instant
+-        # does not exist (clocks jump 02:00->03:00), so localize a NAIVE wall-clock with
+-        # nonexistent="shift_forward" (the level becomes available at 03:00 ET that day —
+-        # 15 min later, conservative, never earlier). The 18:00/02:45/08:00 anchors are
+-        # never in the fall-back fold (01:00-02:00), so ambiguous is moot.
+-        naive = pd.Timestamp(f"{d.isoformat()} {t.strftime('%H:%M:%S')}")
+-        return (
+-            naive.tz_localize(_ET, nonexistent="shift_forward", ambiguous=False)
+-            .tz_convert("UTC")
+-            .to_pydatetime()
+-        )
+-
+-    pdh_pdl_avail = _avail(prev_day, _TRADING_DAY_BOUNDARY)  # prior 18:00 ET (day start)
+-    asia_avail = _avail(td, _ASIA.end)  # 02:45 ET (Asia close)
+-    london_avail = _avail(td, _LONDON.end)  # 08:00 ET (London close)
+-
+-    levels = []
+-
+-    # PDH/PDL = FULL prior trading day's high/low; available from the trading-day start.
+-    if prev_full_hl is not None:
+-        levels.append(
+-            {
+-                "name": "PDH",
+-                "price": prev_full_hl[0],
+-                "side": "HIGH",
+-                "available_from": pdh_pdl_avail,
+-            }
+-        )
+-        levels.append(
+-            {
+-                "name": "PDL",
+-                "price": prev_full_hl[1],
+-                "side": "LOW",
+-                "available_from": pdh_pdl_avail,
+-            }
+-        )
+-
+-    # Asia levels (available from the Asia close, 02:45 ET)
+-    asia = _slice_session(bars_et, "asia")
+-    if not asia.empty:
+-        hl = _session_hl(asia)
+-        levels.append(
+-            {"name": "asia_high", "price": hl[0], "side": "HIGH", "available_from": asia_avail}
+-        )
+-        levels.append(
+-            {"name": "asia_low", "price": hl[1], "side": "LOW", "available_from": asia_avail}
+-        )
+-
+-    # London levels (available from the London close, 08:00 ET)
+-    london = _slice_session(bars_et, "london")
+-    if not london.empty:
+-        hl = _session_hl(london)
+-        levels.append(
+-            {"name": "london_high", "price": hl[0], "side": "HIGH", "available_from": london_avail}
+-        )
+-        levels.append(
+-            {"name": "london_low", "price": hl[1], "side": "LOW", "available_from": london_avail}
+-        )
+-
+-    return levels
+-
+-
+-# ── Zone Merging & Touch Detection ────────────────────────────────
+-
+-
+-def _build_zones(levels: list[dict]) -> list[dict]:
+-    """Merge levels within ZONE_PROXIMITY into zones."""
+-    if not levels:
+-        return []
+-
+-    sorted_levels = sorted(levels, key=lambda level: level["price"])
+-    groups: list[list[dict]] = [[sorted_levels[0]]]
+-
+-    for lvl in sorted_levels[1:]:
+-        if lvl["price"] - groups[-1][-1]["price"] <= _ZONE_PROXIMITY:
+-            groups[-1].append(lvl)
+-        else:
+-            groups.append([lvl])
+-
+-    zones = []
+-    for group in groups:
+-        prices = [level["price"] for level in group]
+-        rep_price = sum(prices) / len(prices)
+-        names = [level["name"] for level in group]
+-        # Side by majority
+-        high_count = sum(1 for level in group if level["side"] == "HIGH")
+-        side = "HIGH" if high_count > len(group) / 2 else "LOW"
+-        zones.append(
+-            {
+-                "representative_price": rep_price,
+-                "names": names,
+-                "side": side,
+-                "touched": False,
+-            }
+-        )
+-
+-    return zones
+-
+-
+-def _detect_touches(
+-    bars_et: pd.DataFrame,
+-    zones: list[dict],
+-) -> list[dict]:
+-    """Detect first-touch events: bar range intersects level price."""
+-    touches = []
+-
+-    for bar_ts, bar in bars_et.iterrows():
+-        bar_low = bar["low"]
+-        bar_high = bar["high"]
+-
+-        for zone in zones:
+-            if zone["touched"]:
+-                continue
+-
+-            rep = zone["representative_price"]
+-            if bar_low <= rep <= bar_high:
+-                zone["touched"] = True
+-                direction = "LONG" if zone["side"] == "LOW" else "SHORT"
+-                touches.append(
+-                    {
+-                        "bar_ts": bar_ts,
+-                        "representative_price": rep,
+-                        "direction": direction,
+-                        "level_type": zone["names"][0],
+-                        "date": str(bar_ts.date()) if hasattr(bar_ts, "date") else "",
+-                    }
+-                )
+-
+-    return touches
+-
+-
+-# ── Feature Computation ───────────────────────────────────────────
+-
+-
+-def _compute_interaction_features(
+-    touch: dict,
+-    data_dir: Path,
+-    symbol: str,
+-    config: DashboardUtilityConfig,
+-) -> dict[str, float] | None:
+-    """Compute 3 dashboard features from the tick interaction window."""
+-    event_ts = pd.Timestamp(touch["bar_ts"])
+-    rep_price = float(touch["representative_price"])
+-    direction = touch["direction"]
+-    window_minutes = config.interaction_window_minutes
+-    proximity = config.level_proximity_pts
+-
+-    if event_ts.tz is not None:
+-        event_ts_utc = event_ts.tz_convert("UTC")
+-    else:
+-        event_ts_utc = event_ts.tz_localize("UTC")
+-
+-    date_str = touch.get("date", "")
+-    if not date_str:
+-        date_str = str(event_ts.date())
+-
+-    store = TickStore(data_dir)
+-    registered = store.register_symbol_date(symbol, date_str)
+-    if not registered:
+-        store.close()
+-        return None
+-
+-    start = event_ts_utc.to_pydatetime()
+-    end = start + timedelta(minutes=window_minutes)
+-
+-    try:
+-        ticks = store.query_tick_feature_rows(symbol, start, end)
+-    finally:
+-        store.close()
+-
+-    if ticks.empty or len(ticks) < 5:
+-        return None
+-
+-    if "price" not in ticks.columns:
+-        return None
+-
+-    mid = ticks["price"].values
+-    ts = ticks["ts_event"].values
+-
+-    # Tempo features
+-    time_beyond = 0.0
+-    time_within = 0.0
+-
+-    for j in range(len(mid) - 1):
+-        delta = ts[j + 1] - ts[j]
+-        dt_sec = float(delta / np.timedelta64(1, "s"))
+-        if dt_sec < 0 or dt_sec > 600:
+-            continue
+-
+-        m = float(mid[j])
+-        if abs(m - rep_price) <= 2.0:
+-            time_within += dt_sec
+-
+-        if direction == "LONG" and m < rep_price or direction == "SHORT" and m > rep_price:
+-            time_beyond += dt_sec
+-
+-    # Absorption ratio
+-    if "size" in ticks.columns:
+-        prices = ticks["price"].values
+-        sizes = ticks["size"].values
+-        vol_at_level = 0.0
+-        vol_through = 0.0
+-        level_low = rep_price - proximity
+-        level_high = rep_price + proximity
+-
+-        for j in range(len(prices)):
+-            p = float(prices[j])
+-            s = float(sizes[j])
+-            if level_low <= p <= level_high:
+-                vol_at_level += s
+-            elif direction == "LONG" and p < rep_price or direction == "SHORT" and p > rep_price:
+-                vol_through += s
+-
+-        total = vol_at_level + vol_through
+-        absorption = vol_at_level / total if total > 0 else 0.0
+-    else:
+-        absorption = 0.0
+-
+-    return {
+-        "int_time_beyond_level": round(time_beyond, 4),
+-        "int_time_within_2pts": round(time_within, 4),
+-        "int_absorption_ratio": round(min(1.0, max(0.0, absorption)), 6),
+-    }
+-
+-
+-def _compute_approach_features(
+-    touch: dict,
+-    data_dir: Path,
+-    symbol: str,
+-    config: DashboardUtilityConfig,
+-) -> dict[str, float] | None:
+-    """Compute live-computable approach features from pre-touch order flow.
+-
+-    Queries all 27 features via DuckDB SQL, then filters to the 8 that
+-    can be computed from MBP-1 (top-of-book) in live trading. Features
+-    requiring deeper book levels or cancel events are excluded.
+-    """
+-    event_ts = pd.Timestamp(touch["bar_ts"])
+-    if event_ts.tz is not None:
+-        event_ts_utc = event_ts.tz_convert("UTC")
+-    else:
+-        event_ts_utc = event_ts.tz_localize("UTC")
+-
+-    date_str = touch.get("date", str(event_ts.date()))
+-    approach_minutes = config.approach_window_minutes
+-    approach_start = event_ts_utc - pd.Timedelta(minutes=approach_minutes)
+-
+-    store = TickStore(data_dir)
+-    registered = store.register_symbol_date(symbol, date_str)
+-    # Also register previous calendar day (approach window may cross midnight)
+-    prev_date = (date.fromisoformat(date_str) - timedelta(days=1)).isoformat()
+-    store.register_symbol_date(symbol, prev_date)
+-
+-    if not registered:
+-        store.close()
+-        return None
+-
+-    try:
+-        views = store._get_views(symbol)
+-        if not views:
+-            return None
+-        union_sql = store._union_views_sql(views)
+-
+-        # Detect symbol filter
+-        sample_sql = f"SELECT column_name FROM (DESCRIBE SELECT * FROM ({union_sql}) LIMIT 0)"
+-        cols = {r[0] for r in store._conn.execute(sample_sql).fetchall()}
+-        has_symbol = "symbol" in cols
+-
+-        if has_symbol:
+-            front = store._conn.execute(f"""
+-                SELECT symbol, count(*) AS n
+-                FROM ({union_sql}) AS t
+-                WHERE symbol NOT LIKE '%-%'
+-                GROUP BY symbol ORDER BY n DESC LIMIT 1
+-            """).fetchone()
+-            sym_f = f"AND symbol = '{front[0]}'" if front else "AND symbol NOT LIKE '%-%'"
+-        else:
+-            sym_f = ""
+-
+-        # Import and call the experiment approach feature query
+-        from alpha_lab.agents.data_infra.ml.config import LIVE_APPROACH_FEATURES
+-        from alpha_lab.experiment.features import _query_approach_features
+-
+-        all_features = _query_approach_features(
+-            store._conn,
+-            union_sql,
+-            sym_f,
+-            approach_start,
+-            event_ts_utc,
+-        )
+-        # Keep only features computable from MBP-1 (top-of-book) in live trading
+-        return {k: v for k, v in all_features.items() if k in LIVE_APPROACH_FEATURES}
+-    except Exception as exc:
+-        logger.debug("Approach features failed for %s: %s", date_str, exc)
+-        return None
+-    finally:
+-        store.close()
+diff --git a/src/alpha_lab/agents/data_infra/ml/engine_decision.py b/src/alpha_lab/agents/data_infra/ml/engine_decision.py
+index 1aafdd3..a969077 100644
+--- a/src/alpha_lab/agents/data_infra/ml/engine_decision.py
++++ b/src/alpha_lab/agents/data_infra/ml/engine_decision.py
+@@ -576,3 +576,215 @@ def _query_quotes(store: TickStore, symbol, start_utc, end_utc) -> pd.DataFrame:
+         ORDER BY ts_event ASC
+     """
+     return store._conn.execute(sql, [pd.Timestamp(start_utc), pd.Timestamp(end_utc)]).fetchdf()
++
++
++# ── W1 P4a: the production labeling path as a batch drive of the SC runtime ──
++
++
++def process_single_date_stream(
++    date_str: str,
++    data_dir: Path,
++    symbol: str,
++    config: DashboardUtilityConfig,
++    *,
++    prev_day_hl: tuple[float, float] | None = None,
++    events_until_utc: datetime | None = None,
++) -> pd.DataFrame:
++    """W1 P4a: research labeling = a batch drive of the SAME engine Trade-Lab serves.
++
++    Canonical SC day-mode stream (``DatabentoParquetSource.for_trading_day``:
++    [prev 18:00 ET, day 18:00 ET), two-file composition, count-based front month,
++    TOB-deduped quotes) -> ``StrategyRuntime``/``TouchReversalPlugin`` exactly as
++    Trade-Lab wires it (decision bar = the configured tick count, default section,
++    auto-attached plugin) -> touches harvested per bar-close -> the 6 SC feature
++    formulas over the SAME trade stream -> ``resolve_honest_outcome`` (unchanged)
++    -> dataset rows in the existing column schema.
++
++    ``prev_day_hl`` is the FULL prior trading-day (high, low) in points — the
++    PDH/PDL cold-start seed (``load_prior_day_summary``), exactly the external
++    seed path Trade-Lab uses. The organic day-roll banking covers multi-day
++    streams; one-day batch drives need the seed.
++
++    Interaction/approach feature windows are half-open ``[start, end)`` over the
++    in-memory stream (the Trade-Lab serving convention). The research
++    ``< 5 interaction trades -> drop row`` rule is preserved. The entry accessor
++    is the wire-LAST trade at-or-before the decision instant with a 30-minute
++    lookback — ring semantics identical to the serving runtime, off the same
++    stream.
++
++    ``events_until_utc`` truncates the drive (test knob: real-data tests cap at a
++    one-hour slice).
++    """
++    from bisect import bisect_left, bisect_right
++
++    from strategy_core.data.databento_parquet import DatabentoParquetSource
++    from strategy_core.data.events import DataQualityWarning as ScDataQualityWarning
++    from strategy_core.runtime.state import StrategyRuntime
++
++    td = date.fromisoformat(date_str)
++    bar_type = str(config.bar_type)
++    if not bar_type.endswith("t"):
++        raise ValueError(
++            f"stream labeling requires a tick-count bar_type, got {bar_type!r}"
++        )
++    tick_count = int(bar_type[:-1])
++
++    source = DatabentoParquetSource.for_trading_day(
++        Path(data_dir) / symbol, td, requested_symbol=symbol
++    )
++    for warning in source.pending_warnings:
++        # Degraded window (missing prior-day file): same single-file fallback the
++        # serving replay applies, surfaced in the build log.
++        print(f"[stream-labeling] {date_str}: {warning.message}")
++
++    runtime = StrategyRuntime(timeframes=(tick_count,), requested_symbol=symbol)
++    if prev_day_hl is not None:
++        runtime.load_prior_day_summary(
++            td - timedelta(days=1),
++            high_ticks=_round_to_ticks(prev_day_hl[0], TRADE_TICK),
++            low_ticks=_round_to_ticks(prev_day_hl[1], TRADE_TICK),
++        )
++
++    trades: list[Trade] = []
++    trade_ts: list[datetime] = []
++    day_bars: list[Bar] = []
++    touches: list = []
++    for event in source.events():
++        if isinstance(event, ScDataQualityWarning):
++            continue
++        if events_until_utc is not None and event.event_ts_utc > events_until_utc:
++            break
++        if not isinstance(event, Trade):
++            # Quotes do not move bars/levels/touches; the approach quotes are
++            # collected in the bounded second pass below.
++            continue
++        trades.append(event)
++        trade_ts.append(event.event_ts_utc)
++        update = runtime.process_event(event)
++        for bar in update.closed_bars:
++            if bar.timeframe_ticks == tick_count:
++                day_bars.append(bar)
++        touches.extend(update.touches)
++
++    if not touches:
++        return pd.DataFrame()
++
++    window_minutes = config.interaction_window_minutes
++    decision_offset = window_minutes
++    interaction_window = timedelta(minutes=window_minutes)
++    approach_window = timedelta(minutes=config.approach_window_minutes)
++
++    def _price_at(ts_utc: datetime) -> float | None:
++        # Wire-LAST trade at-or-before the instant, 30-min bounded — the serving
++        # runtime's trade-ring semantics, off the same stream.
++        index = bisect_right(trade_ts, ts_utc)
++        if index == 0:
++            return None
++        trade = trades[index - 1]
++        if (ts_utc - trade.event_ts_utc) > timedelta(minutes=30):
++            return None
++        return trade.price_points(TRADE_TICK)
++
++    def _trades_in(start: datetime, end: datetime) -> list[Trade]:
++        return trades[bisect_left(trade_ts, start) : bisect_left(trade_ts, end)]
++
++    approach_quotes: dict[int, list[Quote]] = {}
++    if config.include_approach_features:
++        # Bounded second pass: only quotes inside some touch's approach window are
++        # retained (full-day L1 retention would dominate memory for no reader).
++        spans = sorted(
++            (touch.bar_ts_utc - approach_window, touch.bar_ts_utc, idx)
++            for idx, touch in enumerate(touches)
++        )
++        for event in source.events():
++            if not isinstance(event, Quote):
++                continue
++            ts = event.event_ts_utc
++            if events_until_utc is not None and ts > events_until_utc:
++                break
++            for span_start, span_end, idx in spans:
++                if span_start <= ts < span_end:
++                    approach_quotes.setdefault(idx, []).append(event)
++                elif ts < span_start:
++                    break
++
++    rows: list[dict] = []
++    for idx, touch in enumerate(touches):
++        result = resolve_honest_outcome(
++            touch,
++            day_bars,
++            _price_at,
++            tick_size=TRADE_TICK,
++            tp_points=config.tp_points,
++            sl_points=config.sl_points,
++            trap_mfe_min=config.trap_mfe_min,
++            decision_offset_minutes=decision_offset,
++        )
++        if isinstance(result, HonestEntryDrop):
++            continue
++        if result.label == sc.constants.NO_RESOLUTION:
++            continue
++
++        interaction_trades = _trades_in(
++            touch.bar_ts_utc, touch.bar_ts_utc + interaction_window
++        )
++        if len(interaction_trades) < 5:
++            # Research drop rule: too few prints to characterize the interaction.
++            continue
++        level_points = float(touch.representative_price)
++        features = {
++            "int_time_beyond_level": int_time_beyond_level(
++                interaction_trades, level_points, touch.direction, TRADE_TICK
++            ),
++            "int_time_within_2pts": int_time_within_2pts(
++                interaction_trades, level_points, TRADE_TICK
++            ),
++            "int_absorption_ratio": int_absorption_ratio(
++                interaction_trades, level_points, touch.direction, TRADE_TICK,
++                proximity_pts=config.level_proximity_pts,
++            ),
++        }
++
++        bar_ts_et = pd.Timestamp(touch.bar_ts_utc).tz_convert(_ET)
++        session_info = classify_session(touch.bar_ts_utc)
++        decision_time_et = pd.Timestamp(
++            touch.bar_ts_utc + timedelta(minutes=decision_offset)
++        ).tz_convert(_ET)
++        row = {
++            "event_ts": bar_ts_et,
++            "date": date_str,
++            "timestamp": bar_ts_et,
++            "session": session_info.session,
++            "decision_time": decision_time_et,
++            "label_window_end": pd.Timestamp(
++                f"{date_str} {RTH_END.strftime('%H:%M:%S')}", tz=_ET
++            ),
++            "direction": touch.direction.value,
++            "representative_price": touch.representative_price,
++            "level_type": touch.level_type,
++            "label": result.label,
++            "label_encoded": result.label_encoded,
++            "max_mfe": result.max_mfe,
++            "max_mae": result.max_mae,
++        }
++        row.update(features)
++
++        if config.include_approach_features:
++            approach_trades = _trades_in(
++                touch.bar_ts_utc - approach_window, touch.bar_ts_utc
++            )
++            row.update(
++                {
++                    "app_large_trade_vol_pct": app_large_trade_vol_pct(approach_trades),
++                    "app_avg_trade_size": app_avg_trade_size(approach_trades),
++                    "app_max_spread": app_max_spread(
++                        approach_quotes.get(idx, ()), TRADE_TICK
++                    ),
++                }
++            )
++
++        rows.append(row)
++
++    if not rows:
++        return pd.DataFrame()
++    return pd.DataFrame(rows)
+diff --git a/src/alpha_lab/agents/data_infra/ml/legacy_decision.py b/src/alpha_lab/agents/data_infra/ml/legacy_decision.py
+new file mode 100644
+index 0000000..76de975
+--- /dev/null
++++ b/src/alpha_lab/agents/data_infra/ml/legacy_decision.py
+@@ -0,0 +1,479 @@
++"""LEGACY decision stages — imported by parity/regression tests ONLY.
++
++W1 P4b: these stages left the production pipeline (``dashboard_utility_builder``
++now drives the shared Strategy-Core runtime over the canonical day stream via
++``engine_decision.process_single_date_stream``). They are preserved here, verbatim,
++solely so the recorded book-mid repoint-parity proof
++(``tests/agents/test_decision_repoint_parity.py``) stays executable against the
++historical implementation. NOTHING in ``src/`` imports this module.
++
++Moved from ``dashboard_utility_builder.py``:
++  * ``_session_hl`` / ``_slice_session``      (bar-close session attribution)
++  * ``_compute_levels_for_date``              (levels from final-bar slices)
++  * ``_build_zones`` / ``_detect_touches``    (builder-local zone/touch twins)
++  * ``_compute_interaction_features``         (DuckDB tick-window features)
++  * ``_compute_approach_features``            (DuckDB approach features)
++  * ``process_single_date_legacy``            (the ``use_engine=False`` branch)
++"""
++
++from __future__ import annotations
++
++import logging
++from datetime import date, datetime, time, timedelta
++from pathlib import Path
++
++import numpy as np
++import pandas as pd
++from strategy_core.constants import (
++    RESEARCH_SESSION_SCHEME as _SCHEME,
++)
++from strategy_core.constants import (
++    TRADING_DAY_BOUNDARY as _TRADING_DAY_BOUNDARY,
++)
++from strategy_core.constants import (
++    ZONE_PROXIMITY_PTS as _ZONE_PROXIMITY,
++)
++
++from alpha_lab.agents.data_infra.ml.config import DashboardUtilityConfig
++from alpha_lab.agents.data_infra.ml.dashboard_utility_builder import (
++    _build_bars_for_date,
++    _ensure_et_index,
++)
++from alpha_lab.agents.data_infra.ml.dashboard_utility_labeling import (
++    NO_RESOLUTION,
++    label_touch_event,
++)
++from alpha_lab.agents.data_infra.tick_store import TickStore
++
++logger = logging.getLogger(__name__)
++
++_ET = _SCHEME.timezone  # "US/Eastern"
++_ASIA = _SCHEME.sessions["asia"]
++_LONDON = _SCHEME.sessions["london"]
++_NY = _SCHEME.sessions["ny"]
++
++
++def _get_session_hl_for_date(
++    data_dir: Path,
++    symbol: str,
++    date_str: str,
++    util_cfg: DashboardUtilityConfig,
++    prev_full_hl,
++    prev_asia_hl,
++    prev_london_hl,
++):
++    """LEGACY carry: (full H/L, asia H/L, london H/L) for the next day's levels."""
++    bars = _build_bars_for_date(data_dir, symbol, date_str, util_cfg)
++    if bars.empty:
++        return prev_full_hl, prev_asia_hl, prev_london_hl
++
++    bars_et = _ensure_et_index(bars)
++    new_full = (float(bars_et["high"].max()), float(bars_et["low"].min()))
++    asia = _slice_session(bars_et, "asia")
++    london = _slice_session(bars_et, "london")
++
++    new_asia = _session_hl(asia) if not asia.empty else prev_asia_hl
++    new_london = _session_hl(london) if not london.empty else prev_london_hl
++
++    return new_full, new_asia, new_london
++
++
++def _session_hl(bars: pd.DataFrame) -> tuple[float, float]:
++    return float(bars["high"].max()), float(bars["low"].min())
++
++
++def _slice_session(bars: pd.DataFrame, session: str) -> pd.DataFrame:
++    if bars.empty:
++        return bars
++    times = bars.index.time
++    if session == "asia":
++        # crosses midnight: t >= 19:00 OR t < 02:45 (engine SessionWindow.contains)
++        mask = (times >= _ASIA.start) | (times < _ASIA.end)
++    elif session == "london":
++        mask = (times >= _LONDON.start) & (times < _LONDON.end)
++    elif session == "ny":
++        mask = (times >= _NY.start) & (times < _NY.end)
++    else:
++        return pd.DataFrame(columns=bars.columns)
++    return bars[mask]
++
++
++def _compute_levels_for_date(
++    bars_et: pd.DataFrame,
++    date_str: str,
++    prev_full_hl: tuple[float, float] | None,
++    prev_asia_hl: tuple[float, float] | None,
++    prev_london_hl: tuple[float, float] | None,
++) -> list[dict]:
++    """Compute key levels available for this trading date (LEGACY batch form).
++
++    Engine v3: each level carries ``available_from`` — the UTC instant at/after which
++    it may first be touched (its defining session's CLOSE) — so the engine's enforced
++    look-ahead guard can gate detect_touches. PDH/PDL are the FULL prior trading day's
++    high/low (``prev_full_hl``, the daily-candle extremes), available from the
++    trading-day start (prior 18:00 ET). asia/london H/L come from THIS day's session
++    slices and are available from the Asia close (02:45 ET) / London close (08:00 ET).
++    """
++    td = date.fromisoformat(date_str)
++    prev_day = td - timedelta(days=1)
++
++    def _avail(d: date, t: time) -> datetime:
++        # ET wall-clock instant -> tz-aware UTC (DST-aware). On a spring-forward day a
++        # nonexistent instant shifts forward (conservative, never earlier).
++        naive = pd.Timestamp(f"{d.isoformat()} {t.strftime('%H:%M:%S')}")
++        return (
++            naive.tz_localize(_ET, nonexistent="shift_forward", ambiguous=False)
++            .tz_convert("UTC")
++            .to_pydatetime()
++        )
++
++    pdh_pdl_avail = _avail(prev_day, _TRADING_DAY_BOUNDARY)  # prior 18:00 ET (day start)
++    asia_avail = _avail(td, _ASIA.end)  # 02:45 ET (Asia close)
++    london_avail = _avail(td, _LONDON.end)  # 08:00 ET (London close)
++
++    levels = []
++
++    if prev_full_hl is not None:
++        levels.append(
++            {
++                "name": "PDH",
++                "price": prev_full_hl[0],
++                "side": "HIGH",
++                "available_from": pdh_pdl_avail,
++            }
++        )
++        levels.append(
++            {
++                "name": "PDL",
++                "price": prev_full_hl[1],
++                "side": "LOW",
++                "available_from": pdh_pdl_avail,
++            }
++        )
++
++    asia = _slice_session(bars_et, "asia")
++    if not asia.empty:
++        hl = _session_hl(asia)
++        levels.append(
++            {"name": "asia_high", "price": hl[0], "side": "HIGH", "available_from": asia_avail}
++        )
++        levels.append(
++            {"name": "asia_low", "price": hl[1], "side": "LOW", "available_from": asia_avail}
++        )
++
++    london = _slice_session(bars_et, "london")
++    if not london.empty:
++        hl = _session_hl(london)
++        levels.append(
++            {"name": "london_high", "price": hl[0], "side": "HIGH", "available_from": london_avail}
++        )
++        levels.append(
++            {"name": "london_low", "price": hl[1], "side": "LOW", "available_from": london_avail}
++        )
++
++    return levels
++
++
++def _build_zones(levels: list[dict]) -> list[dict]:
++    """Merge levels within ZONE_PROXIMITY into zones."""
++    if not levels:
++        return []
++
++    sorted_levels = sorted(levels, key=lambda level: level["price"])
++    groups: list[list[dict]] = [[sorted_levels[0]]]
++
++    for lvl in sorted_levels[1:]:
++        if lvl["price"] - groups[-1][-1]["price"] <= _ZONE_PROXIMITY:
++            groups[-1].append(lvl)
++        else:
++            groups.append([lvl])
++
++    zones = []
++    for group in groups:
++        prices = [level["price"] for level in group]
++        rep_price = sum(prices) / len(prices)
++        names = [level["name"] for level in group]
++        high_count = sum(1 for level in group if level["side"] == "HIGH")
++        side = "HIGH" if high_count > len(group) / 2 else "LOW"
++        zones.append(
++            {
++                "representative_price": rep_price,
++                "names": names,
++                "side": side,
++                "touched": False,
++            }
++        )
++
++    return zones
++
++
++def _detect_touches(
++    bars_et: pd.DataFrame,
++    zones: list[dict],
++) -> list[dict]:
++    """Detect first-touch events: bar range intersects level price."""
++    touches = []
++
++    for bar_ts, bar in bars_et.iterrows():
++        bar_low = bar["low"]
++        bar_high = bar["high"]
++
++        for zone in zones:
++            if zone["touched"]:
++                continue
++
++            rep = zone["representative_price"]
++            if bar_low <= rep <= bar_high:
++                zone["touched"] = True
++                direction = "LONG" if zone["side"] == "LOW" else "SHORT"
++                touches.append(
++                    {
++                        "bar_ts": bar_ts,
++                        "representative_price": rep,
++                        "direction": direction,
++                        "level_type": zone["names"][0],
++                        "date": str(bar_ts.date()) if hasattr(bar_ts, "date") else "",
++                    }
++                )
++
++    return touches
++
++
++def _compute_interaction_features(
++    touch: dict,
++    data_dir: Path,
++    symbol: str,
++    config: DashboardUtilityConfig,
++) -> dict[str, float] | None:
++    """Compute 3 dashboard features from the tick interaction window."""
++    event_ts = pd.Timestamp(touch["bar_ts"])
++    rep_price = float(touch["representative_price"])
++    direction = touch["direction"]
++    window_minutes = config.interaction_window_minutes
++    proximity = config.level_proximity_pts
++
++    if event_ts.tz is not None:
++        event_ts_utc = event_ts.tz_convert("UTC")
++    else:
++        event_ts_utc = event_ts.tz_localize("UTC")
++
++    date_str = touch.get("date", "")
++    if not date_str:
++        date_str = str(event_ts.date())
++
++    store = TickStore(data_dir)
++    registered = store.register_symbol_date(symbol, date_str)
++    if not registered:
++        store.close()
++        return None
++
++    start = event_ts_utc.to_pydatetime()
++    end = start + timedelta(minutes=window_minutes)
++
++    try:
++        ticks = store.query_tick_feature_rows(symbol, start, end)
++    finally:
++        store.close()
++
++    if ticks.empty or len(ticks) < 5:
++        return None
++
++    if "price" not in ticks.columns:
++        return None
++
++    mid = ticks["price"].values
++    ts = ticks["ts_event"].values
++
++    time_beyond = 0.0
++    time_within = 0.0
++
++    for j in range(len(mid) - 1):
++        delta = ts[j + 1] - ts[j]
++        dt_sec = float(delta / np.timedelta64(1, "s"))
++        if dt_sec < 0 or dt_sec > 600:
++            continue
++
++        m = float(mid[j])
++        if abs(m - rep_price) <= 2.0:
++            time_within += dt_sec
++
++        if direction == "LONG" and m < rep_price or direction == "SHORT" and m > rep_price:
++            time_beyond += dt_sec
++
++    if "size" in ticks.columns:
++        prices = ticks["price"].values
++        sizes = ticks["size"].values
++        vol_at_level = 0.0
++        vol_through = 0.0
++        level_low = rep_price - proximity
++        level_high = rep_price + proximity
++
++        for j in range(len(prices)):
++            p = float(prices[j])
++            s = float(sizes[j])
++            if level_low <= p <= level_high:
++                vol_at_level += s
++            elif direction == "LONG" and p < rep_price or direction == "SHORT" and p > rep_price:
++                vol_through += s
++
++        total = vol_at_level + vol_through
++        absorption = vol_at_level / total if total > 0 else 0.0
++    else:
++        absorption = 0.0
++
++    return {
++        "int_time_beyond_level": round(time_beyond, 4),
++        "int_time_within_2pts": round(time_within, 4),
++        "int_absorption_ratio": round(min(1.0, max(0.0, absorption)), 6),
++    }
++
++
++def _compute_approach_features(
++    touch: dict,
++    data_dir: Path,
++    symbol: str,
++    config: DashboardUtilityConfig,
++) -> dict[str, float] | None:
++    """Compute live-computable approach features from pre-touch order flow."""
++    event_ts = pd.Timestamp(touch["bar_ts"])
++    if event_ts.tz is not None:
++        event_ts_utc = event_ts.tz_convert("UTC")
++    else:
++        event_ts_utc = event_ts.tz_localize("UTC")
++
++    date_str = touch.get("date", str(event_ts.date()))
++    approach_minutes = config.approach_window_minutes
++    approach_start = event_ts_utc - pd.Timedelta(minutes=approach_minutes)
++
++    store = TickStore(data_dir)
++    registered = store.register_symbol_date(symbol, date_str)
++    prev_date = (date.fromisoformat(date_str) - timedelta(days=1)).isoformat()
++    store.register_symbol_date(symbol, prev_date)
++
++    if not registered:
++        store.close()
++        return None
++
++    try:
++        views = store._get_views(symbol)
++        if not views:
++            return None
++        union_sql = store._union_views_sql(views)
++
++        sample_sql = f"SELECT column_name FROM (DESCRIBE SELECT * FROM ({union_sql}) LIMIT 0)"
++        cols = {r[0] for r in store._conn.execute(sample_sql).fetchall()}
++        has_symbol = "symbol" in cols
++
++        if has_symbol:
++            front = store._conn.execute(f"""
++                SELECT symbol, count(*) AS n
++                FROM ({union_sql}) AS t
++                WHERE symbol NOT LIKE '%-%'
++                GROUP BY symbol ORDER BY n DESC LIMIT 1
++            """).fetchone()
++            sym_f = f"AND symbol = '{front[0]}'" if front else "AND symbol NOT LIKE '%-%'"
++        else:
++            sym_f = ""
++
++        from alpha_lab.agents.data_infra.ml.config import LIVE_APPROACH_FEATURES
++        from alpha_lab.experiment.features import _query_approach_features
++
++        all_features = _query_approach_features(
++            store._conn,
++            union_sql,
++            sym_f,
++            approach_start,
++            event_ts_utc,
++        )
++        return {k: v for k, v in all_features.items() if k in LIVE_APPROACH_FEATURES}
++    except Exception as exc:
++        logger.debug("Approach features failed for %s: %s", date_str, exc)
++        return None
++    finally:
++        store.close()
++
++
++def process_single_date_legacy(
++    date_str: str,
++    data_dir: Path,
++    symbol: str,
++    util_cfg: DashboardUtilityConfig,
++    prev_full_hl: tuple[float, float] | None,
++    prev_asia_hl: tuple[float, float] | None,
++    prev_london_hl: tuple[float, float] | None,
++) -> pd.DataFrame:
++    """The retired ``_process_single_date(use_engine=False)`` branch, verbatim."""
++
++    bars = _build_bars_for_date(data_dir, symbol, date_str, util_cfg)
++    if bars.empty:
++        return pd.DataFrame()
++
++    bars_et = _ensure_et_index(bars)
++
++    levels = _compute_levels_for_date(
++        bars_et,
++        date_str,
++        prev_full_hl,
++        prev_asia_hl,
++        prev_london_hl,
++    )
++    if not levels:
++        return pd.DataFrame()
++
++    zones = _build_zones(levels)
++    touches = _detect_touches(bars_et, zones)
++    if not touches:
++        return pd.DataFrame()
++
++    rows: list[dict] = []
++    for touch in touches:
++        forward = bars_et[bars_et.index > touch["bar_ts"]]
++        rth_cutoff = pd.Timestamp(f"{date_str} 16:15:00", tz=_ET)
++        forward = forward[forward.index < rth_cutoff]
++
++        if forward.empty:
++            continue
++
++        label_result = label_touch_event(touch, forward, util_cfg)
++        if label_result["label"] == NO_RESOLUTION:
++            continue
++
++        features = _compute_interaction_features(
++            touch,
++            data_dir,
++            symbol,
++            util_cfg,
++        )
++        if features is None:
++            continue
++
++        row = {
++            "event_ts": touch["bar_ts"],
++            "date": date_str,
++            "timestamp": touch["bar_ts"],
++            "direction": touch["direction"],
++            "representative_price": touch["representative_price"],
++            "level_type": touch["level_type"],
++            "label": label_result["label"],
++            "label_encoded": label_result["label_encoded"],
++            "max_mfe": label_result["max_mfe"],
++            "max_mae": label_result["max_mae"],
++        }
++        row.update(features)
++
++        if util_cfg.include_approach_features:
++            approach = _compute_approach_features(
++                touch,
++                data_dir,
++                symbol,
++                util_cfg,
++            )
++            if approach:
++                row.update(approach)
++
++        rows.append(row)
++
++    if not rows:
++        return pd.DataFrame()
++
++    return pd.DataFrame(rows)
+diff --git a/src/alpha_lab/agents/data_infra/ml/strategy_contract.py b/src/alpha_lab/agents/data_infra/ml/strategy_contract.py
+index 2cea19c..cbf4799 100644
+--- a/src/alpha_lab/agents/data_infra/ml/strategy_contract.py
++++ b/src/alpha_lab/agents/data_infra/ml/strategy_contract.py
+@@ -79,11 +79,10 @@ def _build_touch_reversal_section(
+     every structural value is already single-sourced from ``strategy_core``
+     inside that builder — and overrides ONLY the per-run config values
+     (``du.bar_type``, the two windows, ``level_proximity_pts``, the selected
+-    feature partition, and the run's session-experiment scope). One deliberate
+-    projection is restated: ``direction_from_side`` keeps the lowercase
+-    ``low->long / high->short`` form every shipped bundle carries (still sourced
+-    from the engine's ``DIRECTION_FROM_SIDE``; the plugin default's uppercase
+-    enum-value form is a recorded cosmetic divergence).
++    feature partition, and the run's session-experiment scope).
++    ``direction_from_side`` is sourced from the plugin section VERBATIM
++    (ratified §3, honored in W1 P4c: the plugin owns the lowercase wire
++    vocabulary; the platform-constants re-derivation is gone).
+     """
+     du = config.dashboard_utility
+     base = default_touch_reversal_section()
+@@ -93,10 +92,6 @@ def _build_touch_reversal_section(
+         touch_rule=base.touch_rule.model_copy(
+             update={
+                 "bar_type": du.bar_type,
+-                "direction_from_side": {
+-                    side.value.lower(): direction.value.lower()
+-                    for side, direction in k.DIRECTION_FROM_SIDE.items()
+-                },
+             }
+         ),
+         feature_windows=base.feature_windows.model_copy(
+diff --git a/tests/agents/test_decision_repoint_parity.py b/tests/agents/test_decision_repoint_parity.py
+index dee27e4..08bfdd8 100644
+--- a/tests/agents/test_decision_repoint_parity.py
++++ b/tests/agents/test_decision_repoint_parity.py
+@@ -130,7 +130,7 @@ def cfg():
+ @pytest.fixture(scope="module")
+ def carry(cfg):
+     """Session H/L carry advanced from the warmup day (PDH/PDL for sample day 0)."""
+-    from alpha_lab.agents.data_infra.ml import dashboard_utility_builder as B
++    from alpha_lab.agents.data_infra.ml import legacy_decision as B  # W1 P4b: legacy stages moved
+ 
+     prev_ny = prev_asia = prev_london = None
+     prev_ny, prev_asia, prev_london = B._get_session_hl_for_date(
+@@ -237,8 +237,8 @@ def _legacy_decision_rows(B, bars_et, levels, date_str, cfg):
+ @pytest.mark.parametrize("date_str", SAMPLE_DAYS)
+ def test_engine_decision_matches_legacy(date_str, cfg, carry):
+     """zones + touches + labels + 6 features: engine == legacy, EXACTLY."""
+-    from alpha_lab.agents.data_infra.ml import dashboard_utility_builder as B
+     from alpha_lab.agents.data_infra.ml import engine_decision as E
++    from alpha_lab.agents.data_infra.ml import legacy_decision as B  # W1 P4b: legacy stages moved
+     from alpha_lab.agents.data_infra.ml.dashboard_utility_labeling import (
+         label_touch_event,
+     )
+@@ -347,8 +347,8 @@ def test_integrated_dataset_rows_match(date_str, cfg, carry):
+     (price_source="book_mid", tick_size=0.125, honest_entry=False) and compares to
+     the legacy book-mid decision path.
+     """
+-    from alpha_lab.agents.data_infra.ml import dashboard_utility_builder as B
+     from alpha_lab.agents.data_infra.ml import engine_decision as E
++    from alpha_lab.agents.data_infra.ml import legacy_decision as B  # W1 P4b: legacy stages moved
+ 
+     prev_ny, prev_asia, prev_london = carry[date_str]
+ 
+@@ -409,8 +409,8 @@ def test_engine_trade_path_cutover(date_str, cfg, carry):
+         (no kept touch could have a decision at/after the flatten).
+       * Classes/thresholds unchanged: labels are within the canonical 3-class set.
+     """
+-    from alpha_lab.agents.data_infra.ml import dashboard_utility_builder as B
+     from alpha_lab.agents.data_infra.ml import engine_decision as E
++    from alpha_lab.agents.data_infra.ml import legacy_decision as B  # W1 P4b: legacy stages moved
+ 
+     prev_ny, prev_asia, prev_london = carry[date_str]
+ 
+diff --git a/tests/agents/test_strategy_contract_nodrift.py b/tests/agents/test_strategy_contract_nodrift.py
+index 50492d0..99593f6 100644
+--- a/tests/agents/test_strategy_contract_nodrift.py
++++ b/tests/agents/test_strategy_contract_nodrift.py
+@@ -249,11 +249,9 @@ def test_section_is_sourced_from_the_plugin_section_model(
+         == base.feature_windows.large_trade_threshold
+     )
+     assert typed.feature_windows.mid_price_source == base.feature_windows.mid_price_source
+-    # The recorded lowercase projection of the engine's DIRECTION_FROM_SIDE.
+-    assert typed.touch_rule.direction_from_side == {
+-        side.value.lower(): direction.value.lower()
+-        for side, direction in k.DIRECTION_FROM_SIDE.items()
+-    }
++    # W1 P4c (ratified §3): the emitter ships the PLUGIN's wire vocabulary verbatim.
++    assert typed.touch_rule.direction_from_side == base.touch_rule.direction_from_side
++    assert typed.touch_rule.direction_from_side == {"low": "long", "high": "short"}
+ 
+     # Per-run values come from config, not the default.
+     du = config.dashboard_utility
+diff --git a/tests/agents/test_strategy_contract_repoint.py b/tests/agents/test_strategy_contract_repoint.py
+index 75a9a0b..9048f32 100644
+--- a/tests/agents/test_strategy_contract_repoint.py
++++ b/tests/agents/test_strategy_contract_repoint.py
+@@ -147,11 +147,15 @@ def test_class_map_matches_engine(contract):
+ 
+ 
+ def test_direction_from_side_matches_engine(contract):
+-    expected = {
+-        side.value.lower(): direction.value.lower()
+-        for side, direction in sc.constants.DIRECTION_FROM_SIDE.items()
+-    }
++    # W1 P4c (ratified §3): sourced from the plugin section verbatim — the plugin
++    # owns the lowercase wire vocabulary; the platform constant is gone.
++    from strategy_core.strategies.touch_reversal.section import (
++        default_touch_reversal_section,
++    )
++
++    expected = default_touch_reversal_section().touch_rule.direction_from_side
+     assert contract["section"]["touch_rule"]["direction_from_side"] == expected
++    assert expected == {"low": "long", "high": "short"}
+ 
+ 
+ def test_contract_round_trips_through_engine_loader(contract, tmp_path: Path):
+diff --git a/tests/agents/test_stream_labeling_e2e.py b/tests/agents/test_stream_labeling_e2e.py
+new file mode 100644
+index 0000000..d1983a0
+--- /dev/null
++++ b/tests/agents/test_stream_labeling_e2e.py
+@@ -0,0 +1,144 @@
++"""W1 P4d: end-to-end stream labeling through the SC drive on real data.
++
++ONE real-data test, capped at a ONE-HOUR slice of one trading day (the W1 test
++policy). It proves the production labeling path — the canonical SC day stream
++driving the same StrategyRuntime/TouchReversalPlugin wiring Trade-Lab serves
++with — produces touches, features, and labels end to end, with the dataset
++schema intact and the legacy decision stages absent from the call graph.
++
++Skips cleanly when the Databento NQ store is absent (CI without the data mount).
++"""
++
++from __future__ import annotations
++
++import math
++import os
++import sys
++from datetime import date
++from pathlib import Path
++from zoneinfo import ZoneInfo
++
++import pytest
++
++ENV_DATABENTO_DIR = "QUANT_LAB_DATABENTO_DIR"
++_DEFAULT_DATABENTO_DIR = Path(__file__).resolve().parents[2] / "data" / "databento"
++
++
++def _resolve_databento_dir() -> Path:
++    override = os.environ.get(ENV_DATABENTO_DIR)
++    if override:
++        return Path(override).expanduser()
++    return _DEFAULT_DATABENTO_DIR
++
++
++DATA_DIR = _resolve_databento_dir()
++SYMBOL = "NQ"
++DAY = "2026-02-18"
++PREV_DAY = "2026-02-17"
++
++_HAVE_DATA = (DATA_DIR / SYMBOL / DAY).is_dir() and (DATA_DIR / SYMBOL / PREV_DAY).is_dir()
++
++pytestmark = pytest.mark.skipif(
++    not _HAVE_DATA, reason=f"Databento NQ store with {PREV_DAY}/{DAY} not present"
++)
++
++LEGACY_MODULE = "alpha_lab.agents.data_infra.ml.legacy_decision"
++
++
++def _hour_one_cap_utc():
++    """End of the trading day's FIRST hour: prev-day 19:00 ET as UTC."""
++    et = ZoneInfo("US/Eastern")
++    from datetime import datetime, time
++
++    prev = date.fromisoformat(PREV_DAY)
++    return datetime.combine(prev, time(19, 0), tzinfo=et).astimezone(ZoneInfo("UTC"))
++
++
++def test_stream_drive_labels_one_hour_slice() -> None:
++    from strategy_core import Trade
++    from strategy_core.data.databento_parquet import DatabentoParquetSource
++
++    from alpha_lab.agents.data_infra.ml.config import DashboardUtilityConfig
++    from alpha_lab.agents.data_infra.ml.engine_decision import process_single_date_stream
++
++    cap_utc = _hour_one_cap_utc()
++
++    # Pre-scan the hour's trade range so the seeded PDH straddles traded prices —
++    # guaranteeing at least one touch without assuming anything about the day.
++    low = math.inf
++    high = -math.inf
++    source = DatabentoParquetSource.for_trading_day(DATA_DIR / SYMBOL, date.fromisoformat(DAY))
++    for event in source.events():
++        if isinstance(event, Trade):
++            if event.event_ts_utc > cap_utc:
++                break
++            points = event.price_points(0.25)
++            low = min(low, points)
++            high = max(high, points)
++    assert high > low, "one-hour slice carried no trades"
++    mid_on_grid = round(((low + high) / 2) * 4) / 4
++
++    config = DashboardUtilityConfig(
++        bar_type="147t",
++        interaction_window_minutes=5,
++        tp_points=2.0,  # small barriers so the one-hour forward window resolves
++        sl_points=2.0,
++        trap_mfe_min=1.0,
++        include_approach_features=True,
++        approach_window_minutes=15,
++        level_proximity_pts=0.5,
++    )
++    # Seed PDH at the hour's midpoint (PDL far below): available from the day
++    # start, so the touch fires inside the slice. Pop the legacy module first so
++    # the post-drive assertion is a TRUE call-graph check even when another test
++    # in the session (the parity regression) already imported it.
++    removed_legacy = sys.modules.pop(LEGACY_MODULE, None)
++    try:
++        df = process_single_date_stream(
++            DAY,
++            DATA_DIR,
++            SYMBOL,
++            config,
++            prev_day_hl=(mid_on_grid, low - 50.0),
++            events_until_utc=cap_utc,
++        )
++        # The W1 P4b guarantee: the legacy decision stages are NOT in the call graph.
++        assert LEGACY_MODULE not in sys.modules
++    finally:
++        if removed_legacy is not None:
++            sys.modules[LEGACY_MODULE] = removed_legacy
++
++    assert not df.empty, "stream drive produced no labeled rows in the slice"
++    expected_columns = {
++        "event_ts",
++        "date",
++        "timestamp",
++        "session",
++        "decision_time",
++        "label_window_end",
++        "direction",
++        "representative_price",
++        "level_type",
++        "label",
++        "label_encoded",
++        "max_mfe",
++        "max_mae",
++        "int_time_beyond_level",
++        "int_time_within_2pts",
++        "int_absorption_ratio",
++        "app_large_trade_vol_pct",
++        "app_avg_trade_size",
++        "app_max_spread",
++    }
++    assert expected_columns <= set(df.columns)
++    assert (df["date"] == DAY).all()
++    assert set(df["direction"]) <= {"LONG", "SHORT"}
++    assert df["label"].notna().all()
++
++
++def test_build_utility_dataset_refuses_legacy_mode() -> None:
++    from alpha_lab.agents.data_infra.ml.config import MLPipelineConfig
++    from alpha_lab.agents.data_infra.ml.dashboard_utility_builder import build_utility_dataset
++
++    with pytest.raises(ValueError, match="legacy"):
++        build_utility_dataset([DAY], DATA_DIR, MLPipelineConfig(), use_engine=False)

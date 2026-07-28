@@ -1,0 +1,467 @@
+diff --git a/docs/DECISIONS.md b/docs/DECISIONS.md
+index 86cf69c..491ee95 100644
+--- a/docs/DECISIONS.md
++++ b/docs/DECISIONS.md
+@@ -302,3 +302,21 @@ This prevents re-litigating settled questions across sessions.
+ ---
+ 
+ *Add new decisions below this line.*
++
++## D-036: W3 Training Configuration (Ratified; Execution Stop-Gated in W3a)
++**Date**: 2026-06-12
++**Context**: W3 PROVE needs one explicit, owner-ratified training configuration — no defaults trusted — for the fresh proof bundle (W3a) and the parity gate (W3b). The W3-CONFIG recon (W3_CONFIG_RECON.md) inventoried the store, current defaults, and the fixture-vs-production label divergence.
++**Decision**: The W3 proof-bundle configuration is: `training_mode=dashboard_utility`; session preset `all_to_ny` (train/eval [asia, london, ny], production gate [ny]); `bar_type=147t`; instrument NQ, tick 0.25. Window: 2025-11-21 → 2026-02-13 inclusive, valid store days only (2025-11-20 is an empty day dir and self-skips at date discovery). Folds: purged walk-forward over TRADING days, TRAIN=40 / TEST=5 / STEP=5 / PURGE=2, MIN_TRAIN_EVENTS=30 (the `train_dashboard_model` scheme, now a first-class `--fold-scheme purged-days` path). Label policy (explicit overrides where config defaults differ): `tp_points=15.0`, `sl_points=15.0` (override — config default 30.0), `trap_mfe_min=5.0`, `interaction_window_minutes=5`, `approach_window_minutes=15` (override — default 90), `include_approach_features=True` (override — default False); `entry_reference`/`forward_cutoff`/flatten ride the SC constants (`realistic_at_decision` / `17:00_US/Eastern_ny_close` / 16:40 ET). Features PINNED: `[int_time_within_2pts, int_absorption_ratio, app_avg_trade_size, app_large_trade_vol_pct, app_max_spread]`, `rfecv_enabled=False`. Model: CatBoost 1000 iterations / depth 6 / lr 0.03 / Balanced / seed 42, MultiClass. Model quality is NOT a save gate (explicit `allow_failed_gates` with honest metrics). Bundle name `NQ_W3_<timestamp>` through the W2-hardened save path.
++**Rationale**: Every value is explicit so the proof bundle is reproducible and the W3b gate tests exactly what production would serve; sl=15/aw=15 match the bundle convention the audits established rather than the stale config defaults.
++**Trade-off / Status**: W3a's compute stop-gate measured the post-vectorization per-day pipeline at 1447.1s for 2026-02-12 (fresh, config hash 7850272e) → ×60 ≈ 24.1 h >> the 90-minute gate, with ~2×513s of that being the SC canonical reader's two full-day event decodes (15.3M events/pass). The TRAIN DID NOT RUN; this configuration stands ratified and waits on an owner ruling on the reader cost (SC-side change — out of W3a's bounds).
++
++---
++
++## D-037: Quote Feature Rides the Gate — Stub-Exclusion Pre-Ruling Superseded
++**Date**: 2026-06-12
++**Context**: An earlier pre-ruling leaned toward excluding quote-derived features from the W3 train because `quotes_in_window` is stubbed. The W3-CONFIG recon made the stub's blast radius exact: the stub is the SC `PlatformContext.quotes_in_window` accessor only (`strategy_core/runtime/context.py:103-109`, returns `()`, §9.10 retention window open).
++**Decision**: `app_max_spread` STAYS in the pinned W3 feature set. The stub affects only a future SC-plugin-path consumer; Quant-Lab training computes quotes from the canonical store (deduped L1 via the SC reader), and Trade-Lab serving computes the feature over its own retained quote window — both real. The feature deliberately rides the W3b parity gate, which is exactly where a serving-side divergence would surface.
++**Rationale**: Excluding a live-computable, production-served feature because an unrelated accessor is stubbed would have widened the research/serving gap instead of testing it.
++**Trade-off**: If §9.10 lands later and a plugin-path consumer appears, that path needs its own parity evidence before serving.
++
++---
+diff --git a/scripts/ml_training_tab.py b/scripts/ml_training_tab.py
+index 6f4e69b..b960d70 100644
+--- a/scripts/ml_training_tab.py
++++ b/scripts/ml_training_tab.py
+@@ -165,15 +165,71 @@ def build_training_dataset(
+     return pd.concat(frames, ignore_index=True)
+ 
+ 
++def _purged_trading_day_splits(
++    frame: pd.DataFrame,
++    *,
++    train_days: int,
++    test_days: int,
++    step_days: int,
++    purge_days: int,
++    min_train_events: int,
++) -> list:
++    """Purged walk-forward folds over TRADING days (the train_dashboard_model
++    scheme): contiguous blocks of distinct ``date`` values, a ``purge_days``
++    trading-day gap between train and test, stepping ``step_days`` days. Folds
++    with fewer than ``min_train_events`` training rows (or zero test rows) are
++    skipped, exactly as in scripts/train_dashboard_model.py.
++    """
++    from alpha_lab.agents.data_infra.ml.walk_forward import WalkForwardSplit
++
++    date_values = frame["date"].astype(str)
++    trading_dates = sorted(date_values.unique())
++    n_dates = len(trading_dates)
++    splits: list[WalkForwardSplit] = []
++    fold = 0
++    start = 0
++    while start + train_days + purge_days + test_days <= n_dates:
++        train_dates = trading_dates[start : start + train_days]
++        test_start_pos = start + train_days + purge_days
++        test_dates = trading_dates[test_start_pos : test_start_pos + test_days]
++        train_idx = np.where(date_values.isin(train_dates))[0]
++        test_idx = np.where(date_values.isin(test_dates))[0]
++        if len(train_idx) >= min_train_events and len(test_idx) > 0:
++            splits.append(
++                WalkForwardSplit(
++                    fold=fold,
++                    train_start=pd.Timestamp(train_dates[0]),
++                    train_end=pd.Timestamp(train_dates[-1]),
++                    test_start=pd.Timestamp(test_dates[0]),
++                    test_end=pd.Timestamp(test_dates[-1]),
++                    train_indices=train_idx,
++                    test_indices=test_idx,
++                )
++            )
++            fold += 1
++        start += step_days
++    return splits
++
++
+ def run_walk_forward_training(
+     dataset: pd.DataFrame,
+     config,
+     label_column: str = "label_20t",
++    *,
++    day_folds: dict | None = None,
++    pinned_features: list[str] | None = None,
+ ) -> dict:
+     """Walk-forward train + evaluate.
+ 
+     Returns dict with the refit runtime model, out-of-sample evaluation
+     result, and per-fold diagnostics.
++
++    ``day_folds`` (W3a): optional purged TRADING-day fold scheme — a dict of
++    train_days/test_days/step_days/purge_days/min_train_events passed to
++    ``_purged_trading_day_splits`` INSTEAD of the calendar-day
++    ``WalkForwardSplitter``. ``pinned_features`` (W3a): exact feature list to
++    train/serve (must be a subset of the dataset's feature columns); pinning
++    wins over RFECV.
+     """
+     from alpha_lab.agents.data_infra.ml.model_evaluator import ModelEvaluator
+     from alpha_lab.agents.data_infra.ml.model_trainer import ExtremaModelTrainer
+@@ -237,10 +293,27 @@ def run_walk_forward_training(
+         raise ValueError(msg)
+ 
+     # Walk-forward splits
+-    splitter = WalkForwardSplitter(config.walk_forward)
+-    splits = splitter.split(timestamps)
++    if day_folds is not None:
++        splits = _purged_trading_day_splits(valid, **day_folds)
++    else:
++        splitter = WalkForwardSplitter(config.walk_forward)
++        splits = splitter.split(timestamps)
+ 
+     if len(splits) < 2:
++        if day_folds is not None:
++            need_for_two = (
++                day_folds["train_days"]
++                + day_folds["purge_days"]
++                + day_folds["test_days"]
++                + day_folds["step_days"]
++            )
++            msg = (
++                f"Only {len(splits)} purged trading-day fold(s). Need at least 2.\n"
++                f"Your data covers {valid['date'].nunique()} trading days; the "
++                f"scheme {day_folds} needs {need_for_two} days for 2 folds.\n"
++                f"Fix: use a longer date range, or reduce the fold windows."
++            )
++            raise ValueError(msg)
+         data_span = (timestamps.max() - timestamps.min()).days
+         wf = config.walk_forward
+         min_for_1 = wf.train_days + wf.gap_days + wf.test_days
+@@ -283,8 +356,18 @@ def run_walk_forward_training(
+ 
+     # RFECV: run ONCE before the walk-forward loop so the same feature
+     # subset is used for every per-fold model AND the final saved model.
++    # W3a: an explicit pinned list wins over RFECV (and validates up front).
+     selected_features = feature_cols
+-    if config.model.rfecv_enabled and len(preliminary_cv) >= 2:
++    if pinned_features is not None:
++        missing_pins = [f for f in pinned_features if f not in feature_cols]
++        if missing_pins:
++            msg = (
++                f"pinned_features not in dataset feature columns: {missing_pins} "
++                f"(available: {sorted(feature_cols)})"
++            )
++            raise ValueError(msg)
++        selected_features = list(pinned_features)
++    elif config.model.rfecv_enabled and len(preliminary_cv) >= 2:
+         rfecv_trainer = ExtremaModelTrainer(config.model)
+         rfecv_result = rfecv_trainer.train(features, y, cv_splits=preliminary_cv)
+         selected_features = rfecv_result.selected_features
+diff --git a/scripts/run_dashboard_session_experiment.py b/scripts/run_dashboard_session_experiment.py
+index 7c57b0b..c31b018 100755
+--- a/scripts/run_dashboard_session_experiment.py
++++ b/scripts/run_dashboard_session_experiment.py
+@@ -2,8 +2,14 @@
+ """Run dashboard-utility ML session-scope experiments from the CLI.
+ 
+ This is the non-Streamlit path for the same configuration surfaced in the ML
+-Training Workbench. It is intentionally research-only: saved bundles still carry
+-``supported_by_runtime=false`` until Trade-Lab v3 parity is proven.
++Training Workbench. Saved bundles carry ``supported_by_runtime=true`` since E2
++(Trade-Lab is repointed onto Strategy-Core and gates activation itself).
++
++W3a riders: ``--fold-scheme purged-days`` swaps the calendar-day
++``WalkForwardSplitter`` for the purged TRADING-day scheme
++(train/test/step/purge days + min-train-events, the train_dashboard_model
++fold logic); ``--pin-features`` trains/serves an exact feature list
++(disables RFECV selection).
+ """
+ 
+ from __future__ import annotations
+@@ -68,6 +74,27 @@ def _build_parser() -> argparse.ArgumentParser:
+     parser.add_argument("--train-days", type=int, default=30)
+     parser.add_argument("--test-days", type=int, default=7)
+     parser.add_argument("--gap-days", type=int, default=1)
++    parser.add_argument(
++        "--fold-scheme",
++        choices=["calendar", "purged-days"],
++        default="calendar",
++        help=(
++            "calendar = WalkForwardSplitter over --train/test/gap-days; "
++            "purged-days = purged TRADING-day folds over --fold-*-days (W3a)"
++        ),
++    )
++    parser.add_argument("--fold-train-days", type=int, default=40)
++    parser.add_argument("--fold-test-days", type=int, default=5)
++    parser.add_argument("--fold-step-days", type=int, default=5)
++    parser.add_argument("--fold-purge-days", type=int, default=2)
++    parser.add_argument("--min-train-events", type=int, default=30)
++    parser.add_argument(
++        "--pin-features",
++        help=(
++            "Comma-separated EXACT feature list to train/serve "
++            "(disables RFECV selection)"
++        ),
++    )
+     parser.add_argument("--iterations", type=int, default=500)
+     parser.add_argument("--depth", type=int, default=6)
+     parser.add_argument("--rfecv", action="store_true")
+@@ -130,6 +157,16 @@ def main() -> int:
+     config = _resolve_config(args)
+     available = get_available_dates(args.symbol, args.data_dir)
+     dates = _date_slice(available, args.start, args.end)
++    day_folds = None
++    if args.fold_scheme == "purged-days":
++        day_folds = {
++            "train_days": args.fold_train_days,
++            "test_days": args.fold_test_days,
++            "step_days": args.fold_step_days,
++            "purge_days": args.fold_purge_days,
++            "min_train_events": args.min_train_events,
++        }
++    pinned_features = _parse_sessions(args.pin_features)
+     summary = {
+         "phase": "resolved_config",
+         "symbol": args.symbol,
+@@ -142,6 +179,9 @@ def main() -> int:
+         "bar_type": config.dashboard_utility.bar_type,
+         "include_approach_features": config.dashboard_utility.include_approach_features,
+         "approach_window_minutes": config.dashboard_utility.approach_window_minutes,
++        "fold_scheme": args.fold_scheme,
++        "day_folds": day_folds,
++        "pinned_features": pinned_features,
+         "walk_forward": config.walk_forward.model_dump(),
+         "model": config.model.model_dump(),
+     }
+@@ -155,7 +195,13 @@ def main() -> int:
+     if dataset.empty:
+         raise SystemExit("No touch events detected for selected dates")
+ 
+-    result = run_walk_forward_training(dataset, config, "label_encoded")
++    result = run_walk_forward_training(
++        dataset,
++        config,
++        "label_encoded",
++        day_folds=day_folds,
++        pinned_features=pinned_features,
++    )
+     ev = result["eval_result"]
+     report = {
+         "phase": "trained",
+diff --git a/src/alpha_lab/agents/data_infra/ml/engine_decision.py b/src/alpha_lab/agents/data_infra/ml/engine_decision.py
+index a969077..192f4c3 100644
+--- a/src/alpha_lab/agents/data_infra/ml/engine_decision.py
++++ b/src/alpha_lab/agents/data_infra/ml/engine_decision.py
+@@ -41,6 +41,7 @@ from __future__ import annotations
+ from datetime import date, datetime, timedelta
+ from pathlib import Path
+ 
++import numpy as np
+ import pandas as pd
+ import strategy_core as sc
+ from strategy_core import (
+@@ -88,6 +89,11 @@ assert TRADE_TICK == DEFAULT_TICK_SIZE  # the contract/constant the trade path t
+ 
+ _ET = "US/Eastern"
+ 
++#: Quote-window assignment chunk (process_single_date_stream): bounds the
++#: chunk x touches membership matrix (~64Ki x touches bools) regardless of the
++#: day's quote count.
++_QUOTE_CHUNK_EVENTS = 65536
++
+ 
+ # ── Conversions: CQL representations -> engine neutral types ────────────────
+ 
+@@ -692,21 +698,45 @@ def process_single_date_stream(
+     if config.include_approach_features:
+         # Bounded second pass: only quotes inside some touch's approach window are
+         # retained (full-day L1 retention would dominate memory for no reader).
+-        spans = sorted(
+-            (touch.bar_ts_utc - approach_window, touch.bar_ts_utc, idx)
+-            for idx, touch in enumerate(touches)
++        # Window membership is computed VECTORIZED (numpy over epoch-ns) on
++        # bounded chunks; quotes outside the hull of all windows are dropped at
++        # the stream, so retention matches the per-window bound.
++        starts_ns = np.array(
++            [pd.Timestamp(t.bar_ts_utc - approach_window).value for t in touches],
++            dtype=np.int64,
++        )
++        ends_ns = np.array(
++            [pd.Timestamp(t.bar_ts_utc).value for t in touches], dtype=np.int64
+         )
++        hull_start = min(t.bar_ts_utc - approach_window for t in touches)
++        hull_end = max(t.bar_ts_utc for t in touches)
++        chunk: list[Quote] = []
++
++        def _assign_chunk() -> None:
++            ts_ns = pd.DatetimeIndex([q.event_ts_utc for q in chunk]).asi8
++            inside = (ts_ns[:, None] >= starts_ns[None, :]) & (
++                ts_ns[:, None] < ends_ns[None, :]
++            )
++            for touch_idx in np.flatnonzero(inside.any(axis=0)):
++                approach_quotes.setdefault(int(touch_idx), []).extend(
++                    chunk[pos] for pos in np.flatnonzero(inside[:, touch_idx])
++                )
++            chunk.clear()
++
+         for event in source.events():
+             if not isinstance(event, Quote):
+                 continue
+             ts = event.event_ts_utc
+             if events_until_utc is not None and ts > events_until_utc:
+                 break
+-            for span_start, span_end, idx in spans:
+-                if span_start <= ts < span_end:
+-                    approach_quotes.setdefault(idx, []).append(event)
+-                elif ts < span_start:
+-                    break
++            if ts < hull_start or ts >= hull_end:
++                # Outside every approach window — never retained.
++                continue
++            chunk.append(event)
++            if len(chunk) >= _QUOTE_CHUNK_EVENTS:
++                _assign_chunk()
++        if chunk:
++            _assign_chunk()
+ 
+     rows: list[dict] = []
+     for idx, touch in enumerate(touches):
+diff --git a/tests/agents/test_ml_training_reporting.py b/tests/agents/test_ml_training_reporting.py
+index 5aefcf5..e9a4410 100644
+--- a/tests/agents/test_ml_training_reporting.py
++++ b/tests/agents/test_ml_training_reporting.py
+@@ -620,3 +620,141 @@ def test_build_oos_predictions_frame_empty_carries_canonical_schema():
+         "gate_0_70_runtime_sessions",
+         "gate_0_70_ny",
+     ]
++
++
++# ── W3a: purged trading-day folds + pinned features ─────────────────────────
++
++
++def _day_fold_frame(n_dates: int, rows_per_day: int) -> pd.DataFrame:
++    dates = [
++        str(d.date())
++        for d in pd.bdate_range("2026-01-01", periods=n_dates, freq="B")
++    ]
++    rows = []
++    for date_str in dates:
++        for i in range(rows_per_day):
++            rows.append(
++                {
++                    "date": date_str,
++                    "timestamp": pd.Timestamp(f"{date_str} 14:{i:02d}:00", tz="UTC"),
++                    "session": "ny",
++                    "label_encoded": i % 3,
++                    "int_time_within_2pts": float((i * 7) % 60),
++                    "int_absorption_ratio": float((i % 10) / 10.0),
++                    "app_max_spread": 0.25 + 0.25 * (i % 4),
++                },
++            )
++    return pd.DataFrame(rows)
++
++
++def test_purged_trading_day_splits_match_train_dashboard_model_scheme():
++    """40/5/5/2 over 52 trading days = 2 folds with a 2-trading-day purge gap."""
++    frame = _day_fold_frame(n_dates=52, rows_per_day=2)
++    splits = ml_training_tab._purged_trading_day_splits(
++        frame,
++        train_days=40,
++        test_days=5,
++        step_days=5,
++        purge_days=2,
++        min_train_events=30,
++    )
++    dates = sorted(frame["date"].unique())
++
++    assert [s.fold for s in splits] == [0, 1]
++
++    fold0 = splits[0]
++    assert str(fold0.train_start.date()) == dates[0]
++    assert str(fold0.train_end.date()) == dates[39]
++    assert str(fold0.test_start.date()) == dates[42]
++    assert str(fold0.test_end.date()) == dates[46]
++    train_dates_0 = set(frame.iloc[fold0.train_indices]["date"])
++    test_dates_0 = set(frame.iloc[fold0.test_indices]["date"])
++    assert train_dates_0 == set(dates[0:40])
++    assert test_dates_0 == set(dates[42:47])
++    # The purge gap days belong to NEITHER side.
++    assert dates[40] not in train_dates_0 | test_dates_0
++    assert dates[41] not in train_dates_0 | test_dates_0
++
++    fold1 = splits[1]
++    assert str(fold1.train_start.date()) == dates[5]
++    assert str(fold1.test_end.date()) == dates[51]
++
++
++def test_purged_trading_day_splits_min_train_events_skips_thin_folds():
++    frame = _day_fold_frame(n_dates=6, rows_per_day=1)
++    splits = ml_training_tab._purged_trading_day_splits(
++        frame,
++        train_days=2,
++        test_days=1,
++        step_days=1,
++        purge_days=1,
++        min_train_events=3,  # 2 train days x 1 row < 3 -> every fold skipped
++    )
++    assert splits == []
++
++
++def test_run_walk_forward_training_day_folds_and_pinned_features():
++    """The day-fold scheme + pinned list flow through training to the result."""
++    frame = _day_fold_frame(n_dates=14, rows_per_day=12)
++    config = MLPipelineConfig(
++        training_mode="dashboard_utility",
++        model={"rfecv_enabled": False, "iterations": 25, "depth": 3,
++               "loss_function": "MultiClass"},
++        tick_size=0.25,
++        instrument="NQ",
++    )
++    pinned = ["int_time_within_2pts", "app_max_spread"]
++    day_folds = {
++        "train_days": 4,
++        "test_days": 2,
++        "step_days": 2,
++        "purge_days": 1,
++        "min_train_events": 10,
++    }
++
++    result = ml_training_tab.run_walk_forward_training(
++        frame,
++        config,
++        "label_encoded",
++        day_folds=day_folds,
++        pinned_features=pinned,
++    )
++
++    assert result["selected_features"] == pinned
++    assert result["n_valid_folds"] >= 2
++    # Train/test windows in the fold details follow the TRADING-day scheme:
++    # 4 train days, a 1-day purge gap, 2 test days.
++    dates = sorted(frame["date"].unique())
++    first = result["fold_details"][0]
++    assert first["train_start"] == dates[0]
++    assert first["train_end"] == dates[3]
++    assert first["test_start"] == dates[5]
++    assert first["test_end"] == dates[6]
++    # The pinned list is what the refit model was trained on.
++    assert result["trained_model"].selected_features == pinned
++    assert not result["oos_predictions"].empty
++
++
++def test_run_walk_forward_training_rejects_unknown_pinned_feature():
++    frame = _day_fold_frame(n_dates=14, rows_per_day=12)
++    config = MLPipelineConfig(
++        training_mode="dashboard_utility",
++        model={"rfecv_enabled": False, "iterations": 25, "depth": 3,
++               "loss_function": "MultiClass"},
++        tick_size=0.25,
++        instrument="NQ",
++    )
++    with pytest.raises(ValueError, match="pinned_features not in dataset"):
++        ml_training_tab.run_walk_forward_training(
++            frame,
++            config,
++            "label_encoded",
++            day_folds={
++                "train_days": 4,
++                "test_days": 2,
++                "step_days": 2,
++                "purge_days": 1,
++                "min_train_events": 10,
++            },
++            pinned_features=["app_avg_tob_imbalance"],
++        )

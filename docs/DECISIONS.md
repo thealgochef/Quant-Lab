@@ -329,3 +329,16 @@ This prevents re-litigating settled questions across sessions.
 **Trade-off**: `entry_price` on warm-cache trains is NaN-degraded until caches roll; a batch `resolution_type` beyond the three-class mapping (e.g. session_end) does not exist by construction — the honest resolver never force-labels.
 
 ---
+
+---
+
+## Housekeeping note (2026-07-28, not a ruling)
+
+Root window artifacts were archived to `docs/archive/windows/` (filenames
+unchanged) on branch `chore/cleanup-2026-07`. In particular `W3_CONFIG_RECON.md`,
+cited above by D-036 as the W3 training-config recon evidence, now lives at
+`docs/archive/windows/W3_CONFIG_RECON.md`. The old live-dashboard prototype
+(`src/alpha_lab/dashboard/`, `dashboard-ui/`, its three importer scripts) and
+`experiment/key_levels.py` were deleted in the same window (dead code, pre-v3
+session semantics; recoverable from git history). D-016's
+`scripts/train_dashboard_model.py` export boundary is untouched.

@@ -1,0 +1,857 @@
+﻿commit baecf66fd1267bc045a29ca9b9eb8d3f063ef79a
+Author: Luis Gonzalez <lgcapital300@gmail.com>
+Date:   Wed Jun 10 18:12:26 2026 -0500
+
+    E1/E2: emit two-axis v2 contracts via the registry; migrate the store; CI rider
+    
+    Emitter (ml/strategy_contract.py): stamps contract_version v2 +
+    platform_version from the SC constants; strategy_id is now the REGISTRY ROUTER
+    id (resolved fail-closed via get_strategy - an unknown id refuses to EMIT; the
+    explicit touch_reversal registration import precedes it) and strategy_version
+    is derived from the registered plugin; supported_by_runtime -> True on the FULL
+    contract (the blocking condition was satisfied at C/D - TL is repointed and
+    serves the honest resolver; comment rewritten); the minimal non-
+    dashboard_utility record stays False (schema-incomplete by design, never
+    servable). Caller scripts/ml_training_tab.py passes "touch_reversal" (the
+    plugin id), NOT output_dir.name - the dir name remains the bundle identity
+    everywhere else. ml/config.py dataset_config_hash input renames
+    engine_version= -> platform_version= (cache tags roll, by design).
+    
+    NEW scripts/migrate_contracts_v2.py + EXECUTED against the real store
+    (in place, idempotent, backups strategy.json.pre_v2.bak): the 3 v3-engine
+    bundles (NQ_20260603_233847 / NQ_20260604_012623 / NQ_20260604_015413)
+    migrated to {v2, platform_v1, touch_reversal, strategy_version 1};
+    supported_by_runtime left as-is; sidecars: none exist (regeneration branch
+    no-op). DELIBERATE NARROWING vs the prompt's rewrite spec: ONLY
+    engine_version == strategy_core_engine_v3 bundles migrate - the platform axis
+    RENAMES engine v3, and blanket-stamping platform_v1 onto the store's
+    legacy/v1/v2-engine bundles would FORGE their structural binding (the v2-engine
+    bundle is SC-schema-valid and would have activated under semantics it was not
+    built with). The 3 non-v3 bundles stay at contract v1, fail-closed at the
+    loader's first check.
+    
+    Acceptance (scripts/run_databento_acceptance.py): loader hook ->
+    expected_platform_version; the supported_by_runtime gate FLIPS (asserts True);
+    summary gains strategy_id/strategy_version. v3_verify scripts: sc.ENGINE_VERSION
+    -> sc.PLATFORM_VERSION (display/recording only).
+    
+    Tests (every assertion change enumerated in the window report): nodrift -
+    structural map gains platform_version + registry-sourced strategy_version,
+    fixture id -> touch_reversal, axis tests renamed, loader binding ->
+    platform hook, the old-axis literal is now the MISMATCH case, +1 NEW
+    unknown-id-fails-emission test; repoint - ids -> touch_reversal, flag test
+    flips True (minimal stays False), round-trip -> platform hook;
+    acceptance_cli - fixture -> v2 shape, summary keys, the flag-rejection test
+    inverts (False now rejected).
+    
+    Riders: NEW .github/workflows/ci.yml (cold pip install -e .[dev] resolving the
+    SC pin anonymously + ruff src tests + pytest; pays the 9.6 NAMED DEBT - first
+    green run lands only after the greenlight pin bump + push, stated in-file);
+    tooling alignment ruff py314->py313, mypy 3.14->3.13, .python-version ->
+    3.13.1. The recorded sys.path debt items are deliberately untouched.
+    
+    Gates on this tree (editable SC @ E1): QL suite 740 (739 baseline + 1 new
+    emission negative); ruff src+tests clean; repo-wide ruff = the 13 pre-existing
+    scratch-file findings, unchanged.
+    
+    Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+new file mode 100644
+index 0000000..43fce09
+--- /dev/null
++++ b/.github/workflows/ci.yml
+@@ -0,0 +1,47 @@
++name: ci
++
++# Cold-install CI: pays the 9.6 NAMED DEBT (QL cold-install resolution check, the
++# analog of Trade-Lab's backend-ci.yml). Catches dependency/portability regressions
++# the editable/PYTHONPATH dev runs mask — e.g. a git+ssh strategy-core pin (no SSH
++# key on a fresh runner), a stale pin missing a symbol QL imports, or an undeclared
++# test dependency. Runs on pushes to main and on PRs.
++#
++# NOTE (E-window): authored before the E-window push; the FIRST green run can only
++# happen after the greenlight pin bump + push land — the committed pin (c615e40)
++# predates the PLATFORM_VERSION rename this tree imports, so a cold install from
++# this exact commit fails by design until the pin chore rides the greenlight.
++on:
++  push:
++    branches: [main]
++  pull_request:
++    branches: [main]
++
++concurrency:
++  group: ci-${{ github.ref }}
++  cancel-in-progress: true
++
++jobs:
++  quant-lab:
++    name: quant-lab (cold install + ruff + pytest)
++    runs-on: ubuntu-latest
++    steps:
++      - name: Checkout
++        uses: actions/checkout@v4
++
++      - name: Set up Python 3.13
++        uses: actions/setup-python@v5
++        with:
++          python-version: "3.13"
++
++      # Clean install from scratch. Resolves the strategy-core dependency from its
++      # git+https pin against the public Strategy-Core repo (anonymous, no key or
++      # token) and installs all runtime + dev dependencies — the pin goes from
++      # DECLARED to ENFORCED here (decision 9.6).
++      - name: Install (cold)
++        run: pip install -e ".[dev]"
++
++      - name: Lint (ruff)
++        run: ruff check src tests
++
++      - name: Test (pytest)
++        run: pytest -q
+diff --git a/.python-version b/.python-version
+index a6d9ada..7918c7a 100644
+--- a/.python-version
++++ b/.python-version
+@@ -1 +1 @@
+-3.14.5
++3.13.1
+\ No newline at end of file
+diff --git a/models/NQ_20260603_233847/strategy.json b/models/NQ_20260603_233847/strategy.json
+index d83fd05..fbfcaf7 100644
+--- a/models/NQ_20260603_233847/strategy.json
++++ b/models/NQ_20260603_233847/strategy.json
+@@ -1,7 +1,8 @@
+ {
+-  "contract_version": "trade_lab_contract_v1",
+-  "engine_version": "strategy_core_engine_v3",
+-  "strategy_id": "NQ_20260603_233847",
++  "contract_version": "trade_lab_contract_v2",
++  "platform_version": "strategy_core_platform_v1",
++  "strategy_id": "touch_reversal",
++  "strategy_version": "1",
+   "training_mode": "dashboard_utility",
+   "supported_by_runtime": true,
+   "instrument": "NQ",
+diff --git a/pyproject.toml b/pyproject.toml
+index 3b0365c..69096b0 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -57,7 +57,7 @@ pythonpath = ["src"]
+ addopts = "-v --tb=short"
+ 
+ [tool.ruff]
+-target-version = "py314"
++target-version = "py313"
+ line-length = 100
+ src = ["src"]
+ 
+@@ -65,7 +65,7 @@ src = ["src"]
+ select = ["E", "F", "I", "N", "W", "UP", "B", "SIM"]
+ 
+ [tool.mypy]
+-python_version = "3.14"
++python_version = "3.13"
+ strict = true
+ warn_return_any = true
+ warn_unused_configs = true
+diff --git a/scripts/migrate_contracts_v2.py b/scripts/migrate_contracts_v2.py
+new file mode 100644
+index 0000000..c9bd7cf
+--- /dev/null
++++ b/scripts/migrate_contracts_v2.py
+@@ -0,0 +1,131 @@
++"""Migrate deployed model-bundle strategy.json files to contract v2 (E1/E2), in place.
++
++For every bundle directory under the models root that contains a strategy.json:
++
++* SKIP bundles already at ``trade_lab_contract_v2`` (idempotent re-runs).
++* SKIP bundles whose ``engine_version`` is not ``strategy_core_engine_v3``:
++  the platform axis (``strategy_core_platform_v1``) RENAMES engine v3 — granting
++  it to an engine-v1/v2/absent bundle would FORGE the structural binding (the
++  v2-engine bundle is SC-schema-valid and would activate under semantics it was
++  not built with). Non-v3 bundles stay at contract v1 and keep failing closed at
++  the loader's first check, the same rejection class they had pre-E.
++* Otherwise back up the original to ``strategy.json.pre_v2.bak`` (never
++  overwritten once present — the backup is the pre-migration record) and
++  rewrite, preserving every other field byte-for-byte:
++    - ``contract_version`` -> the strategy_core ``CONTRACT_VERSION`` (v2)
++    - ``engine_version``   -> renamed key ``platform_version`` with the
++      strategy_core ``PLATFORM_VERSION`` value (the E1 axis rename)
++    - ``strategy_id``      -> ``"touch_reversal"`` (the REGISTRY ROUTER KEY; the
++      bundle's identity remains its directory name)
++    - + ``strategy_version`` resolved from the registered plugin
++    - ``supported_by_runtime`` left AS-IS (the migration does not adjudicate it)
++* Regenerate the ``model.cbm.sha256`` sidecar IF one exists (the sidecar hashes
++  the model binary, which this migration never touches — regeneration is a
++  consistency formality, not a correctness need).
++
++Run (from the QL repo root, PYTHONPATH=src or the editable install):
++    python scripts/migrate_contracts_v2.py [models_root]
++models_root defaults to $TRADE_LAB_MODELS_PATH, then ./models.
++"""
++
++from __future__ import annotations
++
++import hashlib
++import json
++import os
++import sys
++from pathlib import Path
++
++# Explicit registration import so get_strategy can resolve the router id.
++import strategy_core.strategies.touch_reversal  # noqa: F401
++from strategy_core import CONTRACT_VERSION, PLATFORM_VERSION
++from strategy_core.strategies.registry import get_strategy
++
++ROUTER_STRATEGY_ID = "touch_reversal"
++
++#: The engine-axis value the platform axis renames. ONLY bundles built under this
++#: engine legitimately carry PLATFORM_VERSION ("strategy_core_platform_v1").
++MIGRATABLE_ENGINE_VERSION = "strategy_core_engine_v3"
++
++
++def migrate_bundle(bundle: Path) -> str:
++    strategy_file = bundle / "strategy.json"
++    payload = json.loads(strategy_file.read_text(encoding="utf-8"))
++
++    before = {
++        "contract_version": payload.get("contract_version"),
++        "engine_version": payload.get("engine_version"),
++        "platform_version": payload.get("platform_version"),
++        "strategy_id": payload.get("strategy_id"),
++        "strategy_version": payload.get("strategy_version"),
++        "supported_by_runtime": payload.get("supported_by_runtime"),
++    }
++
++    if payload.get("contract_version") == CONTRACT_VERSION:
++        return f"{bundle.name}: SKIP (already {CONTRACT_VERSION}) | before={before}"
++
++    if payload.get("engine_version") != MIGRATABLE_ENGINE_VERSION:
++        return (
++            f"{bundle.name}: SKIP (engine_version={before['engine_version']!r} is not "
++            f"{MIGRATABLE_ENGINE_VERSION!r} — not migratable; stays fail-closed at "
++            f"contract_version) | before={before}"
++        )
++
++    backup = bundle / "strategy.json.pre_v2.bak"
++    if not backup.exists():
++        backup.write_text(strategy_file.read_text(encoding="utf-8"), encoding="utf-8")
++
++    # Rebuild the dict preserving key order, swapping engine_version in place for
++    # platform_version and inserting strategy_version right after strategy_id.
++    migrated: dict = {}
++    for key, value in payload.items():
++        if key == "contract_version":
++            migrated[key] = CONTRACT_VERSION
++        elif key == "engine_version":
++            migrated["platform_version"] = PLATFORM_VERSION
++        elif key == "strategy_id":
++            migrated[key] = ROUTER_STRATEGY_ID
++            migrated["strategy_version"] = get_strategy(ROUTER_STRATEGY_ID).strategy_version
++        else:
++            migrated[key] = value
++
++    strategy_file.write_text(json.dumps(migrated, indent=2, default=str), encoding="utf-8")
++
++    sidecar = bundle / "model.cbm.sha256"
++    sidecar_note = "no sidecar"
++    if sidecar.exists():
++        digest = hashlib.sha256((bundle / "model.cbm").read_bytes()).hexdigest()
++        sidecar.write_text(digest, encoding="utf-8")
++        sidecar_note = "sidecar regenerated"
++
++    after = {
++        "contract_version": migrated.get("contract_version"),
++        "platform_version": migrated.get("platform_version"),
++        "strategy_id": migrated.get("strategy_id"),
++        "strategy_version": migrated.get("strategy_version"),
++        "supported_by_runtime": migrated.get("supported_by_runtime"),
++    }
++    return (
++        f"{bundle.name}: MIGRATED ({sidecar_note}; backup={backup.name})\n"
++        f"  before={before}\n  after ={after}"
++    )
++
++
++def main() -> int:
++    root = Path(
++        sys.argv[1]
++        if len(sys.argv) > 1
++        else os.environ.get("TRADE_LAB_MODELS_PATH", "models")
++    )
++    if not root.is_dir():
++        print(f"models root not found: {root}")
++        return 1
++    bundles = sorted(p for p in root.iterdir() if p.is_dir() and (p / "strategy.json").exists())
++    print(f"models root: {root.resolve()} | bundles with strategy.json: {len(bundles)}")
++    for bundle in bundles:
++        print(migrate_bundle(bundle))
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/scripts/ml_training_tab.py b/scripts/ml_training_tab.py
+index 59ace3c..03d9e9c 100644
+--- a/scripts/ml_training_tab.py
++++ b/scripts/ml_training_tab.py
+@@ -1589,7 +1589,9 @@ def save_trained_model(
+             if not selected:
+                 selected = getattr(trained_model, "selected_features", None)
+ 
+-            strategy = build_strategy_contract(config, selected, strategy_id=output_dir.name)
++            # E2: strategy_id is the REGISTRY ROUTER id (the plugin this bundle
++            # runs), not the bundle name; the bundle keeps its dir-name identity.
++            strategy = build_strategy_contract(config, selected, strategy_id="touch_reversal")
+             if strategy is not None:
+                 with open(output_dir / "strategy.json", "w") as f:
+                     json.dump(strategy, f, indent=2, default=str)
+diff --git a/scripts/run_databento_acceptance.py b/scripts/run_databento_acceptance.py
+index a2b33ef..b0bbc93 100644
+--- a/scripts/run_databento_acceptance.py
++++ b/scripts/run_databento_acceptance.py
+@@ -4,8 +4,9 @@
+ This wraps the dashboard session experiment CLI, audits the saved bundle, and
+ optionally runs the focused Quant-Lab + Strategy-Core contract tests. It is a
+ research-readiness check: weak models may be saved with an explicit failed-gate
+-override, but saved bundles must remain ``supported_by_runtime=false`` until
+-Trade-Lab v3 parity is proven.
++override. As of E2 the emitter stamps ``supported_by_runtime=true`` (Trade-Lab
++is repointed + parity-proven since the C/D windows), and the audit asserts the
++flag is True — Trade-Lab activation refuses False.
+ """
+ 
+ from __future__ import annotations
+@@ -147,14 +148,14 @@ def _load_strategy_contract_summary(
+     strategy_src = strategy_core_root / "src"
+     if strategy_src.exists():
+         sys.path.insert(0, str(strategy_src))
+-    from strategy_core import CONTRACT_VERSION, ENGINE_VERSION  # noqa: PLC0415
++    from strategy_core import CONTRACT_VERSION, PLATFORM_VERSION  # noqa: PLC0415
+     from strategy_core.contract.loader import load_strategy_contract  # noqa: PLC0415
+ 
+-    contract = load_strategy_contract(strategy_json, expected_engine_version=ENGINE_VERSION)
++    contract = load_strategy_contract(strategy_json, expected_platform_version=PLATFORM_VERSION)
+     return {
+         "loader": "Strategy-Core",
+         "expected_contract_version": CONTRACT_VERSION,
+-        "expected_engine_version": ENGINE_VERSION,
++        "expected_platform_version": PLATFORM_VERSION,
+         "loaded_type": type(contract).__name__,
+         "feature_count": contract.feature_count,
+         "feature_names": list(contract.feature_set.names),
+@@ -179,8 +180,8 @@ def audit_bundle(
+     metadata = _read_json(model_dir / "metadata.json")
+     strategy = _read_json(model_dir / "strategy.json")
+ 
+-    if strategy.get("supported_by_runtime") is not False:
+-        msg = "Acceptance artifacts must fail closed with supported_by_runtime=false"
++    if strategy.get("supported_by_runtime") is not True:
++        msg = "Acceptance artifacts must be servable with supported_by_runtime=true (E2)"
+         raise ValueError(msg)
+ 
+     oos_file_name = evaluation.get("oos_predictions_file", "oos_predictions.parquet")
+@@ -234,7 +235,9 @@ def audit_bundle(
+         "gated_oos": evaluation.get("gated_oos"),
+         "runtime": {
+             "contract_version": strategy.get("contract_version"),
+-            "engine_version": strategy.get("engine_version"),
++            "platform_version": strategy.get("platform_version"),
++            "strategy_id": strategy.get("strategy_id"),
++            "strategy_version": strategy.get("strategy_version"),
+             "supported_by_runtime": strategy.get("supported_by_runtime"),
+             "bar_type": strategy.get("touch_rule", {}).get("bar_type"),
+             "decision_offset_minutes": strategy.get("label_policy", {}).get(
+diff --git a/scripts/v3_verify/census_v3.py b/scripts/v3_verify/census_v3.py
+index 34dfc32..6080f68 100644
+--- a/scripts/v3_verify/census_v3.py
++++ b/scripts/v3_verify/census_v3.py
+@@ -67,7 +67,7 @@ def _avail_dates(lo: str, hi: str) -> list[str]:
+ def main() -> int:
+     ev = json.load(open("models/NQ_20260602_232808/evaluation.json"))
+     target = sorted(ev["dates_used"])
+-    print(f"engine={sc.ENGINE_VERSION}  target dates={len(target)} [{target[0]} .. {target[-1]}]")
++    print(f"engine={sc.PLATFORM_VERSION}  target dates={len(target)} [{target[0]} .. {target[-1]}]")
+     target_set = set(target)
+     # FAITHFUL to the rebuild: build_utility_dataset(dates_in_range) carries from None
+     # over the sorted dates with NO warm-up (date_range.start == dates_used[0]), so the
+@@ -180,7 +180,7 @@ def main() -> int:
+     OUT.write_text(
+         json.dumps(
+             {
+-                "engine_version": sc.ENGINE_VERSION,
++                "engine_version": sc.PLATFORM_VERSION,
+                 "n_target_dates": len(target),
+                 "n_dates_with_touches": n_done,
+                 "total_gated_touches": total_gated,
+diff --git a/scripts/v3_verify/rebuild_v3.py b/scripts/v3_verify/rebuild_v3.py
+index 9409076..d9139d4 100644
+--- a/scripts/v3_verify/rebuild_v3.py
++++ b/scripts/v3_verify/rebuild_v3.py
+@@ -66,7 +66,7 @@ def main() -> int:
+     dates = sorted(ev["dates_used"])
+     h = CFG.dataset_config_hash()
+     print(
+-        f"engine={sc.ENGINE_VERSION}  new dataset_config_hash={h}  "
++        f"engine={sc.PLATFORM_VERSION}  new dataset_config_hash={h}  "
+         f"(v2 was 3d2f8466; differs={h != '3d2f8466'})"
+     )
+     print(
+diff --git a/scripts/v3_verify/trace_20260603.py b/scripts/v3_verify/trace_20260603.py
+index e9ea494..5c03879 100644
+--- a/scripts/v3_verify/trace_20260603.py
++++ b/scripts/v3_verify/trace_20260603.py
+@@ -58,7 +58,7 @@ def _session_of(idx_et: pd.Timestamp) -> str:
+ 
+ 
+ def main() -> int:
+-    print(f"=== ENGINE v3 session-attribution trace: {DAY} (engine {sc.ENGINE_VERSION}) ===")
++    print(f"=== ENGINE v3 session-attribution trace: {DAY} (engine {sc.PLATFORM_VERSION}) ===")
+     print(
+         "scheme:",
+         {
+diff --git a/src/alpha_lab/agents/data_infra/ml/config.py b/src/alpha_lab/agents/data_infra/ml/config.py
+index c09e994..9b7cf12 100644
+--- a/src/alpha_lab/agents/data_infra/ml/config.py
++++ b/src/alpha_lab/agents/data_infra/ml/config.py
+@@ -399,9 +399,10 @@ class MLPipelineConfig(BaseModel):
+         import json
+ 
+         # Single-source the bar/label cutover key off the engine so the cache tag
+-        # tracks the engine version (v1 book-mid level-entry -> v2 trade-price
+-        # decision-entry) without restating a literal here.
+-        from strategy_core import ENGINE_VERSION
++        # tracks the platform version (the engine axis: v1 book-mid level-entry ->
++        # v2 trade-price decision-entry) without restating a literal here. E1: the
++        # hash INPUT changes with the axis rename, so dataset cache tags roll.
++        from strategy_core import PLATFORM_VERSION
+         from strategy_core.constants import BAR_PRICE_SOURCE, LABEL_ENTRY_REFERENCE
+ 
+         payload = (
+@@ -413,6 +414,6 @@ class MLPipelineConfig(BaseModel):
+             + f"|tick_size={self.tick_size}"
+             + f"|bar_price_source={BAR_PRICE_SOURCE}"
+             + f"|label_entry_reference={LABEL_ENTRY_REFERENCE}"
+-            + f"|engine_version={ENGINE_VERSION}"
++            + f"|platform_version={PLATFORM_VERSION}"
+         )
+         return hashlib.sha256(payload.encode()).hexdigest()[:8]
+diff --git a/src/alpha_lab/agents/data_infra/ml/strategy_contract.py b/src/alpha_lab/agents/data_infra/ml/strategy_contract.py
+index 5994749..7a20370 100644
+--- a/src/alpha_lab/agents/data_infra/ml/strategy_contract.py
++++ b/src/alpha_lab/agents/data_infra/ml/strategy_contract.py
+@@ -8,12 +8,13 @@ scheme, touch rule, level scheme, feature windows, and label policy are only
+ implicit in how the dashboard-utility builder computed the dataset.
+ 
+ `strategy.json` makes those semantics explicit and versioned so a downstream
+-runtime can eventually be driven by the contract instead of hardcoding one
+-strategy. Current Trade-Lab activation is deliberately blocked until that runtime
+-is repointed to Strategy-Core v3 and end-to-end parity is proven.
++runtime can be driven by the contract instead of hardcoding one strategy.
+ 
+-Contract version + engine version are imported from ``strategy_core`` (not
+-restated here).
++Contract version + platform version are imported from ``strategy_core`` (not
++restated here). ``strategy_id`` is the REGISTRY ROUTER KEY (E2): it must resolve
++via ``strategy_core.strategies.registry.get_strategy``, which also supplies the
++plugin's ``strategy_version`` — an unknown id fail-closes EMISSION. Bundle
++identity remains the output directory name (passed separately by the caller).
+ 
+ Only the production-aligned `dashboard_utility` training mode emits a full
+ contract. Other modes emit a minimal record (the runtime is not expected to
+@@ -35,8 +36,13 @@ from __future__ import annotations
+ import logging
+ from datetime import time
+ 
+-from strategy_core import CONTRACT_VERSION, ENGINE_VERSION
++# The explicit registration import (touch_reversal/__init__ registers the plugin)
++# so get_strategy can route; the registry is intentionally empty on a bare
++# `import strategy_core`.
++import strategy_core.strategies.touch_reversal  # noqa: F401
++from strategy_core import CONTRACT_VERSION, PLATFORM_VERSION
+ from strategy_core import constants as k
++from strategy_core.strategies.registry import get_strategy
+ 
+ from alpha_lab.agents.data_infra.ml.config import (
+     LIVE_APPROACH_FEATURES,
+@@ -79,14 +85,24 @@ def build_strategy_contract(
+         selected_features: Ordered feature names the model was trained on
+             (RFECV-selected subset, contractual order). Falls back to the
+             full live feature set when not provided.
+-        strategy_id: Identifier for this bundle (typically the output dir name).
++        strategy_id: The REGISTRY ROUTER id of the strategy this bundle runs
++            (e.g. ``"touch_reversal"``) — resolved fail-closed via
++            ``get_strategy``; NOT the bundle/output-dir name.
+ 
+     Returns:
+         A JSON-serialisable contract dict, or None if the training mode is
+         unknown/unsupported.
++
++    Raises:
++        ContractError: when ``strategy_id`` is unknown to the registry (the
++            emission fail-closes rather than stamping an unroutable contract).
+     """
+     mode = getattr(config, "training_mode", "unknown")
+ 
++    # E2: resolve the router id against the registry — an unknown id raises
++    # ContractError here, so an unroutable contract is never written to disk.
++    strategy_version = get_strategy(strategy_id).strategy_version
++
+     feature_names = (
+         list(selected_features) if selected_features else list(LIVE_INTERACTION_FEATURES)
+     )
+@@ -94,11 +110,13 @@ def build_strategy_contract(
+     if mode != "dashboard_utility":
+         # Minimal record only; the runtime is not expected to serve non
+         # dashboard-utility strategies. Keep enough to identify the bundle.
++        # (Still schema-incomplete by design — it is not loadable by the runtime.)
+         logger.info("strategy.json: minimal contract for training_mode=%s", mode)
+         return {
+             "contract_version": CONTRACT_VERSION,
+-            "engine_version": ENGINE_VERSION,
++            "platform_version": PLATFORM_VERSION,
+             "strategy_id": strategy_id,
++            "strategy_version": strategy_version,
+             "training_mode": mode,
+             "supported_by_runtime": False,
+             "instrument": config.instrument,
+@@ -117,12 +135,14 @@ def build_strategy_contract(
+ 
+     return {
+         "contract_version": CONTRACT_VERSION,
+-        "engine_version": ENGINE_VERSION,
++        "platform_version": PLATFORM_VERSION,
+         "strategy_id": strategy_id,
++        "strategy_version": strategy_version,
+         "training_mode": mode,
+-        # Full v3 contract is emitted, but current Trade-Lab activation is blocked
+-        # until Trade-Lab is repointed to Strategy-Core v3 and parity-tested.
+-        "supported_by_runtime": False,
++        # The blocking condition was satisfied at the C/D windows: Trade-Lab is
++        # repointed onto Strategy-Core (C1) and serves the honest resolver (D1b),
++        # so a full-contract bundle is servable; TL activation REFUSES False (E2).
++        "supported_by_runtime": True,
+         "instrument": config.instrument,
+         "tick_size": config.tick_size,
+         "point_value": k.POINT_VALUE.get(config.instrument),
+@@ -176,7 +196,7 @@ def build_strategy_contract(
+             "large_trade_threshold": k.LARGE_TRADE_THRESHOLD,
+             # Engine-single-sourced. The engine standardizes the 3 interaction
+             # features on the TRADE PRINT price ("trade_price"), which DIVERGES
+-            # from the legacy book-mid training path; the engine_version binding
++            # from the legacy book-mid training path; the platform_version binding
+             # above is what makes Trade-Lab fail-close on a model trained under the
+             # old book-mid feature definition (a retrain is required, next phase).
+             "mid_price_source": k.MID_PRICE_SOURCE,
+diff --git a/tests/agents/test_databento_acceptance_cli.py b/tests/agents/test_databento_acceptance_cli.py
+index 23afaaa..57dc2cd 100644
+--- a/tests/agents/test_databento_acceptance_cli.py
++++ b/tests/agents/test_databento_acceptance_cli.py
+@@ -104,9 +104,11 @@ def test_audit_bundle_summarizes_fail_closed_artifact(tmp_path):
+     (model_dir / "strategy.json").write_text(
+         json.dumps(
+             {
+-                "contract_version": "trade_lab_contract_v1",
+-                "engine_version": "strategy_core_engine_v3",
+-                "supported_by_runtime": False,
++                "contract_version": "trade_lab_contract_v2",
++                "platform_version": "strategy_core_platform_v1",
++                "strategy_id": "touch_reversal",
++                "strategy_version": "1",
++                "supported_by_runtime": True,
+                 "touch_rule": {"bar_type": "147t"},
+                 "label_policy": {
+                     "decision_offset_minutes": 5,
+@@ -131,13 +133,16 @@ def test_audit_bundle_summarizes_fail_closed_artifact(tmp_path):
+     assert summary["artifact"]["required_files_present"] is True
+     assert summary["quality_gates"]["all_passed"] is False
+     assert summary["quality_gates"]["allow_failed_gates"] is True
+-    assert summary["runtime"]["supported_by_runtime"] is False
+-    assert summary["runtime"]["engine_version"] == "strategy_core_engine_v3"
++    assert summary["runtime"]["supported_by_runtime"] is True
++    assert summary["runtime"]["platform_version"] == "strategy_core_platform_v1"
++    assert summary["runtime"]["strategy_id"] == "touch_reversal"
++    assert summary["runtime"]["strategy_version"] == "1"
+     assert summary["oos_predictions"]["rows"] == 2
+     assert summary["oos_predictions"]["gate_true_counts"] == {"gate_0_70_ny": 1}
+ 
+ 
+-def test_audit_bundle_fails_open_runtime_flag_is_rejected(tmp_path):
++def test_audit_bundle_unservable_flag_is_rejected(tmp_path):
++    # E2 flip: the audit now asserts the bundle IS servable; False fails closed.
+     cli = _load_acceptance_module()
+     model_dir = tmp_path / "model"
+     model_dir.mkdir()
+@@ -149,11 +154,11 @@ def test_audit_bundle_fails_open_runtime_flag_is_rejected(tmp_path):
+     (model_dir / "strategy.json").write_text(
+         json.dumps(
+             {
+-                "engine_version": "strategy_core_engine_v3",
+-                "supported_by_runtime": True,
++                "platform_version": "strategy_core_platform_v1",
++                "supported_by_runtime": False,
+             },
+         ),
+     )
+ 
+-    with pytest.raises(ValueError, match="supported_by_runtime=false"):
++    with pytest.raises(ValueError, match="supported_by_runtime=true"):
+         cli.audit_bundle(model_dir, validate_contract=False)
+diff --git a/tests/agents/test_strategy_contract_nodrift.py b/tests/agents/test_strategy_contract_nodrift.py
+index e1e15ce..100a64a 100644
+--- a/tests/agents/test_strategy_contract_nodrift.py
++++ b/tests/agents/test_strategy_contract_nodrift.py
+@@ -10,7 +10,8 @@ This is the real closure of the contract drift surface. It proves:
+    OR an explicit per-run config allow-list. A NEW contract field added with no
+    constant/allow-listed source FAILS this test -- the drift surface cannot reopen.
+ 3. The emitted contract loads cleanly through the shared SC loader with the
+-   engine-version binding (fail-closed on mismatch).
++   platform-version binding (fail-closed on mismatch; the engine axis renamed
++   at E1) and carries the registry-resolved strategy axis (E2).
+ 
+ No data dependency: the emitter is pure config -> dict.
+ """
+@@ -22,10 +23,11 @@ from pathlib import Path
+ from typing import Any
+ 
+ import pytest
+-from strategy_core import CONTRACT_VERSION, ENGINE_VERSION
++from strategy_core import CONTRACT_VERSION, PLATFORM_VERSION
+ from strategy_core import constants as k
+ from strategy_core.contract.loader import load_strategy_contract
+ from strategy_core.contract.schema import StrategyContract
++from strategy_core.strategies.registry import get_strategy
+ 
+ from alpha_lab.agents.data_infra.ml.config import MLPipelineConfig
+ from alpha_lab.agents.data_infra.ml.strategy_contract import build_strategy_contract
+@@ -63,7 +65,8 @@ def config() -> MLPipelineConfig:
+ 
+ @pytest.fixture
+ def contract(config: MLPipelineConfig) -> dict:
+-    return build_strategy_contract(config, MODEL_FEATURES, strategy_id="nq_prod")
++    # E2: strategy_id is the REGISTRY ROUTER id; an unregistered id fail-closes.
++    return build_strategy_contract(config, MODEL_FEATURES, strategy_id="touch_reversal")
+ 
+ 
+ # ─────────────────────────────────────────────────────────────────────────────
+@@ -90,9 +93,13 @@ def _structural_constant_map(config: MLPipelineConfig) -> dict[str, Any]:
+         for side, direction in k.DIRECTION_FROM_SIDE.items()
+     }
+     return {
+-        # top-level version + engine stamps
++        # top-level version stamps: the two-axis binding (decision 9.3). The
++        # platform axis is the package constant; the strategy axis is
++        # single-sourced from the REGISTERED plugin (registry-resolved), the one
++        # place that version is declared.
+         "contract_version": CONTRACT_VERSION,
+-        "engine_version": ENGINE_VERSION,
++        "platform_version": PLATFORM_VERSION,
++        "strategy_version": get_strategy("touch_reversal").strategy_version,
+         # point_value is the engine table projected onto the run's instrument
+         "point_value": k.POINT_VALUE[config.instrument],
+         # feature_set structural descriptor
+@@ -203,8 +210,8 @@ def _is_contract_section():
+ # ─────────────────────────────────────────────────────────────────────────────
+ # Tests
+ # ─────────────────────────────────────────────────────────────────────────────
+-def test_engine_version_is_stamped(contract: dict) -> None:
+-    assert contract["engine_version"] == ENGINE_VERSION
++def test_platform_version_is_stamped(contract: dict) -> None:
++    assert contract["platform_version"] == PLATFORM_VERSION
+     assert contract["contract_version"] == CONTRACT_VERSION
+ 
+ 
+@@ -214,11 +221,21 @@ def test_mid_price_source_is_trade_price(contract: dict) -> None:
+     assert contract["feature_windows"]["mid_price_source"] == k.MID_PRICE_SOURCE
+ 
+ 
+-def test_engine_version_is_v3(contract: dict) -> None:
+-    # The v2 -> v3 bump (session re-clock + enforced level availability + full-prior-day
+-    # PDH/PDL + later flatten/cutoff) is stamped.
+-    assert contract["engine_version"] == "strategy_core_engine_v3"
+-    assert contract["engine_version"] == ENGINE_VERSION
++def test_platform_version_is_v1_and_strategy_axis_is_registry_sourced(contract: dict) -> None:
++    # E1: the platform axis renames engine v3; E2: the strategy axis comes from
++    # the registered plugin, and the flag flips servable.
++    assert contract["platform_version"] == "strategy_core_platform_v1"
++    assert contract["platform_version"] == PLATFORM_VERSION
++    assert contract["strategy_id"] == "touch_reversal"
++    assert contract["strategy_version"] == get_strategy("touch_reversal").strategy_version == "1"
++    assert contract["supported_by_runtime"] is True
++
++
++def test_unknown_strategy_id_fails_emission_closed(config: MLPipelineConfig) -> None:
++    from strategy_core.contract.schema import ContractError
++
++    with pytest.raises(ContractError, match="unknown strategy_id"):
++        build_strategy_contract(config, MODEL_FEATURES, strategy_id="not_a_registered_id")
+ 
+ 
+ def test_label_policy_honest_entry_reanchor_tracks_config_window(
+@@ -309,9 +326,10 @@ def test_contract_loads_through_engine_loader_with_version_binding(
+     path = tmp_path / "strategy.json"
+     path.write_text(json.dumps(contract, default=str), encoding="utf-8")
+ 
+-    loaded = load_strategy_contract(path, expected_engine_version=ENGINE_VERSION)
++    loaded = load_strategy_contract(path, expected_platform_version=PLATFORM_VERSION)
+ 
+-    assert loaded.engine_version == ENGINE_VERSION
++    assert loaded.platform_version == PLATFORM_VERSION
++    assert loaded.strategy_version == "1"
+     assert loaded.contract_version == CONTRACT_VERSION
+     assert loaded.feature_count == 6
+     assert loaded.point_value == k.POINT_VALUE["NQ"]
+@@ -323,34 +341,33 @@ def test_contract_loads_through_engine_loader_with_version_binding(
+     )
+ 
+ 
+-def test_loader_fails_closed_on_engine_version_mismatch(contract: dict, tmp_path: Path) -> None:
++def test_loader_fails_closed_on_platform_version_mismatch(contract: dict, tmp_path: Path) -> None:
+     from strategy_core.contract.schema import ContractError
+ 
+     path = tmp_path / "strategy.json"
+     path.write_text(json.dumps(contract, default=str), encoding="utf-8")
+ 
+     with pytest.raises(ContractError):
+-        load_strategy_contract(path, expected_engine_version="strategy_core_engine_v999")
++        load_strategy_contract(path, expected_platform_version="strategy_core_platform_v999")
+ 
+ 
+-def test_v3_bundle_loads_against_v3_and_rejects_v2(
++def test_platform_v1_bundle_loads_against_v1_and_rejects_old_engine_axis(
+     contract: dict, config: MLPipelineConfig, tmp_path: Path
+ ) -> None:
+-    """The v2 -> v3 binding: a v3 bundle LOADS against v3 and is REJECTED against v2.
++    """The E1 axis rename is a real fail-close boundary.
+ 
+-    Confirms the engine-version bump is a real fail-close boundary -- a runtime
+-    pinned to the old v2 engine refuses this bundle (the session re-clock + enforced
+-    level availability + full-prior-day PDH/PDL + later flatten/cutoff change the
+-    labels, so a retrain is required), while a v3-pinned runtime accepts it.
++    A platform_v1 bundle LOADS against platform_v1 and is REJECTED against the
++    retired engine-axis literal (a runtime still expecting the old axis value
++    refuses it), exactly as the old v2->v3 engine bump was a boundary.
+     """
+     from strategy_core.contract.schema import ContractError
+ 
+     path = tmp_path / "strategy.json"
+     path.write_text(json.dumps(contract, default=str), encoding="utf-8")
+ 
+-    # Loads against v3 (== ENGINE_VERSION).
+-    loaded = load_strategy_contract(path, expected_engine_version="strategy_core_engine_v3")
+-    assert loaded.engine_version == "strategy_core_engine_v3" == ENGINE_VERSION
++    # Loads against platform v1 (== PLATFORM_VERSION).
++    loaded = load_strategy_contract(path, expected_platform_version="strategy_core_platform_v1")
++    assert loaded.platform_version == "strategy_core_platform_v1" == PLATFORM_VERSION
+     assert loaded.label_policy.entry_reference == k.LABEL_ENTRY_REFERENCE
+     assert (
+         loaded.label_policy.decision_offset_minutes
+@@ -359,6 +376,6 @@ def test_v3_bundle_loads_against_v3_and_rejects_v2(
+     assert loaded.level_scheme.pdh_pdl_source == k.PDH_PDL_SOURCE == "prior_day_full"
+     assert loaded.inference.eligible_session == k.INFERENCE_ELIGIBLE_SESSION == "ny"
+ 
+-    # Rejected against the old v2 engine version (the v2 -> v3 binding works).
++    # Rejected against the retired engine-axis literal (the rename is fail-closed).
+     with pytest.raises(ContractError):
+-        load_strategy_contract(path, expected_engine_version="strategy_core_engine_v2")
++        load_strategy_contract(path, expected_platform_version="strategy_core_engine_v3")
+diff --git a/tests/agents/test_strategy_contract_repoint.py b/tests/agents/test_strategy_contract_repoint.py
+index 36cab67..e4b6ba3 100644
+--- a/tests/agents/test_strategy_contract_repoint.py
++++ b/tests/agents/test_strategy_contract_repoint.py
+@@ -2,8 +2,9 @@
+ 
+ Proves ``build_strategy_contract`` no longer RESTATES the strategy literals but
+ single-sources them from ``strategy_core.constants`` (the one place the engine
+-computes with them), carries ``engine_version``, and round-trips cleanly through
+-the shared ``strategy_core`` schema/loader with the engine-version binding.
++computes with them), carries the two-axis binding (``platform_version`` +
++registry-resolved ``strategy_version``, E1/E2), and round-trips cleanly through
++the shared ``strategy_core`` schema/loader with the platform-version binding.
+ 
+ No data dependency: the emitter is pure config -> dict.
+ """
+@@ -15,7 +16,7 @@ from pathlib import Path
+ 
+ import pytest
+ import strategy_core as sc
+-from strategy_core import ENGINE_VERSION
++from strategy_core import PLATFORM_VERSION
+ from strategy_core.contract.loader import load_strategy_contract
+ 
+ from alpha_lab.agents.data_infra.ml.config import DashboardUtilityConfig, MLPipelineConfig
+@@ -52,13 +53,14 @@ def config():
+ 
+ @pytest.fixture
+ def contract(config):
+-    return build_strategy_contract(config, MODEL_FEATURES, strategy_id="nq_repoint")
++    # E2: strategy_id must be a REGISTERED router id (unknown ids fail emission).
++    return build_strategy_contract(config, MODEL_FEATURES, strategy_id="touch_reversal")
+ 
+ 
+ def test_dashboard_utility_default_bar_type_is_v3_production_147t():
+     """Default dashboard-utility bundles should use the Strategy-Core v3 production bar."""
+     cfg = MLPipelineConfig(training_mode="dashboard_utility", instrument="NQ")
+-    c = build_strategy_contract(cfg, None, strategy_id="nq_default")
++    c = build_strategy_contract(cfg, None, strategy_id="touch_reversal")
+ 
+     assert c is not None
+     assert cfg.dashboard_utility.bar_type == "147t"
+@@ -79,20 +81,22 @@ def test_decision_offset_tracks_configured_interaction_window():
+             include_approach_features=True,
+         ),
+     )
+-    c = build_strategy_contract(cfg, MODEL_FEATURES, strategy_id="nq_window_11m")
++    c = build_strategy_contract(cfg, MODEL_FEATURES, strategy_id="touch_reversal")
+ 
+     assert c is not None
+     assert c["feature_windows"]["interaction_window_minutes"] == 11
+     assert c["label_policy"]["decision_offset_minutes"] == 11
+ 
+ 
+-def test_contract_is_engine_version_stamped(contract):
+-    assert contract["engine_version"] == ENGINE_VERSION
++def test_contract_is_platform_version_stamped(contract):
++    assert contract["platform_version"] == PLATFORM_VERSION
++    assert contract["strategy_id"] == "touch_reversal"
++    assert contract["strategy_version"] == "1"
+ 
+ 
+-def test_dashboard_utility_contract_advertises_runtime_activation_blocked(contract):
+-    """A full v3 strategy.json is emitted, but current Trade-Lab use remains blocked."""
+-    assert contract["supported_by_runtime"] is False
++def test_dashboard_utility_contract_advertises_runtime_servable(contract):
++    """E2: the blocking condition cleared at C/D — full bundles are servable."""
++    assert contract["supported_by_runtime"] is True
+ 
+ 
+ def test_contract_records_research_session_experiment(contract):
+@@ -144,9 +148,10 @@ def test_contract_round_trips_through_engine_loader(contract, tmp_path: Path):
+     path = tmp_path / "strategy.json"
+     path.write_text(json.dumps(contract, default=str), encoding="utf-8")
+ 
+-    loaded = load_strategy_contract(path, expected_engine_version=ENGINE_VERSION)
++    loaded = load_strategy_contract(path, expected_platform_version=PLATFORM_VERSION)
+ 
+-    assert loaded.engine_version == ENGINE_VERSION
++    assert loaded.platform_version == PLATFORM_VERSION
++    assert loaded.strategy_version == "1"
+     assert loaded.feature_count == 6
+     assert loaded.research_session_experiment is not None
+     assert loaded.research_session_experiment.production_gate_sessions == ("ny",)
+@@ -157,8 +162,11 @@ def test_contract_round_trips_through_engine_loader(contract, tmp_path: Path):
+     )
+ 
+ 
+-def test_minimal_contract_is_engine_version_stamped():
++def test_minimal_contract_is_platform_version_stamped():
+     cfg = MLPipelineConfig(training_mode="extrema_rebound_crossing", instrument="NQ")
+-    c = build_strategy_contract(cfg, None, strategy_id="other")
+-    assert c["engine_version"] == ENGINE_VERSION
++    c = build_strategy_contract(cfg, None, strategy_id="touch_reversal")
++    assert c["platform_version"] == PLATFORM_VERSION
++    assert c["strategy_version"] == "1"
++    # The minimal record stays non-servable by design (schema-incomplete; it
++    # cannot load) — the E2 flag flip applies to the FULL contract only.
+     assert c["supported_by_runtime"] is False
