@@ -1,0 +1,13 @@
+diff --git a/pyproject.toml b/pyproject.toml
+index 3f997d6..fd2af68 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -33,7 +33,7 @@ dependencies = [
+     "fastapi>=0.100",
+     "uvicorn>=0.20",
+     "python-multipart>=0.0.5",
+-    "strategy-core @ git+https://github.com/thealgochef/Strategy-Core.git@256020c263a019aa8ffbb55aab804f2ebef2c1f6",
++    "strategy-core @ git+https://github.com/thealgochef/Strategy-Core.git@f9a1f6340a4ef4f5382a370fd73f840ebeb1f5df",
+ ]
+ 
+ [project.optional-dependencies]

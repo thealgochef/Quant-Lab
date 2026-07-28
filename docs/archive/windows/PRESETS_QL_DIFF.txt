@@ -1,0 +1,693 @@
+diff --git a/src/alpha_lab/propsim/bootstrap.py b/src/alpha_lab/propsim/bootstrap.py
+index b1af93d..b07bd8a 100644
+--- a/src/alpha_lab/propsim/bootstrap.py
++++ b/src/alpha_lab/propsim/bootstrap.py
+@@ -1,10 +1,11 @@
+ """Day-level block bootstrap Monte Carlo over the evaluation walk.
+ 
+ Whole trading days are resampled with replacement (a day's trades stay
+-together, in their intra-day order) and each run walks until PASS or BUST —
+-an evaluation has no calendar limit — bounded by ``max_days`` as a runaway
+-guard (runs that hit it count as ``incomplete``). Seeded and deterministic:
+-one ``numpy`` generator drawn sequentially.
++together, in their intra-day order) and each run walks until a verdict — PASS,
++BUST, or EXPIRED when the ruleset carries a ``max_eval_days`` budget — bounded
++by ``max_days`` as a runaway guard (runs that hit it count as ``incomplete``;
++distinct from ruleset expiry). Seeded and deterministic: one ``numpy``
++generator drawn sequentially.
+ """
+ 
+ from __future__ import annotations
+@@ -48,6 +49,7 @@ class BootstrapSummary:
+     max_days: int
+     p_pass: float
+     p_bust: float
++    p_expired: float
+     p_incomplete: float
+     pass_ci95_low: float
+     pass_ci95_high: float
+@@ -79,6 +81,7 @@ def run_bootstrap(
+     n_days = len(day_blocks)
+     passes = 0
+     busts = 0
++    expired = 0
+     days_to_pass: list[int] = []
+     days_to_bust: list[int] = []
+     bust_reasons: Counter[str] = Counter()
+@@ -98,7 +101,9 @@ def run_bootstrap(
+             busts += 1
+             days_to_bust.append(result.days_to_outcome or 0)
+             bust_reasons[result.bust_reason or "unknown"] += 1
+-    incomplete = n_runs - passes - busts
++        elif verdict == "expired":
++            expired += 1
++    incomplete = n_runs - passes - busts - expired
+     ci_low, ci_high = wilson_interval(passes, n_runs)
+ 
+     def _pct(values: list[int], q: float) -> float | None:
+@@ -110,6 +115,7 @@ def run_bootstrap(
+         max_days=max_days,
+         p_pass=passes / n_runs,
+         p_bust=busts / n_runs,
++        p_expired=expired / n_runs,
+         p_incomplete=incomplete / n_runs,
+         pass_ci95_low=ci_low,
+         pass_ci95_high=ci_high,
+diff --git a/src/alpha_lab/propsim/engine.py b/src/alpha_lab/propsim/engine.py
+index 2339bab..042d62a 100644
+--- a/src/alpha_lab/propsim/engine.py
++++ b/src/alpha_lab/propsim/engine.py
+@@ -1,9 +1,13 @@
+ """The evaluation walk: barrier-options semantics over per-trade equity paths.
+ 
+ Walks days in order, trades in intra-day order, at 1 contract. Balance updates
+-on realized points (fill column selectable). The trailing floor ratchets on EOD
+-balance highs (capped at the starting balance when the ruleset locks); breach
+-is checked in real time at every equity observation the breach mode provides:
++on realized points (fill column selectable). The trailing floor mechanic is the
++ruleset's ``trail_style`` — EOD-balance ratchet (``eod_floor_realtime_breach``),
++peak-equity trail including unrealized (``intraday_peak_trail``: the favorable
++leg entry + MFE raises the peak in the unrealized modes; realized closes + EOD
++otherwise), or a floor fixed at start − trail (``static_floor``) — capped at
++the starting balance when the ruleset locks; breach is checked in real time at
++every equity observation the breach mode provides:
+ 
+ - ``realized_only`` — equity observed at trade closes and EOD.
+ - ``unrealized_adverse_first`` — each trade's path first visits
+@@ -11,12 +15,15 @@ is checked in real time at every equity observation the breach mode provides:
+   adverse leg the floor and the daily-loss level are BARRIERS on one
+   monotonically falling equity path: whichever level is higher is touched
+   first. A soft-DLL touch force-closes the trade AT the DLL level (day halted,
+-  not a bust); a floor touch is a bust. Trades without excursions (``mae_pts``
+-  is None/NaN) contribute realized-only observations.
++  not a bust); a floor touch is a bust; a hard-DLL touch is a bust. Trades
++  without excursions (``mae_pts`` is None/NaN) contribute realized-only
++  observations.
+ 
+ PASS is evaluated at EOD: total profit ≥ target, min-days satisfied, and (when
+ a consistency rule exists) best single day ≤ pct × total — otherwise the walk
+-keeps going and later days can dilute the ratio.
++keeps going and later days can dilute the ratio. A ruleset ``max_eval_days``
++budget expires the walk on day max+1 (verdict ``"expired"`` — the first day the
++eval may no longer trade).
+ """
+ 
+ from __future__ import annotations
+@@ -30,7 +37,11 @@ from alpha_lab.propsim.models import Ruleset, TradePath, WalkResult
+ BREACH_MODES = ("realized_only", "unrealized_adverse_first")
+ FILL_COLUMNS = ("optimistic", "conservative")
+ 
+-_SUPPORTED_TRAIL_STYLES = ("eod_floor_realtime_breach",)
++_SUPPORTED_TRAIL_STYLES = (
++    "eod_floor_realtime_breach",
++    "intraday_peak_trail",
++    "static_floor",
++)
+ 
+ 
+ def _excursion(value: float | None) -> float | None:
+@@ -63,9 +74,10 @@ class EvaluationWalk:
+         self._column = column
+         self._mode = breach_mode
+         self.balance = ruleset.starting_balance
+-        # The starting balance counts as the day-0 EOD: day 1's floor is
+-        # start − trail.
+-        self._eod_peak = ruleset.starting_balance
++        # The starting balance counts as the day-0 peak (EOD peak for the EOD
++        # style, equity peak for the intraday style): day 1's floor is
++        # start − trail. static_floor never updates the peak.
++        self._peak = ruleset.starting_balance
+         self.floor = self._compute_floor()
+         self._day_pnls: list[float] = []
+         self._days = 0
+@@ -77,11 +89,19 @@ class EvaluationWalk:
+         self._min_floor_distance = ruleset.starting_balance - self.floor
+ 
+     def _compute_floor(self) -> float:
+-        floor = self._eod_peak - self._rs.trail_amount
++        floor = self._peak - self._rs.trail_amount
+         if self._rs.trail_locks_at_start:
+             floor = min(floor, self._rs.starting_balance)
+         return floor
+ 
++    def _raise_peak(self, equity: float) -> None:
++        """Intraday style only: a new equity peak ratchets the floor NOW."""
++        if self._rs.trail_style != "intraday_peak_trail":
++            return
++        if equity > self._peak:
++            self._peak = equity
++            self.floor = max(self.floor, self._compute_floor())
++
+     def _points(self, trade: TradePath) -> float:
+         if self._column == "conservative":
+             return trade.points_conservative
+@@ -105,6 +125,11 @@ class EvaluationWalk:
+             msg = f"walk already terminated with verdict {self._verdict!r}"
+             raise RuntimeError(msg)
+         rs = self._rs
++        if rs.max_eval_days is not None and self._days >= rs.max_eval_days:
++            # The day budget is spent: this day (max+1) may not be traded.
++            self._verdict = "expired"
++            self._days_to_outcome = self._days + 1
++            return "expired"
+         day_start = self.balance
+         halted = False
+         for trade in trades:
+@@ -129,20 +154,28 @@ class EvaluationWalk:
+                     # the deeper excursion never happens because we are flat.
+                     self._observe(dll_level)
+                     self.balance = dll_level
+-                    if not rs.dll_soft:
++                    if rs.dll_hard:
+                         return self._bust("daily_loss_limit", day_start)
+                     halted = True
+                     continue
+                 self._observe(adverse_equity)
++            if self._mode == "unrealized_adverse_first":
++                # Favorable leg (after the adverse leg): under the intraday
++                # style a new unrealized peak ratchets the floor before the
++                # trade settles back down.
++                mfe = _excursion(trade.mfe_pts)
++                if mfe is not None:
++                    self._raise_peak(self.balance + mfe * rs.point_value)
+             # Settle at the realized points.
+             self.balance += pnl
+             self._observe(self.balance)
+             if self.balance <= self.floor:
+                 return self._bust("trailing_floor", day_start)
+             if rs.dll_amount is not None and (self.balance - day_start) <= -rs.dll_amount:
+-                if not rs.dll_soft:
++                if rs.dll_hard:
+                     return self._bust("daily_loss_limit", day_start)
+                 halted = True
++            self._raise_peak(self.balance)
+         # End of day.
+         self._days += 1
+         if halted:
+@@ -161,9 +194,15 @@ class EvaluationWalk:
+                 self._verdict = "pass"
+                 self._days_to_outcome = self._days
+                 return "pass"
+-        # Ratchet the floor on the EOD balance (never moves down).
+-        self._eod_peak = max(self._eod_peak, self.balance)
+-        self.floor = max(self.floor, self._compute_floor())
++        # Ratchet the floor (never moves down): the EOD style banks the EOD
++        # balance here; the intraday style already trailed in real time (the
++        # EOD observation is one more realized-equity peak candidate); the
++        # static floor never ratchets.
++        if rs.trail_style == "eod_floor_realtime_breach":
++            self._peak = max(self._peak, self.balance)
++            self.floor = max(self.floor, self._compute_floor())
++        else:
++            self._raise_peak(self.balance)
+         self._observe(self.balance)
+         return None
+ 
+diff --git a/src/alpha_lab/propsim/models.py b/src/alpha_lab/propsim/models.py
+index 89a21f8..fff1faf 100644
+--- a/src/alpha_lab/propsim/models.py
++++ b/src/alpha_lab/propsim/models.py
+@@ -32,14 +32,26 @@ class TradePath:
+ class Ruleset:
+     """A prop-firm evaluation ruleset. Presets are data (see ``presets``).
+ 
+-    ``trail_style`` currently supports only ``"eod_floor_realtime_breach"``:
+-    the drawdown floor ratchets on END-OF-DAY balance highs (floor = max of all
+-    prior EOD balances − ``trail_amount``) but a BREACH of the floor is checked
+-    in real time. ``trail_locks_at_start`` caps the floor at the starting
+-    balance (it never trails above it). ``dll_amount`` is the daily loss limit;
+-    ``dll_soft`` means a DLL hit halts the day (remaining trades skipped) and is
+-    NOT a bust. ``consistency_pct`` blocks a pass while the best single day
+-    exceeds ``pct`` × total profit. ``point_value`` is dollars per instrument
++    ``trail_style`` selects the drawdown-floor mechanic (breach is always
++    checked in real time at every equity observation the breach mode provides):
++
++    - ``"eod_floor_realtime_breach"`` — the floor ratchets on END-OF-DAY
++      balance highs (floor = max of all prior EOD balances − ``trail_amount``).
++    - ``"intraday_peak_trail"`` — the floor trails PEAK equity including
++      unrealized: in the unrealized breach modes each trade's favorable leg
++      (entry + MFE observed) raises the peak and floor = max(floor,
++      peak − ``trail_amount``); in ``realized_only`` the peak updates from
++      realized equity at trade closes + EOD.
++    - ``"static_floor"`` — the floor is fixed at start − ``trail_amount``
++      forever (never ratchets).
++
++    ``trail_locks_at_start`` caps the floor at the starting balance (it never
++    trails above it). ``dll_amount`` is the daily loss limit; ``dll_hard`` True
++    means a DLL touch is a BUST — False (soft) halts the day (remaining trades
++    skipped) without busting. ``consistency_pct`` blocks a pass while the best
++    single day exceeds ``pct`` × total profit. ``max_eval_days`` is the day
++    budget: a walk still unresolved after that many days lands ``"expired"``
++    on day max+1 (None = no expiry). ``point_value`` is dollars per instrument
+     point per contract.
+     """
+ 
+@@ -49,9 +61,10 @@ class Ruleset:
+     trail_style: str
+     trail_locks_at_start: bool
+     dll_amount: float | None
+-    dll_soft: bool
++    dll_hard: bool
+     consistency_pct: float | None
+     min_days: int | None
++    max_eval_days: int | None
+     point_value: float
+ 
+ 
+@@ -59,9 +72,12 @@ class Ruleset:
+ class WalkResult:
+     """Outcome of one evaluation walk over a day sequence.
+ 
+-    ``verdict``: ``"pass"`` | ``"bust"`` | ``"incomplete"`` (data exhausted
+-    before either) | ``"no_trades"`` (empty input). ``days_to_outcome`` counts
+-    the day the verdict landed on (1-based); ``None`` while incomplete.
++    ``verdict``: ``"pass"`` | ``"bust"`` | ``"expired"`` (the ruleset's
++    ``max_eval_days`` budget ran out) | ``"incomplete"`` (data exhausted
++    before any verdict) | ``"no_trades"`` (empty input). ``days_to_outcome``
++    counts the day the verdict landed on (1-based; ``"expired"`` lands on day
++    max+1, the first day the eval may no longer trade); ``None`` while
++    incomplete.
+     ``best_day_ratio`` = best single-day P&L / total profit (``None`` when the
+     total is not positive). ``min_floor_distance`` is the closest equity ever
+     came to the active floor, in dollars (``None`` for an empty walk).
+diff --git a/src/alpha_lab/propsim/presets.py b/src/alpha_lab/propsim/presets.py
+index f05c5f9..000a021 100644
+--- a/src/alpha_lab/propsim/presets.py
++++ b/src/alpha_lab/propsim/presets.py
+@@ -4,6 +4,18 @@ Preset one (ratified in the PROP-SIM window; recorded in the SC PROGRESS
+ ledger): TopStep 50K. Consistency is best day ≤ pct × TOTAL profit — this
+ supersedes the alpha_lab-era ``config/prop_firms.yaml`` comment ("50% of
+ profit target").
++
++PRESETS window (owner-confirmed checkout data, 2026-07-10 dashboard screens):
++``apex_50k_eod``, ``apex_50k_intraday``, ``tpt_50k_test``. Two Apex
++parameters carry a ⚠ VERIFY AT DASHBOARD note — flip them when confirmed
++(data-only change):
++
++- ⚠ verify-lock: ``trail_locks_at_start=True`` on both Apex presets is not
++  yet dashboard-confirmed (whether the Apex floor stops trailing at the
++  starting balance or keeps trailing above it).
++- ⚠ verify-soft-vs-hard: ``apex_50k_eod`` records the DLL as HARD
++  (``dll_hard=True`` — a touch is a bust, not a halt); not yet
++  dashboard-confirmed.
+ """
+ 
+ from __future__ import annotations
+@@ -18,9 +30,49 @@ PRESETS: dict[str, Ruleset] = {
+         trail_style="eod_floor_realtime_breach",
+         trail_locks_at_start=True,
+         dll_amount=1_000.0,
+-        dll_soft=True,
++        dll_hard=False,
+         consistency_pct=50.0,
+         min_days=None,
++        max_eval_days=None,
++        point_value=20.0,
++    ),
++    "apex_50k_eod": Ruleset(
++        starting_balance=50_000.0,
++        profit_target=3_000.0,
++        trail_amount=2_000.0,
++        trail_style="eod_floor_realtime_breach",
++        trail_locks_at_start=True,  # ⚠ verify-lock (see module docstring)
++        dll_amount=1_000.0,
++        dll_hard=True,  # ⚠ verify-soft-vs-hard (see module docstring)
++        consistency_pct=None,  # no consistency rule in the eval
++        min_days=None,
++        max_eval_days=30,
++        point_value=20.0,
++    ),
++    "apex_50k_intraday": Ruleset(
++        starting_balance=50_000.0,
++        profit_target=3_000.0,
++        trail_amount=2_000.0,
++        trail_style="intraday_peak_trail",
++        trail_locks_at_start=True,  # ⚠ verify-lock (see module docstring)
++        dll_amount=None,
++        dll_hard=False,
++        consistency_pct=None,
++        min_days=None,
++        max_eval_days=30,
++        point_value=20.0,
++    ),
++    "tpt_50k_test": Ruleset(
++        starting_balance=50_000.0,
++        profit_target=3_000.0,
++        trail_amount=2_000.0,
++        trail_style="eod_floor_realtime_breach",
++        trail_locks_at_start=True,
++        dll_amount=None,
++        dll_hard=False,
++        consistency_pct=50.0,
++        min_days=5,
++        max_eval_days=None,
+         point_value=20.0,
+     ),
+ }
+diff --git a/src/alpha_lab/propsim/report.py b/src/alpha_lab/propsim/report.py
+index cd0ceff..aac5af5 100644
+--- a/src/alpha_lab/propsim/report.py
++++ b/src/alpha_lab/propsim/report.py
+@@ -129,9 +129,9 @@ def format_human(report: dict) -> str:
+             f"  ruleset: start {rs['starting_balance']:.0f} / target "
+             f"{rs['profit_target']:.0f} / trail {rs['trail_amount']:.0f} "
+             f"({rs['trail_style']}, locks_at_start={rs['trail_locks_at_start']}) / "
+-            f"DLL {rs['dll_amount']} (soft={rs['dll_soft']}) / consistency "
++            f"DLL {rs['dll_amount']} (hard={rs['dll_hard']}) / consistency "
+             f"{rs['consistency_pct']}% / min_days {rs['min_days']} / "
+-            f"point_value {rs['point_value']}"
++            f"max_eval_days {rs['max_eval_days']} / point_value {rs['point_value']}"
+         ),
+         (
+             f"  pool: {pool['n_trades']} trades over {pool['n_days']} days "
+@@ -158,7 +158,7 @@ def format_human(report: dict) -> str:
+             )
+     header = (
+         f"  {'column':<12} {'breach mode':<25} {'hist':<10} "
+-        f"{'P(pass)':>8} {'95% CI':>15} {'P(bust)':>8} {'P(inc)':>7} "
++        f"{'P(pass)':>8} {'95% CI':>15} {'P(bust)':>8} {'P(exp)':>7} {'P(inc)':>7} "
+         f"{'d2p med':>8} {'p10':>6} {'p90':>6} {'d2b med':>8}  notes"
+     )
+     lines.append("")
+@@ -177,7 +177,8 @@ def format_human(report: dict) -> str:
+             lines.append(
+                 f"  {column:<12} {mode:<25} {str(hist.get('verdict', '-')):<10} "
+                 f"{_fmt(boot.get('p_pass'), 8, 4)} {ci_text:>15} "
+-                f"{_fmt(boot.get('p_bust'), 8, 4)} {_fmt(boot.get('p_incomplete'), 7, 3)} "
++                f"{_fmt(boot.get('p_bust'), 8, 4)} {_fmt(boot.get('p_expired'), 7, 3)} "
++                f"{_fmt(boot.get('p_incomplete'), 7, 3)} "
+                 f"{_fmt(boot.get('days_to_pass_median'), 8, 1)} "
+                 f"{_fmt(boot.get('days_to_pass_p10'), 6, 1)} "
+                 f"{_fmt(boot.get('days_to_pass_p90'), 6, 1)} "
+diff --git a/tests/propsim/test_bootstrap.py b/tests/propsim/test_bootstrap.py
+index cc0b472..e4e25b5 100644
+--- a/tests/propsim/test_bootstrap.py
++++ b/tests/propsim/test_bootstrap.py
+@@ -17,9 +17,10 @@ def _ruleset(**overrides) -> Ruleset:
+         "trail_style": "eod_floor_realtime_breach",
+         "trail_locks_at_start": True,
+         "dll_amount": None,
+-        "dll_soft": True,
++        "dll_hard": False,
+         "consistency_pct": None,
+         "min_days": None,
++        "max_eval_days": None,
+         "point_value": 20.0,
+     }
+     base.update(overrides)
+@@ -109,6 +110,25 @@ def test_max_days_guard_yields_incomplete_runs():
+         max_days=25,
+     )
+     assert summary.p_incomplete == 1.0
++    assert summary.p_expired == 0.0
++
++
++def test_ruleset_expiry_yields_expired_runs_not_incomplete():
++    """With a max_eval_days budget the zero-P&L pool EXPIRES every run —
++    distinct from the max_days runaway guard's incomplete."""
++    pool = _pool([[0.0]])
++    summary = run_bootstrap(
++        pool,
++        _ruleset(max_eval_days=10),
++        column="optimistic",
++        breach_mode="realized_only",
++        n_runs=50,
++        seed=42,
++        max_days=25,
++    )
++    assert summary.p_expired == 1.0
++    assert summary.p_incomplete == 0.0
++    assert summary.p_pass + summary.p_bust + summary.p_expired + summary.p_incomplete == 1.0
+ 
+ 
+ def test_empty_pool_raises():
+diff --git a/tests/propsim/test_engine.py b/tests/propsim/test_engine.py
+index 3ed4d8d..c8047be 100644
+--- a/tests/propsim/test_engine.py
++++ b/tests/propsim/test_engine.py
+@@ -43,9 +43,10 @@ def _ruleset(**overrides) -> Ruleset:
+         "trail_style": "eod_floor_realtime_breach",
+         "trail_locks_at_start": True,
+         "dll_amount": 1_000.0,
+-        "dll_soft": True,
++        "dll_hard": False,
+         "consistency_pct": 50.0,
+         "min_days": None,
++        "max_eval_days": None,
+         "point_value": 20.0,
+     }
+     base.update(overrides)
+@@ -138,7 +139,7 @@ def test_dll_soft_excursion_force_closes_at_the_dll_level():
+ 
+ 
+ def test_dll_hard_is_a_bust():
+-    rs = _ruleset(dll_soft=False, trail_amount=10_000.0, consistency_pct=None,
++    rs = _ruleset(dll_hard=True, trail_amount=10_000.0, consistency_pct=None,
+                   profit_target=1e9)
+     result = walk_days(
+         _days([_trade("2026-01-05", -60.0)]),  # -1200 <= -1000 at the close
+@@ -164,6 +165,160 @@ def test_floor_beats_dll_when_both_barriers_cross_on_the_adverse_leg():
+     assert result.bust_reason == "trailing_floor"
+ 
+ 
++def test_intraday_peak_trail_mfe_then_retrace_busts_where_eod_floor_survives():
++    """THE separating case: an identical day — a run-up trade, then a trade
++    whose path pokes +20pts (MFE) before retracing to −85pts. The unrealized
++    peak trails the floor to $49,900; the retrace settles at $49,800 → bust.
++    The EOD-floor style never ratchets intraday ($48,000 all day) → survives.
++    """
++    day_blocks = _days(
++        [
++            _trade("2026-01-05", 75.0, mae=5.0, mfe=75.0),  # 51_500; peak trail
++            _trade("2026-01-05", -85.0, mae=85.0, mfe=20.0),  # +400 peak, then retrace
++        ]
++    )
++    base = {"dll_amount": None, "consistency_pct": None, "profit_target": 1e9}
++
++    intraday = walk_days(
++        day_blocks,
++        _ruleset(trail_style="intraday_peak_trail", **base),
++        column="optimistic",
++        breach_mode="unrealized_adverse_first",
++    )
++    # t2's favorable leg: peak 51_900 -> floor 49_900; settle 49_800 <= floor.
++    assert intraday.verdict == "bust"
++    assert intraday.bust_reason == "trailing_floor"
++    assert intraday.days_to_outcome == 1
++    assert intraday.final_balance == 49_800.0
++
++    eod = walk_days(
++        day_blocks,
++        _ruleset(**base),
++        column="optimistic",
++        breach_mode="unrealized_adverse_first",
++    )
++    assert eod.verdict == "incomplete"
++    assert eod.final_balance == 49_800.0
++
++    # realized_only intraday trail: the peak comes from CLOSES (51_500 ->
++    # floor 49_500); without the unrealized +20pt leg the same settle survives.
++    realized = walk_days(
++        day_blocks,
++        _ruleset(trail_style="intraday_peak_trail", **base),
++        column="optimistic",
++        breach_mode="realized_only",
++    )
++    assert realized.verdict == "incomplete"
++    assert realized.final_balance == 49_800.0
++
++
++def test_intraday_peak_trail_floor_locks_at_starting_balance():
++    """The intraday peak trail still caps the floor at start when locking."""
++    rs = _ruleset(
++        trail_style="intraday_peak_trail",
++        dll_amount=None, consistency_pct=None, profit_target=1e9,
++    )
++    walk = EvaluationWalk(rs, column="optimistic", breach_mode="realized_only")
++    walk.play_day([_trade("2026-01-05", 120.0)])  # close 52_400; uncapped 50_400
++    assert walk.floor == 50_000.0
++
++
++def test_static_floor_never_ratchets():
++    """start − trail forever: the run-up that locks the EOD floor at start
++    does NOT move the static floor, and the drawdown that busts the EOD walk
++    leaves the static walk alive."""
++    day_blocks = _days(
++        [_trade("2026-01-05", 100.0)],  # 52_000
++        [_trade("2026-01-06", -150.0)],  # 49_000
++    )
++    base = {"dll_amount": None, "consistency_pct": None, "profit_target": 1e9}
++
++    rs_static = _ruleset(trail_style="static_floor", **base)
++    walk = EvaluationWalk(rs_static, column="optimistic", breach_mode="realized_only")
++    assert walk.floor == 48_000.0
++    walk.play_day(day_blocks[0][1])
++    assert walk.floor == 48_000.0  # never ratchets, even after a new high
++    walk.play_day(day_blocks[1][1])
++    assert walk.floor == 48_000.0
++    result = walk.result()
++    assert result.verdict == "incomplete"
++    assert result.final_balance == 49_000.0
++
++    eod = walk_days(
++        day_blocks, _ruleset(**base), column="optimistic", breach_mode="realized_only"
++    )
++    assert eod.verdict == "bust"  # floor locked at 50_000 after day 1
++    assert eod.days_to_outcome == 2
++
++
++def test_expiry_lands_expired_on_day_max_plus_one():
++    """Day max+1 may not be traded: the attempt lands "expired" untraded."""
++    rs = _ruleset(dll_amount=None, consistency_pct=None, max_eval_days=2)
++    walk = EvaluationWalk(rs, column="optimistic", breach_mode="realized_only")
++    assert walk.play_day([_trade("2026-01-05", 10.0)]) is None
++    assert walk.play_day([_trade("2026-01-06", 10.0)]) is None
++    assert walk.play_day([_trade("2026-01-07", 10.0)]) == "expired"
++    result = walk.result()
++    assert result.verdict == "expired"
++    assert result.days_to_outcome == 3  # day max+1
++    assert result.days_walked == 2
++    assert result.final_balance == 50_400.0  # the day-3 trade never happened
++    with pytest.raises(RuntimeError, match="already terminated"):
++        walk.play_day([_trade("2026-01-08", 1.0)])
++
++
++def test_verdicts_on_the_last_budget_day_still_land():
++    """Expiry only fires on day max+1 — day max itself can pass or bust."""
++    passing = walk_days(
++        _days([_trade("2026-01-05", 200.0)]),
++        _ruleset(dll_amount=None, consistency_pct=None, max_eval_days=1),
++        column="optimistic",
++        breach_mode="realized_only",
++    )
++    assert passing.verdict == "pass"
++    assert passing.days_to_outcome == 1
++
++    busting = walk_days(
++        _days([_trade("2026-01-05", -200.0)]),
++        _ruleset(dll_amount=None, consistency_pct=None, max_eval_days=1),
++        column="optimistic",
++        breach_mode="realized_only",
++    )
++    assert busting.verdict == "bust"
++    assert busting.days_to_outcome == 1
++
++
++def test_hard_dll_busts_where_soft_halts_the_same_sequence():
++    """THE SAME day sequence: -1,200 running crosses the 1,000 DLL — soft
++    halts the day and walks on; hard is a bust at the crossing close."""
++    day_blocks = _days(
++        [
++            _trade("2026-01-05", -30.0),
++            _trade("2026-01-05", -30.0),  # running -1_200 <= -1_000
++            _trade("2026-01-05", 50.0),
++        ]
++    )
++    base = {"trail_amount": 10_000.0, "consistency_pct": None, "profit_target": 1e9}
++
++    soft = walk_days(
++        day_blocks, _ruleset(dll_hard=False, **base),
++        column="optimistic", breach_mode="realized_only",
++    )
++    assert soft.verdict == "incomplete"
++    assert soft.final_balance == 48_800.0
++    assert soft.halted_days == 1
++    assert soft.skipped_trades == 1
++
++    hard = walk_days(
++        day_blocks, _ruleset(dll_hard=True, **base),
++        column="optimistic", breach_mode="realized_only",
++    )
++    assert hard.verdict == "bust"
++    assert hard.bust_reason == "daily_loss_limit"
++    assert hard.days_to_outcome == 1
++    assert hard.final_balance == 48_800.0  # the +50pt trade never traded
++
++
+ def test_realized_bust_on_the_trailing_floor_uses_lte():
+     """Equity EXACTLY at the floor is a breach."""
+     rs = _ruleset(dll_amount=None, consistency_pct=None, profit_target=1e9)
+diff --git a/tests/propsim/test_presets.py b/tests/propsim/test_presets.py
+index 0208930..3dccc81 100644
+--- a/tests/propsim/test_presets.py
++++ b/tests/propsim/test_presets.py
+@@ -15,12 +15,62 @@ def test_topstep_50k_ratified_parameters():
+     assert rs.trail_style == "eod_floor_realtime_breach"
+     assert rs.trail_locks_at_start is True
+     assert rs.dll_amount == 1_000.0
+-    assert rs.dll_soft is True
++    assert rs.dll_hard is False  # soft: a DLL touch halts the day
+     assert rs.consistency_pct == 50.0
+     assert rs.min_days is None
++    assert rs.max_eval_days is None
+     assert rs.point_value == 20.0
+ 
+ 
++def test_apex_50k_eod_ratified_parameters():
++    rs = ruleset_from_preset("apex_50k_eod")
++    assert rs.starting_balance == 50_000.0
++    assert rs.profit_target == 3_000.0
++    assert rs.trail_amount == 2_000.0
++    assert rs.trail_style == "eod_floor_realtime_breach"
++    assert rs.trail_locks_at_start is True  # ⚠ verify-lock
++    assert rs.dll_amount == 1_000.0
++    assert rs.dll_hard is True  # ⚠ verify-soft-vs-hard
++    assert rs.consistency_pct is None
++    assert rs.min_days is None
++    assert rs.max_eval_days == 30
++    assert rs.point_value == 20.0
++
++
++def test_apex_50k_intraday_ratified_parameters():
++    rs = ruleset_from_preset("apex_50k_intraday")
++    assert rs.trail_style == "intraday_peak_trail"
++    assert rs.trail_locks_at_start is True  # ⚠ verify-lock
++    assert rs.dll_amount is None
++    assert rs.consistency_pct is None
++    assert rs.max_eval_days == 30
++    assert (rs.starting_balance, rs.profit_target, rs.trail_amount) == (
++        50_000.0, 3_000.0, 2_000.0,
++    )
++
++
++def test_tpt_50k_test_ratified_parameters():
++    rs = ruleset_from_preset("tpt_50k_test")
++    assert rs.trail_style == "eod_floor_realtime_breach"
++    assert rs.trail_locks_at_start is True
++    assert rs.dll_amount is None
++    assert rs.consistency_pct == 50.0
++    assert rs.min_days == 5
++    assert rs.max_eval_days is None  # no expiry
++    assert (rs.starting_balance, rs.profit_target, rs.trail_amount) == (
++        50_000.0, 3_000.0, 2_000.0,
++    )
++
++
++def test_unverified_apex_parameters_carry_the_dashboard_note():
++    """The two ⚠ parameters stay flagged until dashboard-confirmed."""
++    from alpha_lab.propsim import presets
++
++    assert "VERIFY AT DASHBOARD" in presets.__doc__
++    assert "verify-lock" in presets.__doc__
++    assert "verify-soft-vs-hard" in presets.__doc__
++
++
+ def test_unknown_preset_lists_known_names():
+     with pytest.raises(ValueError, match="Unknown propsim preset 'nope'") as excinfo:
+         ruleset_from_preset("nope")
+diff --git a/tests/propsim/test_report.py b/tests/propsim/test_report.py
+index 9413bda..94fbff9 100644
+--- a/tests/propsim/test_report.py
++++ b/tests/propsim/test_report.py
+@@ -15,9 +15,10 @@ _RULESET = Ruleset(
+     trail_style="eod_floor_realtime_breach",
+     trail_locks_at_start=True,
+     dll_amount=1_000.0,
+-    dll_soft=True,
++    dll_hard=False,
+     consistency_pct=50.0,
+     min_days=None,
++    max_eval_days=None,
+     point_value=20.0,
+ )
+ 

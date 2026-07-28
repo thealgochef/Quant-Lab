@@ -1,0 +1,987 @@
+﻿diff --git a/models/NQ_20260603_233847/strategy.json b/models/NQ_20260603_233847/strategy.json
+index fbfcaf7..970cb1a 100644
+--- a/models/NQ_20260603_233847/strategy.json
++++ b/models/NQ_20260603_233847/strategy.json
+@@ -1,5 +1,5 @@
+ {
+-  "contract_version": "trade_lab_contract_v2",
++  "contract_version": "trade_lab_contract_v3",
+   "platform_version": "strategy_core_platform_v1",
+   "strategy_id": "touch_reversal",
+   "strategy_version": "1",
+@@ -22,15 +22,6 @@
+       "app_max_spread"
+     ],
+     "order_is_contractual": true,
+-    "interaction_features": [
+-      "int_time_within_2pts",
+-      "int_absorption_ratio"
+-    ],
+-    "approach_features": [
+-      "app_avg_trade_size",
+-      "app_large_trade_vol_pct",
+-      "app_max_spread"
+-    ],
+     "nan_policy": "model_native"
+   },
+   "class_map": {
+@@ -38,58 +29,9 @@
+     "1": "trap_reversal",
+     "2": "aggressive_blowthrough"
+   },
+-  "session_scheme": {
+-    "timezone": "US/Eastern",
+-    "trading_day_boundary": "18:00",
+-    "sessions": {
+-      "asia": {
+-        "start": "19:00",
+-        "end": "02:45",
+-        "crosses_midnight": true
+-      },
+-      "london": {
+-        "start": "03:00",
+-        "end": "08:00"
+-      },
+-      "ny": {
+-        "start": "09:00",
+-        "end": "17:00"
+-      }
+-    }
+-  },
+-  "level_scheme": {
+-    "pdh_pdl_source": "prior_day_full",
+-    "session_levels": [
+-      "asia_high",
+-      "asia_low",
+-      "london_high",
+-      "london_low",
+-      "pdh",
+-      "pdl"
+-    ],
+-    "available_from_guard": true
+-  },
+-  "touch_rule": {
+-    "type": "bar_intersect",
+-    "bar_type": "147t",
+-    "zone_proximity_pts": 3.0,
+-    "zone_representative_price": "mean_of_constituent_levels",
+-    "scope": "first_touch_per_zone_per_day",
+-    "direction_from_side": {
+-      "low": "long",
+-      "high": "short"
+-    }
+-  },
+-  "feature_windows": {
+-    "interaction_window_minutes": 5,
+-    "approach_window_minutes": 15,
+-    "within_band_pts": 2.0,
+-    "level_proximity_pts": 0.5,
+-    "large_trade_threshold": 10,
+-    "mid_price_source": "trade_price"
+-  },
+   "label_policy": {
+     "resolution": "mae_first",
++    "barrier_mode": "fixed_points",
+     "entry_reference": "realistic_at_decision",
+     "decision_offset_minutes": 5,
+     "tp_points": 15.0,
+@@ -125,5 +67,66 @@
+       "learning_rate": 0.03,
+       "auto_class_weights": "Balanced"
+     }
++  },
++  "section": {
++    "interaction_features": [
++      "int_time_within_2pts",
++      "int_absorption_ratio"
++    ],
++    "approach_features": [
++      "app_avg_trade_size",
++      "app_large_trade_vol_pct",
++      "app_max_spread"
++    ],
++    "session_scheme": {
++      "timezone": "US/Eastern",
++      "trading_day_boundary": "18:00",
++      "sessions": {
++        "asia": {
++          "start": "19:00",
++          "end": "02:45",
++          "crosses_midnight": true
++        },
++        "london": {
++          "start": "03:00",
++          "end": "08:00"
++        },
++        "ny": {
++          "start": "09:00",
++          "end": "17:00"
++        }
++      }
++    },
++    "level_scheme": {
++      "pdh_pdl_source": "prior_day_full",
++      "session_levels": [
++        "asia_high",
++        "asia_low",
++        "london_high",
++        "london_low",
++        "pdh",
++        "pdl"
++      ],
++      "available_from_guard": true
++    },
++    "touch_rule": {
++      "type": "bar_intersect",
++      "bar_type": "147t",
++      "zone_proximity_pts": 3.0,
++      "zone_representative_price": "mean_of_constituent_levels",
++      "scope": "first_touch_per_zone_per_day",
++      "direction_from_side": {
++        "low": "long",
++        "high": "short"
++      }
++    },
++    "feature_windows": {
++      "interaction_window_minutes": 5,
++      "approach_window_minutes": 15,
++      "within_band_pts": 2.0,
++      "level_proximity_pts": 0.5,
++      "large_trade_threshold": 10,
++      "mid_price_source": "trade_price"
++    }
+   }
+ }
+\ No newline at end of file
+diff --git a/scripts/migrate_contracts_v3.py b/scripts/migrate_contracts_v3.py
+new file mode 100644
+index 0000000..70ea8c5
+--- /dev/null
++++ b/scripts/migrate_contracts_v3.py
+@@ -0,0 +1,163 @@
++"""Migrate deployed model-bundle strategy.json files to contract v3 (E3), in place.
++
++Contract v3 is the envelope/section split: the flat v2 contract decomposes into
++the platform-consumed ENVELOPE (flat keys) + ONE strategy-owned ``section``
++subtree typed by the plugin's ``SectionModel``. For every bundle directory under
++the models root that contains a strategy.json:
++
++* SKIP bundles already at ``trade_lab_contract_v3`` (idempotent re-runs).
++* SKIP bundles whose ``contract_version`` is not ``trade_lab_contract_v2``: ONLY
++  v2 bundles migrate (the proven migration-#1 narrowing, D-E-c). The store's
++  legacy/engine-v1/engine-v2 bundles never reached contract v2, so restructuring
++  them would grant a shape they were never validated under; they stay at their
++  old version and keep failing closed at the loader's first check — the same
++  rejection class they have had since pre-E.
++* Otherwise back up the original to ``strategy.json.pre_v3.bak`` (never
++  overwritten once present — the backup is the pre-migration record) and
++  restructure, preserving every kept field byte-for-byte:
++    - ``contract_version``  -> the strategy_core ``CONTRACT_VERSION`` (v3)
++    - the five section fields (``session_scheme``/``level_scheme``/
++      ``touch_rule``/``feature_windows``/``research_session_experiment``) MOVE
++      verbatim into the new ``section`` subtree (appended as the last key — the
++      wire shape is flat envelope keys + one section subtree)
++    - ``feature_set.interaction_features``/``feature_set.approach_features``
++      MOVE out of the envelope's feature_set (now the SHELL) into the section
++    - ``label_policy`` gains ``barrier_mode: "fixed_points"`` (inserted after
++      ``resolution``) — every deployed touch bundle was labeled with the
++      fixed-points barrier, the schema default
++* Regenerate the ``model.cbm.sha256`` sidecar IF one exists (the sidecar hashes
++  the model binary, which this migration never touches).
++
++Run (from the QL repo root, PYTHONPATH=src or the editable install):
++    python scripts/migrate_contracts_v3.py [models_root]
++models_root defaults to $TRADE_LAB_MODELS_PATH, then ./models.
++"""
++
++from __future__ import annotations
++
++import hashlib
++import json
++import os
++import sys
++from pathlib import Path
++
++from strategy_core import CONTRACT_VERSION
++
++MIGRATABLE_CONTRACT_VERSION = "trade_lab_contract_v2"
++
++#: The five flat fields that move verbatim into the section subtree (E3
++#: classification by consumer: these are plugin-consumed).
++SECTION_FIELDS = (
++    "session_scheme",
++    "level_scheme",
++    "touch_rule",
++    "feature_windows",
++    "research_session_experiment",
++)
++#: The feature-partition keys that move out of feature_set into the section.
++PARTITION_FIELDS = ("interaction_features", "approach_features")
++
++
++def _restructure(payload: dict) -> dict:
++    """Flat v2 dict -> v3 envelope + section, preserving key order and bytes."""
++    section: dict = {}
++
++    migrated: dict = {}
++    for key, value in payload.items():
++        if key == "contract_version":
++            migrated[key] = CONTRACT_VERSION
++        elif key in SECTION_FIELDS:
++            section[key] = value  # moved verbatim; envelope position dropped
++        elif key == "feature_set":
++            shell = {}
++            for fs_key, fs_value in value.items():
++                if fs_key in PARTITION_FIELDS:
++                    section[fs_key] = fs_value  # partition moves to the section
++                else:
++                    shell[fs_key] = fs_value
++            migrated[key] = shell
++        elif key == "label_policy":
++            label = {}
++            for lp_key, lp_value in value.items():
++                label[lp_key] = lp_value
++                if lp_key == "resolution":
++                    label["barrier_mode"] = "fixed_points"
++            if "barrier_mode" not in label:  # defensive: resolution key absent
++                label["barrier_mode"] = "fixed_points"
++            migrated[key] = label
++        else:
++            migrated[key] = value
++
++    migrated["section"] = section
++    return migrated
++
++
++def migrate_bundle(bundle: Path) -> str:
++    strategy_file = bundle / "strategy.json"
++    payload = json.loads(strategy_file.read_text(encoding="utf-8"))
++
++    before = {
++        "contract_version": payload.get("contract_version"),
++        "engine_version": payload.get("engine_version"),
++        "platform_version": payload.get("platform_version"),
++        "strategy_id": payload.get("strategy_id"),
++        "strategy_version": payload.get("strategy_version"),
++        "has_section": "section" in payload,
++    }
++
++    if payload.get("contract_version") == CONTRACT_VERSION:
++        return f"{bundle.name}: SKIP (already {CONTRACT_VERSION}) | before={before}"
++
++    if payload.get("contract_version") != MIGRATABLE_CONTRACT_VERSION:
++        return (
++            f"{bundle.name}: SKIP (contract_version={before['contract_version']!r} is not "
++            f"{MIGRATABLE_CONTRACT_VERSION!r} — not migratable; stays fail-closed at "
++            f"contract_version) | before={before}"
++        )
++
++    backup = bundle / "strategy.json.pre_v3.bak"
++    if not backup.exists():
++        backup.write_text(strategy_file.read_text(encoding="utf-8"), encoding="utf-8")
++
++    migrated = _restructure(payload)
++    strategy_file.write_text(json.dumps(migrated, indent=2, default=str), encoding="utf-8")
++
++    sidecar = bundle / "model.cbm.sha256"
++    sidecar_note = "no sidecar"
++    if sidecar.exists():
++        digest = hashlib.sha256((bundle / "model.cbm").read_bytes()).hexdigest()
++        sidecar.write_text(digest, encoding="utf-8")
++        sidecar_note = "sidecar regenerated"
++
++    after = {
++        "contract_version": migrated.get("contract_version"),
++        "platform_version": migrated.get("platform_version"),
++        "strategy_id": migrated.get("strategy_id"),
++        "barrier_mode": migrated.get("label_policy", {}).get("barrier_mode"),
++        "section_keys": sorted(migrated.get("section", {})),
++        "feature_set_keys": sorted(migrated.get("feature_set", {})),
++    }
++    return (
++        f"{bundle.name}: MIGRATED ({sidecar_note}; backup={backup.name})\n"
++        f"  before={before}\n  after ={after}"
++    )
++
++
++def main() -> int:
++    root = Path(
++        sys.argv[1]
++        if len(sys.argv) > 1
++        else os.environ.get("TRADE_LAB_MODELS_PATH", "models")
++    )
++    if not root.is_dir():
++        print(f"models root not found: {root}")
++        return 1
++    bundles = sorted(p for p in root.iterdir() if p.is_dir() and (p / "strategy.json").exists())
++    print(f"models root: {root.resolve()} | bundles with strategy.json: {len(bundles)}")
++    for bundle in bundles:
++        print(migrate_bundle(bundle))
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/scripts/run_databento_acceptance.py b/scripts/run_databento_acceptance.py
+index b0bbc93..cdb2550 100644
+--- a/scripts/run_databento_acceptance.py
++++ b/scripts/run_databento_acceptance.py
+@@ -230,7 +230,8 @@ def audit_bundle(
+         "session_experiment": {
+             "evaluation": evaluation.get("session_experiment"),
+             "metadata": metadata.get("session_experiment"),
+-            "strategy": strategy.get("research_session_experiment"),
++            # v3: the research scope rides the strategy-owned section subtree.
++            "strategy": strategy.get("section", {}).get("research_session_experiment"),
+         },
+         "gated_oos": evaluation.get("gated_oos"),
+         "runtime": {
+@@ -239,7 +240,8 @@ def audit_bundle(
+             "strategy_id": strategy.get("strategy_id"),
+             "strategy_version": strategy.get("strategy_version"),
+             "supported_by_runtime": strategy.get("supported_by_runtime"),
+-            "bar_type": strategy.get("touch_rule", {}).get("bar_type"),
++            # v3: touch_rule is section-bound; forward_bar_type stays envelope.
++            "bar_type": strategy.get("section", {}).get("touch_rule", {}).get("bar_type"),
+             "decision_offset_minutes": strategy.get("label_policy", {}).get(
+                 "decision_offset_minutes",
+             ),
+diff --git a/src/alpha_lab/agents/data_infra/ml/strategy_contract.py b/src/alpha_lab/agents/data_infra/ml/strategy_contract.py
+index 7a20370..2cea19c 100644
+--- a/src/alpha_lab/agents/data_infra/ml/strategy_contract.py
++++ b/src/alpha_lab/agents/data_infra/ml/strategy_contract.py
+@@ -29,12 +29,22 @@ apart. The standing no-drift test
+ (``tests/agents/test_strategy_contract_nodrift.py``) asserts each structural
+ field equals its constant AND that no new contract field can appear without a
+ constant or an allow-listed per-run config source.
++
++Contract v3 (E3 — the envelope/section split): the emitter builds the
++plugin-consumed ``section`` subtree FROM a configured instance of the plugin's
++own ``SectionModel`` (``TouchReversalSection``): the plugin's canonical
++``default_touch_reversal_section()`` supplies every structural value (already
++constants-sourced inside Strategy-Core) and ONLY the per-run config values are
++overridden onto it — so the section the runtime validates is the very model the
++plugin owns, not a restated dict. The envelope keeps the platform-consumed flat
++keys. The feature-partition cross-check (section partition == envelope
++``feature_set.names``) runs HERE at emission (the first of the two validation
++sites; TL activation is the second).
+ """
+ 
+ from __future__ import annotations
+ 
+ import logging
+-from datetime import time
+ 
+ # The explicit registration import (touch_reversal/__init__ registers the plugin)
+ # so get_strategy can route; the registry is intentionally empty on a bare
+@@ -43,6 +53,11 @@ import strategy_core.strategies.touch_reversal  # noqa: F401
+ from strategy_core import CONTRACT_VERSION, PLATFORM_VERSION
+ from strategy_core import constants as k
+ from strategy_core.strategies.registry import get_strategy
++from strategy_core.strategies.touch_reversal.section import (
++    TouchReversalSection,
++    default_touch_reversal_section,
++    validate_feature_partition,
++)
+ 
+ from alpha_lab.agents.data_infra.ml.config import (
+     LIVE_APPROACH_FEATURES,
+@@ -53,17 +68,48 @@ from alpha_lab.agents.data_infra.ml.config import (
+ logger = logging.getLogger(__name__)
+ 
+ 
+-def _hhmm(t: time) -> str:
+-    return t.strftime("%H:%M")
+-
++def _build_touch_reversal_section(
++    config: MLPipelineConfig,
++    interaction: list[str],
++    approach: list[str],
++) -> TouchReversalSection:
++    """Build the configured ``TouchReversalSection`` INSTANCE for this run (E3).
+ 
+-def _session_block(name: str) -> dict:
+-    """Emit a session's start/end (+crosses_midnight) from the engine scheme."""
+-    w = k.RESEARCH_SESSION_SCHEME.sessions[name]
+-    block = {"start": _hhmm(w.start), "end": _hhmm(w.end)}
+-    if w.crosses_midnight:
+-        block["crosses_midnight"] = True
+-    return block
++    Starts from the plugin's canonical ``default_touch_reversal_section()`` —
++    every structural value is already single-sourced from ``strategy_core``
++    inside that builder — and overrides ONLY the per-run config values
++    (``du.bar_type``, the two windows, ``level_proximity_pts``, the selected
++    feature partition, and the run's session-experiment scope). One deliberate
++    projection is restated: ``direction_from_side`` keeps the lowercase
++    ``low->long / high->short`` form every shipped bundle carries (still sourced
++    from the engine's ``DIRECTION_FROM_SIDE``; the plugin default's uppercase
++    enum-value form is a recorded cosmetic divergence).
++    """
++    du = config.dashboard_utility
++    base = default_touch_reversal_section()
++    return TouchReversalSection(
++        session_scheme=base.session_scheme,
++        level_scheme=base.level_scheme,
++        touch_rule=base.touch_rule.model_copy(
++            update={
++                "bar_type": du.bar_type,
++                "direction_from_side": {
++                    side.value.lower(): direction.value.lower()
++                    for side, direction in k.DIRECTION_FROM_SIDE.items()
++                },
++            }
++        ),
++        feature_windows=base.feature_windows.model_copy(
++            update={
++                "interaction_window_minutes": du.interaction_window_minutes,
++                "approach_window_minutes": du.approach_window_minutes,
++                "level_proximity_pts": du.level_proximity_pts,
++            }
++        ),
++        interaction_features=tuple(interaction),
++        approach_features=tuple(approach),
++        research_session_experiment=config.session_experiment.model_dump(),
++    )
+ 
+ 
+ def build_strategy_contract(
+@@ -129,6 +175,13 @@ def build_strategy_contract(
+     interaction = [f for f in feature_names if f in LIVE_INTERACTION_FEATURES]
+     approach = [f for f in feature_names if f in LIVE_APPROACH_FEATURES]
+ 
++    # E3: the section subtree is generated FROM the plugin's SectionModel instance
++    # (structural values via the plugin's own default; per-run values overridden),
++    # then the emission-site feature-partition cross-check runs against the
++    # envelope's names — an inconsistent bundle is never written to disk.
++    section = _build_touch_reversal_section(config, interaction, approach)
++    validate_feature_partition(feature_names, section)
++
+     # class_map keyed by stringified index for stable JSON (0/1/2 -> label),
+     # single-sourced from the engine's CLASS_NAMES.
+     class_map = {str(idx): name for idx, name in sorted(k.CLASS_NAMES.items())}
+@@ -151,58 +204,21 @@ def build_strategy_contract(
+             "loss_function": config.model.loss_function,
+             "file": "model.cbm",
+         },
++        "class_map": class_map,
+         "feature_set": {
++            # The envelope SHELL (v3): the interaction/approach partition lives in
++            # the section (plugin semantics), cross-checked above.
+             "names": feature_names,
+             "order_is_contractual": True,
+-            "interaction_features": interaction,
+-            "approach_features": approach,
+             # Missing feature values are passed through as NaN; the loaded
+             # CatBoost model applies its trained nan_mode. (engine NAN_POLICY)
+             "nan_policy": k.NAN_POLICY,
+         },
+-        "class_map": class_map,
+-        "session_scheme": {
+-            "timezone": k.SESSION_TIMEZONE,
+-            "trading_day_boundary": _hhmm(k.TRADING_DAY_BOUNDARY),
+-            "sessions": {
+-                "asia": _session_block("asia"),
+-                "london": _session_block("london"),
+-                "ny": _session_block("ny"),
+-            },
+-        },
+-        "level_scheme": {
+-            "pdh_pdl_source": k.PDH_PDL_SOURCE,
+-            "session_levels": list(k.SESSION_LEVELS),
+-            "available_from_guard": k.LEVEL_AVAILABLE_FROM_GUARD,
+-        },
+-        "touch_rule": {
+-            "type": k.TOUCH_TYPE,
+-            "bar_type": du.bar_type,
+-            "zone_proximity_pts": k.ZONE_PROXIMITY_PTS,
+-            "zone_representative_price": k.ZONE_REPRESENTATIVE_PRICE,
+-            "scope": k.TOUCH_SCOPE,
+-            # low touch -> long, high touch -> short, single-sourced from the
+-            # engine's DIRECTION_FROM_SIDE (Side enum -> Direction enum).
+-            "direction_from_side": {
+-                side.value.lower(): direction.value.lower()
+-                for side, direction in k.DIRECTION_FROM_SIDE.items()
+-            },
+-        },
+-        "feature_windows": {
+-            "interaction_window_minutes": du.interaction_window_minutes,
+-            "approach_window_minutes": du.approach_window_minutes,
+-            "within_band_pts": k.WITHIN_BAND_PTS,
+-            "level_proximity_pts": du.level_proximity_pts,
+-            "large_trade_threshold": k.LARGE_TRADE_THRESHOLD,
+-            # Engine-single-sourced. The engine standardizes the 3 interaction
+-            # features on the TRADE PRINT price ("trade_price"), which DIVERGES
+-            # from the legacy book-mid training path; the platform_version binding
+-            # above is what makes Trade-Lab fail-close on a model trained under the
+-            # old book-mid feature definition (a retrain is required, next phase).
+-            "mid_price_source": k.MID_PRICE_SOURCE,
+-        },
+         "label_policy": {
+             "resolution": k.LABEL_RESOLUTION,
++            # E3: how tp/sl/trap are interpreted — sourced from the PLUGIN's own
++            # label-policy declaration (LabelPolicySpec), not restated.
++            "barrier_mode": get_strategy(strategy_id).label_policy().barrier_mode,
+             # Engine-single-sourced honest-entry re-anchor (engine v2/v3): the label
+             # is measured from the realistic price at the DECISION INSTANT. The
+             # decision offset is the configured interaction window because the
+@@ -221,7 +237,6 @@ def build_strategy_contract(
+             "eligible_session": k.INFERENCE_ELIGIBLE_SESSION,
+             "confidence_gate": k.DEFAULT_CONFIDENCE_GATE,
+         },
+-        "research_session_experiment": config.session_experiment.model_dump(),
+         "data_requirements": {
+             "min_book_level": k.MIN_BOOK_LEVEL,
+             "live_schemas": list(k.LIVE_SCHEMAS),
+@@ -237,4 +252,8 @@ def build_strategy_contract(
+                 "auto_class_weights": config.model.auto_class_weights,
+             },
+         },
++        # The ONE strategy-owned subtree (wire shape: flat envelope keys + this).
++        # Dumped from the typed instance built above; exclude_none drops the
++        # optional closed_window when absent (the research scheme has none).
++        "section": section.model_dump(mode="json", exclude_none=True),
+     }
+diff --git a/tests/agents/test_databento_acceptance_cli.py b/tests/agents/test_databento_acceptance_cli.py
+index 57dc2cd..6c05a4c 100644
+--- a/tests/agents/test_databento_acceptance_cli.py
++++ b/tests/agents/test_databento_acceptance_cli.py
+@@ -104,18 +104,23 @@ def test_audit_bundle_summarizes_fail_closed_artifact(tmp_path):
+     (model_dir / "strategy.json").write_text(
+         json.dumps(
+             {
+-                "contract_version": "trade_lab_contract_v2",
++                "contract_version": "trade_lab_contract_v3",
+                 "platform_version": "strategy_core_platform_v1",
+                 "strategy_id": "touch_reversal",
+                 "strategy_version": "1",
+                 "supported_by_runtime": True,
+-                "touch_rule": {"bar_type": "147t"},
+                 "label_policy": {
++                    "barrier_mode": "fixed_points",
+                     "decision_offset_minutes": 5,
+                     "forward_bar_type": "147t",
+                 },
+                 "inference": {"eligible_session": "ny", "confidence_gate": 0.7},
+-                "research_session_experiment": SESSION_SCOPE,
++                # v3: the strategy-owned section subtree carries touch_rule +
++                # the research scope.
++                "section": {
++                    "touch_rule": {"bar_type": "147t"},
++                    "research_session_experiment": SESSION_SCOPE,
++                },
+             },
+         ),
+     )
+diff --git a/tests/agents/test_strategy_contract_nodrift.py b/tests/agents/test_strategy_contract_nodrift.py
+index 100a64a..50492d0 100644
+--- a/tests/agents/test_strategy_contract_nodrift.py
++++ b/tests/agents/test_strategy_contract_nodrift.py
+@@ -12,6 +12,13 @@ This is the real closure of the contract drift surface. It proves:
+ 3. The emitted contract loads cleanly through the shared SC loader with the
+    platform-version binding (fail-closed on mismatch; the engine axis renamed
+    at E1) and carries the registry-resolved strategy axis (E2).
++4. Contract v3 (E3): the ``section`` subtree is genuinely SOURCED FROM the
++   plugin's own ``SectionModel`` — it validates under ``TouchReversalSection``,
++   equals the plugin's canonical default with ONLY the per-run config values
++   overridden, and passes the emission-site feature-partition cross-check. The
++   envelope constant-map pins only envelope leaves; the section's structural
++   values are pinned transitively through the plugin default (itself
++   constants-sourced inside Strategy-Core).
+ 
+ No data dependency: the emitter is pure config -> dict.
+ """
+@@ -74,24 +81,8 @@ def contract(config: MLPipelineConfig) -> dict:
+ # value it MUST equal. This is the single registry the coverage guard cross-checks
+ # against the pydantic model, so every structural leaf is pinned to a constant.
+ # ─────────────────────────────────────────────────────────────────────────────
+-def _sessions_projection() -> dict[str, dict]:
+-    """The sessions block as the emitter builds it from RESEARCH_SESSION_SCHEME."""
+-    out: dict[str, dict] = {}
+-    for name in ("asia", "london", "ny"):
+-        w = k.RESEARCH_SESSION_SCHEME.sessions[name]
+-        block = {"start": w.start.strftime("%H:%M"), "end": w.end.strftime("%H:%M")}
+-        if w.crosses_midnight:
+-            block["crosses_midnight"] = True
+-        out[name] = block
+-    return out
+-
+-
+ def _structural_constant_map(config: MLPipelineConfig) -> dict[str, Any]:
+     class_map = {str(idx): name for idx, name in sorted(k.CLASS_NAMES.items())}
+-    direction_from_side = {
+-        side.value.lower(): direction.value.lower()
+-        for side, direction in k.DIRECTION_FROM_SIDE.items()
+-    }
+     return {
+         # top-level version stamps: the two-axis binding (decision 9.3). The
+         # platform axis is the package constant; the strategy axis is
+@@ -102,34 +93,18 @@ def _structural_constant_map(config: MLPipelineConfig) -> dict[str, Any]:
+         "strategy_version": get_strategy("touch_reversal").strategy_version,
+         # point_value is the engine table projected onto the run's instrument
+         "point_value": k.POINT_VALUE[config.instrument],
+-        # feature_set structural descriptor
++        # feature_set structural descriptor (the v3 SHELL; the partition moved
++        # into the plugin section and is pinned by the section-sourcing test)
+         "feature_set.nan_policy": k.NAN_POLICY,
+         # class map
+         "class_map": class_map,
+-        # session scheme (windows projected from RESEARCH_SESSION_SCHEME). The
+-        # schema types ``sessions`` as a single dict leaf, so it is pinned whole
+-        # to the projection of the engine scheme's named windows.
+-        "session_scheme.timezone": k.SESSION_TIMEZONE,
+-        "session_scheme.trading_day_boundary": k.TRADING_DAY_BOUNDARY.strftime("%H:%M"),
+-        "session_scheme.sessions": _sessions_projection(),
+-        # level scheme
+-        "level_scheme.pdh_pdl_source": k.PDH_PDL_SOURCE,
+-        "level_scheme.session_levels": list(k.SESSION_LEVELS),
+-        "level_scheme.available_from_guard": k.LEVEL_AVAILABLE_FROM_GUARD,
+-        # touch rule
+-        "touch_rule.type": k.TOUCH_TYPE,
+-        "touch_rule.zone_proximity_pts": k.ZONE_PROXIMITY_PTS,
+-        "touch_rule.zone_representative_price": k.ZONE_REPRESENTATIVE_PRICE,
+-        "touch_rule.scope": k.TOUCH_SCOPE,
+-        "touch_rule.direction_from_side": direction_from_side,
+-        # feature windows
+-        "feature_windows.within_band_pts": k.WITHIN_BAND_PTS,
+-        "feature_windows.large_trade_threshold": k.LARGE_TRADE_THRESHOLD,
+-        "feature_windows.mid_price_source": k.MID_PRICE_SOURCE,
+         # label policy (engine v2/v3: structural semantics are constant-sourced;
+         # decision_offset_minutes is intentionally per-run config because the
+         # engine uses dashboard_utility.interaction_window_minutes as the offset.)
+         "label_policy.resolution": k.LABEL_RESOLUTION,
++        # E3: sourced from the PLUGIN's own label-policy declaration, the one
++        # place the barrier interpretation is declared.
++        "label_policy.barrier_mode": get_strategy("touch_reversal").label_policy().barrier_mode,
+         "label_policy.entry_reference": k.LABEL_ENTRY_REFERENCE,
+         "label_policy.forward_cutoff": k.LABEL_FORWARD_CUTOFF,
+         "label_policy.no_resolution_dropped": k.LABEL_NO_RESOLUTION_DROPPED,
+@@ -148,6 +123,9 @@ def _structural_constant_map(config: MLPipelineConfig) -> dict[str, Any]:
+ # Per-training-run inputs that LEGITIMATELY come from config, not from an engine
+ # constant. These are the strategy's tunable inputs (and the bundle identity),
+ # allow-listed so the coverage guard does not demand a constant for them.
++# (v3: the section-bound per-run inputs — touch_rule.bar_type, the feature
++# windows, the partition, research_session_experiment — moved INTO the section
++# subtree and are pinned by the section-sourcing test, not listed here.)
+ _CONFIG_INPUT_ALLOWLIST: frozenset[str] = frozenset(
+     {
+         "strategy_id",
+@@ -160,12 +138,6 @@ _CONFIG_INPUT_ALLOWLIST: frozenset[str] = frozenset(
+         "model.file",
+         "feature_set.names",
+         "feature_set.order_is_contractual",
+-        "feature_set.interaction_features",
+-        "feature_set.approach_features",
+-        "touch_rule.bar_type",
+-        "feature_windows.interaction_window_minutes",
+-        "feature_windows.approach_window_minutes",
+-        "feature_windows.level_proximity_pts",
+         "label_policy.tp_points",
+         "label_policy.sl_points",
+         "label_policy.trap_mfe_min",
+@@ -173,10 +145,15 @@ _CONFIG_INPUT_ALLOWLIST: frozenset[str] = frozenset(
+         "label_policy.forward_bar_type",
+         "provenance.dataset_config_hash",
+         "provenance.catboost",
+-        "research_session_experiment",
+     }
+ )
+ 
++# Contract v3: the ONE strategy-owned subtree. It has no leaf-by-leaf home in the
++# envelope maps above because its SOURCE is the plugin's SectionModel — the
++# section-sourcing test below pins it whole (validates under TouchReversalSection,
++# equals the plugin default + per-run overrides, passes the partition cross-check).
++_PLUGIN_SECTION_FIELDS: frozenset[str] = frozenset({"section"})
++
+ 
+ def _model_leaf_paths(model_cls: type, prefix: str = "") -> set[str]:
+     """Enumerate every leaf dotted-path of a pydantic contract model.
+@@ -216,9 +193,10 @@ def test_platform_version_is_stamped(contract: dict) -> None:
+ 
+ 
+ def test_mid_price_source_is_trade_price(contract: dict) -> None:
+-    # The ratified divergence from the legacy book-mid path: now describes the engine.
+-    assert contract["feature_windows"]["mid_price_source"] == "trade_price"
+-    assert contract["feature_windows"]["mid_price_source"] == k.MID_PRICE_SOURCE
++    # The ratified divergence from the legacy book-mid path: now describes the
++    # engine. (v3: feature_windows lives in the plugin section.)
++    assert contract["section"]["feature_windows"]["mid_price_source"] == "trade_price"
++    assert contract["section"]["feature_windows"]["mid_price_source"] == k.MID_PRICE_SOURCE
+ 
+ 
+ def test_platform_version_is_v1_and_strategy_axis_is_registry_sourced(contract: dict) -> None:
+@@ -238,6 +216,78 @@ def test_unknown_strategy_id_fails_emission_closed(config: MLPipelineConfig) ->
+         build_strategy_contract(config, MODEL_FEATURES, strategy_id="not_a_registered_id")
+ 
+ 
++def test_section_is_sourced_from_the_plugin_section_model(
++    contract: dict, config: MLPipelineConfig
++) -> None:
++    """E3 sourcing honesty: the emitted section IS the plugin's SectionModel.
++
++    The subtree validates under ``TouchReversalSection``; its structural groups
++    equal the plugin's canonical default (constants-sourced inside Strategy-Core,
++    with the recorded lowercase ``direction_from_side`` projection); only the
++    per-run config values differ from the default; and the emission-site
++    feature-partition cross-check holds against the envelope shell.
++    """
++    from strategy_core.strategies.touch_reversal.section import (
++        TouchReversalSection,
++        default_touch_reversal_section,
++        validate_feature_partition,
++    )
++
++    typed = TouchReversalSection.model_validate(contract["section"])
++    base = default_touch_reversal_section()
++
++    # Structural groups == the plugin default (no emitter-side restatement).
++    assert typed.session_scheme == base.session_scheme
++    assert typed.level_scheme == base.level_scheme
++    assert typed.touch_rule.type == base.touch_rule.type
++    assert typed.touch_rule.zone_proximity_pts == base.touch_rule.zone_proximity_pts
++    assert typed.touch_rule.zone_representative_price == base.touch_rule.zone_representative_price
++    assert typed.touch_rule.scope == base.touch_rule.scope
++    assert typed.feature_windows.within_band_pts == base.feature_windows.within_band_pts
++    assert (
++        typed.feature_windows.large_trade_threshold
++        == base.feature_windows.large_trade_threshold
++    )
++    assert typed.feature_windows.mid_price_source == base.feature_windows.mid_price_source
++    # The recorded lowercase projection of the engine's DIRECTION_FROM_SIDE.
++    assert typed.touch_rule.direction_from_side == {
++        side.value.lower(): direction.value.lower()
++        for side, direction in k.DIRECTION_FROM_SIDE.items()
++    }
++
++    # Per-run values come from config, not the default.
++    du = config.dashboard_utility
++    assert typed.touch_rule.bar_type == du.bar_type
++    assert typed.feature_windows.interaction_window_minutes == du.interaction_window_minutes
++    assert typed.feature_windows.approach_window_minutes == du.approach_window_minutes
++    assert typed.feature_windows.level_proximity_pts == du.level_proximity_pts
++    assert typed.research_session_experiment is not None
++    assert list(typed.research_session_experiment.training_sessions) == (
++        config.session_experiment.training_sessions
++    )
++
++    # The partition moved out of feature_set into the section, and cross-checks
++    # exactly against the envelope shell's names (the emission validation site).
++    assert "interaction_features" not in contract["feature_set"]
++    assert "approach_features" not in contract["feature_set"]
++    validate_feature_partition(contract["feature_set"]["names"], typed)
++    assert list(typed.interaction_features) + list(typed.approach_features) != []
++
++
++def test_emission_fails_closed_on_partition_mismatch(config: MLPipelineConfig) -> None:
++    """The emission-site cross-check: a feature name outside the known partition
++    lists yields a section partition that no longer covers names -> ContractError
++    BEFORE any contract dict is returned (an inconsistent bundle is never written)."""
++    from strategy_core.contract.schema import ContractError
++
++    with pytest.raises(ContractError, match="exactly the union"):
++        build_strategy_contract(
++            config,
++            [*MODEL_FEATURES, "not_a_known_feature"],
++            strategy_id="touch_reversal",
++        )
++
++
+ def test_label_policy_honest_entry_reanchor_tracks_config_window(
+     contract: dict, config: MLPipelineConfig
+ ) -> None:
+@@ -252,7 +302,7 @@ def test_label_policy_honest_entry_reanchor_tracks_config_window(
+     assert label["decision_offset_minutes"] == config.dashboard_utility.interaction_window_minutes
+     assert (
+         label["decision_offset_minutes"]
+-        == contract["feature_windows"]["interaction_window_minutes"]
++        == contract["section"]["feature_windows"]["interaction_window_minutes"]
+     )
+     # The representative production fixture uses the Strategy-Core default offset/window.
+     assert label["decision_offset_minutes"] == k.DECISION_OFFSET_MINUTES
+@@ -294,7 +344,7 @@ def test_coverage_guard_no_structural_field_without_a_source(
+     """
+     model_leaves = _model_leaf_paths(StrategyContract)
+     structural = set(_structural_constant_map(config).keys())
+-    covered = structural | _CONFIG_INPUT_ALLOWLIST
++    covered = structural | _CONFIG_INPUT_ALLOWLIST | _PLUGIN_SECTION_FIELDS
+ 
+     uncovered = model_leaves - covered
+     assert not uncovered, (
+@@ -312,11 +362,20 @@ def test_coverage_guard_no_structural_field_without_a_source(
+     assert not stale_allow, (
+         f"config allow-list references field(s) not on the model: {sorted(stale_allow)}"
+     )
++    # ...and so must the plugin-section set (the section leaf must stay real).
++    stale_section = _PLUGIN_SECTION_FIELDS - model_leaves
++    assert not stale_section, (
++        f"plugin-section set references field(s) not on the model: {sorted(stale_section)}"
++    )
+ 
+-    # Structural map and config allow-list must be disjoint (a field is one or the other).
+-    overlap = structural & _CONFIG_INPUT_ALLOWLIST
++    # The three sources must be pairwise disjoint (a field has exactly one home).
++    overlap = (
++        (structural & _CONFIG_INPUT_ALLOWLIST)
++        | (structural & _PLUGIN_SECTION_FIELDS)
++        | (_CONFIG_INPUT_ALLOWLIST & _PLUGIN_SECTION_FIELDS)
++    )
+     assert not overlap, (
+-        f"field(s) claimed by BOTH structural-map and config allow-list: {sorted(overlap)}"
++        f"field(s) claimed by more than one source: {sorted(overlap)}"
+     )
+ 
+ 
+@@ -326,14 +385,20 @@ def test_contract_loads_through_engine_loader_with_version_binding(
+     path = tmp_path / "strategy.json"
+     path.write_text(json.dumps(contract, default=str), encoding="utf-8")
+ 
+-    loaded = load_strategy_contract(path, expected_platform_version=PLATFORM_VERSION)
++    # v3: load with the SECTION hook on — the loader types the section subtree
++    # against the registered plugin's SectionModel (E3), mirroring TL activation.
++    loaded = load_strategy_contract(
++        path,
++        expected_platform_version=PLATFORM_VERSION,
++        validate_section_via_registry=True,
++    )
+ 
+     assert loaded.platform_version == PLATFORM_VERSION
+     assert loaded.strategy_version == "1"
+     assert loaded.contract_version == CONTRACT_VERSION
+     assert loaded.feature_count == 6
+     assert loaded.point_value == k.POINT_VALUE["NQ"]
+-    assert loaded.feature_windows.mid_price_source == k.MID_PRICE_SOURCE
++    assert loaded.section_model.feature_windows.mid_price_source == k.MID_PRICE_SOURCE
+     assert loaded.class_map.labels == (
+         k.CLASS_NAMES[0],
+         k.CLASS_NAMES[1],
+@@ -365,15 +430,20 @@ def test_platform_v1_bundle_loads_against_v1_and_rejects_old_engine_axis(
+     path = tmp_path / "strategy.json"
+     path.write_text(json.dumps(contract, default=str), encoding="utf-8")
+ 
+-    # Loads against platform v1 (== PLATFORM_VERSION).
+-    loaded = load_strategy_contract(path, expected_platform_version="strategy_core_platform_v1")
++    # Loads against platform v1 (== PLATFORM_VERSION); section hook on so the
++    # section-bound assertion below reads the TYPED instance.
++    loaded = load_strategy_contract(
++        path,
++        expected_platform_version="strategy_core_platform_v1",
++        validate_section_via_registry=True,
++    )
+     assert loaded.platform_version == "strategy_core_platform_v1" == PLATFORM_VERSION
+     assert loaded.label_policy.entry_reference == k.LABEL_ENTRY_REFERENCE
+     assert (
+         loaded.label_policy.decision_offset_minutes
+         == config.dashboard_utility.interaction_window_minutes
+     )
+-    assert loaded.level_scheme.pdh_pdl_source == k.PDH_PDL_SOURCE == "prior_day_full"
++    assert loaded.section_model.level_scheme.pdh_pdl_source == k.PDH_PDL_SOURCE == "prior_day_full"
+     assert loaded.inference.eligible_session == k.INFERENCE_ELIGIBLE_SESSION == "ny"
+ 
+     # Rejected against the retired engine-axis literal (the rename is fail-closed).
+diff --git a/tests/agents/test_strategy_contract_repoint.py b/tests/agents/test_strategy_contract_repoint.py
+index e4b6ba3..75a9a0b 100644
+--- a/tests/agents/test_strategy_contract_repoint.py
++++ b/tests/agents/test_strategy_contract_repoint.py
+@@ -64,7 +64,7 @@ def test_dashboard_utility_default_bar_type_is_v3_production_147t():
+ 
+     assert c is not None
+     assert cfg.dashboard_utility.bar_type == "147t"
+-    assert c["touch_rule"]["bar_type"] == "147t"
++    assert c["section"]["touch_rule"]["bar_type"] == "147t"
+     assert c["label_policy"]["forward_bar_type"] == "147t"
+ 
+ 
+@@ -84,7 +84,7 @@ def test_decision_offset_tracks_configured_interaction_window():
+     c = build_strategy_contract(cfg, MODEL_FEATURES, strategy_id="touch_reversal")
+ 
+     assert c is not None
+-    assert c["feature_windows"]["interaction_window_minutes"] == 11
++    assert c["section"]["feature_windows"]["interaction_window_minutes"] == 11
+     assert c["label_policy"]["decision_offset_minutes"] == 11
+ 
+ 
+@@ -100,8 +100,11 @@ def test_dashboard_utility_contract_advertises_runtime_servable(contract):
+ 
+ 
+ def test_contract_records_research_session_experiment(contract):
+-    """strategy.json should audit train/eval/gate session scope for experiments."""
+-    scope = contract["research_session_experiment"]
++    """strategy.json should audit train/eval/gate session scope for experiments.
++
++    (v3: the research scope is plugin-section-bound — it rides the section.)
++    """
++    scope = contract["section"]["research_session_experiment"]
+     assert scope["training_sessions"] == ["asia", "london", "ny"]
+     assert scope["evaluation_sessions"] == ["asia", "london", "ny"]
+     assert scope["production_gate_sessions"] == ["ny"]
+@@ -109,26 +112,33 @@ def test_contract_records_research_session_experiment(contract):
+ 
+ 
+ def test_literals_are_single_sourced_from_engine(contract):
+-    """Every value the emitter used to restate now equals the engine constant."""
+-    assert contract["touch_rule"]["zone_proximity_pts"] == sc.constants.ZONE_PROXIMITY_PTS
+-    assert contract["feature_windows"]["within_band_pts"] == sc.constants.WITHIN_BAND_PTS
++    """Every value the emitter used to restate now equals the engine constant.
++
++    (v3: the section-bound values are read through the ``section`` subtree —
++    sourced from the plugin's SectionModel default, itself constants-sourced.)
++    """
++    section = contract["section"]
++    assert section["touch_rule"]["zone_proximity_pts"] == sc.constants.ZONE_PROXIMITY_PTS
++    assert section["feature_windows"]["within_band_pts"] == sc.constants.WITHIN_BAND_PTS
+     assert (
+-        contract["feature_windows"]["large_trade_threshold"] == sc.constants.LARGE_TRADE_THRESHOLD
++        section["feature_windows"]["large_trade_threshold"]
++        == sc.constants.LARGE_TRADE_THRESHOLD
+     )
+-    assert contract["feature_windows"]["mid_price_source"] == sc.constants.MID_PRICE_SOURCE
++    assert section["feature_windows"]["mid_price_source"] == sc.constants.MID_PRICE_SOURCE
+     assert contract["point_value"] == sc.constants.POINT_VALUE["NQ"]
+-    assert contract["session_scheme"]["timezone"] == sc.constants.SESSION_TIMEZONE
+-    assert contract["session_scheme"][
++    assert section["session_scheme"]["timezone"] == sc.constants.SESSION_TIMEZONE
++    assert section["session_scheme"][
+         "trading_day_boundary"
+     ] == sc.constants.TRADING_DAY_BOUNDARY.strftime("%H:%M")
+ 
+ 
+ def test_sessions_match_engine_scheme(contract):
+-    sessions = contract["session_scheme"]["sessions"]
++    sessions = contract["section"]["session_scheme"]["sessions"]
+     scheme = sc.constants.RESEARCH_SESSION_SCHEME.sessions
+     for name in ("asia", "london", "ny"):
+         assert sessions[name]["start"] == scheme[name].start.strftime("%H:%M")
+         assert sessions[name]["end"] == scheme[name].end.strftime("%H:%M")
++        assert sessions[name]["crosses_midnight"] == scheme[name].crosses_midnight
+ 
+ 
+ def test_class_map_matches_engine(contract):
+@@ -141,20 +151,25 @@ def test_direction_from_side_matches_engine(contract):
+         side.value.lower(): direction.value.lower()
+         for side, direction in sc.constants.DIRECTION_FROM_SIDE.items()
+     }
+-    assert contract["touch_rule"]["direction_from_side"] == expected
++    assert contract["section"]["touch_rule"]["direction_from_side"] == expected
+ 
+ 
+ def test_contract_round_trips_through_engine_loader(contract, tmp_path: Path):
+     path = tmp_path / "strategy.json"
+     path.write_text(json.dumps(contract, default=str), encoding="utf-8")
+ 
+-    loaded = load_strategy_contract(path, expected_platform_version=PLATFORM_VERSION)
++    # v3: the section hook types the subtree against the plugin's SectionModel.
++    loaded = load_strategy_contract(
++        path,
++        expected_platform_version=PLATFORM_VERSION,
++        validate_section_via_registry=True,
++    )
+ 
+     assert loaded.platform_version == PLATFORM_VERSION
+     assert loaded.strategy_version == "1"
+     assert loaded.feature_count == 6
+-    assert loaded.research_session_experiment is not None
+-    assert loaded.research_session_experiment.production_gate_sessions == ("ny",)
++    assert loaded.section_model.research_session_experiment is not None
++    assert loaded.section_model.research_session_experiment.production_gate_sessions == ("ny",)
+     assert loaded.class_map.labels == (
+         "tradeable_reversal",
+         "trap_reversal",

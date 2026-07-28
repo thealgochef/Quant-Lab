@@ -1,0 +1,93 @@
+commit 0a03980864874d07beb6e583848ba944175bb3fa
+Author: Luis Gonzalez <lgcapital300@gmail.com>
+Date:   Fri Jun 12 19:31:20 2026 -0500
+
+    fix(ml): W3A-READER P0 — zero-touch guard on the vectorized approach-quote pass
+    
+    process_single_date_stream: the W3a P1 vectorized quote->window pass would
+    raise on an empty touches list (empty window arrays; hull min()/max() on an
+    empty sequence). The early no-touch return masks it today; guard the block
+    with `if touches:` so it is locally a no-op (approach_quotes stays empty —
+    the old per-touch loop's natural behavior) regardless of upstream flow.
+    
+    Zero-touch-day test: real one-hour slice with PDH/PDL seeded absurdly far
+    above any stored price — levels exist but cannot be touched; the approach
+    pass is configured ON; asserts an empty frame with no error.
+    
+    Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+diff --git a/src/alpha_lab/agents/data_infra/ml/engine_decision.py b/src/alpha_lab/agents/data_infra/ml/engine_decision.py
+index 192f4c3..d0562e3 100644
+--- a/src/alpha_lab/agents/data_infra/ml/engine_decision.py
++++ b/src/alpha_lab/agents/data_infra/ml/engine_decision.py
+@@ -695,7 +695,10 @@ def process_single_date_stream(
+         return trades[bisect_left(trade_ts, start) : bisect_left(trade_ts, end)]
+ 
+     approach_quotes: dict[int, list[Quote]] = {}
+-    if config.include_approach_features:
++    if config.include_approach_features and touches:
++        # Zero-touch guard: with no touches the window arrays would be empty and
++        # the hull min()/max() would raise — skip the pass, approach_quotes stays
++        # empty (the old per-touch loop's natural no-op).
+         # Bounded second pass: only quotes inside some touch's approach window are
+         # retained (full-day L1 retention would dominate memory for no reader).
+         # Window membership is computed VECTORIZED (numpy over epoch-ns) on
+diff --git a/tests/agents/test_stream_labeling_e2e.py b/tests/agents/test_stream_labeling_e2e.py
+index d1983a0..6f34901 100644
+--- a/tests/agents/test_stream_labeling_e2e.py
++++ b/tests/agents/test_stream_labeling_e2e.py
+@@ -1,10 +1,11 @@
+ """W1 P4d: end-to-end stream labeling through the SC drive on real data.
+ 
+-ONE real-data test, capped at a ONE-HOUR slice of one trading day (the W1 test
+-policy). It proves the production labeling path — the canonical SC day stream
+-driving the same StrategyRuntime/TouchReversalPlugin wiring Trade-Lab serves
+-with — produces touches, features, and labels end to end, with the dataset
+-schema intact and the legacy decision stages absent from the call graph.
++Real-data tests, each capped at a ONE-HOUR slice of one trading day (the W1
++test policy). They prove the production labeling path — the canonical SC day
++stream driving the same StrategyRuntime/TouchReversalPlugin wiring Trade-Lab
++serves with — produces touches, features, and labels end to end, with the
++dataset schema intact and the legacy decision stages absent from the call
++graph; plus the zero-touch no-op (W3A-READER P0).
+ 
+ Skips cleanly when the Databento NQ store is absent (CI without the data mount).
+ """
+@@ -136,6 +137,37 @@ def test_stream_drive_labels_one_hour_slice() -> None:
+     assert df["label"].notna().all()
+ 
+ 
++def test_stream_drive_zero_touch_day_is_empty_noop() -> None:
++    """W3A-READER P0: a day whose levels are never approached yields an empty
++    frame without error — the vectorized approach-quote pass must stay a no-op
++    on zero touches (its window arrays would be empty and the hull min()/max()
++    would raise if entered)."""
++    from alpha_lab.agents.data_infra.ml.config import DashboardUtilityConfig
++    from alpha_lab.agents.data_infra.ml.engine_decision import process_single_date_stream
++
++    config = DashboardUtilityConfig(
++        bar_type="147t",
++        interaction_window_minutes=5,
++        tp_points=2.0,
++        sl_points=2.0,
++        trap_mfe_min=1.0,
++        include_approach_features=True,  # the guarded pass must be configured ON
++        approach_window_minutes=15,
++    )
++    # Seed PDH/PDL absurdly far above any price in the frozen store (NQ never
++    # trades near 200k points): levels EXIST but cannot be touched, so the
++    # zero-touch path runs with the approach pass enabled.
++    df = process_single_date_stream(
++        DAY,
++        DATA_DIR,
++        SYMBOL,
++        config,
++        prev_day_hl=(200_000.0, 199_900.0),
++        events_until_utc=_hour_one_cap_utc(),
++    )
++    assert df.empty
++
++
+ def test_build_utility_dataset_refuses_legacy_mode() -> None:
+     from alpha_lab.agents.data_infra.ml.config import MLPipelineConfig
+     from alpha_lab.agents.data_infra.ml.dashboard_utility_builder import build_utility_dataset

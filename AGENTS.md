@@ -1,10 +1,10 @@
 # Alpha Signal Research Lab - Agent Notes
 
-Updated: 2026-06-04.
+Updated: 2026-07-28.
 
 ## Start points
 
-- This repo is a Python ML training workbench for NQ/ES futures plus local dashboard surfaces.
+- This repo is a Python ML training workbench for NQ/ES futures (Streamlit workbench + research CLIs). The old live-dashboard prototype (`src/alpha_lab/dashboard/`, `dashboard-ui/`) was deleted in the 2026-07 cleanup — it had no tests, no importers outside three frozen scripts, and pre-v3 session semantics; recover from git history if ever needed.
 - Current canonical architecture doc: `ARCHITECTURE.md`.
 - Docs index / stale-doc classification: `docs/README.md`.
 - Streamlit ML tab workflow: `docs/ML_TRAINING_WORKBENCH.md`.
@@ -14,39 +14,15 @@ Updated: 2026-06-04.
 
 ## Commands
 
-Use the active local environment when present:
+Run from the repo root (`C:\Users\gonza\Documents\Claude-Quant-Lab`, Windows; system Python 3.13 — no venv activation step):
 
 ```bash
-cd /root/trading-algos/Quant-Lab
-. .venv/bin/activate
-python -m pytest tests/agents/test_strategy_contract_nodrift.py tests/agents/test_strategy_contract_repoint.py -q
-python -m ruff check src tests scripts
+python -m pytest -q
+python -m ruff check src tests    # matches CI exactly; scripts/ is not linted by CI
 streamlit run scripts/dashboard.py
 ```
 
-Project metadata requires Python `>=3.14`; prefer the pinned `.python-version` (`3.14.5`) via `uv`. The previous Windows Python 3.13 path may exist on AlgoChef's workstation, but do not hardcode it in new docs or scripts.
-
-React dashboard commands run from `dashboard-ui/`:
-
-```bash
-npm install      # if node_modules is missing
-npm run dev
-npm run build
-npm test
-```
-
-FastAPI dashboard backend:
-
-```bash
-cd /root/trading-algos/Quant-Lab
-. .venv/bin/activate
-PYTHONPATH=src python -m alpha_lab.dashboard.api
-```
-
-Python 3.14 base installs are Databento-first. The legacy Rithmic adapter is not
-installed in the base dependency set because current `async-rithmic` pins protobuf
-`<5`, which conflicts with the Python 3.14-compatible protobuf stack used by
-Streamlit.
+Project metadata requires Python `>=3.13` (`pyproject.toml`); `.python-version` pins `3.13.1`; CI runs 3.13. Do not hardcode other interpreter versions in docs or scripts.
 
 ## Data flow
 
@@ -72,7 +48,7 @@ Dashboard-utility mode is the production-aligned research path and is single-sou
 - Gate: `tradeable_reversal`, `eligible_session="ny"`, confidence `0.70`.
 - Research session experiments: train/evaluate all sessions by default, production-gate NY by default; scope is persisted into `evaluation.json`, `metadata.json`, and `strategy.json` as audit metadata.
 
-Trade-Lab is not v3-compatible yet; do not claim runtime readiness until Trade-Lab is repointed and end-to-end parity is proven.
+Trade-Lab consumes Strategy-Core v3 through its adapter seam (repointed in the W1 one-surface migration); batch↔serving per-touch parity is gated by the W3b harness in Trade-Lab plus this repo's contract/no-drift acceptance tests.
 
 ## Evaluation rules
 
