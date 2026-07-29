@@ -26,7 +26,6 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
-
 from strategy_core.candles.time_batch import build_time_bars_from_frame
 from strategy_core.constants import RESEARCH_SESSION_SCHEME
 from strategy_core.data.databento_parquet import DatabentoParquetSource
@@ -258,7 +257,9 @@ def write_day_artifacts(artifacts: DayArtifacts, cfg: IfvgCaptureConfig) -> None
             "trade_count": [b.trade_count for b in artifacts.bars],
             "is_complete": [b.is_complete for b in artifacts.bars],
             "is_partial": [b.is_partial for b in artifacts.bars],
-            "close_reason": [b.close_reason.value if b.close_reason else None for b in artifacts.bars],
+            "close_reason": [
+                b.close_reason.value if b.close_reason else None for b in artifacts.bars
+            ],
             "kind": [b.kind.value for b in artifacts.bars],
         }
     )

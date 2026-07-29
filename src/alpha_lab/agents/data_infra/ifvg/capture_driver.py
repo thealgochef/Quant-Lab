@@ -12,11 +12,10 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, is_dataclass
-from datetime import date, datetime
+from datetime import date
 from enum import Enum
 
 import pandas as pd
-
 from strategy_core.strategies.ifvg_smc.replay import run_day
 from strategy_core.strategies.ifvg_smc.state import IfvgDaySeed, seed_hash
 
