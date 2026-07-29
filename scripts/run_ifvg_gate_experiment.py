@@ -47,6 +47,7 @@ _IDENTITY = {
     "entry_ticks",
     "stop_ticks",
     "parent_fvg_id",  # string identifier (IFVG-FIX F1), not a measurement
+    "entry_model_final",  # provenance stamp (IFVG-FIX F5), redundant with entry_family
 }
 _CATEGORICAL = ("entry_family", "direction", "session_engine", "session_doc",
                 "tap_nearest_level_kind", "inv_sweep_swept_kinds")

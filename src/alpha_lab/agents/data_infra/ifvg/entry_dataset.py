@@ -171,6 +171,10 @@ def build_entry_dataset(capture: pd.DataFrame, cfg: IfvgCaptureConfig) -> pd.Dat
             "trading_day": day_str,
             "entry_ts_utc": entry_ts,
             "entry_family": row.entry_family,
+            # ifvg_retest rows carry a PLACEHOLDER entry model (bar close; no
+            # CE/boundary entry references yet — recon A1). False until the
+            # real entry references land; not comparable to the fresh family.
+            "entry_model_final": row.entry_family == "fresh_fvg_continuation",
             "selected": bool(row.selected),
             "drop_reason": row.drop_reason,
             "direction": direction.value,

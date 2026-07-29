@@ -164,6 +164,10 @@ def write_labels_report(ds: pd.DataFrame, out_md: Path) -> None:
         "_Entry price model: confirmation_close. Costs: 0.514 NQ points round-turn."
         " `eod_timeout` realizes at the day-end close. Warmup rows excluded below._",
         "",
+        "_The `ifvg_retest` family's entry model is PROVISIONAL (bar-close placeholder,"
+        " no CE/boundary entry references yet; its rows carry `entry_model_final=False`)"
+        " — do not read it as comparable to the finished `fresh_fvg_continuation` model._",
+        "",
     ]
     for family, group in core.groupby("entry_family"):
         lines += [f"## family = {family} (n={len(group)})", ""]
