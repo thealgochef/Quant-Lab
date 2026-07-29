@@ -22,7 +22,6 @@ import pickle
 from datetime import date
 
 import pandas as pd
-
 from strategy_core.strategies.ifvg_smc.state import IfvgDaySeed, seed_hash
 
 from .capture_driver import capture_single_date
@@ -36,9 +35,144 @@ from .day_artifacts import (
     write_day_artifacts,
 )
 
-__all__ = ["build_ifvg_capture", "CaptureChainResult"]
+__all__ = [
+    "build_ifvg_capture",
+    "CaptureChainResult",
+    "CAPTURE_UNION_SCHEMA",
+    "conform_capture_frame",
+]
 
 _CAP_META_KEY = b"ifvg_capture_meta"
+
+#: The FULL flattened v1-record union (column -> pandas dtype), frozen from the
+#: pandas-2 concat of the capture chain. Per-day frames are a union of per-kind
+#: record columns, so on any given day most columns are absent or all-NA;
+#: pandas 2 excluded such entries from concat result-dtype inference, pandas 3
+#: does not — so the union dtype is DECLARED here and every per-day frame is
+#: conformed to it before concat (inference-free under either pandas). A column
+#: outside this schema means the record shape drifted: bump
+#: ``IFVG_RECORD_SCHEMA_VERSION`` and re-freeze; never widen silently.
+CAPTURE_UNION_SCHEMA: dict[str, str] = {
+    "kind": "object",
+    "entering_seed_hash": "object",
+    "envelope_schema_version": "int64",
+    "envelope_strategy_id": "object",
+    "envelope_strategy_version": "object",
+    "envelope_profile_hash": "object",
+    "envelope_trading_day": "object",
+    "envelope_ts_utc": "datetime64[ns, UTC]",
+    "envelope_setup_id": "object",
+    "htf_tf_seconds": "float64",
+    "fvg_fvg_id": "object",
+    "fvg_timeframe_seconds": "float64",
+    "fvg_direction": "object",
+    "fvg_gap_low_ticks": "float64",
+    "fvg_gap_high_ticks": "float64",
+    "fvg_size_ticks": "float64",
+    "fvg_a_bar_id": "object",
+    "fvg_c_bar_id": "object",
+    "fvg_a_open_ts_utc": "datetime64[ns, UTC]",
+    "fvg_confirmed_ts_utc": "datetime64[ns, UTC]",
+    "fvg_trading_day": "object",
+    "direction": "object",
+    "penetration_ticks": "float64",
+    "ce_reached": "object",
+    "htf_age_seconds": "float64",
+    "remaining_fraction": "float64",
+    "registry_live_count": "float64",
+    "rank": "float64",
+    "conflicted": "object",
+    "nearest_level_kind": "object",
+    "nearest_level_distance_ticks": "float64",
+    "session_engine": "object",
+    "session_doc": "object",
+    "selected": "object",
+    "drop_reason": "object",
+    "resolution": "object",
+    "entry_family": "object",
+    "entry_ticks": "float64",
+    "stop_ticks": "float64",
+    "tp_ticks": "float64",
+    "mfe_ticks": "float64",
+    "mae_ticks": "float64",
+    "bars_in_trade": "float64",
+    "tap_ts_utc": "datetime64[ns, UTC]",
+    "parent_confirmed_ts_utc": "datetime64[ns, UTC]",
+    "lock_ts_utc": "datetime64[ns, UTC]",
+    "armed_ts_utc": "datetime64[ns, UTC]",
+    "inversion_ts_utc": "datetime64[ns, UTC]",
+    "entry_ts_utc": "datetime64[ns, UTC]",
+    "htf_fvg_id": "object",
+    "parent_fvg_id": "object",
+    "opposing_fvg_id": "object",
+    "is_warmup": "bool",
+    "days_of_htf_history": "int64",
+    "parent_tf_seconds": "float64",
+    "distance_to_htf_ticks": "float64",
+    "elapsed_1m_bars_since_tap": "float64",
+    "confirmed_after": "object",
+    "fully_formed_after": "object",
+    "elapsed_1m_bars_since_selection": "float64",
+    "distance_to_parent_ticks": "float64",
+    "elapsed_1m_bars_since_lock": "float64",
+    "close_through_margin_ticks": "float64",
+    "bars_armed_to_inversion": "float64",
+    "opposing_size_ticks": "float64",
+    "sweep_sweep_confirmed": "object",
+    "sweep_swept_kinds": "object",
+    "sweep_max_penetration_ticks": "float64",
+    "sweep_nearest_unswept_distance_ticks": "float64",
+    "sweep_sweep_ts_utc": "datetime64[ns, UTC]",
+    "sweep_leg_extreme_ticks": "float64",
+    "entry_fvg": "float64",
+    "entry_fvg_fvg_id": "object",
+    "entry_fvg_timeframe_seconds": "float64",
+    "entry_fvg_direction": "object",
+    "entry_fvg_gap_low_ticks": "float64",
+    "entry_fvg_gap_high_ticks": "float64",
+    "entry_fvg_size_ticks": "float64",
+    "entry_fvg_a_bar_id": "object",
+    "entry_fvg_c_bar_id": "object",
+    "entry_fvg_a_open_ts_utc": "datetime64[ns, UTC]",
+    "entry_fvg_confirmed_ts_utc": "datetime64[ns, UTC]",
+    "entry_fvg_trading_day": "object",
+    "risk_ticks": "float64",
+    "bars_since_inversion": "float64",
+    "entry_to_parent_ticks": "float64",
+    "in_engine_session": "object",
+    "in_doc_session": "object",
+}
+
+#: dtypes that cannot represent NA — a per-day frame missing one of these
+#: columns is malformed, not sparse (they are stamped on every row).
+_NON_NULLABLE = ("bool", "int64")
+
+
+def conform_capture_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    """Reindex/astype one per-day capture frame to ``CAPTURE_UNION_SCHEMA``.
+
+    Absent and all-NA columns get a typed-empty column (their inferred dtype is
+    pure noise — the day simply never emitted the field); populated columns are
+    cast, so a genuine value/dtype conflict still raises."""
+    unknown = [c for c in frame.columns if c not in CAPTURE_UNION_SCHEMA]
+    if unknown:
+        raise ValueError(f"capture frame columns outside CAPTURE_UNION_SCHEMA: {unknown}")
+    out: dict[str, pd.Series] = {}
+    for col, dtype in CAPTURE_UNION_SCHEMA.items():
+        present = col in frame.columns
+        if present and (str(frame[col].dtype) == dtype or not frame[col].isna().all()):
+            series = frame[col]
+            if str(series.dtype) != dtype:
+                series = series.astype(dtype)
+        else:
+            if dtype in _NON_NULLABLE and present is False:
+                raise ValueError(f"non-nullable column {col!r} missing from capture frame")
+            if dtype in _NON_NULLABLE:
+                series = frame[col].astype(dtype)
+            else:
+                series = pd.Series(index=frame.index, dtype=dtype)
+        out[col] = series
+    return pd.DataFrame(out, index=frame.index)
 
 
 class CaptureChainResult:
@@ -49,8 +183,18 @@ class CaptureChainResult:
         self.cached_days: list[str] = []
 
     def frame(self) -> pd.DataFrame:
-        real = [f for f in self.frames if len(f)]
-        return pd.concat(real, ignore_index=True) if real else pd.DataFrame()
+        real = [conform_capture_frame(f) for f in self.frames if len(f)]
+        if not real:
+            return pd.DataFrame()
+        out = pd.concat(real, ignore_index=True)
+        drift = {
+            c: (str(out[c].dtype), CAPTURE_UNION_SCHEMA[c])
+            for c in out.columns
+            if str(out[c].dtype) != CAPTURE_UNION_SCHEMA[c]
+        }
+        if drift:
+            raise ValueError(f"capture concat dtypes drifted from schema (got, want): {drift}")
+        return out
 
 
 def _write_capture(
