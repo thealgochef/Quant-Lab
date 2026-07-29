@@ -21,7 +21,6 @@ import argparse
 import sys
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -47,6 +46,7 @@ _IDENTITY = {
     "entry_slippage_next_open_pts",
     "entry_ticks",
     "stop_ticks",
+    "parent_fvg_id",  # string identifier (IFVG-FIX F1), not a measurement
 }
 _CATEGORICAL = ("entry_family", "direction", "session_engine", "session_doc",
                 "tap_nearest_level_kind", "inv_sweep_swept_kinds")
@@ -56,6 +56,11 @@ def _feature_columns(ds: pd.DataFrame) -> list[str]:
     cols = []
     for col in ds.columns:
         if col in _IDENTITY or any(col.startswith(p) for p in _EXCLUDE_PREFIXES):
+            continue
+        # Raw timestamps are a monotone train-earlier-than-test signal under
+        # expanding splits — exclude every datetime64 column BY DTYPE so future
+        # timestamp columns can never leak in by name (IFVG-FIX F3).
+        if pd.api.types.is_datetime64_any_dtype(ds[col]):
             continue
         cols.append(col)
     return cols
@@ -106,6 +111,15 @@ def main() -> int:
 
     lines = ["# IFVG first honest gate (label_r10 win/other)", ""]
     lines.append(f"Rows {len(core)}, days {len(days)}, features {len(features)} ({len(cats)} cat).")
+    lines += [
+        "",
+        "## Feature matrix (explicit, post dtype exclusion)",
+        "",
+        f"{len(features)} features — identity/label/outcome columns, datetime64 columns"
+        " (excluded by dtype, IFVG-FIX F3) and the parent_fvg_id identifier are out:",
+        "",
+    ]
+    lines += [f"- {c}{'  (cat)' if c in cats else ''}" for c in features]
     lines.append("")
     oos_frames = []
     splits = [0.5, 0.65, 0.8]
@@ -134,14 +148,18 @@ def main() -> int:
         fold["split"] = frac
         oos_frames.append(fold)
         n, wr, net = _expectancy(fold)
-        lines.append(f"- split {frac}: train {len(train)} / test {n} | OOS win_rate {wr:.3f} net_R {net:+.3f}")
+        lines.append(
+            f"- split {frac}: train {len(train)} / test {n} | "
+            f"OOS win_rate {wr:.3f} net_R {net:+.3f}"
+        )
 
     if not oos_frames:
         Path("IFVG_GATE_REPORT.md").write_text("\n".join(lines))
         print("no viable splits; wrote IFVG_GATE_REPORT.md")
         return 0
     oos = pd.concat(oos_frames, ignore_index=True)
-    oos.to_parquet(Path(cfg.data_dir) / cfg.symbol / f"ifvg_oos_predictions_{cfg.capture_tag()}.parquet", index=False)
+    oos_path = Path(cfg.data_dir) / cfg.symbol / f"ifvg_oos_predictions_{cfg.capture_tag()}.parquet"
+    oos.to_parquet(oos_path, index=False)
 
     lines += ["", "## Baselines vs gate (pooled OOS)", ""]
     n, wr, net = _expectancy(oos)
@@ -149,18 +167,37 @@ def main() -> int:
     dd = oos[doc_default_pass(oos)]
     n, wr, net = _expectancy(dd)
     lines.append(f"- doc-defaults filter: n={n} win_rate={wr:.3f} mean_net_R={net:+.3f}")
-    lines += ["", "### Gate coverage sweep (P(win) threshold)", "", "| thr | n | coverage | win_rate | mean_net_R |", "|---|---|---|---|---|"]
+    lines += [
+        "",
+        "### Gate coverage sweep (P(win) threshold)",
+        "",
+        "| thr | n | coverage | win_rate | mean_net_R |",
+        "|---|---|---|---|---|",
+    ]
     for thr in (0.4, 0.5, 0.6, 0.7):
         sub = oos[oos["p_win"] >= thr]
         n, wr, net = _expectancy(sub)
         cov = n / max(1, len(oos))
-        lines.append(f"| {thr} | {n} | {cov:.2f} | {wr if n else float('nan'):.3f} | {net:+.3f} |" if n else f"| {thr} | 0 | 0.00 | - | - |")
+        lines.append(
+            f"| {thr} | {n} | {cov:.2f} | {wr:.3f} | {net:+.3f} |"
+            if n
+            else f"| {thr} | 0 | 0.00 | - | - |"
+        )
 
     # Calibration (quartile bins) + Brier.
     oos["bin"] = pd.qcut(oos["p_win"], q=min(4, oos["p_win"].nunique()), duplicates="drop")
-    lines += ["", "### Calibration (quartile bins of p_win)", "", "| bin | n | mean p | actual win rate |", "|---|---|---|---|"]
+    lines += [
+        "",
+        "### Calibration (quartile bins of p_win)",
+        "",
+        "| bin | n | mean p | actual win rate |",
+        "|---|---|---|---|",
+    ]
     for interval, group in oos.groupby("bin", observed=True):
-        lines.append(f"| {interval} | {len(group)} | {group['p_win'].mean():.3f} | {group['target'].mean():.3f} |")
+        lines.append(
+            f"| {interval} | {len(group)} | {group['p_win'].mean():.3f} "
+            f"| {group['target'].mean():.3f} |"
+        )
     brier = float(((oos["p_win"] - oos["target"]) ** 2).mean())
     lines += ["", f"Brier score: {brier:.4f} (base-rate reference: {oos['target'].mean():.3f})", ""]
 
