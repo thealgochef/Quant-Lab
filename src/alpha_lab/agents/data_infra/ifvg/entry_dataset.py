@@ -18,14 +18,24 @@ from __future__ import annotations
 from datetime import datetime
 
 import pandas as pd
-
 from strategy_core.strategies.ifvg_smc.labels import resolve_ifvg_outcome
 from strategy_core.types import Bar, Direction
 
 from .config import IfvgCaptureConfig
 from .day_artifacts import load_day_artifacts
 
-__all__ = ["build_entry_dataset", "NQ_COST_POINTS_ROUND_TURN"]
+__all__ = ["build_entry_dataset", "assert_no_all_nan_columns", "NQ_COST_POINTS_ROUND_TURN"]
+
+
+def assert_no_all_nan_columns(frame: pd.DataFrame) -> None:
+    """FAIL CLOSED on silent pivot/union breakage: a fully-all-NaN column means
+    a join key or a pivot rename collided (the ``parent_fvg_id`` lesson) —
+    raise with the column names, never emit."""
+    if frame.empty:
+        return
+    dead = [c for c in frame.columns if frame[c].isna().all()]
+    if dead:
+        raise ValueError(f"entry dataset emitted fully-all-NaN columns: {dead}")
 
 #: NQ round-turn friction in POINTS: commission $2.64/side x2 = $5.28 -> /$20
 #: per point = 0.264 pts, plus 0.5 tick slippage per side = 0.25 pts.
@@ -47,6 +57,7 @@ _STAGE_FEATURES = {
     ),
     "parent_candidate": (
         "parent_tf_seconds",
+        "fvg_fvg_id",
         "fvg_size_ticks",
         "distance_to_htf_ticks",
         "elapsed_1m_bars_since_tap",
@@ -79,6 +90,13 @@ _STAGE_PREFIX = {
     "inversion": "inv",
 }
 
+#: Pivot names that are explicit, not mechanical ``{prefix}_{column}``: the
+#: parent's own gap id must emerge as ``parent_fvg_id`` (the join name every
+#: downstream reader expects), not ``parent_fvg_fvg_id``.
+_STAGE_RENAME_OVERRIDES: dict[str, dict[str, str]] = {
+    "parent_candidate": {"fvg_fvg_id": "parent_fvg_id"},
+}
+
 
 def _atr14_ticks(bars_1m: list[Bar], before: datetime) -> float | None:
     """Mean true range (ticks) over the last 14 COMPLETE 1m bars closing
@@ -106,6 +124,15 @@ def build_entry_dataset(capture: pd.DataFrame, cfg: IfvgCaptureConfig) -> pd.Dat
     if entries.empty:
         return pd.DataFrame()
 
+    # The capture frame is a UNION of per-kind record columns, so entry rows
+    # carry other kinds' fields as all-NA remnants (parent_fvg_id from
+    # parent_lock/resolution rows, the resolution timestamps, ...). Those
+    # namespaces belong exclusively to the stage pivot below — drop the
+    # remnants first so the pivot output is authoritative and no colliding
+    # all-NaN column leaks through the prefix passthrough.
+    stage_namespaces = tuple(f"{p}_" for p in _STAGE_PREFIX.values())
+    entries = entries.drop(columns=[c for c in entries.columns if c.startswith(stage_namespaces)])
+
     # ── stage-feature pivots (selected rows only, keyed by setup_id) ─────────
     for kind, columns in _STAGE_FEATURES.items():
         stage = capture[capture["kind"] == kind]
@@ -113,9 +140,10 @@ def build_entry_dataset(capture: pd.DataFrame, cfg: IfvgCaptureConfig) -> pd.Dat
             stage = stage[stage["selected"] == True]  # noqa: E712 — pandas mask
         stage = stage.drop_duplicates(subset=["envelope_setup_id"], keep="last")
         prefix = _STAGE_PREFIX[kind]
+        overrides = _STAGE_RENAME_OVERRIDES.get(kind, {})
         available = [c for c in columns if c in stage.columns]
         renamed = stage[["envelope_setup_id", *available]].rename(
-            columns={c: f"{prefix}_{c}" for c in available}
+            columns={c: overrides.get(c, f"{prefix}_{c}") for c in available}
         )
         entries = entries.merge(renamed, on="envelope_setup_id", how="left")
 
@@ -216,4 +244,6 @@ def build_entry_dataset(capture: pd.DataFrame, cfg: IfvgCaptureConfig) -> pd.Dat
                 out[f"label_{tag}"] = "no_forward"
             out["label_window_end"] = entry_ts
         rows.append(out)
-    return pd.DataFrame(rows)
+    dataset = pd.DataFrame(rows)
+    assert_no_all_nan_columns(dataset)
+    return dataset
