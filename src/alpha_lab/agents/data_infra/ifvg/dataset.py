@@ -268,8 +268,16 @@ def _chained_seeds(prev: DayArtifacts | None) -> DaySeeds | None:
 
 
 def build_ifvg_capture(
-    dates: list[str], cfg: IfvgCaptureConfig, progress_fn=None
+    dates: list[str],
+    cfg: IfvgCaptureConfig,
+    progress_fn=None,
+    *,
+    cached_only: bool = False,
 ) -> CaptureChainResult:
+    """``cached_only=True`` is the READ-ONLY rebuild mode: every day must pass
+    chain trust verification from the existing per-day caches, or the chain
+    raises — it never re-drives the reducer and never (re)writes an artifact,
+    capture parquet, or seed pickle."""
     result = CaptureChainResult()
     seed: IfvgDaySeed | None = None
     prev_artifacts: DayArtifacts | None = None
@@ -282,6 +290,12 @@ def build_ifvg_capture(
         if cached is not None and artifacts is not None:
             frame, funnel, seed = cached
             result.cached_days.append(date_str)
+        elif cached_only:
+            raise RuntimeError(
+                f"cached-only chain: {date_str} failed trust verification "
+                f"(capture cached={cached is not None}, artifacts ok={artifacts is not None})"
+                " — refusing to re-drive the reducer or rewrite any artifact"
+            )
         else:
             if artifacts is None:
                 build_seeds = (

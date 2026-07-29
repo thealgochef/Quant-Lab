@@ -40,6 +40,12 @@ def main() -> int:
     parser.add_argument("--start", default=None)
     parser.add_argument("--end", default=None)
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument(
+        "--cached-only",
+        action="store_true",
+        help="read-only rebuild: raise instead of re-driving the reducer or "
+        "rewriting any per-day artifact if a day fails trust verification",
+    )
     args = parser.parse_args()
 
     cfg = IfvgCaptureConfig()
@@ -64,7 +70,7 @@ def main() -> int:
         if i % 10 == 0 or i == n:
             print(f"  [{i}/{n}] {date_str} ({time.time()-t0:.0f}s)", flush=True)
 
-    chain = build_ifvg_capture(days, cfg, progress_fn=progress)
+    chain = build_ifvg_capture(days, cfg, progress_fn=progress, cached_only=args.cached_only)
     capture = chain.frame()
     print(
         f"chain done in {time.time()-t0:.0f}s: {len(capture)} rows, "
