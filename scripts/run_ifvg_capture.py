@@ -21,14 +21,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from alpha_lab.agents.data_infra.ifvg.config import IfvgCaptureConfig  # noqa: E402
+from ifvg_artifact_warmer import available_store_days  # noqa: E402
+
+from alpha_lab.agents.data_infra.ifvg.config import (  # noqa: E402
+    SEALED_HOLDOUT_START,
+    IfvgCaptureConfig,
+)
 from alpha_lab.agents.data_infra.ifvg.dataset import build_ifvg_capture  # noqa: E402
 from alpha_lab.agents.data_infra.ifvg.entry_dataset import build_entry_dataset  # noqa: E402
 from alpha_lab.agents.data_infra.ifvg.funnel_report import (  # noqa: E402
     write_funnel_report,
     write_labels_report,
 )
-from ifvg_artifact_warmer import available_store_days  # noqa: E402
 
 
 def main() -> int:
@@ -70,23 +74,27 @@ def main() -> int:
     t1 = time.time()
     entries = build_entry_dataset(capture, cfg)
     print(f"entry dataset: {len(entries)} rows in {time.time()-t1:.0f}s")
-    out_entries = Path(cfg.data_dir) / cfg.symbol / f"ifvg_entry_dataset_{cfg.capture_tag()}.parquet"
+    out_entries = (
+        Path(cfg.data_dir) / cfg.symbol / f"ifvg_entry_dataset_{cfg.capture_tag()}.parquet"
+    )
     if len(entries):
         entries.to_parquet(out_entries, index=False)
         print(f"wrote {out_entries}")
 
     root = Path(__file__).resolve().parents[1]
-    totals = write_funnel_report(
+    segments = write_funnel_report(
         chain.day_funnels,
         root / "IFVG_FUNNEL.md",
         root / f"ifvg_funnel_{cfg.capture_tag()}.json",
+        warmup_days=cfg.warmup_days,
+        sealed_start=SEALED_HOLDOUT_START,
     )
     write_labels_report(entries, root / "IFVG_LABELS.md")
     print("reports: IFVG_FUNNEL.md, IFVG_LABELS.md")
     print(
-        "headline:",
+        "headline (core segment):",
         {
-            k: totals.get(k, 0)
+            k: segments["core"].get(k, 0)
             for k in ("htf_taps", "setups_born", "inversions", "entries_selected")
         },
     )

@@ -41,29 +41,84 @@ def doc_default_pass(ds: pd.DataFrame) -> pd.Series:
     return checks
 
 
+#: The three trade-outcome resolutions. SEALED rule (IFVG-FIX F4): stage
+#: counters may publish raw over the sealed range, but the tp/sl/eod
+#: decomposition is an OUTCOME ratio over the sealed holdout and stays
+#: unpublished — sealed sections carry only the combined count.
+_SEALED_RESOLVED = ("resolved_tp", "resolved_sl", "resolved_eod")
+
+
+def _seal_counters(counters: dict[str, int]) -> dict[str, int]:
+    """Collapse the outcome decomposition for anything published about the
+    sealed segment (see the ``_SEALED_RESOLVED`` rule above)."""
+    out = {k: v for k, v in counters.items() if k not in _SEALED_RESOLVED}
+    out["resolved_total_sealed"] = sum(counters.get(k, 0) for k in _SEALED_RESOLVED)
+    return out
+
+
+def _segment_of(day: str, chain_idx: int, warmup_days: int, sealed_start: str) -> str:
+    if day >= sealed_start:  # seal wins over warmup: outcomes stay unpublished
+        return "sealed"
+    return "warmup" if chain_idx < warmup_days else "core"
+
+
 def write_funnel_report(
-    day_funnels: dict[str, dict[str, int]], out_md: Path, out_json: Path
-) -> dict[str, int]:
-    total: dict[str, int] = {}
-    for counters in day_funnels.values():
+    day_funnels: dict[str, dict[str, int]],
+    out_md: Path,
+    out_json: Path,
+    *,
+    warmup_days: int,
+    sealed_start: str,
+) -> dict[str, dict[str, int]]:
+    """Three-way split (warmup / core / sealed) of the per-day funnel counters.
+
+    ``day_funnels`` must be in chain order (warmup = the first ``warmup_days``
+    chain positions). Returns the per-segment totals; everything published for
+    the sealed segment goes through ``_seal_counters``."""
+    totals: dict[str, dict[str, int]] = {"warmup": {}, "core": {}, "sealed": {}}
+    seg_days: dict[str, int] = {"warmup": 0, "core": 0, "sealed": 0}
+    day_entries: dict[str, dict] = {}
+    for chain_idx, (day, counters) in enumerate(day_funnels.items()):
+        segment = _segment_of(day, chain_idx, warmup_days, sealed_start)
+        seg_days[segment] += 1
         for key, value in counters.items():
-            total[key] = total.get(key, 0) + value
+            totals[segment][key] = totals[segment].get(key, 0) + value
+        day_entries[day] = {
+            "segment": segment,
+            "counters": _seal_counters(dict(counters)) if segment == "sealed" else dict(counters),
+        }
+    published = {
+        seg: (_seal_counters(t) if seg == "sealed" else t) for seg, t in totals.items()
+    }
     out_json.write_text(
-        json.dumps({"days": day_funnels, "total": total}, indent=2, sort_keys=True)
+        json.dumps({"segments": published, "days": day_entries}, indent=2, sort_keys=True)
     )
+    titles = {
+        "warmup": f"Warmup totals (first {warmup_days} chain days)",
+        "core": "Core totals (post-warmup, pre-seal)",
+        "sealed": (
+            f"Sealed totals ({sealed_start}+ holdout — stage counters only, "
+            "resolutions undecomposed)"
+        ),
+    }
     lines = [
         "# IFVG capture funnel",
         "",
-        f"Days in chain: {len(day_funnels)}",
-        "",
-        "## Totals (all days, warmup included)",
-        "",
-        "| counter | total | /day |",
-        "|---|---|---|",
+        f"Days in chain: {len(day_funnels)} — warmup {seg_days['warmup']}, "
+        f"core {seg_days['core']}, sealed {seg_days['sealed']} "
+        f"(sealed = trading day >= {sealed_start}; counts only, no outcome decomposition).",
     ]
-    ndays = max(1, len(day_funnels))
-    for key in sorted(total):
-        lines.append(f"| {key} | {total[key]} | {total[key] / ndays:.2f} |")
+    for seg in ("warmup", "core", "sealed"):
+        lines += [
+            "",
+            f"## {titles[seg]}",
+            "",
+            "| counter | total | /day |",
+            "|---|---|---|",
+        ]
+        ndays = max(1, seg_days[seg])
+        for key in sorted(published[seg]):
+            lines.append(f"| {key} | {published[seg][key]} | {published[seg][key] / ndays:.2f} |")
     active = sum(1 for c in day_funnels.values() if c.get("setups_born", 0) > 0)
     lines += [
         "",
@@ -73,7 +128,7 @@ def write_funnel_report(
         " measured cost, not a quality judgement._",
     ]
     out_md.write_text("\n".join(lines))
-    return total
+    return published
 
 
 def _expectancy_block(ds: pd.DataFrame, tag: str) -> list[str]:
