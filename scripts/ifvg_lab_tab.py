@@ -25,10 +25,12 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import ifvg_lab_charts as charts  # noqa: E402
+import ifvg_recapture_job as recapture  # noqa: E402
 
 from alpha_lab.agents.data_infra.ifvg.config import (  # noqa: E402
     SEALED_HOLDOUT_START,
     IfvgCaptureConfig,
+    custom_session_capture_config,
 )
 from alpha_lab.agents.data_infra.ifvg.experiment import (  # noqa: E402
     IfvgDocDefaultsConfig,
@@ -83,14 +85,57 @@ def _cached_entry_dataset(path: str) -> pd.DataFrame | None:
     return pd.read_parquet(p)
 
 
-def _cfg() -> tuple[IfvgCaptureConfig, str, str, str]:
-    cfg = IfvgCaptureConfig()
+def _cfg(profile: dict | None = None) -> tuple[IfvgCaptureConfig, str, str, str]:
+    """Capture config for the selected profile (None/default = canonical)."""
+    if profile is None or profile.get("is_default"):
+        cfg = IfvgCaptureConfig()
+    else:
+        cfg = custom_session_capture_config(
+            recapture.windows_to_times(
+                {n: (w[0], w[1]) for n, w in profile["windows"].items()}
+            )
+        )
     symbol_dir = str(Path(cfg.data_dir) / cfg.symbol)
     return cfg, symbol_dir, cfg.artifacts_tag(), cfg.capture_tag()
 
 
+def _profile_selector(st, key: str) -> dict | None:
+    """Capture-profile dropdown (default first + ready custom re-captures).
+
+    Sealed guards are IDENTICAL on every profile: the engine clamp and the
+    replay-day loader filter key off SEALED_HOLDOUT_START, not off tags.
+    """
+    profiles = [p for p in recapture.list_profiles() if p.get("status") == "ready"]
+    by_label = {f"{p['name']} · {p['ctag'][:8]}": p for p in profiles}
+    options = list(by_label)
+    _sanitize_select(st, key, options)
+    choice = st.selectbox(
+        "Capture profile", options, key=key,
+        help="Selects which capture (session-window scheme) drives datasets, "
+        "experiments and replay. Custom profiles come from the Profile "
+        "re-capture job.",
+    )
+    return by_label.get(choice)
+
+
 def _dataset_path(cfg: IfvgCaptureConfig, ctag: str) -> str:
     return str(Path(cfg.data_dir) / cfg.symbol / f"ifvg_entry_dataset_{ctag}.parquet")
+
+
+def _capture_cfg_for_tag(ctag: str) -> IfvgCaptureConfig | None:
+    """Resolve the capture config a run was SAVED against (default or a custom
+    profile from the registry); None when the profile is unknown."""
+    default = IfvgCaptureConfig()
+    if ctag == default.capture_tag():
+        return default
+    for p in recapture.list_profiles():
+        if p.get("ctag") == ctag and not p.get("is_default"):
+            cfg = custom_session_capture_config(
+                recapture.windows_to_times({n: (w[0], w[1]) for n, w in p["windows"].items()})
+            )
+            if cfg.capture_tag() == ctag:
+                return cfg
+    return None
 
 
 # ── small render helpers ──────────────────────────────────────────────────────
@@ -178,11 +223,13 @@ def _render_config_panel(st, config_dict: dict, header: dict) -> None:
 
 
 def render_ifvg_experiments_tab(st) -> None:
-    cfg, symbol_dir, atag, ctag = _cfg()
+    profile = _profile_selector(st, key="ifl_exp_profile")
+    cfg, symbol_dir, atag, ctag = _cfg(profile)
     ds = _cached_entry_dataset(_dataset_path(cfg, ctag))
     _profile_header(st, cfg, ctag, ds)
     if ds is None:
         st.warning("Entry dataset parquet not found — run the capture pipeline first.")
+        _recapture_section(st)
         return
 
     runs = list_experiments()
@@ -205,6 +252,9 @@ def render_ifvg_experiments_tab(st) -> None:
 
     st.divider()
     _history_and_compare(st, runs)
+
+    st.divider()
+    _recapture_section(st)
 
 
 def _profile_header(st, cfg: IfvgCaptureConfig, ctag: str, ds: pd.DataFrame | None) -> None:
@@ -288,13 +338,21 @@ def _sealed_validation_controls(st, run: dict, loaded: dict) -> None:
             f"Type the run hash `{run['experiment_hash']}` to confirm",
             key="ifl_sealed_confirm_text",
         )
+        run_cfg = _capture_cfg_for_tag(loaded["capture_tag"])
+        if run_cfg is None:
+            st.error(
+                f"This run's capture profile (`{loaded['capture_tag']}`) is not in the "
+                "profile registry — cannot sealed-validate it."
+            )
         if st.button(
             "Run sealed validation (permanent)",
             key="ifl_sealed_run_btn",
-            disabled=typed.strip() != run["experiment_hash"],
+            disabled=typed.strip() != run["experiment_hash"] or run_cfg is None,
         ):
             with st.spinner("Evaluating the sealed holdout..."):
-                path = run_sealed_validation(run["experiment_hash"])
+                # capture_cfg from the RUN's stored tag (engine hard-guards the
+                # match) — never from the dropdown's selected profile.
+                path = run_sealed_validation(run["experiment_hash"], capture_cfg=run_cfg)
             st.success(f"Sealed validation recorded -> {path.name}")
             st.rerun()
         seqs = sorted(run.get("sealed_validations") or [])
@@ -431,8 +489,8 @@ def _config_form(st, ds: pd.DataFrame) -> IfvgExperimentConfig | None:
     with st.expander("Custom session windows (filter semantics only)"):
         st.caption(
             "Trades are re-stamped offline from entry_ts_utc against these ET windows. "
-            "This does NOT rebuild session H/L LEVELS — those are baked into the capture "
-            "(the Part C re-capture job changes them)."
+            "This does NOT rebuild session H/L LEVELS — those are baked into the capture; "
+            "to change the levels themselves use the 'Profile re-capture' section below."
         )
         custom_enable = st.checkbox("Enable custom session stamps", key="ifl_custom_enable")
         windows: dict[str, SessionWindow] = {}
@@ -996,13 +1054,100 @@ def _history_and_compare(st, runs: list[dict]) -> None:
     st.dataframe(stats, use_container_width=True, hide_index=True)
 
 
+# ── Part C — profile re-capture (managed background job) ──────────────────────
+
+
+def _render_job_status(st, status: dict) -> None:
+    state = status.get("state", "?")
+    done = int(status.get("done_days") or 0)
+    total = int(status.get("total_days") or 0)
+    day = status.get("day")
+    if total:
+        st.progress(
+            min(1.0, done / total),
+            text=f"{state}: day {done}/{total}" + (f" ({day})" if day else ""),
+        )
+    else:
+        st.caption(f"state: {state}")
+    if state == "failed":
+        st.error(f"Job failed: {status.get('error')}")
+    elif state == "done":
+        st.success("Re-capture complete — the profile is now in the dropdown.")
+    st.caption(
+        f"started {status.get('started_utc', '?')} · updated {status.get('updated_utc', '?')}"
+    )
+
+
+def _recapture_section(st) -> None:
+    with st.expander("Profile re-capture — rebuild session H/L LEVELS under custom windows"):
+        st.caption(
+            "LEVEL-CONSTRUCTION re-capture: Phase A artifacts + the full capture chain "
+            "are rebuilt under the custom ET windows (times only; names, timezone and "
+            "trading-day boundary are fixed). All files are written under NEW atag/ctag "
+            "names — the canonical capture is never modified. The 'custom session "
+            "windows' control in the experiment form only re-stamps trades; THIS job "
+            "changes the Asia/London/NY H/L levels the strategy interacts with."
+        )
+        windows: dict[str, tuple[str, str]] = {}
+        for name in ("asia", "london", "ny"):
+            default = charts.ENGINE_SESSION_WINDOWS[name]
+            _seed_default(st, f"ifl_rc_{name}_start", default[0])
+            _seed_default(st, f"ifl_rc_{name}_end", default[1])
+            w1, w2 = st.columns(2)
+            start = w1.text_input(f"{name} start (ET HH:MM)", key=f"ifl_rc_{name}_start")
+            end = w2.text_input(f"{name} end (ET HH:MM)", key=f"ifl_rc_{name}_end")
+            windows[name] = (start.strip(), end.strip())
+
+        try:
+            preview = recapture.config_for_windows(windows)
+        except ValueError as exc:
+            st.error(f"Invalid windows: {exc}")
+            return
+        atag, ctag = preview.artifacts_tag(), preview.capture_tag()
+        is_default = ctag == IfvgCaptureConfig().capture_tag()
+        st.caption(f"derived atag `{atag}` · ctag `{ctag}`")
+        st.caption(
+            "Cost: ~45-65 min at 4 workers; Phase A levels rebuild is decode-bound "
+            "72-101s/day; capture adds minutes."
+        )
+        if is_default:
+            st.info("These windows match the default profile — nothing to re-capture.")
+
+        c1, c2 = st.columns(2)
+        name_label = c1.text_input("Profile name (optional)", key="ifl_rc_name")
+        _seed_default(st, "ifl_rc_workers", 4)
+        workers = c2.number_input("Workers", 1, 16, key="ifl_rc_workers")
+        confirm = st.checkbox(
+            "I understand this launches a ~1h background job that rebuilds all "
+            "per-day artifacts for these windows",
+            key="ifl_rc_confirm",
+        )
+        if st.button(
+            "Launch re-capture job",
+            type="primary",
+            key="ifl_rc_launch",
+            disabled=not confirm or is_default,
+        ):
+            job_dir = recapture.launch_recapture_job(
+                windows, name=name_label.strip() or None, workers=int(workers)
+            )
+            st.success(f"Job launched -> {job_dir}")
+
+        status = recapture.read_job_status(recapture.job_dir_for(atag, ctag))
+        if status is not None:
+            st.markdown("**Job status (for the windows above)**")
+            _render_job_status(st, status)
+        st.button("Refresh status", key="ifl_rc_refresh")
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  B2 — Replay / verifier
 # ══════════════════════════════════════════════════════════════════════════════
 
 
 def render_ifvg_replay_tab(st) -> None:
-    cfg, symbol_dir, atag, ctag = _cfg()
+    profile = _profile_selector(st, key="ifl_rep_profile")
+    cfg, symbol_dir, atag, ctag = _cfg(profile)
     st.markdown("### IFVG Lab — Replay / verifier")
     runs = list_experiments()
     run = _run_picker(st, runs, key="ifl_rep_run", none_label="(all captured trades)")
@@ -1020,9 +1165,20 @@ def render_ifvg_replay_tab(st) -> None:
                     "created_utc": (loaded.get("meta") or {}).get("created_utc"),
                 },
             )
-        trades = ((loaded.get("result") or {}).get("trade_stats") or {}).get("trades") or []
-        run_keys = charts.run_trade_keys(trades)
-        st.caption(f"Chart scoped to this run's {len(run_keys)} admitted trades.")
+        if loaded["capture_tag"] != ctag:
+            st.warning(
+                f"This run was saved on capture profile `{loaded['capture_tag']}` but the "
+                f"selected profile is `{ctag}` — trade scoping and sealed replay are "
+                "disabled here; switch to the run's profile to replay it."
+            )
+            run = None
+            loaded = None
+        else:
+            trades = (
+                ((loaded.get("result") or {}).get("trade_stats") or {}).get("trades") or []
+            )
+            run_keys = charts.run_trade_keys(trades)
+            st.caption(f"Chart scoped to this run's {len(run_keys)} admitted trades.")
 
     days = _cached_replay_days(symbol_dir, atag, ctag, False)
     if not days:
@@ -1034,13 +1190,17 @@ def render_ifvg_replay_tab(st) -> None:
     _trade_navigation(st, nav)
     _sanitize_select(st, "ifl_rep_day", days)
     day = st.selectbox("Day (pre-seal only)", days, index=len(days) - 1, key="ifl_rep_day")
+    # The selected PROFILE's windows drive the engine-scheme bands.
+    eng_windows = charts.scheme_windows(cfg.session_scheme)
     _render_day_chart(
         st, symbol_dir, atag, ctag, day, run_keys,
-        key_prefix="ifl_rep", allow_sealed=False, ds=ds,
+        key_prefix="ifl_rep", allow_sealed=False, ds=ds, engine_windows=eng_windows,
     )
 
     if charts.sealed_replay_available(run):
-        _sealed_replay_section(st, symbol_dir, atag, ctag, run, loaded)
+        _sealed_replay_section(
+            st, symbol_dir, atag, ctag, run, loaded, engine_windows=eng_windows
+        )
 
 
 def _trade_nav_entries(
@@ -1135,6 +1295,7 @@ def _render_day_chart(
     key_prefix: str,
     allow_sealed: bool,
     ds: pd.DataFrame | None,
+    engine_windows: dict[str, tuple[str, str]] | None = None,
 ) -> None:
     payload = _cached_day_payload(symbol_dir, atag, ctag, day, allow_sealed)
     capture = payload["capture"]
@@ -1231,6 +1392,7 @@ def _render_day_chart(
             show_extra_tps=show_extra_tps,
             recomputed_zones=recomputed,
             selected_setup_id=setup_id,
+            engine_windows=engine_windows,
         )
         st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_fig")
     with panel_col:
@@ -1298,7 +1460,8 @@ def _trade_side_panel(
 
 
 def _sealed_replay_section(
-    st, symbol_dir: str, atag: str, ctag: str, run: dict, loaded: dict
+    st, symbol_dir: str, atag: str, ctag: str, run: dict, loaded: dict,
+    *, engine_windows: dict[str, tuple[str, str]] | None = None,
 ) -> None:
     """The ONLY place sealed days can appear: an explicit, labeled expander for
     a saved run with ledgered sealed validations, scoped to that run."""
@@ -1329,6 +1492,7 @@ def _sealed_replay_section(
         _render_day_chart(
             st, symbol_dir, atag, ctag, day, sealed_keys,
             key_prefix="ifl_sealed", allow_sealed=True, ds=None,
+            engine_windows=engine_windows,
         )
 
 

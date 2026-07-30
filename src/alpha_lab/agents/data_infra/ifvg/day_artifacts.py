@@ -27,7 +27,6 @@ from pathlib import Path
 
 import pandas as pd
 from strategy_core.candles.time_batch import build_time_bars_from_frame
-from strategy_core.constants import RESEARCH_SESSION_SCHEME
 from strategy_core.data.databento_parquet import DatabentoParquetSource
 from strategy_core.data.events import DataQualityWarning as ScDataQualityWarning
 from strategy_core.data.prior_day import (
@@ -35,7 +34,7 @@ from strategy_core.data.prior_day import (
     prior_full_day_extremes,
 )
 from strategy_core.runtime.levels import StrategyLevelState
-from strategy_core.types import Bar, BarKind, CloseReason, Level, Side, Trade
+from strategy_core.types import Bar, BarKind, CloseReason, Level, SessionScheme, Side, Trade
 
 from .config import IfvgCaptureConfig
 
@@ -100,7 +99,11 @@ def seeds_for_day(date_str: str, cfg: IfvgCaptureConfig) -> DaySeeds:
         )
     full = prior_full_day_extremes(symbol_dir, td, requested_symbol=cfg.symbol)
     sessions = prior_day_session_extremes(
-        symbol_dir, td, sessions=("ny",), requested_symbol=cfg.symbol
+        symbol_dir,
+        td,
+        sessions=("ny",),
+        scheme=cfg.session_scheme,
+        requested_symbol=cfg.symbol,
     )
     ny = sessions.get("ny")
     return DaySeeds(
@@ -141,6 +144,7 @@ def build_day_artifacts(date_str: str, cfg: IfvgCaptureConfig, seeds: DaySeeds) 
 
     level_state = StrategyLevelState(
         tick_size=cfg.tick_size,
+        scheme=cfg.session_scheme,
         session_range_names=("asia", "london", "ny"),
         emit_prior_session_levels=("ny",),
     )
@@ -170,7 +174,7 @@ def build_day_artifacts(date_str: str, cfg: IfvgCaptureConfig, seeds: DaySeeds) 
         }
     )
     bars = build_time_bars_from_frame(
-        frame, cfg.timeframes_seconds(), scheme=RESEARCH_SESSION_SCHEME, tick_size=cfg.tick_size
+        frame, cfg.timeframes_seconds(), scheme=cfg.session_scheme, tick_size=cfg.tick_size
     )
 
     # Level timeline: fold the SAME trade stream, snapshot at every 1m close.
@@ -191,7 +195,8 @@ def build_day_artifacts(date_str: str, cfg: IfvgCaptureConfig, seeds: DaySeeds) 
     ny_bars = [
         b
         for b in bars_1m
-        if _session_of_bucket_start(b.open_ts_utc) == "ny" and b.trading_day == td
+        if _session_of_bucket_start(b.open_ts_utc, cfg.session_scheme) == "ny"
+        and b.trading_day == td
     ]
     ny_hl = (
         (max(b.high_ticks for b in ny_bars), min(b.low_ticks for b in ny_bars))
@@ -201,10 +206,10 @@ def build_day_artifacts(date_str: str, cfg: IfvgCaptureConfig, seeds: DaySeeds) 
     return DayArtifacts(date_str, bars, timeline, seeds, day_hl, ny_hl, warnings)
 
 
-def _session_of_bucket_start(ts_utc: datetime) -> str:
+def _session_of_bucket_start(ts_utc: datetime, scheme: SessionScheme) -> str:
     from strategy_core.decisions.sessions import classify_session
 
-    return classify_session(ts_utc, RESEARCH_SESSION_SCHEME).session
+    return classify_session(ts_utc, scheme).session
 
 
 # ── serialization ─────────────────────────────────────────────────────────────

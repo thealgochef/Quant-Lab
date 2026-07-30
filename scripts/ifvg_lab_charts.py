@@ -51,6 +51,7 @@ __all__ = [
     "run_trade_keys",
     "scope_overlays",
     "sealed_replay_available",
+    "scheme_windows",
     "session_bands",
     "recompute_day_gaps",
     "build_replay_figure",
@@ -85,6 +86,15 @@ ENGINE_SESSION_WINDOWS: dict[str, tuple[str, str]] = {
 }
 #: Doc scheme (ifvg-strat.md §6.4, strategy_core IFVG_DOC_SESSIONS).
 DOC_SESSION_WINDOWS: dict[str, tuple[str, str]] = dict(IFVG_DOC_SESSIONS)
+
+
+def scheme_windows(scheme) -> dict[str, tuple[str, str]]:
+    """A runtime SessionScheme's windows as HH:MM ET pairs (band input) — so a
+    custom capture profile's bands show ITS windows, not the canonical ones."""
+    return {
+        name: (w.start.strftime("%H:%M"), w.end.strftime("%H:%M"))
+        for name, w in scheme.sessions.items()
+    }
 
 
 # ── per-day payload loading (SEALED guard lives HERE, not in the widget) ──────
@@ -669,6 +679,7 @@ def build_replay_figure(
     recomputed_zones: pd.DataFrame | None = None,
     selected_setup_id: str | None = None,
     tick_size: float = TICK_SIZE,
+    engine_windows: dict[str, tuple[str, str]] | None = None,
 ) -> go.Figure:
     """The single replay candlestick figure (all 8 visual-contract elements).
 
@@ -691,7 +702,7 @@ def build_replay_figure(
 
     # 2) session background bands (engine + doc ET schemes).
     for scheme_key, windows, on in (
-        ("engine", ENGINE_SESSION_WINDOWS, show_engine_bands),
+        ("engine", engine_windows or ENGINE_SESSION_WINDOWS, show_engine_bands),
         ("doc", DOC_SESSION_WINDOWS, show_doc_bands),
     ):
         if not on:

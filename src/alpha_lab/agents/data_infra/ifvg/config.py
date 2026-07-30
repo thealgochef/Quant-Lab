@@ -16,7 +16,8 @@ Hash discipline (the ``dataset_config_hash`` idiom, extended):
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import time
 from pathlib import Path
 
 from strategy_core import PLATFORM_VERSION
@@ -30,7 +31,18 @@ from strategy_core.strategies.ifvg_smc.section import (
     ifvg_profile_hash,
 )
 
-__all__ = ["IfvgCaptureConfig", "DEFAULT_DATA_DIR", "SEALED_HOLDOUT_START"]
+# The ratified runtime->contract scheme adapter. It is module-internal to the
+# touch section but is the exact function SC's own ifvg section.py uses to
+# build its contract scheme (single-source; SC stays unmodified).
+from strategy_core.strategies.touch_reversal.section import _contract_scheme_from_runtime
+from strategy_core.types import SessionScheme, SessionWindow
+
+__all__ = [
+    "IfvgCaptureConfig",
+    "DEFAULT_DATA_DIR",
+    "SEALED_HOLDOUT_START",
+    "custom_session_capture_config",
+]
 
 DEFAULT_DATA_DIR = Path("data/databento")
 
@@ -47,6 +59,16 @@ def _short_hash(payload: str, n: int = 16) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:n]
 
 
+def _windows_signature(scheme: SessionScheme) -> str:
+    """Deterministic per-window times signature: ``name:start-end:xmid`` per
+    sorted name. Folded into ``artifacts_tag`` ONLY for non-default schemes so
+    the canonical tag (and the 624 warmed files) stays byte-identical."""
+    return ",".join(
+        f"{name}:{w.start.isoformat()}-{w.end.isoformat()}:{int(w.crosses_midnight)}"
+        for name, w in sorted(scheme.sessions.items())
+    )
+
+
 @dataclass(frozen=True)
 class IfvgCaptureConfig:
     symbol: str = "NQ"
@@ -56,6 +78,11 @@ class IfvgCaptureConfig:
     #: First N chain days feed registries only; their rows carry is_warmup=True
     #: (census: the 4H registry stabilizes days 8-10).
     warmup_days: int = 10
+    #: Runtime scheme Phase A is built with (bars trading-day slicing, level
+    #: session ranges, NY-extremes stamping). MUST stay consistent with
+    #: ``section.session_scheme`` — build customs via
+    #: :func:`custom_session_capture_config` so both tags roll together.
+    session_scheme: SessionScheme = field(default=RESEARCH_SESSION_SCHEME)
 
     @property
     def profile_hash(self) -> str:
@@ -65,18 +92,21 @@ class IfvgCaptureConfig:
         return self.section.timeframe_seconds()
 
     def artifacts_tag(self) -> str:
-        scheme = RESEARCH_SESSION_SCHEME
-        payload = "|".join(
-            (
-                _ARTIFACTS_PIPELINE_TAG,
-                PLATFORM_VERSION,
-                scheme.timezone,
-                scheme.trading_day_boundary.isoformat(),
-                ",".join(sorted(scheme.sessions)),
-                ",".join(str(s) for s in self.timeframes_seconds()),
-                repr(self.tick_size),
-            )
-        )
+        scheme = self.session_scheme
+        parts = [
+            _ARTIFACTS_PIPELINE_TAG,
+            PLATFORM_VERSION,
+            scheme.timezone,
+            scheme.trading_day_boundary.isoformat(),
+            ",".join(sorted(scheme.sessions)),
+            ",".join(str(s) for s in self.timeframes_seconds()),
+            repr(self.tick_size),
+        ]
+        # Session-window TIMES fold in conditionally (tag-collision fix): the
+        # default payload stays byte-identical, so the canonical tag never moves.
+        if _windows_signature(scheme) != _windows_signature(RESEARCH_SESSION_SCHEME):
+            parts.append(_windows_signature(scheme))
+        payload = "|".join(parts)
         return _short_hash(payload)
 
     def capture_tag(self) -> str:
@@ -111,3 +141,40 @@ class IfvgCaptureConfig:
         the SC ``seed_hash`` stamped in the capture parquet, never the pickle
         bytes; the capture_tag in the name invalidates stale shapes."""
         return self.day_dir(date_str) / f"ifvg_seed_{self.capture_tag()}.pkl"
+
+
+_CUSTOM_SESSION_NAMES = ("asia", "london", "ny")
+
+
+def custom_session_capture_config(
+    windows: dict[str, tuple[time, time]],
+    base: IfvgCaptureConfig | None = None,
+) -> IfvgCaptureConfig:
+    """A capture config whose session windows carry custom TIMES (names fixed:
+    asia/london/ny; timezone + trading_day_boundary fixed to the base scheme's).
+
+    ``crosses_midnight`` is derived per window (``start > end``). Both identity
+    axes roll together: the runtime ``session_scheme`` moves ``artifacts_tag``
+    (conditional windows signature) and the section's contract scheme moves
+    ``profile_hash`` -> ``capture_tag``.
+    """
+    base = base or IfvgCaptureConfig()
+    if sorted(windows) != sorted(_CUSTOM_SESSION_NAMES):
+        raise ValueError(
+            f"custom session windows must define exactly {_CUSTOM_SESSION_NAMES}, "
+            f"got {sorted(windows)}"
+        )
+    base_scheme = base.session_scheme
+    scheme = SessionScheme(
+        timezone=base_scheme.timezone,
+        trading_day_boundary=base_scheme.trading_day_boundary,
+        sessions={
+            name: SessionWindow(start=start, end=end, crosses_midnight=start > end)
+            for name, (start, end) in sorted(windows.items())
+        },
+        closed_window=base_scheme.closed_window,
+    )
+    section = base.section.model_copy(
+        update={"session_scheme": _contract_scheme_from_runtime(scheme)}
+    )
+    return replace(base, section=section, session_scheme=scheme)

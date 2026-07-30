@@ -1022,6 +1022,14 @@ def run_sealed_validation(
     run_dir: Path = loaded["run_dir"]
 
     capture_cfg = capture_cfg or IfvgCaptureConfig()
+    # A sealed look must evaluate the run on the capture it was saved against —
+    # a profile mismatch would silently score the wrong dataset.
+    expected_tag = loaded.get("capture_tag")
+    if expected_tag and capture_cfg.capture_tag() != expected_tag:
+        raise ValueError(
+            f"capture profile mismatch: run saved on capture_tag {expected_tag}, "
+            f"got config for {capture_cfg.capture_tag()} — pass the matching capture_cfg"
+        )
     if dataset is None:
         dataset = pd.read_parquet(dataset_path or _default_dataset_path(capture_cfg))
     frame = dataset.reset_index(drop=True).copy()
