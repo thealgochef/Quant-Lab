@@ -1374,9 +1374,10 @@ def main() -> None:
     # TAB LAYOUT — primary extrema workflow + retained compatibility path
     # ══════════════════════════════════════════════════════════
 
-    tab_ml, tab_exp, tab_chart, tab_trades, tab_val, tab_exec, tab_mon = st.tabs(
+    tab_ml, tab_ifvg, tab_exp, tab_chart, tab_trades, tab_val, tab_exec, tab_mon = st.tabs(
         [
             "🧠 ML Training",
+            "🧪 IFVG Lab",
             "🔬 Dashboard Compatibility",
             "📈 Price & Signals",
             "📋 Trade Log",
@@ -1391,6 +1392,12 @@ def main() -> None:
         from ml_training_tab import render_ml_training_tab
 
         render_ml_training_tab()
+
+    # ── IFVG Lab: experiments + replay/verifier (always available) ──
+    with tab_ifvg:
+        from ifvg_lab_tab import render_ifvg_lab_tab
+
+        render_ifvg_lab_tab()
 
     # ── Secondary dashboard-compatibility tab (always available) ──
     with tab_exp:

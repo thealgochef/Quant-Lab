@@ -62,6 +62,7 @@ __all__ = [
     "load_experiment",
     "delete_experiment",
     "run_sealed_validation",
+    "sealed_ledger_count",
     "NO_PATH_DEPENDENCE_CAVEAT",
 ]
 
@@ -895,6 +896,18 @@ def save_experiment(
     if oos is not None:
         oos.to_parquet(run_dir / "oos.parquet", index=False)
     return run_dir
+
+
+def sealed_ledger_count(base_dir: Path | None = None) -> int:
+    """GLOBAL sealed-evaluation count across ALL configs.
+
+    Holdout degradation is per-look, not per-config (later configs are chosen
+    with knowledge of earlier sealed results), so this single number is the
+    trust meter for every sealed result."""
+    ledger = Path(base_dir or EXPERIMENTS_DIR) / "sealed_ledger.jsonl"
+    if not ledger.exists():
+        return 0
+    return sum(1 for line in ledger.read_text(encoding="utf-8").splitlines() if line.strip())
 
 
 def _sealed_history(base: Path, run_hash: str) -> list[int]:
