@@ -91,7 +91,8 @@ def write_funnel_report(
         seg: (_seal_counters(t) if seg == "sealed" else t) for seg, t in totals.items()
     }
     out_json.write_text(
-        json.dumps({"segments": published, "days": day_entries}, indent=2, sort_keys=True)
+        json.dumps({"segments": published, "days": day_entries}, indent=2, sort_keys=True),
+        encoding="utf-8",
     )
     titles = {
         "warmup": f"Warmup totals (first {warmup_days} chain days)",
@@ -127,7 +128,7 @@ def write_funnel_report(
         "_Capture bounds are WIDE by design (ruling 9.13): every drop reason above is a"
         " measured cost, not a quality judgement._",
     ]
-    out_md.write_text("\n".join(lines))
+    out_md.write_text("\n".join(lines), encoding="utf-8")
     return published
 
 
@@ -149,7 +150,7 @@ def write_labels_report(ds: pd.DataFrame, out_md: Path) -> None:
     lines = ["# IFVG label families", ""]
     if ds.empty:
         lines.append("No entry candidates captured.")
-        out_md.write_text("\n".join(lines))
+        out_md.write_text("\n".join(lines), encoding="utf-8")
         return
     from .config import SEALED_HOLDOUT_START
 
@@ -198,4 +199,4 @@ def write_labels_report(ds: pd.DataFrame, out_md: Path) -> None:
             f"entry->next-1m-open slippage pts: mean {slip.mean():+.3f}, "
             f"p10 {slip.quantile(0.1):+.2f}, p90 {slip.quantile(0.9):+.2f} (n={len(slip)})",
         ]
-    out_md.write_text("\n".join(lines))
+    out_md.write_text("\n".join(lines), encoding="utf-8")

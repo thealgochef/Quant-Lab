@@ -25,6 +25,8 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from datetime import UTC
+
 from alpha_lab.agents.data_infra.ifvg.config import (  # noqa: E402
     SEALED_HOLDOUT_START,
     IfvgCaptureConfig,
@@ -108,9 +110,16 @@ def main() -> int:
         core[col] = pd.to_numeric(core[col], errors="coerce")
     core["target"] = (core["label_r10"] == "win").astype(int)
 
+    from datetime import datetime
+
     from catboost import CatBoostClassifier, Pool
 
     lines = ["# IFVG first honest gate (label_r10 win/other)", ""]
+    lines.append(
+        f"Generated {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')} | "
+        f"dataset `{path.name}` | capture_tag `{cfg.capture_tag()}`"
+    )
+    lines.append("")
     lines.append(f"Rows {len(core)}, days {len(days)}, features {len(features)} ({len(cats)} cat).")
     lines += [
         "",
@@ -155,7 +164,7 @@ def main() -> int:
         )
 
     if not oos_frames:
-        Path("IFVG_GATE_REPORT.md").write_text("\n".join(lines))
+        Path("IFVG_GATE_REPORT.md").write_text("\n".join(lines), encoding="utf-8")
         print("no viable splits; wrote IFVG_GATE_REPORT.md")
         return 0
     oos = pd.concat(oos_frames, ignore_index=True)
@@ -211,13 +220,33 @@ def main() -> int:
         n, wr, net = _expectancy(group)
         lines.append(f"- {family}: n={n} win_rate={wr:.3f} net_R={net:+.3f}")
 
+    # ── generated verdict: measurement facts of THIS run only ────────────────
+    base_rate = float(oos["target"].mean())
+    ref_brier = base_rate * (1.0 - base_rate)
+    bin_stats = oos.groupby("bin", observed=True).agg(
+        mean_p=("p_win", "mean"), actual=("target", "mean")
+    )
+    n_all, wr_all, net_all = _expectancy(oos)
     lines += [
+        "",
+        "## Verdict (this run)",
+        "",
+        f"- Brier {brier:.4f} vs constant-base-rate reference {ref_brier:.4f} "
+        f"(base rate {base_rate:.3f}).",
+        f"- Calibration: quartile mean p_win spans {bin_stats['mean_p'].min():.3f} -> "
+        f"{bin_stats['mean_p'].max():.3f}; actual win rate spans "
+        f"{bin_stats['actual'].min():.3f} -> {bin_stats['actual'].max():.3f}.",
+        f"- Pooled OOS (overlapping splits, n={n_all}): win_rate {wr_all:.3f}, "
+        f"mean_net_R {net_all:+.3f}.",
+        "",
+        "_Measurement facts only — works/doesn't-work judgements are reserved for the"
+        " owner after the build is complete and the sealed one-shot validation runs._",
         "",
         "_Small-N caveat: shallow fixed-hyperparameter model, no tuning, no feature"
         " selection; calibration and expectancy-at-coverage are the readouts that"
         " matter. The funnel and label reports are the window's primary results._",
     ]
-    Path("IFVG_GATE_REPORT.md").write_text("\n".join(lines))
+    Path("IFVG_GATE_REPORT.md").write_text("\n".join(lines), encoding="utf-8")
     print("wrote IFVG_GATE_REPORT.md")
     return 0
 
