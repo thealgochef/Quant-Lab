@@ -15,26 +15,45 @@ from pathlib import Path
 
 import pandas as pd
 
-__all__ = ["doc_default_pass", "write_funnel_report", "write_labels_report"]
+__all__ = [
+    "DOC_DEFAULT_FLOORS",
+    "DOC_DEFAULT_CAPS",
+    "doc_default_pass",
+    "write_funnel_report",
+    "write_labels_report",
+]
+
+#: The hardcoded ifvg-strat.md tuned defaults, now the parameter defaults of
+#: :func:`doc_default_pass` so experiments can override them per run.
+DOC_DEFAULT_FLOORS: dict[str, float] = {
+    "tap_fvg_size_ticks": 4,
+    "parent_fvg_size_ticks": 4,
+    "opp_fvg_size_ticks": 4,
+}
+DOC_DEFAULT_CAPS: dict[str, float] = {
+    "parent_distance_to_htf_ticks": 80,
+    "opp_distance_to_parent_ticks": 80,
+    "bars_since_inversion": 80,
+}
 
 
-def doc_default_pass(ds: pd.DataFrame) -> pd.Series:
+def doc_default_pass(
+    ds: pd.DataFrame,
+    *,
+    floors: dict[str, float] | None = None,
+    caps: dict[str, float] | None = None,
+) -> pd.Series:
     """ifvg-strat.md tuned defaults as a boolean filter over measurements:
-    >=4-tick gaps at every recorded joint, <=80-tick distances, <=80 bars
-    post-inversion, entry inside a doc session."""
+    gap-size floors at every recorded joint, distance/bars caps, entry inside a
+    doc session. ``floors``/``caps`` default to the doc values (backward
+    compatible); the doc-session requirement is unconditional."""
+    floors = DOC_DEFAULT_FLOORS if floors is None else floors
+    caps = DOC_DEFAULT_CAPS if caps is None else caps
     checks = pd.Series(True, index=ds.index)
-    for col, floor in (
-        ("tap_fvg_size_ticks", 4),
-        ("parent_fvg_size_ticks", 4),
-        ("opp_fvg_size_ticks", 4),
-    ):
+    for col, floor in floors.items():
         if col in ds:
             checks &= ds[col].fillna(0) >= floor
-    for col, cap in (
-        ("parent_distance_to_htf_ticks", 80),
-        ("opp_distance_to_parent_ticks", 80),
-        ("bars_since_inversion", 80),
-    ):
+    for col, cap in caps.items():
         if col in ds:
             checks &= ds[col].fillna(10**9) <= cap
     checks &= ds["session_doc"].fillna("none") != "none"

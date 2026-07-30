@@ -1,15 +1,10 @@
-"""First honest IFVG gate: CatBoost over the entry dataset, walk-forward purged.
+"""First honest IFVG gate — thin CLI over the experiment engine.
 
-Small-N discipline (expected 150-450 rows): shallow depth, no tuning loops,
-calibration-first reporting, and the two baselines the gate must beat OOS at
-matched coverage — take-everything and doc-defaults-as-filter. The funnel +
-label reports are the window's primary results; this gate is "first honest",
-not final.
-
-Eval: day-level walk-forward — train on days [0, k), purge 2 trading days,
-test on the remainder; repeated over 3 expanding splits. Warmup rows and
-``no_forward`` rows excluded. Target: ``label_r10 == "win"`` (binary), scored
-against ``realized_r_net_r10`` expectancy at coverage sweeps.
+The logic lives in ``alpha_lab.agents.data_infra.ifvg.experiment``; this script
+runs the DEFAULT config with the model block on and renders the same
+``IFVG_GATE_REPORT.md`` sections (parity check for the refactor: the numbers
+must reproduce the pre-refactor report exactly) + writes the pooled-OOS
+parquet as before.
 
 Usage:
     PYTHONPATH=src python scripts/run_ifvg_gate_experiment.py [--dataset PATH]
@@ -19,62 +14,141 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
-
-import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from datetime import UTC
-
-from alpha_lab.agents.data_infra.ifvg.config import (  # noqa: E402
-    SEALED_HOLDOUT_START,
-    IfvgCaptureConfig,
+from alpha_lab.agents.data_infra.ifvg.config import IfvgCaptureConfig  # noqa: E402
+from alpha_lab.agents.data_infra.ifvg.experiment import (  # noqa: E402
+    IfvgExperimentConfig,
+    IfvgModelConfig,
+    run_ifvg_experiment,
+    save_experiment,
 )
-from alpha_lab.agents.data_infra.ifvg.funnel_report import doc_default_pass  # noqa: E402
-
-_EXCLUDE_PREFIXES = ("label_", "realized_", "bars_to_res_", "mfe_r", "mae_r")
-_IDENTITY = {
-    "setup_id",
-    "trading_day",
-    "entry_ts_utc",
-    "selected",
-    "drop_reason",
-    "is_warmup",
-    "days_of_htf_history",
-    "profile_hash",
-    "strategy_version",
-    "label_window_end",
-    "entry_slippage_next_open_pts",
-    "entry_ticks",
-    "stop_ticks",
-    "parent_fvg_id",  # string identifier (IFVG-FIX F1), not a measurement
-    "entry_model_final",  # provenance stamp (IFVG-FIX F5), redundant with entry_family
-}
-_CATEGORICAL = ("entry_family", "direction", "session_engine", "session_doc",
-                "tap_nearest_level_kind", "inv_sweep_swept_kinds")
 
 
-def _feature_columns(ds: pd.DataFrame) -> list[str]:
-    cols = []
-    for col in ds.columns:
-        if col in _IDENTITY or any(col.startswith(p) for p in _EXCLUDE_PREFIXES):
-            continue
-        # Raw timestamps are a monotone train-earlier-than-test signal under
-        # expanding splits — exclude every datetime64 column BY DTYPE so future
-        # timestamp columns can never leak in by name (IFVG-FIX F3).
-        if pd.api.types.is_datetime64_any_dtype(ds[col]):
-            continue
-        cols.append(col)
-    return cols
+def _fmt(value: float | None, spec: str) -> str:
+    return "-" if value is None else format(value, spec)
 
 
-def _expectancy(sub: pd.DataFrame) -> tuple[int, float, float]:
-    if sub.empty:
-        return 0, float("nan"), float("nan")
-    return len(sub), float((sub["label_r10"] == "win").mean()), float(
-        sub["realized_r_net_r10"].mean()
+def _render(result: dict, dataset_name: str, capture_tag: str) -> str:
+    model = result["model"] or {}
+    features = result["features"]
+    lines = ["# IFVG first honest gate (label_r10 win/other)", ""]
+    lines.append(
+        f"Generated {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')} | "
+        f"dataset `{dataset_name}` | capture_tag `{capture_tag}`"
     )
+    lines.append("")
+    n_rows, n_days = model.get("n_rows", 0), model.get("n_days", 0)
+    n_feat, n_cat = features["n"], len(features["categorical"])
+    lines.append(f"Rows {n_rows}, days {n_days}, features {n_feat} ({n_cat} cat).")
+    lines += [
+        "",
+        "## Feature matrix (explicit, post dtype exclusion)",
+        "",
+        f"{n_feat} features — identity/label/outcome columns, datetime64 columns"
+        " (excluded by dtype, IFVG-FIX F3) and the parent_fvg_id identifier are out:",
+        "",
+    ]
+    cats = set(features["categorical"])
+    lines += [f"- {c}{'  (cat)' if c in cats else ''}" for c in features["all"]]
+    lines.append("")
+    if model.get("skipped_reason"):
+        lines.append(f"Model skipped: {model['skipped_reason']}")
+        return "\n".join(lines)
+    for split in model["splits"]:
+        if split.get("skipped"):
+            lines.append(
+                f"- split {split['frac']}: skipped (train {split['train_n']}, "
+                f"test {split['test_n']})"
+            )
+        else:
+            lines.append(
+                f"- split {split['frac']}: train {split['train_n']} / test {split['test_n']} | "
+                f"OOS win_rate {split['win_rate']:.3f} net_R {split['mean_net_r']:+.3f}"
+            )
+    if "pooled" not in model:
+        return "\n".join(lines)
+
+    lines += ["", "## Baselines vs gate (pooled OOS)", ""]
+    p = model["pooled"]
+    lines.append(
+        f"- take-everything: n={p['n']} win_rate={p['win_rate']:.3f} "
+        f"mean_net_R={p['mean_net_r']:+.3f}"
+    )
+    d = model["doc_defaults_baseline"]
+    lines.append(
+        f"- doc-defaults filter: n={d['n']} win_rate={_fmt(d['win_rate'], '.3f')} "
+        f"mean_net_R={_fmt(d['mean_net_r'], '+.3f')}"
+    )
+    lines += [
+        "",
+        "### Gate coverage sweep (P(win) threshold)",
+        "",
+        "| thr | n | coverage | win_rate | mean_net_R |",
+        "|---|---|---|---|---|",
+    ]
+    for row in model["coverage"]:
+        if row["n"]:
+            lines.append(
+                f"| {row['thr']} | {row['n']} | {row['coverage']:.2f} "
+                f"| {row['win_rate']:.3f} | {row['mean_net_r']:+.3f} |"
+            )
+        else:
+            lines.append(f"| {row['thr']} | 0 | 0.00 | - | - |")
+    lines += [
+        "",
+        "### Calibration (quartile bins of p_win)",
+        "",
+        "| bin | n | mean p | actual win rate |",
+        "|---|---|---|---|",
+    ]
+    for row in model["calibration"]:
+        lines.append(
+            f"| {row['bin']} | {row['n']} | {row['mean_p']:.3f} | {row['actual']:.3f} |"
+        )
+    lines += [
+        "",
+        f"Brier score: {model['brier']:.4f} (base-rate reference: {model['base_rate']:.3f})",
+        "",
+    ]
+    lines += ["", "## Per-session OOS (mandatory breakout, engine scheme)", ""]
+    for row in model["per_session"]:
+        lines.append(
+            f"- {row['session']}: n={row['n']} win_rate={row['win_rate']:.3f} "
+            f"net_R={row['mean_net_r']:+.3f}"
+        )
+    lines += ["", "## Per-family OOS", ""]
+    for row in model["per_family"]:
+        lines.append(
+            f"- {row['family']}: n={row['n']} win_rate={row['win_rate']:.3f} "
+            f"net_R={row['mean_net_r']:+.3f}"
+        )
+
+    mean_ps = [row["mean_p"] for row in model["calibration"]]
+    actuals = [row["actual"] for row in model["calibration"]]
+    lines += [
+        "",
+        "## Verdict (this run)",
+        "",
+        f"- Brier {model['brier']:.4f} vs constant-base-rate reference "
+        f"{model['ref_brier']:.4f} (base rate {model['base_rate']:.3f}).",
+        f"- Calibration: quartile mean p_win spans {min(mean_ps):.3f} -> "
+        f"{max(mean_ps):.3f}; actual win rate spans "
+        f"{min(actuals):.3f} -> {max(actuals):.3f}.",
+        f"- Pooled OOS (overlapping splits, n={p['n']}): win_rate {p['win_rate']:.3f}, "
+        f"mean_net_R {p['mean_net_r']:+.3f}.",
+        "",
+        "_Measurement facts only — works/doesn't-work judgements are reserved for the"
+        " owner after the build is complete and the sealed one-shot validation runs._",
+        "",
+        "_Small-N caveat: shallow fixed-hyperparameter model, no tuning, no feature"
+        " selection; calibration and expectancy-at-coverage are the readouts that"
+        " matter. The funnel and label reports are the window's primary results._",
+    ]
+    return "\n".join(lines)
 
 
 def main() -> int:
@@ -88,166 +162,30 @@ def main() -> int:
         if args.dataset
         else Path(cfg.data_dir) / cfg.symbol / f"ifvg_entry_dataset_{cfg.capture_tag()}.parquet"
     )
-    ds = pd.read_parquet(path)
-    core = ds[
-        (~ds["is_warmup"])
-        & (ds["label_r10"] != "no_forward")
-        & (ds["trading_day"] < SEALED_HOLDOUT_START)  # sealed holdout untouched
-    ].copy()
-    core = core.sort_values("entry_ts_utc").reset_index(drop=True)
-    days = sorted(core["trading_day"].unique())
-    print(f"dataset {path.name}: {len(ds)} rows -> {len(core)} eval rows over {len(days)} days")
-    if len(core) < 40 or len(days) < 12:
-        print("TOO FEW ROWS for even a first gate — funnel/label reports are the result.")
-        return 0
+    config = IfvgExperimentConfig(model=IfvgModelConfig())
+    result = run_ifvg_experiment(config, dataset_path=path, capture_cfg=cfg)
 
-    features = _feature_columns(core)
-    cats = [c for c in _CATEGORICAL if c in features]
-    for col in cats:
-        core[col] = core[col].fillna("none").astype(str)
-    numeric = [c for c in features if c not in cats]
-    for col in numeric:
-        core[col] = pd.to_numeric(core[col], errors="coerce")
-    core["target"] = (core["label_r10"] == "win").astype(int)
-
-    from datetime import datetime
-
-    from catboost import CatBoostClassifier, Pool
-
-    lines = ["# IFVG first honest gate (label_r10 win/other)", ""]
-    lines.append(
-        f"Generated {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')} | "
-        f"dataset `{path.name}` | capture_tag `{cfg.capture_tag()}`"
+    model = result["model"] or {}
+    print(
+        f"dataset {path.name}: {model.get('n_rows', 0)} eval rows over "
+        f"{model.get('n_days', 0)} days | experiment {result['meta']['experiment_hash']}"
     )
-    lines.append("")
-    lines.append(f"Rows {len(core)}, days {len(days)}, features {len(features)} ({len(cats)} cat).")
-    lines += [
-        "",
-        "## Feature matrix (explicit, post dtype exclusion)",
-        "",
-        f"{len(features)} features — identity/label/outcome columns, datetime64 columns"
-        " (excluded by dtype, IFVG-FIX F3) and the parent_fvg_id identifier are out:",
-        "",
-    ]
-    lines += [f"- {c}{'  (cat)' if c in cats else ''}" for c in features]
-    lines.append("")
-    oos_frames = []
-    splits = [0.5, 0.65, 0.8]
-    for frac in splits:
-        k = int(len(days) * frac)
-        train_days = set(days[:k])
-        test_days = set(days[k + 2 :])  # 2-day purge
-        train = core[core["trading_day"].isin(train_days)]
-        test = core[core["trading_day"].isin(test_days)]
-        if len(train) < 30 or len(test) < 10:
-            lines.append(f"- split {frac}: skipped (train {len(train)}, test {len(test)})")
-            continue
-        model = CatBoostClassifier(
-            iterations=200,
-            depth=4,
-            learning_rate=0.08,
-            loss_function="Logloss",
-            random_seed=7,
-            verbose=False,
-            allow_writing_files=False,
+    oos = result.get("_oos_frame")
+    if oos is not None:
+        oos_path = (
+            Path(cfg.data_dir) / cfg.symbol / f"ifvg_oos_predictions_{cfg.capture_tag()}.parquet"
         )
-        model.fit(Pool(train[features].fillna(-1), train["target"], cat_features=cats))
-        proba = model.predict_proba(Pool(test[features].fillna(-1), cat_features=cats))[:, 1]
-        fold = test.copy()
-        fold["p_win"] = proba
-        fold["split"] = frac
-        oos_frames.append(fold)
-        n, wr, net = _expectancy(fold)
-        lines.append(
-            f"- split {frac}: train {len(train)} / test {n} | "
-            f"OOS win_rate {wr:.3f} net_R {net:+.3f}"
-        )
-
-    if not oos_frames:
-        Path("IFVG_GATE_REPORT.md").write_text("\n".join(lines), encoding="utf-8")
-        print("no viable splits; wrote IFVG_GATE_REPORT.md")
-        return 0
-    oos = pd.concat(oos_frames, ignore_index=True)
-    oos_path = Path(cfg.data_dir) / cfg.symbol / f"ifvg_oos_predictions_{cfg.capture_tag()}.parquet"
-    oos.to_parquet(oos_path, index=False)
-
-    lines += ["", "## Baselines vs gate (pooled OOS)", ""]
-    n, wr, net = _expectancy(oos)
-    lines.append(f"- take-everything: n={n} win_rate={wr:.3f} mean_net_R={net:+.3f}")
-    dd = oos[doc_default_pass(oos)]
-    n, wr, net = _expectancy(dd)
-    lines.append(f"- doc-defaults filter: n={n} win_rate={wr:.3f} mean_net_R={net:+.3f}")
-    lines += [
-        "",
-        "### Gate coverage sweep (P(win) threshold)",
-        "",
-        "| thr | n | coverage | win_rate | mean_net_R |",
-        "|---|---|---|---|---|",
-    ]
-    for thr in (0.4, 0.5, 0.6, 0.7):
-        sub = oos[oos["p_win"] >= thr]
-        n, wr, net = _expectancy(sub)
-        cov = n / max(1, len(oos))
-        lines.append(
-            f"| {thr} | {n} | {cov:.2f} | {wr:.3f} | {net:+.3f} |"
-            if n
-            else f"| {thr} | 0 | 0.00 | - | - |"
-        )
-
-    # Calibration (quartile bins) + Brier.
-    oos["bin"] = pd.qcut(oos["p_win"], q=min(4, oos["p_win"].nunique()), duplicates="drop")
-    lines += [
-        "",
-        "### Calibration (quartile bins of p_win)",
-        "",
-        "| bin | n | mean p | actual win rate |",
-        "|---|---|---|---|",
-    ]
-    for interval, group in oos.groupby("bin", observed=True):
-        lines.append(
-            f"| {interval} | {len(group)} | {group['p_win'].mean():.3f} "
-            f"| {group['target'].mean():.3f} |"
-        )
-    brier = float(((oos["p_win"] - oos["target"]) ** 2).mean())
-    lines += ["", f"Brier score: {brier:.4f} (base-rate reference: {oos['target'].mean():.3f})", ""]
-
-    lines += ["", "## Per-session OOS (mandatory breakout, engine scheme)", ""]
-    for session, group in oos.groupby("session_engine"):
-        n, wr, net = _expectancy(group)
-        lines.append(f"- {session}: n={n} win_rate={wr:.3f} net_R={net:+.3f}")
-    lines += ["", "## Per-family OOS", ""]
-    for family, group in oos.groupby("entry_family"):
-        n, wr, net = _expectancy(group)
-        lines.append(f"- {family}: n={n} win_rate={wr:.3f} net_R={net:+.3f}")
-
-    # ── generated verdict: measurement facts of THIS run only ────────────────
-    base_rate = float(oos["target"].mean())
-    ref_brier = base_rate * (1.0 - base_rate)
-    bin_stats = oos.groupby("bin", observed=True).agg(
-        mean_p=("p_win", "mean"), actual=("target", "mean")
+        oos.drop(columns=["bin"], errors="ignore").to_parquet(oos_path, index=False)
+    Path("IFVG_GATE_REPORT.md").write_text(
+        _render(result, path.name, cfg.capture_tag()), encoding="utf-8"
     )
-    n_all, wr_all, net_all = _expectancy(oos)
-    lines += [
-        "",
-        "## Verdict (this run)",
-        "",
-        f"- Brier {brier:.4f} vs constant-base-rate reference {ref_brier:.4f} "
-        f"(base rate {base_rate:.3f}).",
-        f"- Calibration: quartile mean p_win spans {bin_stats['mean_p'].min():.3f} -> "
-        f"{bin_stats['mean_p'].max():.3f}; actual win rate spans "
-        f"{bin_stats['actual'].min():.3f} -> {bin_stats['actual'].max():.3f}.",
-        f"- Pooled OOS (overlapping splits, n={n_all}): win_rate {wr_all:.3f}, "
-        f"mean_net_R {net_all:+.3f}.",
-        "",
-        "_Measurement facts only — works/doesn't-work judgements are reserved for the"
-        " owner after the build is complete and the sealed one-shot validation runs._",
-        "",
-        "_Small-N caveat: shallow fixed-hyperparameter model, no tuning, no feature"
-        " selection; calibration and expectancy-at-coverage are the readouts that"
-        " matter. The funnel and label reports are the window's primary results._",
-    ]
-    Path("IFVG_GATE_REPORT.md").write_text("\n".join(lines), encoding="utf-8")
     print("wrote IFVG_GATE_REPORT.md")
+    # Baseline seeding (plan A4): the default-config run persists as a saved
+    # history entry (idempotent — same config hash redeploys the same dir).
+    run_dir = save_experiment(
+        config, result, name="baseline", note="default-config gate run (CLI)"
+    )
+    print(f"saved baseline experiment -> {run_dir}")
     return 0
 
 
