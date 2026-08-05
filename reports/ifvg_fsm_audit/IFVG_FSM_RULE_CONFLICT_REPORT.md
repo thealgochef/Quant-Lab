@@ -11,5 +11,4 @@ All entries are characterized, UNRESOLVED, and registered in
 | D-4 Q-23 window wording + BE-off | parentless predicate encodes the IMPLEMENTED any-window-open semantics; no break-even management exists | `parentless_step` rows reconcile 1:1 with `parentless_window_live`; resolver walks stop/target only |
 | D-5 profile-name-in-hash + one-per-TF wording | renames move identity; retention is per-TF but the slot is single-global | emitted `rank`/`outranked` evidence; identity discipline retained |
 
-Structural parent invalidations observed: **0** (the branch is
-contract-supported and instrumented even at zero observations).
+Structural parent invalidations observed: **0** (the branch is contract-supported and instrumented even at zero observations).

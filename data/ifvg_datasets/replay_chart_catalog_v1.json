@@ -1,0 +1,21 @@
+{
+  "1a0066faee051c29d70ecff1ac668d5da737919146292833a80981c70b446e0a": {
+    "profile_name": "ifvg_v2_doc_default_fresh_static_1r",
+    "replay_chart_manifest_payload_sha256": "f08a62d25bd32d8060b314f4c42bd5629a1a17f9b9e47cea576fca6c85a0f651",
+    "v2_dataset_id": "143b510f8a73896072f44e08f331ef5156e85eb8e5124d25bdf441c4fb6b2ac7",
+    "v2_manifest_hash": "b089dfadf44253b7071882cc9577feeacd97e532f4fd7086fe2fcbac39e60c22",
+    "v3_dataset_id": "09ef35d0c37ca4c2b688ec88c57b2881f02d52f11cc99c4daf0f74b5c46245c3",
+    "v3_manifest_hash": "20e0873ebb4de06125b8de8979d9eedaf8ecc55300109d7e6bad086840d85c0a"
+  },
+  "a3f1beabfdbddf47d9e6c4eda9bcb041766299f96dadebcc6da175b3f716746b": {
+    "artifact_kind": "ifvg_replay_chart_v2",
+    "fsm_audit_artifact_id": "7e55ee89d9492fa8338cefa3c6389c9e80c4b139f1ec3b3a1a87ab7ac701fe41",
+    "fsm_audit_manifest_hash": "112615098e9a854b96a983254a6fc01bb5de08fff590a4e119b7b982381bb996",
+    "profile_name": "ifvg_v2_doc_default_fresh_static_1r",
+    "replay_chart_manifest_payload_sha256": "3fac58e8db6e31394834e03501aa787f5273648764b07d50518bb1354ef19274",
+    "v2_dataset_id": "143b510f8a73896072f44e08f331ef5156e85eb8e5124d25bdf441c4fb6b2ac7",
+    "v2_manifest_hash": "b089dfadf44253b7071882cc9577feeacd97e532f4fd7086fe2fcbac39e60c22",
+    "v3_dataset_id": "09ef35d0c37ca4c2b688ec88c57b2881f02d52f11cc99c4daf0f74b5c46245c3",
+    "v3_manifest_hash": "20e0873ebb4de06125b8de8979d9eedaf8ecc55300109d7e6bad086840d85c0a"
+  }
+}

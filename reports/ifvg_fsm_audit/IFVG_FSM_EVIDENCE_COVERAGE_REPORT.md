@@ -1,6 +1,6 @@
 # IFVG FSM Evidence Coverage
 
-Artifact: `8f87271f8998ccf48410eaaea7377a9af54186b01b84f039411f3529e360895f`
+Artifact: `7e55ee89d9492fa8338cefa3c6389c9e80c4b139f1ec3b3a1a87ab7ac701fe41`
 
 ## Drop-reason coverage (every contract reason observed or provably zero)
 

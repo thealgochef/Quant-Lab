@@ -92,10 +92,40 @@ Trade-Lab writes; no sealed access. The D-1..D-5 register holds every
 characterized-but-unresolved decision. Browser viewport/keyboard QA is
 recorded as OPEN (no approved browser session).
 
-## 7. Publication record (filled at the Phase 6.5 gate)
+## 7. Publication record (Phase 6.5 gate, 2026-08-05)
 
-- QL source commit: `PENDING`
-- Final fsm-audit artifact id / manifest hash: `PENDING`
-- Final replay-chart v2 artifact id / manifest hash: `PENDING`
-- Catalog update commit: `PENDING`
-- Remaining pre-existing dirt not belonging to this task: `PENDING`
+- QL source commit (published, pushed): `9faa60f8468e0a592ad86a25862957f21e13d3c0`
+  — 104 files; includes the previously uncommitted prior-window IFVG source
+  this lane builds on, so the commit contains every module the artifact
+  identities hash. The scoped source surface (`src/…/ifvg`, ifvg scripts,
+  ifvg tests, `docs/ifvg`, `pyproject.toml`) was verified CLEAN over this
+  commit before the final builds.
+- FINAL fsm-audit artifact:
+  `7e55ee89d9492fa8338cefa3c6389c9e80c4b139f1ec3b3a1a87ab7ac701fe41`,
+  manifest payload
+  `112615098e9a854b96a983254a6fc01bb5de08fff590a4e119b7b982381bb996`.
+  Built AFTER the source commit; its manifest's repository-state block
+  records QL head `9faa60f8…` and Strategy-Core `a4e3303…` (verified).
+  Parity PASSED, reconciliation PASSED, identical evidence counts to the
+  superseded validation-lineage artifact `8f87271f…`.
+- FINAL replay-chart v2 artifact:
+  `a3f1beabfdbddf47d9e6c4eda9bcb041766299f96dadebcc6da175b3f716746b`,
+  manifest payload
+  `3fac58e8db6e31394834e03501aa787f5273648764b07d50518bb1354ef19274`
+  (pins the final fsm-audit identity inside its canonical policy set).
+- Refuse-overwrite re-run check: a second save under the same identity
+  raised `FileExistsError` before touching anything — PASSED.
+- Catalog: `replay_chart_catalog_v1.json` gained the v2 bundle entry ONLY
+  after the commit hash was verified inside the manifests (this follow-up
+  commit); v1 entries untouched.
+- Reports under `reports/ifvg_fsm_audit/` regenerated from the FINAL
+  artifact id.
+- Remaining pre-existing dirt NOT belonging to this task (left
+  uncommitted, inventoried in `QL_DIRTY_STATE_BEFORE_EDITS.txt`):
+  `ARCHITECTURE.md`, `docs/ML_TRAINING_WORKBENCH.md`, `docs/README.md`,
+  `docs/pipeline_state.yaml`, the root `IFVG_*.md`/ledger/funnel prompt
+  artifacts, `docs/IFVG_CONTEXT_CAPTURE_V3.md`,
+  `docs/IFVG_PLUGIN_DESIGN_…md`, `ifvg_search_runs/`,
+  `reports/ifvg_final_review/` + `reports/IFVG_WORK_COMPLETION_SUMMARY.docx`,
+  and the non-ignored `data/` stores (immutable/generated artifacts
+  excluded by policy).
