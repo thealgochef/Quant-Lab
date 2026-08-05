@@ -1,17 +1,14 @@
-"""IFVG capture research harness (IFVG window).
+"""IFVG v2 replay plus separate v3 deterministic-context evidence.
 
-QL is the DRIVER only — every strategy semantic lives in ``strategy_core``:
-bars come from ``candles/time_batch.py``, levels from
-``runtime/levels.StrategyLevelState``, the FSM from
-``strategies/ifvg_smc/replay.run_day``, labels from the shared MAE-first
-kernel. This package orchestrates the store replay in three phases:
+Strategy-Core owns bars, FVGs, the sequential FSM, IDs, geometry, and trade
+resolution. Quant-Lab authorizes sources, drives the fixed nonsealed chain,
+adds counterfactual candidate labels, validates foreign keys/invariants, and
+writes content-addressed immutable datasets.
 
-* Phase A (``day_artifacts``) — parallel, profile-independent, one reader drain
-  per day: 8-TF time bars + the level timeline, cached per day with seed
-  stamps.
-* Phase C (``capture_driver``/``dataset``) — sequential seeded ``run_day``
-  chain over the cached artifacts (seconds per day), per-day capture parquets
-  trusted by (profile_hash, entering seed_hash).
-* Labels/features/reports — offline composition over the capture rows and the
-  cached 1m bars.
+The v1 wide candidate stream remains a read-only reproduction lane. It cannot
+produce eligible decisions, executed trades, or performance statistics.
+
+The v3 context lane references the accepted v2 artifact and persists only new
+normalized context/link tables. It is measurement-only and invokes no training
+or evaluation.
 """

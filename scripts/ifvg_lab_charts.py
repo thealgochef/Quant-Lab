@@ -1,4 +1,4 @@
-"""Pure data/chart-payload builders for the IFVG Lab tab (plan Part B).
+"""Legacy-v1 data/chart payload builders retained for saved-study inspection.
 
 NO streamlit import here — everything is a pure function over frames/paths so
 ``tests/agents/test_ifvg_lab_tab.py`` can exercise the logic headlessly:
@@ -14,7 +14,8 @@ NO streamlit import here — everything is a pure function over frames/paths so
 * the Plotly figures (single figure per render; zones are deduped FIRST so the
   shape count stays at ~tens, never one shape per tap row).
 
-The streamlit layer (``ifvg_lab_tab.py``) is a thin wrapper over these.
+The active IFVG v2 tab reads immutable report/manifest artifacts directly and
+does not use these setup-ID-based loaders or trade overlays.
 """
 
 from __future__ import annotations
@@ -182,6 +183,10 @@ ZONE_COLORS = {
 def _rgba(hex_color: str, alpha: float) -> str:
     r, g, b = (int(hex_color[i : i + 2], 16) for i in (1, 3, 5))
     return f"rgba({r},{g},{b},{alpha})"
+
+
+#: Public alias for downstream chart modules (behavior identical to _rgba).
+rgba = _rgba
 
 
 def dedup_zones(capture: pd.DataFrame) -> pd.DataFrame:
@@ -641,6 +646,9 @@ _STAGE_SYMBOLS = {
     "entry": "star",
     "resolution": "circle-open",
 }
+
+#: Public alias for downstream chart modules (behavior identical).
+STAGE_SYMBOLS = _STAGE_SYMBOLS
 
 
 def _bar_high_at(tf_bars: pd.DataFrame, ts: pd.Timestamp) -> float | None:

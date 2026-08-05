@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -367,6 +368,19 @@ def test_config_diff_frame_flags_only_differences() -> None:
     assert bool(by_field.loc["model", "differs"]) is False
 
 
+def test_tab_config_diff_is_arrow_safe_for_mixed_contract_values() -> None:
+    import ifvg_lab_tab as tab
+
+    diff = tab._config_diff(
+        {"dataset": {"artifact_id": "a" * 64}, "train_days": 40},
+        {"dataset": {"artifact_id": "b" * 64}, "train_days": 45},
+    )
+
+    assert diff["left"].map(type).eq(str).all()
+    assert diff["right"].map(type).eq(str).all()
+    assert diff["differs"].all()
+
+
 # ── optional streamlit AppTest smoke ──────────────────────────────────────────
 
 
@@ -384,8 +398,19 @@ def test_tab_smoke_apptest(monkeypatch) -> None:
         }
     )
     monkeypatch.setattr(tab, "list_experiments", lambda base_dir=None: [])
+    monkeypatch.setattr(tab, "list_context_run_catalog", lambda catalog_path=None: [])
     monkeypatch.setattr(tab, "_cached_entry_dataset", lambda path: ds)
     monkeypatch.setattr(tab, "_cached_replay_days", lambda *a, **k: [])
+    monkeypatch.setattr(tab, "_ready_pair_options", lambda: {})
+    monkeypatch.setattr(
+        tab,
+        "read_preparation_state",
+        lambda _root: SimpleNamespace(
+            status=SimpleNamespace(value="failed"),
+            current_date="2026-03-17",
+            error_code="source_unavailable",
+        ),
+    )
 
     def _app() -> None:
         # AppTest re-executes this function's SOURCE in a fresh namespace, so
@@ -397,6 +422,296 @@ def test_tab_smoke_apptest(monkeypatch) -> None:
     at = apptest.AppTest.from_function(_app, default_timeout=60)
     at.run()
     assert not at.exception
+    assert [tab.label for tab in at.tabs[:3]] == [
+        "Experiments",
+        "Replay / Verifier",
+        "Data & Audit",
+    ]
+    code_values = [element.value for element in at.code]
+    assert any("ifvg_preparation_job.py start" in value for value in code_values)
+    assert any("ifvg_preparation_job.py status" in value for value in code_values)
+    assert any("Preparation status: failed" in item.value for item in at.caption)
+    button_labels = {button.label.lower() for button in at.button}
+    assert not any(
+        unsafe in label
+        for label in button_labels
+        for unsafe in ("delete", "sealed", "recapture", "promote")
+    )
+
+
+def _apptest_result(state: str) -> dict:
+    candidate: dict = {
+        "candidate_count": 0,
+        "resolved_candidate_count": 0,
+        "censored_candidate_count": 0,
+        "labels": {},
+        "censoring": {},
+        "model": {"status": "insufficient_class_coverage"},
+    }
+    coverage: dict = {
+        "candidate_count": 0,
+        "feature_count": 0,
+        "features": [],
+        "m3_status": "model_eligible",
+        "anchor_240m_status": "experimental_q40_open",
+    }
+    status = "insufficient_class_coverage"
+    if state == "complete":
+        status = "complete"
+        candidate.update(
+            {
+                "candidate_count": 2,
+                "resolved_candidate_count": 2,
+                "labels": {"0": 1, "1": 1},
+                "model": {
+                    "metrics": {
+                        "status": "complete",
+                        "brier_score": 0.2,
+                        "brier_skill_score": 0.1,
+                        "log_loss": 0.5,
+                        "auc": 1.0,
+                        "reliability_bins": [
+                            {
+                                "mean_probability": 0.25,
+                                "observed_rate": 0.0,
+                                "count": 1,
+                            },
+                            {
+                                "mean_probability": 0.75,
+                                "observed_rate": 1.0,
+                                "count": 1,
+                            },
+                        ],
+                        "thresholds": [
+                            {
+                                "threshold": 0.5,
+                                "coverage_count": 1,
+                                "coverage_fraction": 0.5,
+                                "r": {"net_r_sum": 1.0},
+                            }
+                        ],
+                    },
+                    "folds": [{"fold_index": 0, "status": "complete"}],
+                    "feature_importance": [
+                        {
+                            "feature": "ctx_gap_count",
+                            "permutation_importance_mean": 0.1,
+                        }
+                    ],
+                },
+            }
+        )
+    elif state == "censored":
+        candidate.update(
+            {
+                "candidate_count": 2,
+                "censored_candidate_count": 2,
+                "censoring": {"development_cutoff": 2},
+            }
+        )
+    elif state == "undefined_auc":
+        status = "complete"
+        candidate.update(
+            {
+                "candidate_count": 2,
+                "resolved_candidate_count": 2,
+                "labels": {"1": 2},
+                "model": {
+                    "metrics": {
+                        "status": "complete",
+                        "auc": None,
+                        "auc_reason": "single_class_oos",
+                    }
+                },
+            }
+        )
+    elif state == "descriptive_m3":
+        status = "descriptive_only_no_positive_qualification_coverage"
+        coverage.update(
+            {
+                "candidate_count": 2,
+                "feature_count": 1,
+                "m3_status": status,
+                "features": [
+                    {
+                        "feature": "ctx_sweep_qualifying_link_count",
+                        "non_null_count": 2,
+                        "missing_count": 0,
+                        "coverage_fraction": 1.0,
+                        "constant": True,
+                        "low_coverage": False,
+                    }
+                ],
+            }
+        )
+    elif state == "no_valid_fold":
+        candidate["model"] = {"status": "no_valid_fold"}
+        status = "no_valid_fold"
+    return {
+        "run_id": "a" * 64,
+        "status": status,
+        "candidate_research_report": candidate,
+        "actual_execution_report": {},
+        "feature_coverage_report": coverage,
+        "reconciliation_audit_report": {"passed": state != "empty"},
+    }
+
+
+@pytest.mark.parametrize(
+    "state",
+    (
+        "complete",
+        "empty",
+        "censored",
+        "no_valid_fold",
+        "undefined_auc",
+        "descriptive_m3",
+    ),
+)
+def test_context_report_states_apptest(monkeypatch, state: str) -> None:
+    apptest = pytest.importorskip("streamlit.testing.v1")
+    import ifvg_lab_tab as tab
+
+    monkeypatch.setattr(tab, "_APPTEST_RESULT", _apptest_result(state), raising=False)
+
+    def _app() -> None:
+        import ifvg_lab_tab
+        import streamlit as st
+
+        ifvg_lab_tab._render_result(st, ifvg_lab_tab._APPTEST_RESULT)
+
+    at = apptest.AppTest.from_function(_app, default_timeout=60)
+    at.run()
+    assert not at.exception
+    assert [item.label for item in at.tabs] == [
+        "Candidate research",
+        "Actual execution",
+        "Feature coverage",
+        "Reconciliation",
+    ]
+
+
+def test_tampered_history_state_apptest(monkeypatch) -> None:
+    apptest = pytest.importorskip("streamlit.testing.v1")
+    import ifvg_lab_tab as tab
+
+    monkeypatch.setattr(
+        tab,
+        "list_context_run_catalog",
+        lambda **_kwargs: [{"run_id": "a" * 64, "display_name": "Tampered"}],
+    )
+    monkeypatch.setattr(
+        tab,
+        "load_context_experiment_run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ValueError("immutable run artifact was modified")
+        ),
+    )
+
+    def _app() -> None:
+        import ifvg_lab_tab
+        import streamlit as st
+
+        ifvg_lab_tab._run_history(st)
+
+    at = apptest.AppTest.from_function(_app, default_timeout=60)
+    at.run()
+    assert not at.exception
+    assert any("Run verification failed" in item.value for item in at.error)
+
+
+def test_duplicate_run_is_verified_and_reused_apptest(monkeypatch) -> None:
+    apptest = pytest.importorskip("streamlit.testing.v1")
+    import ifvg_lab_tab as tab
+
+    from alpha_lab.agents.data_infra.ifvg.context_experiment_contracts import (
+        ArtifactReference,
+        PairedIfvgArtifactReference,
+    )
+
+    references = PairedIfvgArtifactReference(
+        v2=ArtifactReference(
+            artifact_id="1" * 64,
+            manifest_payload_sha256="2" * 64,
+            artifact_kind="v2",
+            dataset_schema_version=2,
+        ),
+        v3=ArtifactReference(
+            artifact_id="3" * 64,
+            manifest_payload_sha256="4" * 64,
+            artifact_kind="v3",
+            dataset_schema_version=4,
+            feature_formula_version="ifvg_context_formula_v2",
+        ),
+    )
+    pair = SimpleNamespace(
+        reference=references,
+        v3=SimpleNamespace(reference=references.v3),
+    )
+    view = SimpleNamespace(
+        frame=pd.DataFrame(
+            {
+                "trading_day": ["2026-01-13"],
+                "ctx_sweep_qualifying_link_count": [0],
+            }
+        )
+    )
+    result_payload = _apptest_result("empty")
+    result = SimpleNamespace(
+        run_id="a" * 64,
+        model_dump=lambda **_kwargs: result_payload,
+    )
+    stored = SimpleNamespace(
+        result=result,
+        manifest={"manifest_payload_sha256": "b" * 64},
+    )
+    cataloged = SimpleNamespace(
+        stored_run=stored,
+        run_manifest_sha256="b" * 64,
+        reused_run=True,
+    )
+    monkeypatch.setattr(
+        tab,
+        "_load_selected_pair",
+        lambda _st, **_kwargs: (
+            pair,
+            {
+                "profile_name": "ifvg_v2_doc_default_fresh_static_1r",
+                "preparation_status": "context_ready",
+            },
+        ),
+    )
+    monkeypatch.setattr(tab, "build_candidate_feature_view", lambda _pair: view)
+    monkeypatch.setattr(
+        tab,
+        "run_and_catalog_context_experiment",
+        lambda *_args, **_kwargs: cataloged,
+    )
+    monkeypatch.setattr(
+        tab,
+        "load_context_experiment_run",
+        lambda *_args, **_kwargs: stored,
+    )
+    monkeypatch.setattr(tab, "_run_history", lambda _st: None)
+    monkeypatch.setattr(tab, "_legacy_read_only", lambda _st: None)
+    monkeypatch.setattr(tab, "_render_result", lambda _st, _result: None)
+
+    def _app() -> None:
+        import ifvg_lab_tab
+
+        ifvg_lab_tab.render_ifvg_experiments_tab()
+
+    at = apptest.AppTest.from_function(_app, default_timeout=60)
+    at.run()
+    next(button for button in at.button if button.label == "Run deterministic experiment").click()
+    at.run()
+    assert not at.exception
+    assert any("verified and reused" in item.value for item in at.info)
+    pointer = at.session_state["ifvg_context_v1_last_run"]
+    assert pointer == {
+        "run_id": "a" * 64,
+        "manifest_payload_sha256": "b" * 64,
+    }
 
 
 # ── sealed-replay gate + global ledger count (regression net) ─────────────────

@@ -1,16 +1,18 @@
-"""IFVG capture configuration + the three cache identities.
+"""IFVG capture configuration and cache identities.
 
-Hash discipline (the ``dataset_config_hash`` idiom, extended):
+The default configuration is the executable IFVG v2 document profile.  The
+old warmed v1 cache identities remain available only through
+``legacy_ifvg_capture_config``; they are never silently reused by v2.
 
-* ``artifacts_tag`` — Phase-A identity. Profile-INDEPENDENT so reducer/profile
-  iteration never invalidates the expensive drains. Folds the SC platform
-  version, the session scheme identity, the timeframe set, and the pipeline
-  tag.
-* ``capture_tag`` — Phase-C identity: the full profile hash + strategy version
-  + record schema + the artifacts tag.
-* per-day TRUST is a separate axis from identity: an artifact/capture file is
-  consumed only if its stamped ENTERING seeds match (``prev_full_hl`` +
-  ``prev_ny_hl`` for artifacts; the ``IfvgDaySeed`` hash for captures).
+Identity discipline:
+
+* ``artifacts_tag`` identifies profile-independent bars and level timelines.
+  It includes the platform version, named anchor, session scheme, timeframes,
+  tick size, and artifact pipeline version.
+* ``capture_tag`` identifies the sequential reducer stream.  It additionally
+  includes the resolved profile hash and record/capture schema versions.
+* cache trust is separate from identity: entering and exiting state hashes are
+  checked for every day in a capture chain.
 """
 
 from __future__ import annotations
@@ -21,7 +23,17 @@ from datetime import time
 from pathlib import Path
 
 from strategy_core import PLATFORM_VERSION
-from strategy_core.constants import DEFAULT_TICK_SIZE, RESEARCH_SESSION_SCHEME
+from strategy_core.candles._buckets import HTF_ANCHOR_POLICY
+from strategy_core.constants import (
+    DEFAULT_TICK_SIZE,
+    IFVG_DOC_SESSION_SCHEME,
+    RESEARCH_SESSION_SCHEME,
+)
+from strategy_core.strategies.ifvg_smc.context_config import (
+    ContextFeatureConfig,
+    context_config_hash,
+    feature_schema_hash,
+)
 from strategy_core.strategies.ifvg_smc.records import IFVG_RECORD_SCHEMA_VERSION
 from strategy_core.strategies.ifvg_smc.section import (
     IFVG_STRATEGY_ID,
@@ -29,30 +41,72 @@ from strategy_core.strategies.ifvg_smc.section import (
     IfvgSmcSection,
     default_ifvg_smc_section,
     ifvg_profile_hash,
+    legacy_ifvg_smc_section,
 )
-
-# The ratified runtime->contract scheme adapter. It is module-internal to the
-# touch section but is the exact function SC's own ifvg section.py uses to
-# build its contract scheme (single-source; SC stays unmodified).
-from strategy_core.strategies.touch_reversal.section import _contract_scheme_from_runtime
+from strategy_core.strategies.touch_reversal.section import (
+    _contract_scheme_from_runtime,
+)
 from strategy_core.types import SessionScheme, SessionWindow
+
+from .contracts import IFVG_CAPTURE_SCHEMA_VERSION
 
 __all__ = [
     "IfvgCaptureConfig",
     "DEFAULT_DATA_DIR",
+    "V2_DATASET_DIR",
     "SEALED_HOLDOUT_START",
+    "LEGACY_DEFAULT_ARTIFACTS_TAG",
+    "LEGACY_DEFAULT_CAPTURE_TAG",
+    "legacy_ifvg_capture_config",
     "custom_session_capture_config",
+    "IfvgV3CaptureConfig",
+    "V3_DATASET_DIR",
+    "ACCEPTED_V2_DATASET_ID",
+    "ACCEPTED_V2_MANIFEST_SHA256",
+    "FSM_AUDIT_ACCEPTED_V2_DATASET_ID",
+    "FSM_AUDIT_ACCEPTED_V2_MANIFEST_SHA256",
+    "FSM_AUDIT_DATASET_DIR",
 ]
 
 DEFAULT_DATA_DIR = Path("data/databento")
+V2_DATASET_DIR = Path("data/ifvg_datasets/v2")
+V3_DATASET_DIR = Path("data/ifvg_datasets/v3")
 
-#: 2026-06-12..2026-07-10 stays SEALED this window (census precedent): captured
-#: and funnel-counted, but excluded from label expectancies and ALL gate
-#: training/evaluation — the future one-shot validation range.
+ACCEPTED_V2_DATASET_ID = (
+    "49902280956e2f6448799b16018e65b197387c58c6ae6109d17b5a76386c9a1a"
+)
+ACCEPTED_V2_MANIFEST_SHA256 = (
+    "e635d064225444f02e2f11277d01912ee96e87bf24618aaa363cc86d53af7c5f"
+)
+
+# FSM-audit lane pins — the FINAL-REVIEW accepted v2 dataset (per
+# reports/ifvg_final_review/2314066…/IFVG_LAB_FINAL_VERIFICATION.md), which is
+# NOT the same lineage as ``ACCEPTED_V2_DATASET_ID`` (the v3-baseline pin
+# above). The discrepancy is deliberate and registered in
+# docs/ifvg/IFVG_FSM_AUDITABILITY_OPEN_DECISIONS.md: the audit lane pins the
+# final-review identity as its own constants and never reuses or moves the v3
+# lane's pin. The exact-parity gate verifies both ids against the on-disk
+# manifest before any audit artifact is saved.
+FSM_AUDIT_ACCEPTED_V2_DATASET_ID = (
+    "143b510f8a73896072f44e08f331ef5156e85eb8e5124d25bdf441c4fb6b2ac7"
+)
+FSM_AUDIT_ACCEPTED_V2_MANIFEST_SHA256 = (
+    "b089dfadf44253b7071882cc9577feeacd97e532f4fd7086fe2fcbac39e60c22"
+)
+FSM_AUDIT_DATASET_DIR = Path("data/ifvg_datasets/fsm_audit/v1")
+
+# Retained for v1 readers only.  Repaired-v2 data access denies this entire
+# range before path construction; no repair workflow may invoke sealed
+# evaluation.
 SEALED_HOLDOUT_START = "2026-06-12"
 
-_ARTIFACTS_PIPELINE_TAG = "ifvg_day_artifacts_v1"
-_CAPTURE_PIPELINE_TAG = "ifvg_capture_pipeline_v1"
+_ARTIFACTS_PIPELINE_TAG = "ifvg_day_artifacts_v2"
+_CAPTURE_PIPELINE_TAG = "ifvg_capture_pipeline_v2"
+
+# Literal read-only reproduction identities.  Strategy-Core v2 versions and
+# hashes must never move or overwrite the warmed v1 files under these names.
+LEGACY_DEFAULT_ARTIFACTS_TAG = "466b5fe8e7952ecd"
+LEGACY_DEFAULT_CAPTURE_TAG = "2a40b18e0b273ee0"
 
 
 def _short_hash(payload: str, n: int = 16) -> str:
@@ -60,12 +114,10 @@ def _short_hash(payload: str, n: int = 16) -> str:
 
 
 def _windows_signature(scheme: SessionScheme) -> str:
-    """Deterministic per-window times signature: ``name:start-end:xmid`` per
-    sorted name. Folded into ``artifacts_tag`` ONLY for non-default schemes so
-    the canonical tag (and the 624 warmed files) stays byte-identical."""
     return ",".join(
-        f"{name}:{w.start.isoformat()}-{w.end.isoformat()}:{int(w.crosses_midnight)}"
-        for name, w in sorted(scheme.sessions.items())
+        f"{name}:{window.start.isoformat()}-{window.end.isoformat()}:"
+        f"{int(window.crosses_midnight)}"
+        for name, window in sorted(scheme.sessions.items())
     )
 
 
@@ -75,14 +127,17 @@ class IfvgCaptureConfig:
     data_dir: Path = DEFAULT_DATA_DIR
     tick_size: float = DEFAULT_TICK_SIZE
     section: IfvgSmcSection = field(default_factory=default_ifvg_smc_section)
-    #: First N chain days feed registries only; their rows carry is_warmup=True
-    #: (census: the 4H registry stabilizes days 8-10).
+    # First ten available chain days are registry warmup only.
     warmup_days: int = 10
-    #: Runtime scheme Phase A is built with (bars trading-day slicing, level
-    #: session ranges, NY-extremes stamping). MUST stay consistent with
-    #: ``section.session_scheme`` — build customs via
-    #: :func:`custom_session_capture_config` so both tags roll together.
-    session_scheme: SessionScheme = field(default=RESEARCH_SESSION_SCHEME)
+    session_scheme: SessionScheme = field(default=IFVG_DOC_SESSION_SCHEME)
+    # ``legacy_v1`` can locate old files but cannot enter any v2 writer.
+    identity_lane: str = "v2"
+
+    def __post_init__(self) -> None:
+        if self.identity_lane not in {"v2", "legacy_v1"}:
+            raise ValueError("identity_lane must be 'v2' or 'legacy_v1'")
+        if self.identity_lane == "legacy_v1" and self.section.execution_enabled:
+            raise ValueError("legacy_v1 capture configuration must be non-executable")
 
     @property
     def profile_hash(self) -> str:
@@ -92,24 +147,26 @@ class IfvgCaptureConfig:
         return self.section.timeframe_seconds()
 
     def artifacts_tag(self) -> str:
+        if self.identity_lane == "legacy_v1":
+            return LEGACY_DEFAULT_ARTIFACTS_TAG
         scheme = self.session_scheme
         parts = [
             _ARTIFACTS_PIPELINE_TAG,
             PLATFORM_VERSION,
+            HTF_ANCHOR_POLICY,
             scheme.timezone,
             scheme.trading_day_boundary.isoformat(),
             ",".join(sorted(scheme.sessions)),
-            ",".join(str(s) for s in self.timeframes_seconds()),
+            ",".join(str(seconds) for seconds in self.timeframes_seconds()),
             repr(self.tick_size),
         ]
-        # Session-window TIMES fold in conditionally (tag-collision fix): the
-        # default payload stays byte-identical, so the canonical tag never moves.
-        if _windows_signature(scheme) != _windows_signature(RESEARCH_SESSION_SCHEME):
+        if _windows_signature(scheme) != _windows_signature(IFVG_DOC_SESSION_SCHEME):
             parts.append(_windows_signature(scheme))
-        payload = "|".join(parts)
-        return _short_hash(payload)
+        return _short_hash("|".join(parts))
 
     def capture_tag(self) -> str:
+        if self.identity_lane == "legacy_v1":
+            return LEGACY_DEFAULT_CAPTURE_TAG
         payload = "|".join(
             (
                 _CAPTURE_PIPELINE_TAG,
@@ -117,13 +174,13 @@ class IfvgCaptureConfig:
                 IFVG_STRATEGY_ID,
                 IFVG_STRATEGY_VERSION,
                 str(IFVG_RECORD_SCHEMA_VERSION),
+                str(IFVG_CAPTURE_SCHEMA_VERSION),
                 self.profile_hash,
                 self.artifacts_tag(),
             )
         )
         return _short_hash(payload)
 
-    # ── per-day file locations ────────────────────────────────────────────────
     def day_dir(self, date_str: str) -> Path:
         return Path(self.data_dir) / self.symbol / date_str
 
@@ -137,10 +194,54 @@ class IfvgCaptureConfig:
         return self.day_dir(date_str) / f"ifvg_capture_{self.capture_tag()}.parquet"
 
     def seed_path(self, date_str: str) -> Path:
-        """The IfvgDaySeed (pickle) written at the END of ``date_str``. Trust is
-        the SC ``seed_hash`` stamped in the capture parquet, never the pickle
-        bytes; the capture_tag in the name invalidates stale shapes."""
         return self.day_dir(date_str) / f"ifvg_seed_{self.capture_tag()}.pkl"
+
+
+@dataclass(frozen=True)
+class IfvgV3CaptureConfig:
+    """Generation-3 adapter; v2 strategy/profile identity stays untouched."""
+
+    core: IfvgCaptureConfig = field(default_factory=IfvgCaptureConfig)
+    context: ContextFeatureConfig = field(default_factory=ContextFeatureConfig)
+    accepted_v2_dataset_id: str = ACCEPTED_V2_DATASET_ID
+    accepted_v2_manifest_sha256: str = ACCEPTED_V2_MANIFEST_SHA256
+
+    def __post_init__(self) -> None:
+        if self.core.identity_lane != "v2":
+            raise ValueError("IFVG v3 requires the repaired v2 core identity lane")
+        if self.core.warmup_days != 10:
+            raise ValueError("IFVG v3 freezes the first ten available dates as warmup")
+        if len(self.accepted_v2_dataset_id) != 64:
+            raise ValueError("accepted v2 dataset ID must be a full SHA-256")
+        if len(self.accepted_v2_manifest_sha256) != 64:
+            raise ValueError("accepted v2 manifest hash must be a full SHA-256")
+
+    @property
+    def feature_schema_hash(self) -> str:
+        return feature_schema_hash(self.context)
+
+    @property
+    def context_config_hash(self) -> str:
+        return context_config_hash(self.context)
+
+    @property
+    def accepted_v2_exploration_dir(self) -> Path:
+        return V2_DATASET_DIR / self.accepted_v2_dataset_id / "exploration"
+
+
+def legacy_ifvg_capture_config(
+    *,
+    data_dir: Path = DEFAULT_DATA_DIR,
+    symbol: str = "NQ",
+) -> IfvgCaptureConfig:
+    """Return the read-only v1 candidate-stream configuration."""
+    return IfvgCaptureConfig(
+        symbol=symbol,
+        data_dir=data_dir,
+        section=legacy_ifvg_smc_section(),
+        session_scheme=RESEARCH_SESSION_SCHEME,
+        identity_lane="legacy_v1",
+    )
 
 
 _CUSTOM_SESSION_NAMES = ("asia", "london", "ny")
@@ -150,15 +251,10 @@ def custom_session_capture_config(
     windows: dict[str, tuple[time, time]],
     base: IfvgCaptureConfig | None = None,
 ) -> IfvgCaptureConfig:
-    """A capture config whose session windows carry custom TIMES (names fixed:
-    asia/london/ny; timezone + trading_day_boundary fixed to the base scheme's).
-
-    ``crosses_midnight`` is derived per window (``start > end``). Both identity
-    axes roll together: the runtime ``session_scheme`` moves ``artifacts_tag``
-    (conditional windows signature) and the section's contract scheme moves
-    ``profile_hash`` -> ``capture_tag``.
-    """
+    """Build a v2 custom-session profile with both identity axes updated."""
     base = base or IfvgCaptureConfig()
+    if base.identity_lane != "v2":
+        raise ValueError("custom session recapture is unavailable for legacy_v1")
     if sorted(windows) != sorted(_CUSTOM_SESSION_NAMES):
         raise ValueError(
             f"custom session windows must define exactly {_CUSTOM_SESSION_NAMES}, "
@@ -169,7 +265,11 @@ def custom_session_capture_config(
         timezone=base_scheme.timezone,
         trading_day_boundary=base_scheme.trading_day_boundary,
         sessions={
-            name: SessionWindow(start=start, end=end, crosses_midnight=start > end)
+            name: SessionWindow(
+                start=start,
+                end=end,
+                crosses_midnight=start > end,
+            )
             for name, (start, end) in sorted(windows.items())
         },
         closed_window=base_scheme.closed_window,

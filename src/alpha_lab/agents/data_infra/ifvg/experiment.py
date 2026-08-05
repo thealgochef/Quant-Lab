@@ -37,11 +37,18 @@ from strategy_core.strategies.ifvg_smc.labels import resolve_ifvg_outcome
 from strategy_core.types import Bar, Direction
 
 from .config import SEALED_HOLDOUT_START, IfvgCaptureConfig
+from .contracts import RecordTable
 from .day_artifacts import load_day_artifacts
 from .entry_dataset import NQ_COST_POINTS_ROUND_TURN
 from .feature_insight import MULTIPLE_COMPARISONS_CAVEAT, compute_feature_insight
 from .funnel_report import DOC_DEFAULT_CAPS, DOC_DEFAULT_FLOORS, doc_default_pass
-from .trade_stats import compute_trade_stats, mean_ci, wilson_ci
+from .reporting import (
+    build_candidate_report,
+    build_decision_report,
+    build_executed_trade_report,
+    build_invariant_audit,
+)
+from .trade_stats import mean_ci, wilson_ci
 
 __all__ = [
     "IfvgFilterConfig",
@@ -52,6 +59,7 @@ __all__ = [
     "IfvgModelConfig",
     "IfvgExperimentConfig",
     "run_ifvg_experiment",
+    "run_ifvg_v2_evaluation",
     "dedup_pooled_oos",
     "stamp_custom_sessions",
     "recover_override_stop_ticks",
@@ -773,6 +781,158 @@ def _default_dataset_path(capture_cfg: IfvgCaptureConfig) -> Path:
     )
 
 
+def _post_warmup_report_views(
+    tables: dict[RecordTable, pd.DataFrame],
+) -> tuple[dict[RecordTable, pd.DataFrame], dict[str, int | str]]:
+    """Select evaluation rows by candidate-entry scope, never resolution day.
+
+    Warmup rows remain in the full typed tables and invariant audit because
+    their sequential effects can occupy the single setup/trade slots.  Reports
+    exclude a candidate, and all of its downstream rows, when that candidate
+    was emitted during warmup.  This also prevents a warmup trade resolving on
+    an evidence day from leaking into evidence-period performance.
+    """
+    candidates = tables[RecordTable.ENTRY_CANDIDATE]
+    if candidates.empty:
+        evidence_candidate_ids: set[str] = set()
+        evidence_candidates = candidates.copy()
+    else:
+        if "is_warmup" not in candidates:
+            raise ValueError(
+                "IFVG v2 evaluation requires candidate is_warmup provenance"
+            )
+        if candidates["is_warmup"].isna().any():
+            raise ValueError(
+                "IFVG v2 evaluation refuses candidates with null is_warmup"
+            )
+        warmup_values = set(candidates["is_warmup"].unique().tolist())
+        if not warmup_values <= {True, False}:
+            raise ValueError(
+                "IFVG v2 candidate is_warmup must contain booleans only"
+            )
+        evidence_candidates = candidates.loc[
+            ~candidates["is_warmup"].astype(bool)
+        ].copy()
+        evidence_candidate_ids = set(
+            evidence_candidates["candidate_id"].astype(str)
+        )
+
+    views = dict(tables)
+    views[RecordTable.ENTRY_CANDIDATE] = evidence_candidates
+    for table in (
+        RecordTable.CANDIDATE_LABEL,
+        RecordTable.ELIGIBLE_DECISION,
+        RecordTable.EXECUTED_TRADE,
+    ):
+        frame = tables[table]
+        if frame.empty:
+            views[table] = frame.copy()
+        else:
+            views[table] = frame.loc[
+                frame["candidate_id"].astype(str).isin(evidence_candidate_ids)
+            ].copy()
+
+    scope: dict[str, int | str] = {
+        "policy": "post_warmup_candidate_entry_v1",
+        "all_chain_candidates": int(len(candidates)),
+        "evidence_candidates": int(len(evidence_candidates)),
+        "warmup_candidates_excluded": int(
+            len(candidates) - len(evidence_candidates)
+        ),
+        "all_chain_candidate_labels": int(
+            len(tables[RecordTable.CANDIDATE_LABEL])
+        ),
+        "evidence_candidate_labels": int(
+            len(views[RecordTable.CANDIDATE_LABEL])
+        ),
+        "warmup_candidate_labels_excluded": int(
+            len(tables[RecordTable.CANDIDATE_LABEL])
+            - len(views[RecordTable.CANDIDATE_LABEL])
+        ),
+        "all_chain_decisions": int(
+            len(tables[RecordTable.ELIGIBLE_DECISION])
+        ),
+        "evidence_decisions": int(
+            len(views[RecordTable.ELIGIBLE_DECISION])
+        ),
+        "warmup_decisions_excluded": int(
+            len(tables[RecordTable.ELIGIBLE_DECISION])
+            - len(views[RecordTable.ELIGIBLE_DECISION])
+        ),
+        "all_chain_executed_trades": int(
+            len(tables[RecordTable.EXECUTED_TRADE])
+        ),
+        "evidence_executed_trades": int(
+            len(views[RecordTable.EXECUTED_TRADE])
+        ),
+        "warmup_executed_trades_excluded": int(
+            len(tables[RecordTable.EXECUTED_TRADE])
+            - len(views[RecordTable.EXECUTED_TRADE])
+        ),
+    }
+    return views, scope
+
+
+def run_ifvg_v2_evaluation(
+    tables: dict[RecordTable, pd.DataFrame],
+    *,
+    resolved_profile,
+    data_access_audit: dict,
+    tick_size: float = 0.25,
+    cost_points: float = NQ_COST_POINTS_ROUND_TURN,
+    old_artifact_mutations: int = 0,
+) -> dict:
+    """Build reconciled v2 reports without search, modeling, or filtering.
+
+    Execution caps have already been applied by sequential replay.  The only
+    evaluator-side candidate cap affects the candidate report view and its
+    evaluation hash; it cannot create/remove decisions or trades.
+    """
+    report_tables, evaluation_scope = _post_warmup_report_views(tables)
+    candidates = report_tables[RecordTable.ENTRY_CANDIDATE]
+    labels = report_tables[RecordTable.CANDIDATE_LABEL]
+    decisions = report_tables[RecordTable.ELIGIBLE_DECISION]
+    trades = report_tables[RecordTable.EXECUTED_TRADE]
+    candidate_report = build_candidate_report(
+        candidates,
+        labels,
+        evaluation_config_hash=resolved_profile.evaluation_config_hash,
+        max_candidates_per_day=resolved_profile.evaluator_config[
+            "max_candidates_per_day"
+        ],
+    )
+    decision_report = build_decision_report(
+        candidates,
+        decisions,
+        evaluation_config_hash=resolved_profile.evaluation_config_hash,
+    )
+    trade_report = build_executed_trade_report(
+        trades,
+        cost_points=cost_points,
+        evaluation_config_hash=resolved_profile.evaluation_config_hash,
+        tick_size=tick_size,
+    )
+    candidate_report["evaluation_scope"] = evaluation_scope
+    decision_report["evaluation_scope"] = evaluation_scope
+    trade_report["evaluation_scope"] = evaluation_scope
+    invariant_audit = build_invariant_audit(
+        tables,
+        data_access_audit=data_access_audit,
+        old_artifact_mutations=old_artifact_mutations,
+        prohibited_action_counts={
+            "model_invocations": 0,
+            "search_runs": 0,
+            "optimization_actions": 0,
+        },
+    )
+    return {
+        "candidate_report": candidate_report,
+        "decision_report": decision_report,
+        "executed_trade_report": trade_report,
+        "invariant_audit": invariant_audit,
+    }
+
+
 def run_ifvg_experiment(
     config: IfvgExperimentConfig,
     *,
@@ -786,7 +946,15 @@ def run_ifvg_experiment(
     The raw pooled-OOS frame rides along under the PRIVATE ``"_oos_frame"`` key
     (a DataFrame; stripped by :func:`save_experiment` / :func:`json_safe`).
     """
-    capture_cfg = capture_cfg or IfvgCaptureConfig()
+    if capture_cfg is None:
+        raise ValueError(
+            "run_ifvg_experiment is frozen legacy-candidate tooling; pass "
+            "legacy_ifvg_capture_config() explicitly"
+        )
+    if capture_cfg.identity_lane != "legacy_v1":
+        raise ValueError(
+            "repaired IFVG v2 datasets cannot enter the legacy experiment/model path"
+        )
     capture_tag = capture_cfg.capture_tag()
     if dataset is None:
         dataset = pd.read_parquet(dataset_path or _default_dataset_path(capture_cfg))
@@ -822,7 +990,9 @@ def run_ifvg_experiment(
     numeric_features = [c for c in features if c not in cats]
     result: dict = {
         "meta": {
-            "engine": "ifvg_experiment_v1",
+            "engine": "ifvg_legacy_candidate_study_v1",
+            "execution_enabled": False,
+            "legacy_candidate_only": True,
             "experiment_hash": config.experiment_hash(capture_tag),
             "capture_tag": capture_tag,
             "created_utc": datetime.now(UTC).isoformat(),
@@ -835,8 +1005,8 @@ def run_ifvg_experiment(
         },
         "config": config.model_dump(mode="json"),
         "features": {"all": features, "categorical": cats, "n": len(features)},
-        "expectancy": _expectancy_section(work),
-        "trade_stats": compute_trade_stats(work, cost_points=config.scoring.cost_points),
+        "counterfactual_outcomes": _expectancy_section(work),
+        "trade_stats": None,
         "feature_insight": compute_feature_insight(
             work,
             numeric_features,
@@ -936,7 +1106,7 @@ def list_experiments(base_dir: Path | None = None) -> list[dict]:
         result_path = run_dir / "result.json"
         if result_path.exists():
             result = json.loads(result_path.read_text(encoding="utf-8"))
-            ts = result.get("trade_stats", {})
+            ts = result.get("trade_stats") or {}
             stats = {
                 "n_trades": ts.get("n"),
                 "net_r": ts.get("equity", {}).get("r", {}).get("net"),
@@ -952,6 +1122,16 @@ def list_experiments(base_dir: Path | None = None) -> list[dict]:
                 "created_utc": cfg_payload.get("meta", {}).get("created_utc"),
                 "capture_tag": cfg_payload.get("capture_tag"),
                 "stats": stats,
+                "execution_enabled": bool(
+                    (result if result_path.exists() else {})
+                    .get("meta", {})
+                    .get("execution_enabled", False)
+                ),
+                "legacy_candidate_only": bool(
+                    (result if result_path.exists() else {})
+                    .get("meta", {})
+                    .get("legacy_candidate_only", True)
+                ),
                 "sealed_validations": _sealed_history(base, run_hash),
             }
         )
@@ -1021,7 +1201,14 @@ def run_sealed_validation(
     config: IfvgExperimentConfig = loaded["config"]
     run_dir: Path = loaded["run_dir"]
 
-    capture_cfg = capture_cfg or IfvgCaptureConfig()
+    if capture_cfg is None:
+        raise ValueError(
+            "sealed validation is legacy-only; pass legacy_ifvg_capture_config()"
+        )
+    if capture_cfg.identity_lane != "legacy_v1":
+        raise PermissionError(
+            "repaired IFVG v2 datasets are denied to legacy sealed/model workflows"
+        )
     # A sealed look must evaluate the run on the capture it was saved against —
     # a profile mismatch would silently score the wrong dataset.
     expected_tag = loaded.get("capture_tag")
@@ -1107,10 +1294,8 @@ def run_sealed_validation(
         "created_utc": datetime.now(UTC).isoformat(),
         "sealed_start": SEALED_HOLDOUT_START,
         "counts": sealed_info,
-        "expectancy": _expectancy_section(sealed_work),
-        "trade_stats": compute_trade_stats(
-            sealed_work, cost_points=config.scoring.cost_points
-        ),
+        "counterfactual_outcomes": _expectancy_section(sealed_work),
+        "trade_stats": None,
         "model": model_section,
     }
     result_path.write_text(

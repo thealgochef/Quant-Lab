@@ -17,6 +17,7 @@ import pandas as pd
 import pytest
 from strategy_core.types import Bar, BarKind
 
+from alpha_lab.agents.data_infra.ifvg.config import legacy_ifvg_capture_config
 from alpha_lab.agents.data_infra.ifvg.experiment import (
     IfvgExperimentConfig,
     IfvgFilterConfig,
@@ -35,6 +36,10 @@ from alpha_lab.agents.data_infra.ifvg.experiment import (
 )
 
 _TICK = 0.25
+
+
+def _legacy_capture():
+    return legacy_ifvg_capture_config()
 
 
 def _row(
@@ -96,11 +101,14 @@ def test_sealed_rows_never_enter_any_result_section() -> None:
         _row("2026-06-20", 10 + i, "win", 4.0, setup_id="SEALEDROW") for i in range(4)
     ]
     ds = pd.DataFrame(pre + sealed)
-    result = run_ifvg_experiment(_expectancy_only(), dataset=ds)
+    result = run_ifvg_experiment(
+        _expectancy_only(), dataset=ds, capture_cfg=_legacy_capture()
+    )
 
     assert result["meta"]["sealed"]["sealed_rows_excluded"] == 4
-    assert result["expectancy"]["overall"]["n"] == 6
-    assert result["trade_stats"]["n"] == 6
+    assert result["counterfactual_outcomes"]["overall"]["n"] == 6
+    assert result["trade_stats"] is None
+    assert result["meta"]["execution_enabled"] is False
     assert result["model"] is None
     payload = json.dumps(json_safe(result))
     assert "SEALEDROW" not in payload  # sealed setup ids appear nowhere
@@ -114,15 +122,15 @@ def test_sealed_day_range_inputs_cannot_reintroduce_sealed_rows() -> None:
     config = IfvgExperimentConfig(
         filters=IfvgFilterConfig(day_start="2026-01-01", day_end="2026-12-31")
     )
-    result = run_ifvg_experiment(config, dataset=ds)
-    assert result["expectancy"]["overall"]["n"] == 1
+    result = run_ifvg_experiment(config, dataset=ds, capture_cfg=_legacy_capture())
+    assert result["counterfactual_outcomes"]["overall"]["n"] == 1
     assert result["meta"]["sealed"]["sealed_rows_excluded"] == 1
 
 
 # ── hand-computed stats ───────────────────────────────────────────────────────
 
 
-def test_expectancy_profit_factor_and_max_drawdown_hand_computed() -> None:
+def test_legacy_candidate_study_never_publishes_trade_performance() -> None:
     ds = pd.DataFrame(
         [
             _row("2026-05-01", 10, "win", 4.0),
@@ -131,31 +139,15 @@ def test_expectancy_profit_factor_and_max_drawdown_hand_computed() -> None:
             _row("2026-05-01", 13, "eod_timeout", 1.0),
         ]
     )
-    result = run_ifvg_experiment(_expectancy_only(), dataset=ds)
-    stats = result["trade_stats"]
-
-    # net R per row: (4-0.514)/4=0.8715, -1.1285, 0.8715, (1-0.514)/4=0.1215
-    assert result["expectancy"]["overall"]["win_rate"] == pytest.approx(0.5)
-    assert result["expectancy"]["overall"]["mean_net_r"] == pytest.approx(0.184, abs=1e-9)
-
-    # $ per row (x $20/pt, cost netted): +69.72, -90.28, +69.72, +9.72
-    pnl = stats["pnl_usd"]["all"]
-    assert pnl["net"] == pytest.approx(58.88)
-    assert pnl["gross_profit"] == pytest.approx(149.16)
-    assert pnl["gross_loss"] == pytest.approx(90.28)
-    assert pnl["profit_factor"] == pytest.approx(149.16 / 90.28)
-
-    # equity 69.72 -> -20.56 -> 49.16 -> 58.88: maxDD 90.28, never recovered.
-    dd = stats["equity"]["usd"]["drawdown"]
-    assert stats["equity"]["usd"]["net"] == pytest.approx(58.88)
-    assert dd["max_drawdown_close"] == pytest.approx(90.28)
-    assert dd["ongoing_episode"] is True
-    assert stats["equity"]["usd"]["romad"] == pytest.approx(58.88 / 90.28)
-
-    assert stats["counts"]["all"]["eod_timeouts"] == 1
-    assert stats["streaks"] == {"max_consecutive_wins": 1, "max_consecutive_losses": 1}
-    # exposure: 5 + 5 + 5 resolved minutes + 480 eod minutes over one 1380m day
-    assert stats["time"]["exposure_fraction"] == pytest.approx(495 / 1380)
+    result = run_ifvg_experiment(
+        _expectancy_only(), dataset=ds, capture_cfg=_legacy_capture()
+    )
+    labels = result["counterfactual_outcomes"]["overall"]
+    assert labels["win_rate"] == pytest.approx(0.5)
+    assert labels["mean_net_r"] == pytest.approx(0.184, abs=1e-9)
+    assert result["trade_stats"] is None
+    assert "equity" not in result
+    assert "profit_factor" not in json.dumps(result)
 
 
 # ── config hash + persistence round-trip ──────────────────────────────────────
@@ -177,13 +169,13 @@ def test_config_hash_is_stable_and_capture_tag_sensitive() -> None:
 def test_save_load_round_trip(tmp_path) -> None:
     ds = pd.DataFrame([_row("2026-05-01", 10 + i, "win", 4.0) for i in range(3)])
     config = _expectancy_only()
-    result = run_ifvg_experiment(config, dataset=ds)
+    result = run_ifvg_experiment(config, dataset=ds, capture_cfg=_legacy_capture())
     run_dir = save_experiment(config, result, name="unit", note="n", base_dir=tmp_path)
     assert (run_dir / "config.json").exists() and (run_dir / "result.json").exists()
 
     loaded = load_experiment(result["meta"]["experiment_hash"], base_dir=tmp_path)
     assert loaded["config"] == config
-    assert loaded["result"]["expectancy"]["overall"]["n"] == 3
+    assert loaded["result"]["counterfactual_outcomes"]["overall"]["n"] == 3
     summaries = list_experiments(tmp_path)
     assert len(summaries) == 1
     assert summaries[0]["name"] == "unit"
@@ -312,23 +304,26 @@ def test_sl_tp_override_recompute_long_and_short() -> None:
         sl_tp=_sl_tp(sl_mode="swing_buffer_ticks", sl_value=2)
     )
     long_result = run_ifvg_experiment(
-        config, dataset=ds.iloc[[0]], bars_loader=loader_for(bars)
+        config,
+        dataset=ds.iloc[[0]],
+        bars_loader=loader_for(bars),
+        capture_cfg=_legacy_capture(),
     )
-    trade = long_result["trade_stats"]["trades"][0]
-    assert trade["stop_ticks"] == 91
-    assert trade["risk_points"] == pytest.approx(2.25)
-    assert trade["label"] == "win"
-    assert trade["realized_pts"] == pytest.approx(2.25)  # 1R at the new risk
-    assert trade["net_r"] == pytest.approx((2.25 - 0.514) / 2.25)
+    assert long_result["counterfactual_outcomes"]["overall"]["win_rate"] == 1.0
+    assert long_result["counterfactual_outcomes"]["overall"][
+        "mean_net_r"
+    ] == pytest.approx((2.25 - 0.514) / 2.25)
+    assert long_result["trade_stats"] is None
     assert long_result["meta"]["caveats"][0].startswith("SL/TP override")
 
     short_result = run_ifvg_experiment(
-        config, dataset=ds.iloc[[1]], bars_loader=loader_for(short_bars)
+        config,
+        dataset=ds.iloc[[1]],
+        bars_loader=loader_for(short_bars),
+        capture_cfg=_legacy_capture(),
     )
-    trade = short_result["trade_stats"]["trades"][0]
-    assert trade["stop_ticks"] == 209
-    assert trade["label"] == "win"  # TP 200-9=191 touched, stop 209 never
-    assert trade["realized_pts"] == pytest.approx(2.25)
+    assert short_result["counterfactual_outcomes"]["overall"]["win_rate"] == 1.0
+    assert short_result["trade_stats"] is None
 
 
 def test_sl_tp_sub_tick_risk_rows_are_dropped_and_counted() -> None:
@@ -336,9 +331,15 @@ def test_sl_tp_sub_tick_risk_rows_are_dropped_and_counted() -> None:
     config = IfvgExperimentConfig(
         sl_tp=_sl_tp(sl_mode="fixed_points", sl_value=0.1)  # rounds to 0 ticks
     )
-    result = run_ifvg_experiment(config, dataset=ds, bars_loader=lambda _d: [])
+    result = run_ifvg_experiment(
+        config,
+        dataset=ds,
+        bars_loader=lambda _d: [],
+        capture_cfg=_legacy_capture(),
+    )
     assert result["meta"]["counts"]["sl_tp_risk_dropped"] == 1
-    assert result["trade_stats"]["n"] == 0
+    assert result["counterfactual_outcomes"]["overall"]["n"] == 0
+    assert result["trade_stats"] is None
 
 
 # ── custom sessions ───────────────────────────────────────────────────────────
@@ -381,9 +382,9 @@ def test_custom_session_filter_applies_to_restamped_rows() -> None:
         custom_sessions={"asia": SessionWindow(start="19:00", end="02:45")},
         sessions_custom=("asia",),
     )
-    result = run_ifvg_experiment(config, dataset=ds)
-    assert result["expectancy"]["overall"]["n"] == 1
-    assert result["trade_stats"]["trades"][0]["session_custom"] == "asia"
+    result = run_ifvg_experiment(config, dataset=ds, capture_cfg=_legacy_capture())
+    assert result["counterfactual_outcomes"]["overall"]["n"] == 1
+    assert result["counterfactual_outcomes"]["per_session_custom"]["asia"]["n"] == 1
 
 
 def test_sessions_custom_requires_defined_windows() -> None:
@@ -399,17 +400,21 @@ def test_run_sealed_validation_writes_files_only(tmp_path, capsys) -> None:
     sealed = [_row("2026-06-20", 10 + i, "loss", -4.0) for i in range(2)]
     ds = pd.DataFrame(pre + sealed)
     config = _expectancy_only()
-    result = run_ifvg_experiment(config, dataset=ds)
+    result = run_ifvg_experiment(config, dataset=ds, capture_cfg=_legacy_capture())
     save_experiment(config, result, base_dir=tmp_path)
 
     out_path = run_sealed_validation(
-        result["meta"]["experiment_hash"], dataset=ds, base_dir=tmp_path
+        result["meta"]["experiment_hash"],
+        dataset=ds,
+        base_dir=tmp_path,
+        capture_cfg=_legacy_capture(),
     )
     assert capsys.readouterr().out == ""  # sealed stats never hit stdout
     sealed_result = json.loads(out_path.read_text(encoding="utf-8"))
     assert sealed_result["sealed_validation"] is True
     assert sealed_result["sequence"] == 1
-    assert sealed_result["trade_stats"]["n"] == 2
+    assert sealed_result["trade_stats"] is None
+    assert sealed_result["counterfactual_outcomes"]["overall"]["n"] == 2
 
     ledger = (tmp_path / "sealed_ledger.jsonl").read_text(encoding="utf-8").splitlines()
     assert len(ledger) == 1

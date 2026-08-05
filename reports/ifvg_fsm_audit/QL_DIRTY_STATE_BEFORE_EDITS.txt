@@ -1,0 +1,93 @@
+﻿ M ARCHITECTURE.md
+ M docs/ML_TRAINING_WORKBENCH.md
+ M docs/README.md
+ M docs/pipeline_state.yaml
+ M pyproject.toml
+ M scripts/ifvg_artifact_warmer.py
+ M scripts/ifvg_lab_charts.py
+ M scripts/ifvg_lab_tab.py
+ M scripts/ifvg_recapture_job.py
+ M scripts/run_ifvg_capture.py
+ M scripts/run_ifvg_gate_experiment.py
+ M src/alpha_lab/agents/data_infra/ifvg/__init__.py
+ M src/alpha_lab/agents/data_infra/ifvg/capture_driver.py
+ M src/alpha_lab/agents/data_infra/ifvg/config.py
+ M src/alpha_lab/agents/data_infra/ifvg/dataset.py
+ M src/alpha_lab/agents/data_infra/ifvg/day_artifacts.py
+ M src/alpha_lab/agents/data_infra/ifvg/entry_dataset.py
+ M src/alpha_lab/agents/data_infra/ifvg/experiment.py
+ M src/alpha_lab/agents/data_infra/ifvg/feature_insight.py
+ M src/alpha_lab/agents/data_infra/ifvg/funnel_report.py
+ M src/alpha_lab/agents/data_infra/ifvg/trade_stats.py
+ M tests/agents/test_ifvg_capture_scheme.py
+ M tests/agents/test_ifvg_experiment.py
+ M tests/agents/test_ifvg_lab_tab.py
+?? IFVG_CONTEXT_FEATURES_CODEX_PROMPT.md
+?? IFVG_FINAL_REVIEW_REPORT_GENERATION_CODEX_PROMPT.md
+?? IFVG_FUNNEL.md
+?? IFVG_LABELS.md
+?? IFVG_SEARCH_LEDGER.json
+?? data/ifvg_datasets/
+?? data/ifvg_experiments/
+?? data/ifvg_preparation_jobs/
+?? data/ifvg_profiles.json
+?? docs/IFVG_CONTEXT_CAPTURE_V3.md
+?? docs/IFVG_PLUGIN_DESIGN_ict_amended_ml_research_revised.md
+?? docs/ifvg/
+?? ifvg_funnel_2a40b18e0b273ee0.json
+?? ifvg_search_runs/
+?? reports/
+?? scripts/ifvg_build_replay_chart.py
+?? scripts/ifvg_preparation_job.py
+?? scripts/ifvg_verifier_charts.py
+?? scripts/ifvg_verifier_tab.py
+?? scripts/prepare_ifvg_development_pair.py
+?? scripts/run_ifvg_context_capture.py
+?? scripts/run_ifvg_context_experiment.py
+?? scripts/run_ifvg_repair_verification.py
+?? src/alpha_lab/agents/data_infra/ifvg/artifact_io.py
+?? src/alpha_lab/agents/data_infra/ifvg/context_contracts.py
+?? src/alpha_lab/agents/data_infra/ifvg/context_experiment_contracts.py
+?? src/alpha_lab/agents/data_infra/ifvg/context_experiment_service.py
+?? src/alpha_lab/agents/data_infra/ifvg/context_feature_view.py
+?? src/alpha_lab/agents/data_infra/ifvg/context_folds.py
+?? src/alpha_lab/agents/data_infra/ifvg/context_labels.py
+?? src/alpha_lab/agents/data_infra/ifvg/context_model.py
+?? src/alpha_lab/agents/data_infra/ifvg/context_report_adapters.py
+?? src/alpha_lab/agents/data_infra/ifvg/context_reporting.py
+?? src/alpha_lab/agents/data_infra/ifvg/context_run_store.py
+?? src/alpha_lab/agents/data_infra/ifvg/context_schemas.py
+?? src/alpha_lab/agents/data_infra/ifvg/context_statistics.py
+?? src/alpha_lab/agents/data_infra/ifvg/contracts.py
+?? src/alpha_lab/agents/data_infra/ifvg/data_access.py
+?? src/alpha_lab/agents/data_infra/ifvg/development_access.py
+?? src/alpha_lab/agents/data_infra/ifvg/geometry.py
+?? src/alpha_lab/agents/data_infra/ifvg/manifest.py
+?? src/alpha_lab/agents/data_infra/ifvg/migration.py
+?? src/alpha_lab/agents/data_infra/ifvg/preparation.py
+?? src/alpha_lab/agents/data_infra/ifvg/profiles.py
+?? src/alpha_lab/agents/data_infra/ifvg/replay_chart_provider.py
+?? src/alpha_lab/agents/data_infra/ifvg/replay_chart_store.py
+?? src/alpha_lab/agents/data_infra/ifvg/reporting.py
+?? src/alpha_lab/agents/data_infra/ifvg/verification.py
+?? src/alpha_lab/agents/data_infra/ifvg/visual_review_store.py
+?? tests/agents/ifvg_v3_fixtures.py
+?? tests/agents/test_ifvg_context_experiment_engine.py
+?? tests/agents/test_ifvg_context_report_adapters.py
+?? tests/agents/test_ifvg_context_schemas.py
+?? tests/agents/test_ifvg_development_preparation.py
+?? tests/agents/test_ifvg_replay_chart_provider.py
+?? tests/agents/test_ifvg_replay_chart_store.py
+?? tests/agents/test_ifvg_v2_characterization.py
+?? tests/agents/test_ifvg_v2_data_access.py
+?? tests/agents/test_ifvg_v2_profiles_migration.py
+?? tests/agents/test_ifvg_v2_replay_reconciliation.py
+?? tests/agents/test_ifvg_v2_reporting_manifest.py
+?? tests/agents/test_ifvg_v3_context_access.py
+?? tests/agents/test_ifvg_v3_context_contracts.py
+?? tests/agents/test_ifvg_v3_context_manifest.py
+?? tests/agents/test_ifvg_v3_context_reconciliation.py
+?? tests/agents/test_ifvg_verifier_charts.py
+?? tests/agents/test_ifvg_verifier_tab.py
+?? tests/agents/test_ifvg_visual_review_store.py
+bd6825924d02f76c108e81ef1d4edb27b032d55a

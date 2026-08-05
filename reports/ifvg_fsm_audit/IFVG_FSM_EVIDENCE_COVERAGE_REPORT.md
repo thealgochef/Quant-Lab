@@ -1,0 +1,38 @@
+# IFVG FSM Evidence Coverage
+
+Artifact: `8f87271f8998ccf48410eaaea7377a9af54186b01b84f039411f3529e360895f`
+
+## Drop-reason coverage (every contract reason observed or provably zero)
+
+- age_evicted: 64
+- cap_evicted: 0 (provably zero)
+- causality_failed: 19
+- conflicted: 0 (provably zero)
+- direction_disabled: 7955
+- distance_gt_profile: 1444
+- filled_before_activation: 50077
+- outranked: 1026
+- reaction_window_expired: 5452
+- replaced: 148
+- retention_not_selected: 12836
+- selected: 600
+- slot_occupied: 34811
+
+## Audit rows by table
+
+- ifvg_audit_day_funnel: 913
+- ifvg_audit_entry_causality: 132
+- ifvg_audit_fill_event: 101066
+- ifvg_audit_htf_tap: 56792
+- ifvg_audit_inversion: 46
+- ifvg_audit_opposing: 1060
+- ifvg_audit_parent_candidate: 6291
+- ifvg_audit_parent_lock: 117
+- ifvg_audit_parent_window: 553
+- ifvg_audit_parentless_interval: 251
+- ifvg_audit_parentless_step: 18863
+- ifvg_audit_setup_resolution: 214
+- ifvg_audit_slot_death: 251
+
+Funnel ⇔ events reconciliation: EXACT
+

@@ -1,20 +1,18 @@
-"""Entry-candidate dataset: label families + gate features over capture rows.
+"""IFVG candidate-label composition.
 
-One row per ``entry_candidate`` capture row (BOTH families, selected or not —
-explicit family pooling), composed offline from the capture frame + the cached
-Phase-A bars. Labels go through the SHARED SC kernel
-(``resolve_ifvg_outcome`` — per-call r-relative pairs); QL adds only
-composition: realized/net columns (cost model: NQ $2.64/side commission +
-0.5-tick slippage per side), next-open slippage measurement, and the setup-
-stage feature joins (tap/parent/opposing/inversion measurements pivoted onto
-the entry row by ``setup_id``).
+The v2 path emits long-form, candidate-ID-keyed counterfactual labels. It
+persists setup direction, asserts stop side, uses each label family's own
+barrier/path, and never turns a candidate label into executed P&L.
 
-Direction is derived, not stored: ``stop < entry`` == LONG (risk >= 1 tick
-guarantees strict inequality).
+The lower half retains the original wide v1 gate-dataset composer for explicit
+``legacy_v1`` reproduction only. Its setup-ID pivots, derived direction, and
+modeled candidate outcomes are not accepted by a v2 execution/report path.
 """
 
 from __future__ import annotations
 
+import json
+import uuid
 from datetime import datetime
 
 import pandas as pd
@@ -24,7 +22,198 @@ from strategy_core.types import Bar, Direction
 from .config import IfvgCaptureConfig
 from .day_artifacts import load_day_artifacts
 
-__all__ = ["build_entry_dataset", "assert_no_all_nan_columns", "NQ_COST_POINTS_ROUND_TURN"]
+__all__ = [
+    "build_entry_dataset",
+    "build_candidate_label_rows",
+    "build_candidate_labels_from_tables",
+    "assert_no_all_nan_columns",
+    "NQ_COST_POINTS_ROUND_TURN",
+]
+
+_LABEL_NAMESPACE = uuid.UUID("9fbe0114-a6d3-4a24-92c9-3cb945933d65")
+
+
+def build_candidate_label_rows(
+    *,
+    candidate_id: str,
+    entry_ticks: int,
+    stop_ticks: int,
+    direction: Direction,
+    entry_bar: Bar,
+    forward_bars_1m,
+    tick_size: float,
+    r_multiples: tuple[float, ...] = (1.0, 1.5, 2.0),
+) -> list[dict]:
+    """Long-form, family-qualified counterfactual labels.
+
+    Each family owns its barrier, resolution horizon, and MFE/MAE path. No
+    generic R10 metrics are copied onto R15/R20 rows.
+    """
+    if not candidate_id:
+        raise ValueError("candidate_id is required")
+    rows: list[dict] = []
+    for r_multiple in r_multiples:
+        outcome = resolve_ifvg_outcome(
+            entry_ticks=entry_ticks,
+            stop_ticks=stop_ticks,
+            direction=direction,
+            entry_bar=entry_bar,
+            forward_bars_1m=forward_bars_1m,
+            tick_size=tick_size,
+            r_multiple=r_multiple,
+        )
+        label_family = f"static_r_{r_multiple:g}_next_bar_stop_first_v1"
+        label_id = str(
+            uuid.uuid5(
+                _LABEL_NAMESPACE,
+                json.dumps(
+                    [candidate_id, label_family],
+                    separators=(",", ":"),
+                ),
+            )
+        )
+        rows.append(
+            {
+                "record_table": "candidate_label",
+                "candidate_label_schema_version": 2,
+                "candidate_label_id": label_id,
+                "candidate_id": candidate_id,
+                "label_family": label_family,
+                "r_multiple": r_multiple,
+                "label": outcome.label,
+                "kernel_label": outcome.kernel_label,
+                "target_ticks": outcome.target_ticks,
+                "bars_to_resolution_generic_zero_based": (
+                    outcome.bars_to_resolution
+                ),
+                "bars_after_entry_to_resolution": (
+                    outcome.bars_after_entry_to_resolution
+                ),
+                "resolution_bar_id": outcome.resolution_bar_id,
+                "mfe_r": outcome.mfe_r,
+                "mae_r": outcome.mae_r,
+                "censored": outcome.bars_after_entry_to_resolution is None,
+                "censor_reason": (
+                    "candidate_label_window_exhausted"
+                    if outcome.bars_after_entry_to_resolution is None
+                    else None
+                ),
+            }
+        )
+    return rows
+
+
+def build_candidate_labels_from_tables(
+    candidates: pd.DataFrame,
+    *,
+    bars_by_day: dict[str, tuple[Bar, ...]],
+    tick_size: float,
+    resolved_profile,
+    r_multiples: tuple[float, ...] = (1.0, 1.5, 2.0),
+) -> pd.DataFrame:
+    """Resolve candidate-specific, trading-day-censored long-form labels.
+
+    Geometry-incomplete candidates remain in the quarantine stream and do not
+    receive a fabricated label. Direction comes from the setup record; stop
+    side is asserted and never used to infer direction.
+    """
+    rows: list[dict] = []
+    if candidates.empty:
+        return pd.DataFrame()
+    required = {
+        "candidate_id",
+        "setup_id",
+        "direction",
+        "entry_ticks",
+        "proposed_stop_ticks",
+        "trading_day",
+        "entry_family",
+        "trigger_cursor",
+    }
+    missing = sorted(required - set(candidates.columns))
+    if missing:
+        raise ValueError(f"entry_candidate table is missing label evidence {missing}")
+
+    ordered = candidates.sort_values(
+        ["trading_day", "candidate_id"], kind="mergesort"
+    )
+    for candidate in ordered.to_dict("records"):
+        geometry_entry_id = candidate.get("geometry_entry_bar_bar_id")
+        geometry_cursor = candidate.get("geometry_feature_as_of_cursor")
+        if geometry_entry_id is None or pd.isna(geometry_entry_id) or not geometry_entry_id:
+            continue
+        day = str(candidate["trading_day"])[:10]
+        bars_1m = [
+            bar
+            for bar in bars_by_day.get(day, ())
+            if bar.timeframe_ticks == 60
+        ]
+        entry_matches = [
+            bar for bar in bars_1m if bar.bar_id == str(geometry_entry_id)
+        ]
+        if len(entry_matches) != 1:
+            raise ValueError(
+                "candidate geometry entry bar does not resolve uniquely: "
+                f"{candidate['candidate_id']}"
+            )
+        entry_bar = entry_matches[0]
+        direction = Direction(str(candidate["direction"]))
+        entry_ticks = int(candidate["entry_ticks"])
+        stop_ticks = int(candidate["proposed_stop_ticks"])
+        if direction is Direction.LONG and stop_ticks >= entry_ticks:
+            raise ValueError("LONG candidate stop must be below entry")
+        if direction is Direction.SHORT and stop_ticks <= entry_ticks:
+            raise ValueError("SHORT candidate stop must be above entry")
+        forward = tuple(
+            bar
+            for bar in bars_1m
+            if bar.availability_ts_utc > entry_bar.availability_ts_utc
+        )
+        label_rows = build_candidate_label_rows(
+            candidate_id=str(candidate["candidate_id"]),
+            entry_ticks=entry_ticks,
+            stop_ticks=stop_ticks,
+            direction=direction,
+            entry_bar=entry_bar,
+            forward_bars_1m=forward,
+            tick_size=tick_size,
+            r_multiples=r_multiples,
+        )
+        common = {
+            "setup_id": str(candidate["setup_id"]),
+            "trading_day": day,
+            "strategy_id": candidate.get("strategy_id"),
+            "strategy_version": candidate.get("strategy_version"),
+            "profile_hash": candidate.get("profile_hash"),
+            "profile_name": candidate.get("profile_name"),
+            "qualification_mode": candidate.get("qualification_mode"),
+            "section_config_hash": candidate.get("section_config_hash"),
+            "evaluation_config_hash": resolved_profile.evaluation_config_hash,
+            "entry_family": candidate.get("entry_family"),
+            "entry_session": candidate.get("entry_session", "none"),
+            "anchor_policy": candidate.get("anchor_policy"),
+            "resolver_policy": candidate.get("resolver_policy"),
+            "causality_parent": candidate.get("causality_parent"),
+            "causality_opposing": candidate.get("causality_opposing"),
+            "causality_entry": candidate.get("causality_entry"),
+            "timeout_policy": candidate.get("timeout_policy"),
+            "label_censor_policy": "trading_day_end_counterfactual_v1",
+            "feature_as_of_cursor": (
+                geometry_cursor
+                if geometry_cursor is not None
+                and not pd.isna(geometry_cursor)
+                and str(geometry_cursor)
+                else candidate["trigger_cursor"]
+            ),
+            "entry_bar_id": entry_bar.bar_id,
+            "entry_cursor": candidate["trigger_cursor"],
+            "is_warmup": bool(candidate.get("is_warmup", False)),
+            "days_of_htf_history": int(
+                candidate.get("days_of_htf_history", 0)
+            ),
+        }
+        rows.extend({**row, **common} for row in label_rows)
+    return pd.DataFrame(rows)
 
 
 def assert_no_all_nan_columns(frame: pd.DataFrame) -> None:

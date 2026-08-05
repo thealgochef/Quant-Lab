@@ -13,11 +13,12 @@ from datetime import UTC, datetime, time
 from pathlib import Path
 
 import pytest
-from strategy_core.constants import RESEARCH_SESSION_SCHEME
+from strategy_core.constants import IFVG_DOC_SESSION_SCHEME
 
 from alpha_lab.agents.data_infra.ifvg.config import (
     IfvgCaptureConfig,
     custom_session_capture_config,
+    legacy_ifvg_capture_config,
 )
 from alpha_lab.agents.data_infra.ifvg.day_artifacts import _session_of_bucket_start
 
@@ -28,19 +29,21 @@ if str(_SCRIPTS) not in sys.path:
 import ifvg_recapture_job as recapture  # noqa: E402
 
 #: Canonical tags — MUST NEVER CHANGE (regression lock).
-DEFAULT_ATAG = "466b5fe8e7952ecd"
-DEFAULT_CTAG = "2a40b18e0b273ee0"
+DEFAULT_ATAG = "a9016426641071c3"
+DEFAULT_CTAG = "035d9e14ff3276ed"
+LEGACY_ATAG = "466b5fe8e7952ecd"
+LEGACY_CTAG = "2a40b18e0b273ee0"
 
 #: The canonical windows as time pairs (asia crosses midnight).
 _DEFAULT_WINDOWS = {
-    "asia": (time(19, 0), time(2, 45)),
-    "london": (time(3, 0), time(8, 0)),
-    "ny": (time(9, 0), time(17, 0)),
+    "asia": (time(16, 0), time(1, 45)),
+    "london": (time(2, 0), time(7, 0)),
+    "ny": (time(8, 0), time(14, 0)),
 }
 _CUSTOM_WINDOWS = {
-    "asia": (time(19, 0), time(2, 45)),
-    "london": (time(3, 0), time(8, 0)),
-    "ny": (time(9, 30), time(16, 0)),  # ny times moved
+    "asia": (time(16, 0), time(1, 45)),
+    "london": (time(2, 0), time(7, 0)),
+    "ny": (time(8, 30), time(13, 0)),  # ny times moved
 }
 
 
@@ -53,6 +56,14 @@ def test_default_tags_regression_locked() -> None:
     assert cfg.capture_tag() == DEFAULT_CTAG
 
 
+def test_legacy_tags_remain_read_only_and_stable() -> None:
+    cfg = legacy_ifvg_capture_config()
+    assert cfg.artifacts_tag() == LEGACY_ATAG
+    assert cfg.capture_tag() == LEGACY_CTAG
+    assert cfg.identity_lane == "legacy_v1"
+    assert cfg.section.execution_enabled is False
+
+
 def test_custom_ny_window_rolls_both_tags() -> None:
     cfg = custom_session_capture_config(_CUSTOM_WINDOWS)
     assert cfg.artifacts_tag() != DEFAULT_ATAG
@@ -63,15 +74,15 @@ def test_custom_scheme_preserves_fixed_axes() -> None:
     cfg = custom_session_capture_config(_CUSTOM_WINDOWS)
     scheme = cfg.session_scheme
     assert sorted(scheme.sessions) == ["asia", "london", "ny"]
-    assert scheme.timezone == RESEARCH_SESSION_SCHEME.timezone
-    assert scheme.trading_day_boundary == RESEARCH_SESSION_SCHEME.trading_day_boundary
-    assert scheme.closed_window == RESEARCH_SESSION_SCHEME.closed_window
+    assert scheme.timezone == IFVG_DOC_SESSION_SCHEME.timezone
+    assert scheme.trading_day_boundary == IFVG_DOC_SESSION_SCHEME.trading_day_boundary
+    assert scheme.closed_window == IFVG_DOC_SESSION_SCHEME.closed_window
     # crosses_midnight derived per window: start > end only for asia.
     assert scheme.sessions["asia"].crosses_midnight is True
     assert scheme.sessions["london"].crosses_midnight is False
     assert scheme.sessions["ny"].crosses_midnight is False
     # the section's CONTRACT scheme rolled with it (profile_hash -> capture_tag)
-    assert cfg.section.session_scheme.sessions["ny"].start == "09:30"
+    assert cfg.section.session_scheme.sessions["ny"].start == "08:30"
     assert cfg.section.session_scheme.sessions["asia"].crosses_midnight is True
 
 
@@ -106,19 +117,19 @@ def test_custom_windows_reject_wrong_names() -> None:
 def test_session_of_bucket_start_default_scheme_unchanged() -> None:
     # 2026-06-05 15:00 UTC = 11:00 ET (EDT) -> ny under the engine scheme.
     ny_ts = datetime(2026, 6, 5, 15, 0, tzinfo=UTC)
-    assert _session_of_bucket_start(ny_ts, RESEARCH_SESSION_SCHEME) == "ny"
+    assert _session_of_bucket_start(ny_ts, IFVG_DOC_SESSION_SCHEME) == "ny"
     # 00:30 UTC = 20:30 ET previous evening -> asia (crosses midnight).
     asia_ts = datetime(2026, 6, 5, 0, 30, tzinfo=UTC)
-    assert _session_of_bucket_start(asia_ts, RESEARCH_SESSION_SCHEME) == "asia"
+    assert _session_of_bucket_start(asia_ts, IFVG_DOC_SESSION_SCHEME) == "asia"
     # default config carries the SAME scheme object (behavioral identity).
-    assert IfvgCaptureConfig().session_scheme is RESEARCH_SESSION_SCHEME
+    assert IfvgCaptureConfig().session_scheme is IFVG_DOC_SESSION_SCHEME
 
 
 def test_session_of_bucket_start_honors_custom_scheme() -> None:
-    # 13:10 UTC = 09:10 ET (EDT): ny under the default 09:00 open, but outside
-    # the custom 09:30 open.
-    ts = datetime(2026, 6, 5, 13, 10, tzinfo=UTC)
-    assert _session_of_bucket_start(ts, RESEARCH_SESSION_SCHEME) == "ny"
+    # 12:10 UTC = 08:10 ET (EDT): NY under the default 08:00 open, but outside
+    # the custom 08:30 open.
+    ts = datetime(2026, 6, 5, 12, 10, tzinfo=UTC)
+    assert _session_of_bucket_start(ts, IFVG_DOC_SESSION_SCHEME) == "ny"
     custom = custom_session_capture_config(_CUSTOM_WINDOWS)
     assert _session_of_bucket_start(ts, custom.session_scheme) == "none"
 

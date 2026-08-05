@@ -19,7 +19,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from alpha_lab.agents.data_infra.ifvg.config import IfvgCaptureConfig  # noqa: E402
+from alpha_lab.agents.data_infra.ifvg.config import (  # noqa: E402
+    legacy_ifvg_capture_config,
+)
 from alpha_lab.agents.data_infra.ifvg.experiment import (  # noqa: E402
     IfvgExperimentConfig,
     IfvgModelConfig,
@@ -156,7 +158,9 @@ def main() -> int:
     parser.add_argument("--dataset", default=None)
     args = parser.parse_args()
 
-    cfg = IfvgCaptureConfig()
+    cfg = legacy_ifvg_capture_config(
+        data_dir=Path(__file__).resolve().parents[1] / "data" / "databento"
+    )
     path = (
         Path(args.dataset)
         if args.dataset

@@ -1,0 +1,90 @@
+{
+  "expected_funnel": {
+    "entry_candidates": {
+      "expected": 132,
+      "matched": true,
+      "observed": 132
+    },
+    "executed_trades": {
+      "expected": 33,
+      "matched": true,
+      "observed": 33
+    },
+    "post_warmup_resolved_trades": {
+      "expected": 30,
+      "matched": true,
+      "observed": 30
+    },
+    "setup_activations": {
+      "expected": 215,
+      "matched": true,
+      "observed": 215
+    }
+  },
+  "passed": true,
+  "tables": {
+    "candidate_label": {
+      "accepted_content_sha256": "49fc3419d600e2e86258cc78b970db4444ac7bd2c3a0fb9605afc98f48e776ea",
+      "accepted_rows": 396,
+      "derived_content_sha256": "49fc3419d600e2e86258cc78b970db4444ac7bd2c3a0fb9605afc98f48e776ea",
+      "derived_rows": 396,
+      "matched": true,
+      "pk_only_in_accepted": 0,
+      "pk_only_in_derived": 0
+    },
+    "eligible_decision": {
+      "accepted_content_sha256": "25af4cdc78ee11acb73484babb99db84ab1926243375319f236107ec0321c09e",
+      "accepted_rows": 33,
+      "derived_content_sha256": "25af4cdc78ee11acb73484babb99db84ab1926243375319f236107ec0321c09e",
+      "derived_rows": 33,
+      "matched": true,
+      "pk_only_in_accepted": 0,
+      "pk_only_in_derived": 0
+    },
+    "entry_candidate": {
+      "accepted_content_sha256": "d19043560195603a26b3ad7ba2b357f3b4a34ca1d16aaaf00ce0f0d6cabe349a",
+      "accepted_rows": 132,
+      "derived_content_sha256": "d19043560195603a26b3ad7ba2b357f3b4a34ca1d16aaaf00ce0f0d6cabe349a",
+      "derived_rows": 132,
+      "matched": true,
+      "pk_only_in_accepted": 0,
+      "pk_only_in_derived": 0
+    },
+    "executed_trade": {
+      "accepted_content_sha256": "fe1083eba3c33cf082652348aed96dde9cb96226280ef4f652ec208ae67eb964",
+      "accepted_rows": 33,
+      "derived_content_sha256": "fe1083eba3c33cf082652348aed96dde9cb96226280ef4f652ec208ae67eb964",
+      "derived_rows": 33,
+      "matched": true,
+      "pk_only_in_accepted": 0,
+      "pk_only_in_derived": 0
+    },
+    "geometry_dossier": {
+      "accepted_content_sha256": "eccb4a5d773138b95606203175754ea6cf42b3344d672ef8cc40b96011b54178",
+      "accepted_rows": 132,
+      "derived_content_sha256": "eccb4a5d773138b95606203175754ea6cf42b3344d672ef8cc40b96011b54178",
+      "derived_rows": 132,
+      "matched": true,
+      "pk_only_in_accepted": 0,
+      "pk_only_in_derived": 0
+    },
+    "quarantine": {
+      "accepted_content_sha256": "74522c25631199b2e6980d3c317c8b2f946b24791b77be24337300096816266c",
+      "accepted_rows": 0,
+      "derived_content_sha256": "74522c25631199b2e6980d3c317c8b2f946b24791b77be24337300096816266c",
+      "derived_rows": 0,
+      "matched": true,
+      "pk_only_in_accepted": 0,
+      "pk_only_in_derived": 0
+    },
+    "setup_lifecycle_event": {
+      "accepted_content_sha256": "d4848f985809ea5f0e46b2e1c5bbadbdc5b78db27acdade4a37335a9c6c68352",
+      "accepted_rows": 723,
+      "derived_content_sha256": "d4848f985809ea5f0e46b2e1c5bbadbdc5b78db27acdade4a37335a9c6c68352",
+      "derived_rows": 723,
+      "matched": true,
+      "pk_only_in_accepted": 0,
+      "pk_only_in_derived": 0
+    }
+  }
+}

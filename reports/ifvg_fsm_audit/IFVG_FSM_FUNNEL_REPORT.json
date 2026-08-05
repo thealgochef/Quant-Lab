@@ -1,0 +1,59 @@
+{
+  "corrections_previously_unknown_now_measured_descriptive_only": {
+    "cross_setup_opportunity_cost": {
+      "distinct_gaps_tapping_while_occupied": 451,
+      "taps_dropped_slot_occupied": 34811
+    },
+    "note": "These three quantities were previously reported as claims without persisted evidence; they are now DESCRIPTIVE measurements from the audit artifact. No strategy conclusion is drawn from them.",
+    "ranked_fallback_benefit": {
+      "note": "No ranked HTF fallback exists (D-2); these counts only describe how often a later parent arrived in-window.",
+      "parent_replacements_observed": 148,
+      "parentless_intervals_ended_by_successor": 154
+    },
+    "session_impact": {
+      "slot_occupied_taps_by_doc_session": {
+        "asia": 14513,
+        "london": 8106,
+        "none": 4637,
+        "ny": 7555
+      }
+    }
+  },
+  "fsm_audit_artifact_id": "8f87271f8998ccf48410eaaea7377a9af54186b01b84f039411f3529e360895f",
+  "funnel_totals": {
+    "candidate_blocked_already_in_trade": 71,
+    "candidate_blocked_entry_family_not_profile": 40,
+    "candidate_blocked_out_of_session": 14,
+    "candidate_blocked_retest_trigger_unratified": 40,
+    "candidate_died_filled": 36,
+    "eligible_decisions": 33,
+    "entry_candidates_fresh_fvg_continuation": 92,
+    "entry_candidates_ifvg_retest": 40,
+    "executions_opened": 33,
+    "expired_parent_search": 6,
+    "htf_taps": 56792,
+    "invalidated_htf_filled": 92,
+    "invalidated_parent_filled": 83,
+    "inversions": 46,
+    "inverted_manipulation_failed": 46,
+    "opposing_armed": 61,
+    "opposing_candidates": 1060,
+    "opposing_replaced": 22,
+    "parent_candidates": 6291,
+    "parentless_window_live": 18863,
+    "parents_locked": 117,
+    "parents_replaced": 148,
+    "resolved_stop": 14,
+    "resolved_target": 19,
+    "setups_born": 215,
+    "taps_slot_occupied": 34811
+  },
+  "provisional_parent_deaths": 36,
+  "terminal_death_reasons": {
+    "dataset_exhaustion_pre_entry": 1,
+    "expired_parent_search": 6,
+    "invalidated_htf_filled": 92,
+    "invalidated_parent_filled": 83,
+    "slot_freed": 33
+  }
+}

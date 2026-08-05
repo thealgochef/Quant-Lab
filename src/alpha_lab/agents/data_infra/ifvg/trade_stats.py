@@ -1,19 +1,9 @@
-"""Trade-statistics section of an IFVG experiment result (plan Part A item 2b).
+"""Performance statistics over validated IFVG v2 executions only.
 
-Contract: computed over the run's FILTERED trade set, ordered by resolution
-time; every sided metric reported three ways (ALL / LONG / SHORT); dual units
-($ at 1 NQ contract x $20/pt with costs netted, and cost-net R). eod_timeout
-rows count at their signed realized PnL and are also broken out separately.
-
-Resolution-time approximation (documented): resolution ts = entry_ts +
-bars_to_res minutes; eod rows resolve at ``label_window_end``. Wins/losses in
-rate metrics follow the label column; PnL winner/loser splits follow the sign
-of net PnL (an eod row can be a PnL winner).
-
-Input frame contract (built by ``experiment.py``): working columns ``_label``,
-``_bars_to_res``, ``_realized_pts``, ``_net_r``, ``_pnl_usd``, ``_risk_points``,
-``_mfe_r``, ``_mae_r`` plus ``trading_day``/``entry_ts_utc``/``direction`` and
-the identity columns carried into the trade list.
+Candidate labels and eligible decisions are counterfactual/reconciliation
+streams and are rejected.  Resolution time is exact, the entry candle is
+excluded by contract, and dataset-exhausted open trades carry no realized P&L
+and therefore cannot enter this function.
 """
 
 from __future__ import annotations
@@ -23,6 +13,13 @@ import math
 import numpy as np
 import pandas as pd
 
+from .contracts import (
+    IFVG_DATASET_SCHEMA_VERSION,
+    RecordTable,
+    validate_primary_keys,
+    validate_table_identity,
+)
+
 __all__ = ["wilson_ci", "mean_ci", "compute_trade_stats", "RESOLUTION_TIME_NOTE"]
 
 _Z95 = 1.959963984540054
@@ -31,23 +28,20 @@ DOLLARS_PER_POINT = 20.0
 SESSION_MINUTES_PER_DAY = 1380
 
 RESOLUTION_TIME_NOTE = (
-    "Trade ordering approximates resolution time as entry_ts + bars_to_res minutes "
-    "(1m label bars); eod_timeout rows resolve at label_window_end."
+    "Trade ordering uses the exact Strategy-Core resolution cursor/timestamp; "
+    "the confirmation/entry candle is excluded and the first forward 1m bar is 1."
 )
 
 _ASSUMPTIONS = (
     "1-contract sizing, $20/NQ point, round-turn cost netted into every PnL figure.",
-    RESOLUTION_TIME_NOTE,
-    "Candidate pooling: non-selected family rows are label-resolved hypotheticals, "
-    "not walked executions.",
-    "Streaks run over win/loss labels only (eod_timeout rows excluded from streaks).",
-    "PnL winner/loser splits use the sign of net PnL; win-rate metrics use the label.",
-    "MFE/MAE come from the base-family (r10) resolution window unless SL/TP overrides "
-    "recomputed them.",
+    "Rows are validated IFVG v2 resolved executed trades; candidates and decisions "
+    "are rejected.",
+    "Resolution timestamps and one-based bars-after-entry come from Strategy-Core.",
+    "Same-bar stop/target ambiguity is stop-first.",
+    "Confidence intervals use a 10,000-sample trading-day cluster bootstrap.",
     "Daily Sharpe/Sortino annualize over TRADED days only (no-trade days contribute no "
     "0-PnL observation; sparse configs read higher in magnitude).",
-    "Exposure sums per-trade minutes without merging overlaps (pooled candidates can be "
-    "concurrently open), so it can exceed 1.0.",
+    "One-setup/one-trade replay forbids overlapping executed trades.",
     "Intrabar drawdown folds the GROSS (cost-free) MAE excursion onto the cost-netted "
     "curve; a drawdown starting at the initial zero peak counts depth but no duration.",
 )
@@ -97,7 +91,6 @@ def _counts(sub: pd.DataFrame) -> dict:
         "trades": int(len(sub)),
         "winners": int((sub["_label"] == "win").sum()),
         "losers": int((sub["_label"] == "loss").sum()),
-        "eod_timeouts": int((sub["_label"] == "eod_timeout").sum()),
     }
 
 
@@ -107,7 +100,6 @@ def _win_rate(sub: pd.DataFrame) -> dict:
     return {
         "n": n,
         "win_rate": _f(k / n) if n else None,
-        "ci95": wilson_ci(k, n),
     }
 
 
@@ -129,7 +121,6 @@ def _pnl_block(sub: pd.DataFrame, col: str) -> dict:
         "gross_profit": gross_profit,
         "gross_loss": gross_loss,
         "avg_per_trade": float(series.mean()),
-        "avg_per_trade_ci95": mean_ci(series),
         "avg_win": avg_win,
         "avg_loss": avg_loss,
         "largest_win": float(pos.max()) if len(pos) else None,
@@ -219,7 +210,7 @@ def _drawdown(equity: np.ndarray, mae: np.ndarray, res_ts: pd.Series) -> dict:
 
 
 def _streaks(labels: pd.Series) -> dict:
-    """Max consecutive wins/losses over win/loss labels (eod excluded)."""
+    """Maximum consecutive resolved wins/losses."""
     best = {"win": 0, "loss": 0}
     current_label, run = None, 0
     for label in labels:
@@ -271,6 +262,9 @@ def _mfe_mae(ordered: pd.DataFrame) -> dict:
 
 _TRADE_LIST_COLUMNS = (
     "setup_id",
+    "candidate_id",
+    "decision_id",
+    "trade_id",
     "trading_day",
     "entry_family",
     "direction",
@@ -281,6 +275,211 @@ _TRADE_LIST_COLUMNS = (
     "stop_ticks",
     "risk_ticks",
 )
+
+
+def _validate_and_normalize_executed_trades(
+    work: pd.DataFrame,
+    *,
+    tick_size: float,
+) -> pd.DataFrame:
+    """Fail closed before any performance arithmetic."""
+    # Identity uniqueness is the first diagnostic even when a caller also
+    # omitted other required execution fields.
+    validate_primary_keys(RecordTable.EXECUTED_TRADE, work)
+    required_identity = {
+        "record_table",
+        "record_schema_version",
+        "capture_schema_version",
+        "dataset_schema_version",
+        "trade_schema_version",
+        "setup_id",
+        "candidate_id",
+        "trade_id",
+        "decision_id",
+        "status",
+        "resolution",
+        "trading_day",
+        "direction",
+        "entry_ts_utc",
+        "resolution_ts_utc",
+        "entry_cursor",
+        "resolution_cursor",
+        "entry_ticks",
+        "stop_ticks",
+        "target_ticks",
+        "risk_ticks",
+        "bars_after_entry_to_resolution",
+        "realized_ticks",
+        "mfe_ticks",
+        "mae_ticks",
+    }
+    missing = sorted(required_identity - set(work.columns))
+    if missing:
+        raise ValueError(
+            "performance input must be a validated executed_trade table; "
+            f"missing {missing}"
+        )
+    validate_table_identity(RecordTable.EXECUTED_TRADE, work)
+    if work["setup_id"].isna().any() or work["candidate_id"].isna().any():
+        raise ValueError("executed_trade setup_id/candidate_id must be non-null")
+    if work["decision_id"].isna().any() or (
+        work["decision_id"].astype(str) == ""
+    ).any():
+        raise ValueError("executed_trade decision_id must be non-null")
+    if not (work["status"] == "resolved").all():
+        raise ValueError(
+            "only resolved executed_trade rows may enter performance statistics"
+        )
+    if not work["resolution"].isin(("target", "stop")).all():
+        raise ValueError("resolved executed_trade resolution must be target or stop")
+
+    normalized = work.copy()
+    normalized["direction"] = normalized["direction"].astype(str).str.upper()
+    if not normalized["direction"].isin(("LONG", "SHORT")).all():
+        raise ValueError("executed_trade direction must be LONG or SHORT")
+    normalized["_label"] = normalized["resolution"].map(
+        {"target": "win", "stop": "loss"}
+    )
+    normalized["_bars_to_res"] = pd.to_numeric(
+        normalized["bars_after_entry_to_resolution"], errors="raise"
+    )
+    if (normalized["_bars_to_res"] < 1).any():
+        raise ValueError("executed_trade cannot resolve on the entry bar")
+
+    risk_ticks = pd.to_numeric(normalized["risk_ticks"], errors="raise")
+    normalized["_risk_points"] = risk_ticks * tick_size
+    if (normalized["_risk_points"] <= 0).any():
+        raise ValueError("executed_trade risk must be positive")
+
+    entry_ticks = pd.to_numeric(normalized["entry_ticks"], errors="raise")
+    stop_ticks = pd.to_numeric(normalized["stop_ticks"], errors="raise")
+    target_ticks = pd.to_numeric(normalized["target_ticks"], errors="raise")
+    expected_risk = (entry_ticks - stop_ticks).abs()
+    if not (risk_ticks == expected_risk).all():
+        raise ValueError("executed_trade risk_ticks disagrees with entry/stop")
+    is_long = normalized["direction"] == "LONG"
+    wrong_side = (
+        is_long & ~((stop_ticks < entry_ticks) & (target_ticks > entry_ticks))
+    ) | (
+        ~is_long & ~((stop_ticks > entry_ticks) & (target_ticks < entry_ticks))
+    )
+    if wrong_side.any():
+        raise ValueError("executed_trade stop/target is on the wrong side")
+
+    realized_ticks = pd.to_numeric(normalized["realized_ticks"], errors="raise")
+    expected_realized = pd.Series(
+        np.where(
+            normalized["resolution"] == "stop",
+            -risk_ticks,
+            (target_ticks - entry_ticks).abs(),
+        ),
+        index=normalized.index,
+    )
+    if not (realized_ticks == expected_realized).all():
+        raise ValueError("executed_trade realized_ticks disagrees with its barrier")
+    normalized["_realized_pts"] = realized_ticks * tick_size
+    normalized["_gross_r"] = normalized["_realized_pts"] / normalized["_risk_points"]
+    normalized["_mfe_r"] = (
+        pd.to_numeric(normalized["mfe_ticks"], errors="raise")
+        * tick_size
+        / normalized["_risk_points"]
+    )
+    normalized["_mae_r"] = (
+        pd.to_numeric(normalized["mae_ticks"], errors="raise")
+        * tick_size
+        / normalized["_risk_points"]
+    )
+    normalized["_tp_r"] = (
+        (target_ticks - entry_ticks).abs() * tick_size
+        / normalized["_risk_points"]
+    )
+
+    entry_ts = pd.to_datetime(normalized["entry_ts_utc"], utc=True, errors="raise")
+    resolution_ts = pd.to_datetime(
+        normalized["resolution_ts_utc"], utc=True, errors="raise"
+    )
+    if resolution_ts.isna().any() or not (resolution_ts > entry_ts).all():
+        raise ValueError("executed_trade resolution must be strictly after entry")
+    if normalized["resolution_cursor"].isna().any() or (
+        normalized["resolution_cursor"].astype(str) == ""
+    ).any():
+        raise ValueError("executed_trade resolution_cursor is required")
+    if (
+        normalized["resolution_cursor"].astype(str)
+        == normalized["entry_cursor"].astype(str)
+    ).any():
+        raise ValueError("executed_trade cannot resolve at its entry cursor")
+
+    # The reducer has one execution slot.  A later trade may start only after
+    # the prior trade's exact resolution event.
+    chronological = pd.DataFrame(
+        {"entry": entry_ts, "resolution": resolution_ts}
+    ).sort_values("entry", kind="mergesort")
+    if len(chronological) > 1:
+        previous_resolution = chronological["resolution"].shift(1)
+        overlaps = chronological["entry"] <= previous_resolution
+        if overlaps.fillna(False).any():
+            raise ValueError("executed_trade intervals overlap")
+    return normalized
+
+
+def _cluster_bootstrap(
+    ordered: pd.DataFrame,
+    *,
+    evaluation_config_hash: str,
+    samples: int = 10_000,
+) -> dict:
+    days = sorted(ordered["trading_day"].astype(str).unique())
+    if len(days) < 2:
+        return {
+            "available": False,
+            "reason": "fewer_than_two_trading_days",
+            "samples": samples,
+            "confidence_level": 0.95,
+        }
+    seed = int(evaluation_config_hash[:16], 16)
+    rng = np.random.default_rng(seed)
+    groups = [
+        ordered[ordered["trading_day"].astype(str) == day]
+        for day in days
+    ]
+    cluster_n = np.array([len(group) for group in groups], dtype=float)
+    cluster_wins = np.array(
+        [int((group["_label"] == "win").sum()) for group in groups],
+        dtype=float,
+    )
+    cluster_net_r = np.array(
+        [float(group["_net_r"].sum()) for group in groups],
+        dtype=float,
+    )
+    cluster_pnl = np.array(
+        [float(group["_pnl_usd"].sum()) for group in groups],
+        dtype=float,
+    )
+    sampled_indices = rng.integers(
+        0, len(days), size=(samples, len(days))
+    )
+    sampled_n = cluster_n[sampled_indices].sum(axis=1)
+    win_rates = cluster_wins[sampled_indices].sum(axis=1) / sampled_n
+    mean_net_r = cluster_net_r[sampled_indices].sum(axis=1) / sampled_n
+    mean_pnl_usd = cluster_pnl[sampled_indices].sum(axis=1) / sampled_n
+
+    def interval(values: np.ndarray) -> list[float]:
+        return [
+            float(np.percentile(values, 2.5)),
+            float(np.percentile(values, 97.5)),
+        ]
+
+    return {
+        "available": True,
+        "samples": samples,
+        "confidence_level": 0.95,
+        "seed_source": "evaluation_config_hash",
+        "n_trading_days": len(days),
+        "win_rate": interval(win_rates),
+        "mean_net_r": interval(mean_net_r),
+        "mean_pnl_usd": interval(mean_pnl_usd),
+    }
 
 
 def _trade_list(ordered: pd.DataFrame) -> list[dict]:
@@ -334,21 +533,44 @@ def _scrub(rec: dict) -> dict:
     return out
 
 
-def compute_trade_stats(work: pd.DataFrame, *, cost_points: float) -> dict:
-    """The full 2b metric contract over an engine-prepared frame."""
-    if work.empty:
-        return {"n": 0, "assumptions": list(_ASSUMPTIONS)}
-    ordered = work.copy()
+def compute_trade_stats(
+    work: pd.DataFrame,
+    *,
+    cost_points: float,
+    evaluation_config_hash: str,
+    tick_size: float = 0.25,
+) -> dict:
+    """Performance metrics over validated resolved IFVG v2 executions only."""
+    if len(evaluation_config_hash) != 64:
+        raise ValueError("evaluation_config_hash must be a SHA-256 hex string")
+    try:
+        int(evaluation_config_hash, 16)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("evaluation_config_hash must be a SHA-256 hex string") from exc
+    ordered = _validate_and_normalize_executed_trades(
+        work, tick_size=tick_size
+    )
+    if ordered.empty:
+        return {
+            "schema_version": IFVG_DATASET_SCHEMA_VERSION,
+            "record_table": RecordTable.EXECUTED_TRADE.value,
+            "n": 0,
+            "cluster_bootstrap_ci95": {
+                "available": False,
+                "reason": "fewer_than_two_trading_days",
+                "samples": 10_000,
+                "confidence_level": 0.95,
+            },
+            "assumptions": list(_ASSUMPTIONS),
+        }
     ordered["_pnl_usd"] = (
         pd.to_numeric(ordered["_realized_pts"], errors="coerce") - cost_points
     ) * DOLLARS_PER_POINT
+    ordered["_net_r"] = (
+        pd.to_numeric(ordered["_realized_pts"], errors="coerce") - cost_points
+    ) / pd.to_numeric(ordered["_risk_points"], errors="raise")
     entry = pd.to_datetime(ordered["entry_ts_utc"], utc=True)
-    bars = pd.to_numeric(ordered.get("_bars_to_res"), errors="coerce")
-    res = entry + pd.to_timedelta(bars.clip(lower=0).fillna(0), unit="m")
-    eod = (ordered["_label"] == "eod_timeout") | bars.isna() | (bars < 0)
-    if "label_window_end" in ordered.columns:
-        lwe = pd.to_datetime(ordered["label_window_end"], utc=True, errors="coerce")
-        res = res.mask(eod & lwe.notna(), lwe)
+    res = pd.to_datetime(ordered["resolution_ts_utc"], utc=True, errors="raise")
     ordered["_res_ts"] = res
     ordered["_minutes_in_trade"] = (res - entry).dt.total_seconds() / 60.0
     ordered = ordered.sort_values("_res_ts", kind="mergesort").reset_index(drop=True)
@@ -380,20 +602,18 @@ def compute_trade_stats(work: pd.DataFrame, *, cost_points: float) -> dict:
             "romad": _f(net / dd["max_drawdown_close"]) if dd["max_drawdown_close"] else None,
         }
 
-    eod_rows = ordered[ordered["_label"] == "eod_timeout"]
     return {
+        "schema_version": IFVG_DATASET_SCHEMA_VERSION,
+        "record_table": RecordTable.EXECUTED_TRADE.value,
+        "evaluation_config_hash": evaluation_config_hash,
         "n": int(len(ordered)),
         "counts": _sided(ordered, _counts),
         "win_rate": _sided(ordered, _win_rate),
         "pnl_usd": _sided(ordered, lambda sub: _pnl_block(sub, "_pnl_usd")),
         "pnl_r": _sided(ordered, lambda sub: _pnl_block(sub, "_net_r")),
-        "eod_timeout_breakout": _sided(
-            eod_rows,
-            lambda sub: {
-                "n": int(len(sub)),
-                "net_pnl_usd": _f(sub["_pnl_usd"].sum()) if len(sub) else 0.0,
-                "avg_pnl_usd": _f(sub["_pnl_usd"].mean()) if len(sub) else None,
-            },
+        "cluster_bootstrap_ci95": _cluster_bootstrap(
+            ordered,
+            evaluation_config_hash=evaluation_config_hash,
         ),
         "time": {
             **_sided(ordered, _time_block),

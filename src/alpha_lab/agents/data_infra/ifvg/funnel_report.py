@@ -152,17 +152,12 @@ def write_funnel_report(
 
 
 def _expectancy_block(ds: pd.DataFrame, tag: str) -> list[str]:
-    col_label, col_net = f"label_{tag}", f"realized_r_net_{tag}"
+    col_label = f"label_{tag}"
     sub = ds[ds[col_label] != "no_forward"]
     if sub.empty:
         return [f"- {tag}: no labeled rows"]
     dist = sub[col_label].value_counts().to_dict()
-    net = sub[col_net].mean()
-    win_rate = (sub[col_label] == "win").mean()
-    return [
-        f"- **{tag}** n={len(sub)} labels={dist} win_rate={win_rate:.3f} "
-        f"mean_net_R={net:+.3f}"
-    ]
+    return [f"- **{tag}** n={len(sub)} counterfactual_labels={dist}"]
 
 
 def write_labels_report(ds: pd.DataFrame, out_md: Path) -> None:
@@ -181,8 +176,8 @@ def write_labels_report(ds: pd.DataFrame, out_md: Path) -> None:
         f"captured but excluded from every statistic below; "
         f"{int(ds['selected'].sum())} selected by the doc-default family).",
         "",
-        "_Entry price model: confirmation_close. Costs: 0.514 NQ points round-turn."
-        " `eod_timeout` realizes at the day-end close. Warmup rows excluded below._",
+        "_Legacy v1 candidate study only: no row is an eligible decision or an "
+        "executed trade. Day-end is label censoring, never an execution close._",
         "",
         "_The `ifvg_retest` family's entry model is PROVISIONAL (bar-close placeholder,"
         " no CE/boundary entry references yet; its rows carry `entry_model_final=False`)"

@@ -97,6 +97,10 @@ def compute_feature_insight(
     permutation_importance: list[dict] | None = None,
 ) -> dict:
     """Univariate + model-importance insight over an engine-prepared frame."""
+    if "record_table" in work.columns:
+        raise ValueError(
+            "repaired IFVG v2 tables are denied to the legacy feature/model path"
+        )
     numeric = []
     for col in numeric_features:
         # Bool flags are reported once, as categorical tables — a quartile scan

@@ -26,6 +26,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
+from strategy_core.candles._buckets import HTF_ANCHOR_POLICY
 from strategy_core.candles.time_batch import build_time_bars_from_frame
 from strategy_core.data.databento_parquet import DatabentoParquetSource
 from strategy_core.data.events import DataQualityWarning as ScDataQualityWarning
@@ -37,6 +38,11 @@ from strategy_core.runtime.levels import StrategyLevelState
 from strategy_core.types import Bar, BarKind, CloseReason, Level, SessionScheme, Side, Trade
 
 from .config import IfvgCaptureConfig
+from .data_access import (
+    ExplorationDataPolicy,
+    allowlist_sha256,
+    require_fixed_exploration_allowlist,
+)
 
 __all__ = [
     "DayArtifacts",
@@ -49,6 +55,7 @@ __all__ = [
 ]
 
 _META_KEY = b"ifvg_artifacts_meta"
+_ARTIFACT_SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -81,9 +88,24 @@ class DayArtifacts:
     reader_warnings: tuple[str, ...]
 
 
-def seeds_for_day(date_str: str, cfg: IfvgCaptureConfig) -> DaySeeds:
+def seeds_for_day(
+    date_str: str,
+    cfg: IfvgCaptureConfig,
+    *,
+    access_policy: ExplorationDataPolicy | None = None,
+) -> DaySeeds:
     """Entering seeds — prior artifact's stamped outputs when present, else the
     SC store walks (parallel-warmer fallback)."""
+    if cfg.identity_lane == "v2" and access_policy is None:
+        raise PermissionError(
+            "IFVG v2 seed discovery requires an explicit pre-I/O access policy"
+        )
+    if access_policy is not None:
+        access_policy.authorize_date(date_str)
+        raise RuntimeError(
+            "v2 exploration cannot scan prior store days; start the explicit "
+            "allowlisted chain with cold DaySeeds and carry seeds forward"
+        )
     td = date.fromisoformat(date_str)
     symbol_dir = Path(cfg.data_dir) / cfg.symbol
     prior = _prior_artifact_meta(td, cfg)
@@ -134,12 +156,49 @@ def _prior_artifact_meta(td: date, cfg: IfvgCaptureConfig) -> tuple[str, dict] |
     return None
 
 
-def build_day_artifacts(date_str: str, cfg: IfvgCaptureConfig, seeds: DaySeeds) -> DayArtifacts:
+def build_day_artifacts(
+    date_str: str,
+    cfg: IfvgCaptureConfig,
+    seeds: DaySeeds,
+    *,
+    access_policy: ExplorationDataPolicy | None = None,
+) -> DayArtifacts:
     """ONE drain of the canonical reader -> bars + level timeline + own extremes."""
+    if cfg.identity_lane == "v2" and access_policy is None:
+        raise PermissionError(
+            "IFVG v2 artifact construction requires an explicit access policy"
+        )
+    if cfg.identity_lane == "v2":
+        require_fixed_exploration_allowlist(access_policy)
     td = date.fromisoformat(date_str)
+    symbol_dir = Path(cfg.data_dir) / cfg.symbol
+    allowed_source_dates = None
+    if access_policy is not None:
+        access_policy.resolve_source_path(
+            date_str,
+            lambda day: symbol_dir / day,
+        )
+        allowed_source_dates = frozenset(
+            date.fromisoformat(day) for day in access_policy.allowlist
+        )
+        prior_day = td - timedelta(days=1)
+        if prior_day in allowed_source_dates:
+            access_policy.resolve_source_path(
+                prior_day.isoformat(),
+                lambda day: symbol_dir / day,
+            )
+            access_policy.record_metadata_access(prior_day.isoformat())
+        access_policy.record_metadata_access(date_str)
     source = DatabentoParquetSource.for_trading_day(
-        Path(cfg.data_dir) / cfg.symbol, td, requested_symbol=cfg.symbol
+        symbol_dir,
+        td,
+        requested_symbol=cfg.symbol,
+        allowed_source_dates=allowed_source_dates,
     )
+    if access_policy is not None:
+        for source_path in source.paths:
+            source_day = source_path.parent.name
+            access_policy.record_file_open(source_day)
     warnings = tuple(w.message for w in source.pending_warnings)
 
     level_state = StrategyLevelState(
@@ -158,10 +217,14 @@ def build_day_artifacts(date_str: str, cfg: IfvgCaptureConfig, seeds: DaySeeds) 
         )
 
     trades: list[Trade] = []
+    event_rows = 0
     for event in source.events():
+        event_rows += 1
         if isinstance(event, ScDataQualityWarning) or not isinstance(event, Trade):
             continue
         trades.append(event)
+    if access_policy is not None:
+        access_policy.record_rows_read(date_str, rows=event_rows)
 
     if not trades:
         return DayArtifacts(date_str, [], {}, seeds, None, None, warnings)
@@ -183,10 +246,10 @@ def build_day_artifacts(date_str: str, cfg: IfvgCaptureConfig, seeds: DaySeeds) 
     idx = 0
     n = len(trades)
     for bar in bars_1m:
-        while idx < n and trades[idx].event_ts_utc <= bar.close_ts_utc:
+        while idx < n and trades[idx].event_ts_utc <= bar.availability_ts_utc:
             level_state.process_trade(trades[idx])
             idx += 1
-        timeline[bar.close_ts_utc] = level_state.levels()
+        timeline[bar.availability_ts_utc] = level_state.levels()
 
     day_hl = (
         max(b.high_ticks for b in bars_1m),
@@ -195,7 +258,7 @@ def build_day_artifacts(date_str: str, cfg: IfvgCaptureConfig, seeds: DaySeeds) 
     ny_bars = [
         b
         for b in bars_1m
-        if _session_of_bucket_start(b.open_ts_utc, cfg.session_scheme) == "ny"
+        if _session_of_bucket_start(b.availability_ts_utc, cfg.session_scheme) == "ny"
         and b.trading_day == td
     ]
     ny_hl = (
@@ -231,14 +294,34 @@ _BAR_COLUMNS = (
     "is_partial",
     "close_reason",
     "kind",
+    "logical_open_ts_utc",
+    "logical_close_ts_utc",
 )
 
 
-def write_day_artifacts(artifacts: DayArtifacts, cfg: IfvgCaptureConfig) -> None:
+def write_day_artifacts(
+    artifacts: DayArtifacts,
+    cfg: IfvgCaptureConfig,
+    *,
+    access_policy: ExplorationDataPolicy | None = None,
+) -> None:
     import pyarrow as pa
     import pyarrow.parquet as pq
 
+    if cfg.identity_lane != "v2":
+        raise PermissionError("legacy IFVG artifacts are read-only")
+    if access_policy is None:
+        raise PermissionError(
+            "IFVG v2 artifact writes require an explicit access policy"
+        )
+    require_fixed_exploration_allowlist(access_policy)
+    access_policy.authorize_date(artifacts.date_str)
     meta = {
+        "artifact_schema_version": _ARTIFACT_SCHEMA_VERSION,
+        "artifacts_tag": cfg.artifacts_tag(),
+        "anchor_policy": HTF_ANCHOR_POLICY,
+        "source_access_policy": "explicit_allowlist_before_path_v1",
+        "source_allowlist_sha256": allowlist_sha256(access_policy.allowlist),
         "seeds": artifacts.seeds.meta(),
         "day_hl": list(artifacts.day_hl) if artifacts.day_hl else None,
         "ny_hl": list(artifacts.ny_hl) if artifacts.ny_hl else None,
@@ -266,6 +349,8 @@ def write_day_artifacts(artifacts: DayArtifacts, cfg: IfvgCaptureConfig) -> None
                 b.close_reason.value if b.close_reason else None for b in artifacts.bars
             ],
             "kind": [b.kind.value for b in artifacts.bars],
+            "logical_open_ts_utc": [b.logical_open_ts_utc for b in artifacts.bars],
+            "logical_close_ts_utc": [b.logical_close_ts_utc for b in artifacts.bars],
         }
     )
     table = pa.Table.from_pandas(bars_frame, preserve_index=False)
@@ -297,24 +382,54 @@ def write_day_artifacts(artifacts: DayArtifacts, cfg: IfvgCaptureConfig) -> None
 
 
 def load_day_artifacts(
-    date_str: str, cfg: IfvgCaptureConfig, *, expected_seeds: DaySeeds | None
+    date_str: str,
+    cfg: IfvgCaptureConfig,
+    *,
+    expected_seeds: DaySeeds | None,
+    access_policy: ExplorationDataPolicy | None = None,
 ) -> DayArtifacts | None:
     """Load a trusted artifact pair, or ``None`` (missing / seed mismatch)."""
     import pyarrow.parquet as pq
 
-    bars_path = cfg.bars_path(date_str)
-    levels_path = cfg.levels_path(date_str)
+    if cfg.identity_lane == "v2" and access_policy is None:
+        raise PermissionError(
+            "IFVG v2 artifact reads require an explicit access policy"
+        )
+    if cfg.identity_lane == "v2":
+        require_fixed_exploration_allowlist(access_policy)
+    if access_policy is not None:
+        bars_path = access_policy.resolve_source_path(date_str, cfg.bars_path)
+        levels_path = access_policy.resolve_source_path(date_str, cfg.levels_path)
+    else:
+        bars_path = cfg.bars_path(date_str)
+        levels_path = cfg.levels_path(date_str)
     if not bars_path.exists() or not levels_path.exists():
         return None
     try:
+        if access_policy is not None:
+            access_policy.record_metadata_access(date_str)
         md = pq.read_metadata(bars_path).metadata or {}
         meta = json.loads(md.get(_META_KEY, b"{}"))
     except Exception:
         return None
+    if cfg.identity_lane == "v2" and (
+        meta.get("artifact_schema_version") != _ARTIFACT_SCHEMA_VERSION
+        or meta.get("artifacts_tag") != cfg.artifacts_tag()
+        or meta.get("anchor_policy") != HTF_ANCHOR_POLICY
+        or meta.get("source_access_policy")
+        != "explicit_allowlist_before_path_v1"
+        or meta.get("source_allowlist_sha256")
+        != allowlist_sha256(access_policy.allowlist)
+    ):
+        return None
     if expected_seeds is not None and meta.get("seeds") != expected_seeds.meta():
         return None
 
+    if access_policy is not None:
+        access_policy.record_file_open(date_str)
     bars_frame = pd.read_parquet(bars_path)
+    if access_policy is not None:
+        access_policy.record_rows_read(date_str, rows=len(bars_frame))
     bars = [
         Bar(
             timeframe_ticks=int(r.timeframe_ticks),
@@ -333,10 +448,26 @@ def load_day_artifacts(
             is_partial=bool(r.is_partial),
             close_reason=CloseReason(r.close_reason) if pd.notna(r.close_reason) else None,
             kind=BarKind(r.kind),
+            logical_open_ts_utc=(
+                r.logical_open_ts_utc.to_pydatetime()
+                if hasattr(r, "logical_open_ts_utc")
+                and pd.notna(r.logical_open_ts_utc)
+                else None
+            ),
+            logical_close_ts_utc=(
+                r.logical_close_ts_utc.to_pydatetime()
+                if hasattr(r, "logical_close_ts_utc")
+                and pd.notna(r.logical_close_ts_utc)
+                else None
+            ),
         )
         for r in bars_frame.itertuples(index=False)
     ]
+    if access_policy is not None:
+        access_policy.record_file_open(date_str)
     levels_frame = pd.read_parquet(levels_path)
+    if access_policy is not None:
+        access_policy.record_rows_read(date_str, rows=len(levels_frame))
     timeline: dict[datetime, tuple[Level, ...]] = {}
     if len(levels_frame):
         for ts, group in levels_frame.groupby("close_ts_utc", sort=True):
