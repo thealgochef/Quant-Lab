@@ -1395,3 +1395,62 @@ def collapse_to_execution_pane(fig):
         xaxis3={"visible": False, "showticklabels": False},
     )
     return fig
+
+
+DISPLAY_TIMEZONE = "America/New_York"
+
+
+def _display_ts(value, tz: str):
+    """UTC-ish datetime-like -> naive wall-clock in ``tz`` (DST-aware);
+    non-datetime values pass through unchanged."""
+    import numpy as np
+
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            parsed = pd.Timestamp(value)
+        except (ValueError, TypeError):
+            return value
+        if parsed.tzinfo is None:
+            return value  # ambiguous string; leave untouched
+        return parsed.tz_convert(tz).tz_localize(None)
+    if isinstance(value, np.datetime64):
+        return pd.Timestamp(value, tz="UTC").tz_convert(tz).tz_localize(None)
+    if isinstance(value, (pd.Timestamp, datetime)):
+        ts = pd.Timestamp(value)
+        ts = ts.tz_localize("UTC") if ts.tzinfo is None else ts
+        return ts.tz_convert(tz).tz_localize(None)
+    return value
+
+
+def to_display_timezone(fig, tz: str = DISPLAY_TIMEZONE):
+    """Display-only: convert every datetime x-coordinate (traces, shapes,
+    axis-anchored annotations, explicit axis ranges) from UTC to wall-clock
+    time in ``tz`` and label ticks on a 12-hour clock. The underlying
+    evidence stays UTC; hover texts that spell out ISO instants keep their
+    explicit +00:00 suffix."""
+    from datetime import datetime as _dt  # noqa: F401  (documentation import)
+
+    for trace in fig.data:
+        x = getattr(trace, "x", None)
+        if x is not None and len(x):
+            trace.x = [_display_ts(value, tz) for value in x]
+    for shape in fig.layout.shapes or ():
+        if str(shape.xref or "x").split(" ")[0].startswith("x") and "domain" not in str(
+            shape.xref or ""
+        ):
+            shape.x0 = _display_ts(shape.x0, tz)
+            shape.x1 = _display_ts(shape.x1, tz)
+    for annotation in fig.layout.annotations or ():
+        xref = str(annotation.xref or "x")
+        if xref.startswith("x") and "domain" not in xref:
+            annotation.x = _display_ts(annotation.x, tz)
+    for axis_name in ("xaxis", "xaxis2", "xaxis3"):
+        axis = getattr(fig.layout, axis_name, None)
+        if axis is None:
+            continue
+        if axis.range is not None:
+            axis.range = tuple(_display_ts(value, tz) for value in axis.range)
+        axis.tickformat = "%I:%M %p<br>%b %d"
+    return fig

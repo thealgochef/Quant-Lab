@@ -23,10 +23,12 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from ifvg_verifier_charts import (  # noqa: E402
+    DISPLAY_TIMEZONE,
     VerifierLayers,
     build_setup_figure,
     build_verifier_figure,
     collapse_to_execution_pane,
+    to_display_timezone,
 )
 
 from alpha_lab.agents.data_infra.ifvg.replay_chart_provider import (  # noqa: E402
@@ -1124,8 +1126,13 @@ def _render_setup_section(st_module, pair_ref: ArtifactPairRef) -> None:
         )
         if execution_pane_only:
             figure = collapse_to_execution_pane(figure)
+        figure = to_display_timezone(figure)
         # hold-left-drag pans; mouse wheel zooms (box-zoom stays in the modebar).
         figure.update_layout(dragmode="pan")
+        st_module.caption(
+            f"Axis times: Eastern ({DISPLAY_TIMEZONE}), 12-hour clock, "
+            "DST-aware. Hover ISO timestamps remain UTC (+00:00)."
+        )
         st_module.plotly_chart(
             figure,
             use_container_width=True,
@@ -1409,8 +1416,13 @@ def render_verifier_section(st_module, pair, entry: dict) -> str | None:
         )
         if execution_pane_only:
             figure = collapse_to_execution_pane(figure)
+        figure = to_display_timezone(figure)
         # hold-left-drag pans; mouse wheel zooms (box-zoom stays in the modebar).
         figure.update_layout(dragmode="pan")
+        st_module.caption(
+            f"Axis times: Eastern ({DISPLAY_TIMEZONE}), 12-hour clock, "
+            "DST-aware. Hover ISO timestamps remain UTC (+00:00)."
+        )
         st_module.plotly_chart(
             figure,
             use_container_width=True,

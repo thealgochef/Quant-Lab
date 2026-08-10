@@ -399,3 +399,43 @@ def test_collapse_to_execution_pane_hides_tf_panes_and_keeps_q40() -> None:
     assert collapsed.layout.yaxis.domain[0] <= 0.05
     assert collapsed.layout.yaxis2.visible is False
     assert collapsed.layout.yaxis3.visible is False
+
+
+def test_to_display_timezone_converts_and_uses_12_hour_ticks() -> None:
+    """x-coordinates convert UTC -> Eastern wall-clock (DST-aware: EST in
+    January, EDT in June) and the tick format is a 12-hour clock. Domain-
+    anchored annotations are untouched."""
+    import pandas as pd
+    import plotly.graph_objects as go
+    from ifvg_verifier_charts import DISPLAY_TIMEZONE, to_display_timezone
+    from plotly.subplots import make_subplots
+
+    assert DISPLAY_TIMEZONE == "America/New_York"
+    winter = pd.Timestamp("2026-01-13T03:00:00Z")  # EST: 22:00 prior day
+    summer = pd.Timestamp("2026-06-05T15:30:00Z")  # EDT: 11:30
+    fig = make_subplots(rows=3, cols=1, shared_xaxes=True)
+    fig.add_trace(go.Scatter(x=[winter, summer], y=[1, 2]), row=1, col=1)
+    fig.add_shape(
+        type="rect", x0=winter, x1=summer, y0=1, y1=2, xref="x", yref="y"
+    )
+    fig.add_annotation(
+        text="zone tag", x=winter, y=2, xref="x", yref="y", showarrow=False
+    )
+    fig.add_annotation(
+        text="watermark", x=0.99, y=0.02, xref="x domain", yref="y domain",
+        showarrow=False,
+    )
+    out = to_display_timezone(fig)
+
+    x0, x1 = out.data[0].x
+    assert pd.Timestamp(x0) == pd.Timestamp("2026-01-12T22:00:00")
+    assert pd.Timestamp(x0).tzinfo is None
+    assert pd.Timestamp(x1) == pd.Timestamp("2026-06-05T11:30:00")
+    shape = out.layout.shapes[0]
+    assert pd.Timestamp(shape.x0) == pd.Timestamp("2026-01-12T22:00:00")
+    zone_tag = out.layout.annotations[0]
+    assert pd.Timestamp(zone_tag.x) == pd.Timestamp("2026-01-12T22:00:00")
+    watermark = out.layout.annotations[1]
+    assert watermark.x == 0.99  # domain-anchored: untouched
+    for axis_name in ("xaxis", "xaxis2", "xaxis3"):
+        assert getattr(out.layout, axis_name).tickformat == "%I:%M %p<br>%b %d"
