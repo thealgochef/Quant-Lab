@@ -223,3 +223,41 @@ class TestPairRefAndCatalog:
         }
         with pytest.raises(ReplayChartStoreError, match="duplicate"):
             find_replay_artifact(catalog, pair)
+
+
+def test_v1_finder_ignores_v2_bundle_entries_for_the_same_pair() -> None:
+    """Regression: after the publication gate writes the setup-aware v2 bundle
+    entry, the SAME pair exists twice in the catalog. The v1 finder must
+    resolve only the v1 artifact (candidate mode broke with a duplicate-pair
+    error when it matched both)."""
+    from alpha_lab.agents.data_infra.ifvg.replay_chart_store import (
+        ArtifactPairRef,
+        find_replay_artifact,
+        find_replay_artifact_v2,
+    )
+
+    pair = ArtifactPairRef(
+        profile_name="p",
+        v2_dataset_id="1" * 64,
+        v2_manifest_hash="2" * 64,
+        v3_dataset_id="3" * 64,
+        v3_manifest_hash="4" * 64,
+    )
+    catalog = {
+        "a" * 64: {
+            **pair.as_dict(),
+            "replay_chart_manifest_payload_sha256": "5" * 64,
+        },
+        "b" * 64: {
+            **pair.as_dict(),
+            "artifact_kind": "ifvg_replay_chart_v2",
+            "fsm_audit_artifact_id": "6" * 64,
+            "fsm_audit_manifest_hash": "7" * 64,
+            "replay_chart_manifest_payload_sha256": "8" * 64,
+        },
+    }
+    assert find_replay_artifact(catalog, pair) == "a" * 64
+    assert (
+        find_replay_artifact_v2(catalog, pair, fsm_audit_artifact_id="6" * 64)
+        == "b" * 64
+    )

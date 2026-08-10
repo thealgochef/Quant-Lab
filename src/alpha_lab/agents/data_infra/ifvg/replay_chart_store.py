@@ -705,12 +705,19 @@ def find_replay_artifact(
     catalog: dict[str, dict[str, str]],
     pair: ArtifactPairRef,
 ) -> str | None:
-    """Resolve a replay artifact by exact pair identity (all five fields)."""
+    """Resolve a V1 replay artifact by exact pair identity (all five fields).
+
+    Setup-aware v2 bundle entries share the same pair fields but carry an
+    ``artifact_kind`` marker — they are NEVER resolved by this finder (use
+    :func:`find_replay_artifact_v2`), so a pair with both generations
+    catalogued still resolves its v1 artifact unambiguously."""
     wanted = pair.as_dict()
     matches = [
         artifact_id
         for artifact_id, entry in catalog.items()
         if isinstance(entry, dict)
+        and entry.get("artifact_kind", "ifvg_replay_chart_v1")
+        == "ifvg_replay_chart_v1"
         and all(entry.get(key) == value for key, value in wanted.items())
     ]
     if len(matches) > 1:
