@@ -1308,3 +1308,64 @@ def figure_geometry_index(fig: go.Figure) -> dict[str, Any]:
     if meta is None:
         return {}
     return dict(meta)
+
+
+def collapse_to_execution_pane(fig):
+    """Display-only collapse of a built three-pane figure to the 1m execution
+    pane (row 1): parent/HTF-row traces, shapes, and annotations are hidden
+    and the execution pane takes the full height. A Q-40 watermark carried by
+    the full figure is RE-ANCHORED to the visible pane rather than dropped —
+    the experimental-anchor warning is never hidden while any 240m-derived
+    content (projected zones) can still be on screen. Geometry meta and the
+    omission report are untouched."""
+    hidden_axes = {"x2", "x3", "y2", "y3"}
+
+    def _axis_token(ref) -> str:
+        return str(ref).split(" ")[0] if ref is not None else ""
+
+    for trace in fig.data:
+        if getattr(trace, "xaxis", "x") in ("x2", "x3"):
+            trace.visible = False
+    kept_shapes = tuple(
+        shape
+        for shape in (fig.layout.shapes or ())
+        if _axis_token(shape.xref) not in hidden_axes
+        and _axis_token(shape.yref) not in hidden_axes
+    )
+    # row-1's vertical span BEFORE re-domaining — paper-referenced
+    # annotations (make_subplots places the subplot titles this way) below it
+    # belong to the hidden rows.
+    row1_domain = fig.layout.yaxis.domain or (0.0, 1.0)
+    row1_bottom = float(row1_domain[0])
+    kept_annotations = []
+    for annotation in fig.layout.annotations or ():
+        tokens = {_axis_token(annotation.xref), _axis_token(annotation.yref)}
+        is_q40 = "q40" in str(annotation.text or "").lower()
+        if not tokens.isdisjoint(hidden_axes):
+            if is_q40:
+                annotation.update(xref="x domain", yref="y domain", x=0.99, y=0.03)
+                kept_annotations.append(annotation)
+            continue
+        if (
+            _axis_token(annotation.yref) == "paper"
+            and annotation.y is not None
+            and float(annotation.y) < row1_bottom - 1e-9
+        ):
+            if is_q40:
+                annotation.update(xref="x domain", yref="y domain", x=0.99, y=0.03)
+                kept_annotations.append(annotation)
+            continue
+        kept_annotations.append(annotation)
+    # direct assignment: update_layout would MERGE the arrays element-wise
+    # instead of replacing them, resurrecting the hidden rows' shapes.
+    fig.layout.shapes = kept_shapes
+    fig.layout.annotations = tuple(kept_annotations)
+    fig.update_layout(
+        yaxis={"domain": [0.02, 1.0]},
+        yaxis2={"visible": False, "domain": [0.0, 0.005]},
+        yaxis3={"visible": False, "domain": [0.008, 0.013]},
+        xaxis={"showticklabels": True},
+        xaxis2={"visible": False, "showticklabels": False},
+        xaxis3={"visible": False, "showticklabels": False},
+    )
+    return fig

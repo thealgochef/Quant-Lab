@@ -343,3 +343,59 @@ class TestBudgetsAndDegradation:
         assert fig is not None
         titles = [a.text for a in fig.layout.annotations if a.text]
         assert any("none selected" in (t or "") for t in titles)
+
+
+def test_collapse_to_execution_pane_hides_tf_panes_and_keeps_q40() -> None:
+    """Display-only collapse: parent/HTF-row traces, shapes, and subplot
+    titles are hidden, the 1m pane takes the full height, and a Q-40
+    watermark is re-anchored to the visible pane instead of dropped."""
+    import plotly.graph_objects as go
+    from ifvg_verifier_charts import collapse_to_execution_pane
+    from plotly.subplots import make_subplots
+
+    fig = make_subplots(
+        rows=3,
+        cols=1,
+        shared_xaxes=True,
+        row_heights=[0.52, 0.24, 0.24],
+        subplot_titles=("1m execution", "parent 10m", "HTF 4H"),
+    )
+    for row in (1, 2, 3):
+        fig.add_trace(go.Scatter(x=[1, 2], y=[1, 2], name=f"row{row}"), row=row, col=1)
+    fig.add_shape(
+        type="rect", x0=1, x1=2, y0=1, y1=2, xref="x2", yref="y2"
+    )
+    fig.add_shape(
+        type="rect", x0=1, x1=2, y0=1, y1=2, xref="x", yref="y"
+    )
+    fig.add_annotation(
+        text="experimental_q40_open — not canonical context",
+        xref="x3 domain",
+        yref="y3 domain",
+        x=0.99,
+        y=0.98,
+        showarrow=False,
+    )
+    collapsed = collapse_to_execution_pane(fig)
+
+    visibility = {
+        trace.name: trace.visible for trace in collapsed.data
+    }
+    assert visibility["row1"] is None or visibility["row1"] is True
+    assert visibility["row2"] is False and visibility["row3"] is False
+    # only the row-1 shape survives.
+    assert len(collapsed.layout.shapes) == 1
+    assert str(collapsed.layout.shapes[0].xref).startswith("x")
+    assert "2" not in str(collapsed.layout.shapes[0].xref)
+    # subplot titles for rows 2/3 are gone; the q40 watermark survives,
+    # re-anchored onto the visible pane.
+    texts = [str(a.text) for a in collapsed.layout.annotations]
+    assert "parent 10m" not in texts and "HTF 4H" not in texts
+    assert any("q40" in text.lower() for text in texts)
+    q40 = next(a for a in collapsed.layout.annotations if "q40" in str(a.text).lower())
+    assert q40.xref == "x domain" and q40.yref == "y domain"
+    # the execution pane takes the full height; tf-pane axes are hidden.
+    assert collapsed.layout.yaxis.domain[1] == 1.0
+    assert collapsed.layout.yaxis.domain[0] <= 0.05
+    assert collapsed.layout.yaxis2.visible is False
+    assert collapsed.layout.yaxis3.visible is False

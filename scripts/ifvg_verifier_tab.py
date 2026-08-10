@@ -26,6 +26,7 @@ from ifvg_verifier_charts import (  # noqa: E402
     VerifierLayers,
     build_setup_figure,
     build_verifier_figure,
+    collapse_to_execution_pane,
 )
 
 from alpha_lab.agents.data_infra.ifvg.replay_chart_provider import (  # noqa: E402
@@ -264,7 +265,7 @@ def _render_side_panel(st_module, ctx: ReplayContext, evidence, row: pd.Series) 
                 continue
             st_module.caption(f"{name}")
             st_module.code(str(value), language=None)
-    with st_module.expander("Lifecycle", expanded=True):
+    with st_module.expander("Lifecycle", expanded=False):
         gates = evidence.stage_gates
         rows = []
         for stage_name in _STAGE_ORDER:
@@ -303,7 +304,7 @@ def _render_side_panel(st_module, ctx: ReplayContext, evidence, row: pd.Series) 
             use_container_width=True,
         )
         st_module.caption("Zone fill/invalidation times are not persisted — lifecycle end unknown.")
-    with st_module.expander("Execution", expanded=True):
+    with st_module.expander("Execution", expanded=False):
         if evidence.execution is None:
             if row["blocked"]:
                 st_module.warning(f"Blocked candidate — {row['block_reasons']}")
@@ -809,7 +810,7 @@ def _setup_candidate_ids(row: pd.Series) -> list[str]:
 
 def _render_setup_panel(st_module, ctx, bundle, evidence, row: pd.Series) -> None:
     candidate_less = bool(row["candidate_less"])
-    with st_module.expander("Setup summary", expanded=True):
+    with st_module.expander("Setup summary", expanded=False):
         first, second = st_module.columns(2)
         first.metric("Terminal reason", str(row["terminal_reason"]))
         second.metric("Phase at death", str(row["phase_at_death"]))
@@ -825,7 +826,7 @@ def _render_setup_panel(st_module, ctx, bundle, evidence, row: pd.Series) -> Non
                 "Candidate-less setup — it never produced an entry candidate "
                 "and is NOT executable evidence."
             )
-    with st_module.expander("Ordered event log", expanded=True):
+    with st_module.expander("Ordered event log", expanded=False):
         if evidence.events.empty:
             st_module.caption("No events are visible at this stage gate.")
         else:
@@ -1104,7 +1105,15 @@ def _render_setup_section(st_module, pair_ref: ArtifactPairRef) -> None:
             st_module.error(f"Bars unavailable: {_sanitize_error(error)}")
             return
 
-    chart_col, panel_col = st_module.columns([3.3, 1.4])
+    execution_pane_only = st_module.checkbox(
+        "Execution pane only",
+        value=True,
+        key=f"{_STATE_PREFIX}setup_execution_only",
+        help=(
+            "Show only the 1m execution pane; parent/HTF panes are hidden."
+        ),
+    )
+    chart_col, panel_col = st_module.columns([4.2, 1.0])
     with chart_col, st_module.container(border=True):
         figure, omissions = build_setup_figure(
             evidence=evidence,
@@ -1113,6 +1122,8 @@ def _render_setup_section(st_module, pair_ref: ArtifactPairRef) -> None:
             htf_tf=htf_tf,
             range_bounds=(start_ts, end_ts),
         )
+        if execution_pane_only:
+            figure = collapse_to_execution_pane(figure)
         st_module.plotly_chart(
             figure,
             use_container_width=True,
@@ -1301,6 +1312,15 @@ def render_verifier_section(st_module, pair, entry: dict) -> str | None:
                 key=f"{_STATE_PREFIX}verifier_layer_projection",
             ),
         )
+        execution_pane_only = st_module.checkbox(
+            "Execution pane only",
+            value=True,
+            key=f"{_STATE_PREFIX}verifier_layer_execution_only",
+            help=(
+                "Show only the 1m execution pane; parent/HTF panes are "
+                "hidden (their zones stay visible via 1m projection)."
+            ),
+        )
 
     custom_bounds = None
     if range_kind == "custom":
@@ -1373,7 +1393,7 @@ def render_verifier_section(st_module, pair, entry: dict) -> str | None:
             "the day) — parent/HTF panes carry the formation context."
         )
 
-    chart_col, panel_col = st_module.columns([3.3, 1.4])
+    chart_col, panel_col = st_module.columns([4.2, 1.0])
     with chart_col, st_module.container(border=True):
         figure, omissions = build_verifier_figure(
             evidence=evidence,
@@ -1384,6 +1404,8 @@ def render_verifier_section(st_module, pair, entry: dict) -> str | None:
             layers=layers,
             blocked_reasons=(row["block_reasons"] or None) if row["blocked"] else None,
         )
+        if execution_pane_only:
+            figure = collapse_to_execution_pane(figure)
         st_module.plotly_chart(
             figure,
             use_container_width=True,
