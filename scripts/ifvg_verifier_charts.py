@@ -113,6 +113,19 @@ def _budget(
     return items[:limit]
 
 
+def _tf_label(timeframe_seconds: int) -> str:
+    minutes = int(timeframe_seconds) // 60
+    if minutes >= 60 and minutes % 60 == 0:
+        return f"{minutes // 60}H"
+    return f"{minutes}m"
+
+
+def _zone_label(role: str, timeframe_seconds: int) -> str:
+    """On-chart FVG tag, e.g. 'HTF 4H' / 'parent 10m' / 'entry 1m'."""
+    name = {"entry_fvg": "entry", "htf": "HTF"}.get(role, role)
+    return f"{name} {_tf_label(timeframe_seconds)}"
+
+
 def _pane_for_timeframe(timeframe: int, parent_tf: int, htf_tf: int) -> int:
     if timeframe == 60:
         return 1
@@ -349,6 +362,19 @@ def build_verifier_figure(
                     col=1,
                     **style,
                 )
+            fig.add_annotation(
+                x=segments[0][0],
+                y=y1,
+                text=_zone_label(zone.role, zone.timeframe_seconds),
+                showarrow=False,
+                xanchor="left",
+                yanchor="top",
+                font={"size": 9, "color": color},
+                bgcolor="rgba(255,255,255,0.6)",
+                opacity=0.9,
+                row=target_row,
+                col=1,
+            )
         zone_hover_x.append(x0)
         zone_hover_y.append((y0 + y1) / 2)
         zone_hover_text.append(
