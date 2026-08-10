@@ -1124,11 +1124,14 @@ def _render_setup_section(st_module, pair_ref: ArtifactPairRef) -> None:
         )
         if execution_pane_only:
             figure = collapse_to_execution_pane(figure)
+        # hold-left-drag pans; mouse wheel zooms (box-zoom stays in the modebar).
+        figure.update_layout(dragmode="pan")
         st_module.plotly_chart(
             figure,
             use_container_width=True,
             key=f"{_STATE_PREFIX}setup_chart",
             config={
+                "scrollZoom": True,
                 "toImageButtonOptions": {
                     "format": "png",
                     "filename": f"ifvg_setup_{setup_id[:12]}_{stage}",
@@ -1406,11 +1409,14 @@ def render_verifier_section(st_module, pair, entry: dict) -> str | None:
         )
         if execution_pane_only:
             figure = collapse_to_execution_pane(figure)
+        # hold-left-drag pans; mouse wheel zooms (box-zoom stays in the modebar).
+        figure.update_layout(dragmode="pan")
         st_module.plotly_chart(
             figure,
             use_container_width=True,
             key=f"{_STATE_PREFIX}verifier_chart",
             config={
+                "scrollZoom": True,
                 "toImageButtonOptions": {
                     "format": "png",
                     "filename": (
