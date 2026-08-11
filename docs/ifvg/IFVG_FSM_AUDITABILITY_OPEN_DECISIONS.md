@@ -65,6 +65,25 @@ tap-time age gate distinct from registry eviction.
   vs the single-global setup slot is a documentation divergence, characterized by
   the emitted `rank`/`outranked` evidence. UNRESOLVED.
 
+## D-6 — Unbounded S1 wait with a SELECTED parent freezes the single slot (found 2026-08-11 via the audit artifact)
+
+The 40-parent-bar reaction window only clocks the PARENTLESS S1 state
+(`_apply_expiries` requires `parent is None`); once a parent is selected, the
+applicable timeout is `parent_retest_timeout_1m_bars` — which is **None** in
+the document profile, as is `parent_reaction_window_1m_bars_max`. A setup
+whose selected parent is never wick-retested (lock), never filled, and never
+structurally closed therefore waits FOREVER. Observed in the ACCEPTED
+baseline `143b510f…` (and identically in the tf-variant): setup
+`5230dde3-bf17…` activated 2026-04-13 18:28Z, selected a 10m parent within
+22 minutes, then sat in S1 for **two months** until dataset exhaustion on
+2026-06-10 — suppressing 9,193 HTF taps (100% `slot_occupied` in May–June)
+and every possible trade after 2026-04-09. Invisible before this artifact;
+surfaced by the tap drop-reason and parent-window evidence. UNRESOLVED: any
+timeout on the selected-parent retest wait is a RULE CHANGE requiring
+ratification (candidate knobs: `parent_retest_timeout_1m_bars`,
+`parent_reaction_window_1m_bars_max`, or clocking the parent window while a
+parent is held).
+
 ## Register notes (not decisions)
 
 - **Accepted-v2 pin discrepancy** — `config.py:72` `ACCEPTED_V2_DATASET_ID =
