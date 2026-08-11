@@ -23,6 +23,7 @@ from strategy_core.data.databento_parquet import DAY_FILE_PRIORITY
 from strategy_core.strategies.ifvg_smc.context_config import (
     FEATURE_FORMULA_VERSION,
     FEATURE_SET_VERSION,
+    ContextFeatureConfig,
     build_feature_registry,
 )
 
@@ -330,15 +331,26 @@ def prepare_ifvg_development_pair(
     v3_output_base: Path | None = None,
     catalog_path: Path | None = None,
     progress_fn: Callable[[int, int, str], None] | None = None,
+    section_overrides: dict | None = None,
+    context_config: ContextFeatureConfig | None = None,
 ) -> PreparedIfvgPair:
-    """Prepare the full permitted chain; never discover protected date paths."""
+    """Prepare the full permitted chain; never discover protected date paths.
+
+    ``section_overrides`` (validated by the section model, capability-gated on
+    the BASE profile) and ``context_config`` support variant pairs — e.g. a
+    reduced timeframe set, whose context observer must declare a timeframe
+    subset of the section's. Variants get their own profile hash, artifact
+    identities, and catalog entry; accepted artifacts are untouched."""
 
     capability = profile_capability(profile_name)
     if capability.status is not ProfileCapabilityStatus.RUNNABLE:
         raise PermissionError(f"profile is {capability.status.value}: {capability.reason}")
     root = Path(repo_root).resolve()
     _verify_authoritative_blob(root)
-    resolved = resolve_profile_config({"profile_name": profile_name})
+    raw_profile: dict = {"profile_name": profile_name}
+    if section_overrides:
+        raw_profile["section_overrides"] = dict(section_overrides)
+    resolved = resolve_profile_config(raw_profile)
     base_cfg = IfvgCaptureConfig()
     cfg = replace(
         base_cfg,
@@ -463,6 +475,7 @@ def prepare_ifvg_development_pair(
         core=cfg,
         accepted_v2_dataset_id=v2_id,
         accepted_v2_manifest_sha256=v2_manifest_hash,
+        **({"context": context_config} if context_config is not None else {}),
     )
     v3_policy = DevelopmentReplayPolicy(
         replay_dates,
@@ -601,7 +614,10 @@ def prepare_ifvg_development_pair(
         v3_artifact_id=v3_id,
     )
     _catalog_pair(
-        profile_name,
+        # the STAMPED name (variants may override section.profile_name so the
+        # verifier dropdown distinguishes them; identical to profile_name for
+        # the base profile).
+        resolved.section.profile_name,
         pair,
         catalog_path=Path(catalog_path or (root / PAIR_CATALOG_PATH)),
     )
@@ -626,13 +642,18 @@ def prepare_ifvg_development_pair_persisted(
     cached_artifacts_only: bool = True,
     job_root: Path = PREPARATION_JOB_ROOT,
     progress_fn: Callable[[int, int, str], None] | None = None,
+    section_overrides: dict | None = None,
+    context_config: ContextFeatureConfig | None = None,
+    job_label: str | None = None,
 ) -> PreparedIfvgPair:
     """Run production preparation under a profile lock with durable boundaries.
 
     The underlying replay remains one sequential seed chain.  Checkpoints record
     each completed authorized-date callback for crash diagnosis; a restarted job
     deterministically rebuilds the chain from cached authorized day artifacts and
-    refuses any non-identical immutable publication.
+    refuses any non-identical immutable publication. Variant runs (with
+    ``section_overrides``) must pass a distinct ``job_label`` so their lock and
+    state directory never collide with the base profile's.
     """
 
     root = Path(repo_root).resolve()
@@ -640,9 +661,10 @@ def prepare_ifvg_development_pair_persisted(
     if not jobs.is_absolute():
         jobs = root / jobs
     jobs = jobs.resolve()
-    profile_root = jobs / profile_name
+    lock_name = job_label or profile_name
+    profile_root = jobs / lock_name
     cancellation = profile_root / "cancel.requested"
-    with _profile_lock(jobs, profile_name):
+    with _profile_lock(jobs, lock_name):
         profile_root.mkdir(parents=True, exist_ok=True)
         state = PreparationJobState(
             profile_name=profile_name,
@@ -696,6 +718,8 @@ def prepare_ifvg_development_pair_persisted(
                 profile_name=profile_name,
                 cached_artifacts_only=cached_artifacts_only,
                 progress_fn=persisted_progress,
+                section_overrides=section_overrides,
+                context_config=context_config,
             )
             state = replace(
                 prepared.preparation_state,
