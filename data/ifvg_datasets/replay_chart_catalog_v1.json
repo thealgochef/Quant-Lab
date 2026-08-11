@@ -7,6 +7,14 @@
     "v3_dataset_id": "09ef35d0c37ca4c2b688ec88c57b2881f02d52f11cc99c4daf0f74b5c46245c3",
     "v3_manifest_hash": "20e0873ebb4de06125b8de8979d9eedaf8ecc55300109d7e6bad086840d85c0a"
   },
+  "46d0d4037b47eb01a9c1057ee541a9a80d92320bbddeda9210d4bfc0d32f981e": {
+    "profile_name": "ifvg_v2_tf1h_5m15m_retest480_fresh_static_1r",
+    "replay_chart_manifest_payload_sha256": "a87521ba052265e64b712578c9d28271c7fb9de50cc25678038856b0cf7e1b08",
+    "v2_dataset_id": "89025bdcaf1bf88874767995baadb71ca77eb23ae2d88ebbe081bfecc4269300",
+    "v2_manifest_hash": "117f70a005940f54ecdaf820c9031e1b810dac0cdfd1543ed90a3f3032ac4d89",
+    "v3_dataset_id": "879f26c96b5fd0b4896c204d7cc4e43025c22dcb4c5b26717e14cbaf1cafcc4f",
+    "v3_manifest_hash": "efdc63e9f32d9c2eed4393f8015bdb0f938907e35883765bae6b1c132728379e"
+  },
   "71c4ee46d4513bd337f94a24734a0bd44898b0768eb28057d546029d69aad65e": {
     "profile_name": "ifvg_v2_tf1h_5m15m_fresh_static_1r",
     "replay_chart_manifest_payload_sha256": "425ac081792ebbb36e58ad9c301bdc47fe49a369e7ea9acd32d67c7cc392e9aa",
