@@ -1,0 +1,88 @@
+"""Reviewable verified pair: timeframe variant + the D-6 fix ratified at 480.
+
+Same as ``prepare_ifvg_tf_variant_pair`` (HTF 1H only; parents 5m + 15m;
+continuation-only executions) PLUS ``parent_retest_timeout_1m_bars = 480``
+(8 trading hours), activating the engine's existing ``expired_parent_retest``
+termination so a selected-but-never-retested parent can no longer freeze the
+single slot (open-decisions register D-6; ratified 2026-08-11 at 480 for
+variant measurement — the document default is unchanged pending review).
+
+Day artifacts are cached (the timeframe set is unchanged from the first
+variant), so this is replay + context + saves only.
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from strategy_core.strategies.ifvg_smc.context_config import (  # noqa: E402
+    ContextFeatureConfig,
+)
+
+from alpha_lab.agents.data_infra.ifvg.preparation import (  # noqa: E402
+    prepare_ifvg_development_pair_persisted,
+)
+from alpha_lab.agents.data_infra.ifvg.replay_chart_store import (  # noqa: E402
+    build_replay_chart_artifact,
+)
+
+VARIANT_PROFILE_NAME = "ifvg_v2_tf1h_5m15m_retest480_fresh_static_1r"
+SECTION_OVERRIDES = {
+    "profile_name": VARIANT_PROFILE_NAME,
+    "htf_timeframes": ["1H"],
+    "parent_timeframes": ["5m", "15m"],
+    # D-6 fix (ratified at 480): bound the selected-parent retest wait.
+    "parent_retest_timeout_1m_bars": 480,
+}
+VARIANT_CONTEXT = ContextFeatureConfig(
+    normalized_timeframes=("1m", "5m", "15m", "60m"),
+    mtf_timeframes=("5m", "15m", "60m"),
+)
+
+
+def main() -> int:
+    def progress(completed: int, total: int, day: str) -> None:
+        print(
+            json.dumps({"completed": completed, "total": total, "source_date": day}),
+            flush=True,
+        )
+
+    prepared = prepare_ifvg_development_pair_persisted(
+        repo_root=ROOT,
+        profile_name="ifvg_v2_doc_default_fresh_static_1r",
+        cached_artifacts_only=True,
+        section_overrides=SECTION_OVERRIDES,
+        context_config=VARIANT_CONTEXT,
+        job_label=VARIANT_PROFILE_NAME,
+        progress_fn=progress,
+    )
+    chart_dir = build_replay_chart_artifact(prepared.pair, repo_root=ROOT)
+    chart_manifest = json.loads(
+        (chart_dir / "manifest.json").read_text(encoding="utf-8")
+    )
+    print(
+        json.dumps(
+            {
+                "status": prepared.preparation_state.status.value,
+                "variant_profile": VARIANT_PROFILE_NAME,
+                "v2_artifact_id": prepared.pair.reference.v2.artifact_id,
+                "v3_artifact_id": prepared.pair.reference.v3.artifact_id,
+                "replay_chart_artifact_id": chart_manifest["replay_chart_artifact_id"],
+                "protected_counters": prepared.access_audit.get("protected_counters"),
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
