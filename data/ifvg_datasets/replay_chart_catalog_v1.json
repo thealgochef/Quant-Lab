@@ -7,6 +7,14 @@
     "v3_dataset_id": "09ef35d0c37ca4c2b688ec88c57b2881f02d52f11cc99c4daf0f74b5c46245c3",
     "v3_manifest_hash": "20e0873ebb4de06125b8de8979d9eedaf8ecc55300109d7e6bad086840d85c0a"
   },
+  "71c4ee46d4513bd337f94a24734a0bd44898b0768eb28057d546029d69aad65e": {
+    "profile_name": "ifvg_v2_tf1h_5m15m_fresh_static_1r",
+    "replay_chart_manifest_payload_sha256": "425ac081792ebbb36e58ad9c301bdc47fe49a369e7ea9acd32d67c7cc392e9aa",
+    "v2_dataset_id": "0cc64d5d72f1a411dcbb48f344f7b9e28690de0e793fcaae5bdc283242e39d25",
+    "v2_manifest_hash": "da9c40b6a3dbb608480694e8b8fcf22757b6f0481869df2e5b3fbf527a829cb5",
+    "v3_dataset_id": "9b60796ebf3964966a3c76715a67ec1d6d24045fd616ba390838a80848eb5c1c",
+    "v3_manifest_hash": "dbbe280fde8ba13ca8af9c344e4b4bd26f3cc7100c1857461e9d35e0679cef99"
+  },
   "a3f1beabfdbddf47d9e6c4eda9bcb041766299f96dadebcc6da175b3f716746b": {
     "artifact_kind": "ifvg_replay_chart_v2",
     "fsm_audit_artifact_id": "7e55ee89d9492fa8338cefa3c6389c9e80c4b139f1ec3b3a1a87ab7ac701fe41",
