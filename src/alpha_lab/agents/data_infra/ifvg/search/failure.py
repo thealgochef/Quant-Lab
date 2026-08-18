@@ -8,7 +8,16 @@ from pydantic import Field
 
 from .identities import SHA256_PATTERN, FrozenContract
 
-__all__ = ["FailureReason", "ChildFailureRecord", "sanitize_failure_message"]
+__all__ = [
+    "FailureReason",
+    "ChildFailureRecord",
+    "ChildNeutralityError",
+    "sanitize_failure_message",
+]
+
+
+class ChildNeutralityError(PermissionError):
+    """A child's audit-neutrality proof FAILED — publication is blocked (§3.3)."""
 
 
 class FailureReason(StrEnum):

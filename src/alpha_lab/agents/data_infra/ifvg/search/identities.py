@@ -28,6 +28,7 @@ import hashlib
 import json
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, ClassVar, Literal, get_args
 
@@ -169,7 +170,14 @@ class ImmutableMap(Mapping):
             if isinstance(value, Mapping):
                 return dict(value)
             if isinstance(value, (list, tuple)):
-                return {key: item for key, item in value}
+                materialized: dict = {}
+                for key, item in value:
+                    if key in materialized:  # same fail-closed rule as __init__
+                        raise ValueError(
+                            f"ImmutableMap received duplicate key {key!r}"
+                        )
+                    materialized[key] = item
+                return materialized
             return value
 
         def _wrap(value):
@@ -339,9 +347,17 @@ def register_identity_pair(
 def registered_identity_pairs() -> tuple[RegisteredIdentityPair, ...]:
     """Import every contract-bearing lane module, then list the registry."""
 
+    from .. import fsm_audit_preparation  # noqa: F401, PLC0415
     from ..features import feature_blocks, feature_bundles  # noqa: F401, PLC0415
-    from ..study import cohort, comparison_contracts, study_cell  # noqa: F401, PLC0415
-    from . import authorization, charter, child_replay, verification  # noqa: F401, PLC0415
+    from ..study import cohort, comparison_contracts, contrasts, study_cell  # noqa: F401, PLC0415
+    from . import (  # noqa: F401, PLC0415
+        authorization,
+        charter,
+        child_replay,
+        lineage,
+        orchestrator,
+        verification,
+    )
 
     return tuple(ID_PRODUCING_CONTRACTS)
 
@@ -505,15 +521,39 @@ def is_generated_profile_id(profile_id: str) -> bool:
     return profile_id.startswith(_GENERATED_PROFILE_PREFIX)
 
 
+@lru_cache(maxsize=1)
+def _registered_baseline_name_free_hashes() -> dict[str, str]:
+    """name-free section hash → registered profile name, for every baseline."""
+
+    from ..profiles import resolve_profile_config  # noqa: PLC0415
+
+    hashes: dict[str, str] = {}
+    for profile_name in PROFILE_CAPABILITY_REGISTRY:
+        resolved = resolve_profile_config({"profile_name": profile_name})
+        hashes[name_free_section_hash(resolved.section)] = profile_name
+    return hashes
+
+
 def canonicalize_section(section: IfvgSmcSection) -> IfvgSmcSection:
     """Re-validate the section under its canonical, content-derived name.
 
-    Baseline sections registered in the fixed capability registry keep their
-    registered names — canonical naming applies to generated children only.
+    The name-free content is compared against EVERY registered baseline (not
+    just the one whose name the section happens to carry): content identical
+    to a registered baseline adopts that baseline's registered name; any
+    other content gets the canonical study-independent
+    ``ifvg_search_profile_<hash16>`` id. Two different names for identical
+    semantics, and one baseline name for different semantics, are both
+    impossible (CS §1.3).
     """
 
-    if section.profile_name in PROFILE_CAPABILITY_REGISTRY:
-        return section
+    content_hash = name_free_section_hash(section)
+    registered_name = _registered_baseline_name_free_hashes().get(content_hash)
+    if registered_name is not None:
+        if section.profile_name == registered_name:
+            return section
+        return IfvgSmcSection.model_validate(
+            {**section.model_dump(mode="json"), "profile_name": registered_name}
+        )
     canonical = canonical_profile_id_for(section)
     if section.profile_name == canonical:
         return section
@@ -633,13 +673,17 @@ def evaluate_generated_profile_capability(
     authorization_state: Literal["authorized", "missing", "not_required"],
     section: IfvgSmcSection | None,
     section_error: str | None = None,
+    invariant_violations: tuple[str, ...] = (),
 ) -> GeneratedProfileCapability:
     """Fail-closed capability for one generated child profile.
 
     Eligibility (§1.4): runnable baseline + registered values authorized for
-    the run scope + a valid resolved section under deterministic canonical
-    naming. Generated children are never inserted into the fixed registry and
-    never fail merely for being absent from it.
+    the run scope + intact locked invariants + a valid resolved section under
+    deterministic canonical naming. ``invariant_violations`` names any
+    LOCKED_INVARIANT section field the caller found changed vs the resolved
+    baseline — non-empty blocks the child (`blocked_invariant_failure`).
+    Generated children are never inserted into the fixed registry and never
+    fail merely for being absent from it.
     """
 
     frozen_values = ImmutableMap(axis_value_ids)
@@ -679,6 +723,12 @@ def evaluate_generated_profile_capability(
         return _blocked(
             "blocked_invalid_section",
             section_error or "resolved section failed validation",
+        )
+    if invariant_violations:
+        return _blocked(
+            "blocked_invariant_failure",
+            "locked correctness invariants changed vs the resolved baseline: "
+            + ", ".join(sorted(invariant_violations)),
         )
     expected = canonical_profile_id_for(section)
     if section.profile_name != expected:

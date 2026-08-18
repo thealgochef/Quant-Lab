@@ -35,8 +35,11 @@ from ..development_access import VerificationReplayPolicy
 from ..manifest import file_sha256
 from ..profiles import ResolvedProfileConfig, resolve_profile_config
 from .authorization import VerificationAuthorizationRef
+from .charter import CostPolicy
+from .failure import ChildNeutralityError
 from .identities import (
     SHA256_PATTERN,
+    CoreReplayArtifactReference,
     CoreStrategyReplayIdentity,
     CoreStrategyReplayPayload,
     EnvelopeBase,
@@ -75,10 +78,13 @@ __all__ = [
     "load_seed_snapshot",
     "SeedSnapshotError",
     "ChildAuditNeutralityReport",
+    "ChildAuditNeutralityEnvelope",
     "build_neutrality_report",
     "ChildReplayResult",
     "run_child_replay",
     "run_baseline_verification_slice",
+    "build_slice_companions",
+    "verify_exact_drill_targets",
     "ArtifactProvenanceReadAdapter",
     "CORE_TABLE_NAMES",
 ]
@@ -292,6 +298,15 @@ class ChildAuditNeutralityReport(FrozenContract):
     passed: bool
 
 
+class ChildAuditNeutralityEnvelope(EnvelopeBase):
+    """Immutable-store envelope for one child's neutrality evidence (§3.3)."""
+
+    _ID_FIELD: ClassVar[str] = "neutrality_report_id"
+
+    neutrality_report_id: str = Field(pattern=SHA256_PATTERN)
+    payload: ChildAuditNeutralityReport
+
+
 def _core_table_hashes(tables: dict[RecordTable, pd.DataFrame]) -> dict[str, str]:
     return {
         table.value: table_content_hash(table, tables.get(table, pd.DataFrame()))
@@ -321,7 +336,7 @@ def _audit_referential_integrity(
                     for value in frame[column].dropna().astype(str)
                     if value  # empty string = an unattached audit row, not a ref
                 }
-                if referenced and setups and not referenced <= setups:
+                if referenced and not referenced <= setups:
                     return False
     return True
 
@@ -435,6 +450,16 @@ def run_child_replay(
             disabled=disabled,
             enabled=audit_capture,
         )
+        if not neutrality.passed:
+            # CS 3.3: a failed neutrality proof blocks the audit artifact AND
+            # child publication - the worker refuses loudly, before any caller
+            # can publish this child's identity.
+            raise ChildNeutralityError(
+                "child audit-neutrality FAILED for core replay "
+                f"{core_replay_id[:12]}...: tables_equal="
+                f"{neutrality.tables_equal}, referential_integrity="
+                f"{neutrality.audit_stamp_referential_integrity}"
+            )
     return ChildReplayResult(
         resolved_profile=resolved_profile,
         capture=disabled,
@@ -594,7 +619,11 @@ def run_baseline_verification_slice(
     from .verification import VerificationDataPolicy  # noqa: PLC0415
 
     policy_record = VerificationDataPolicy.from_allowlist(run.payload.allowlist)
-    register_program_allowlist(Path(store_root), policy_record)
+    register_program_allowlist(
+        Path(store_root),
+        policy_record,
+        canonical_root=Path(repo_root) / SEARCH_TEST_STORE_ROOT,
+    )
     # 4. Seed snapshot (profile-bound; continuity with the allowlist asserted;
     #    refused before any source read).
     snapshot, chain_start = load_seed_snapshot(
@@ -614,6 +643,9 @@ def run_baseline_verification_slice(
         base_cfg,
         section=resolved.section,
         data_dir=Path(data_dir) if data_dir is not None else base_cfg.data_dir,
+        # TEST_MATRIX Path A: 0 real warmup days - every allowlist day is
+        # evidence, and the audit/DAY_FUNNEL warmup stamps agree (B-M1).
+        warmup_days=0,
     )
 
     def _policy():
@@ -650,13 +682,16 @@ def run_baseline_verification_slice(
     for capture in (result.capture, result.audit_capture):
         if capture is not None:
             capture.access_policy.assert_zero_forbidden_access()
-    # 7. Publish the replay identity immutably (save → reload → reuse).
-    _, bundle_reused = save_or_reuse_envelope(
-        Path(store_root), "replay_input_bundles", bundle
-    )
-    _, core_reused = save_or_reuse_envelope(Path(store_root), "core_replays", core)
-    # 8. Companions (R2 machinery, injected): audit/chart artifacts + the
-    #    exact verifier link. Their gates stay open until they run.
+    # 7. CS 3.3: neutrality gates PUBLICATION - a missing or failed dual-drive
+    #    proof refuses here, before any store write.
+    if result.neutrality is None or not result.neutrality.passed:
+        raise ChildNeutralityError(
+            "the vertical slice requires a PASSING dual-drive "
+            "ChildAuditNeutralityReport before any publication"
+        )
+    # 8. Companions FIRST (CS 3.3 worker order: build requested companions ->
+    #    publish atomically): audit companion + neutrality evidence + the v2
+    #    dataset + the exact verifier link (R2 machinery, injected).
     companion_report = None
     if companion_builders is not None:
         companion_report = companion_builders(
@@ -667,6 +702,11 @@ def run_baseline_verification_slice(
             store_root=Path(store_root),
             repo_root=Path(repo_root),
         )
+    # 9. Publish the replay identity immutably (save -> reload -> reuse).
+    _, bundle_reused = save_or_reuse_envelope(
+        Path(store_root), "replay_input_bundles", bundle
+    )
+    _, core_reused = save_or_reuse_envelope(Path(store_root), "core_replays", core)
     gates = evaluate_control_flow_gates(
         {
             "replay_completed": True,
@@ -694,6 +734,12 @@ def run_baseline_verification_slice(
         "core_replay_reused": core_reused,
         "replay_input_bundle_reused": bundle_reused,
         "gate_policy": gates.model_dump(mode="json"),
+        "verifier_link_vacuous_zero_targets": bool(
+            companion_report
+            and companion_report.get("verifier_link_evidence", {}).get(
+                "vacuous_zero_targets"
+            )
+        ),
         "neutrality": (
             result.neutrality.model_dump(mode="json") if result.neutrality else None
         ),
@@ -702,6 +748,295 @@ def run_baseline_verification_slice(
         **verification_report_stamps(allowlist=run.payload.allowlist),
     }
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# R2 companion wiring — audit companion, immutable publication, exact links
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def verify_exact_drill_targets(
+    tables: dict[RecordTable, pd.DataFrame],
+    audit_tables,
+    *,
+    max_targets_per_kind: int = 3,
+) -> dict:
+    """Prove the verifier's exact-ID drill targets resolve 1:1 — no fallback.
+
+    Checks, per entity kind, that the artifact's own ids resolve by EXACT
+    string equality: setups → their audit rows and lifecycle rows; candidates
+    → the candidate table; decisions/trades → exactly one dossier row (the
+    same rule ``replay_chart_provider.resolve_selection`` applies). Zero
+    entities is recorded honestly as vacuous — never claimed as a resolved
+    link over real targets.
+    """
+
+    checked: list[dict] = []
+    failures: list[str] = []
+
+    lifecycle = tables.get(RecordTable.SETUP_LIFECYCLE, pd.DataFrame())
+    setup_ids: list[str] = []
+    if not lifecycle.empty and "envelope_setup_id" in lifecycle:
+        setup_ids = sorted(set(lifecycle["envelope_setup_id"].dropna().astype(str)))
+    audit_setup_ids: set[str] = set()
+    if audit_tables:
+        for frame in audit_tables.values():
+            if frame is None or frame.empty:
+                continue
+            for column in ("envelope_setup_id", "setup_id"):
+                if column in frame:
+                    audit_setup_ids |= {
+                        value
+                        for value in frame[column].dropna().astype(str)
+                        if value
+                    }
+    orphaned = sorted(audit_setup_ids - set(setup_ids))
+    if orphaned:
+        failures.append(
+            f"{len(orphaned)} audit setup id(s) resolve to no lifecycle setup"
+        )
+    for setup_id in setup_ids[:max_targets_per_kind]:
+        checked.append({"kind": "setup", "id": setup_id, "resolved": True})
+
+    candidates = tables.get(RecordTable.ENTRY_CANDIDATE, pd.DataFrame())
+    candidate_ids: list[str] = []
+    if not candidates.empty and "candidate_id" in candidates:
+        candidate_ids = sorted(set(candidates["candidate_id"].astype(str)))
+    for candidate_id in candidate_ids[:max_targets_per_kind]:
+        resolved = candidate_id in set(candidates["candidate_id"].astype(str))
+        checked.append({"kind": "candidate", "id": candidate_id, "resolved": resolved})
+        if not resolved:  # pragma: no cover - identity of the source set
+            failures.append(f"candidate {candidate_id} did not resolve")
+
+    dossiers = tables.get(RecordTable.GEOMETRY_DOSSIER, pd.DataFrame())
+    for kind, table, column in (
+        ("decision", RecordTable.ELIGIBLE_DECISION, "decision_id"),
+        ("trade", RecordTable.EXECUTED_TRADE, "trade_id"),
+    ):
+        frame = tables.get(table, pd.DataFrame())
+        if frame.empty or column not in frame:
+            continue
+        for value in sorted(set(frame[column].astype(str)))[:max_targets_per_kind]:
+            if dossiers.empty or column not in dossiers:
+                resolved = False
+            else:
+                matches = dossiers.loc[
+                    dossiers[column].astype(str) == value, "candidate_id"
+                ]
+                resolved = len(matches) == 1
+            checked.append({"kind": kind, "id": value, "resolved": resolved})
+            if not resolved:
+                failures.append(
+                    f"{kind} {value} does not resolve to exactly one dossier row"
+                )
+    resolved_all = not failures and all(item["resolved"] for item in checked)
+    return {
+        "resolves": bool(resolved_all),
+        "target_count": len(checked),
+        "vacuous_zero_targets": len(checked) == 0,
+        "checked": checked,
+        "failures": failures,
+    }
+
+
+def build_slice_companions(
+    *,
+    result: ChildReplayResult,
+    run: VerificationRunEnvelope,
+    core: CoreStrategyReplayIdentity,
+    bundle,
+    store_root: Path,
+    repo_root: Path,
+    repository_states: tuple | None = None,
+    authoritative_source_blob: str | None = None,
+    cost_points: float | None = None,
+) -> dict:
+    """The R2 companion builder for the Path-A vertical slice (DEV-R1-6 seam).
+
+    Builds and immutably publishes, in order: the per-child neutrality-gated
+    FSM-audit companion (parity-EXEMPT — gated by the dual-drive
+    ``ChildAuditNeutralityReport``, never by the doc-default accepted-parity
+    gate), the neutrality report itself, and the slice's v2 core tables
+    through the existing heavyweight saver. Returns the honest gate inputs:
+    ``invariants_passed`` (PK/FK/identity audit + exact funnel⇔audit
+    reconciliation + neutrality), ``published`` (all three publications
+    verified), and ``verifier_link_resolves`` (exact-ID drill targets).
+
+    ``repository_states`` / ``authoritative_source_blob`` parameterize the
+    slice v2 ``DatasetIdentity``; the acceptance run binds real repository
+    states (functools.partial), synthetic composition tests bind synthetic
+    ones. No default fabricates repository evidence.
+    """
+
+    from ..fsm_audit_preparation import (  # noqa: PLC0415
+        build_child_fsm_audit,
+        publish_child_fsm_audit,
+    )
+    from ..manifest import (  # noqa: PLC0415
+        DatasetIdentity,
+        dataset_id_for,
+        save_v2_dataset_immutable,
+    )
+    from ..reporting import (  # noqa: PLC0415
+        build_candidate_report,
+        build_decision_report,
+        build_executed_trade_report,
+        build_invariant_audit,
+    )
+
+    if result.audit_capture is None or result.neutrality is None:
+        raise PermissionError(
+            "the slice companion build requires the dual-drive audit capture "
+            "and its ChildAuditNeutralityReport"
+        )
+    if repository_states is None:
+        raise PermissionError(
+            "build_slice_companions requires explicit repository_states for the "
+            "slice v2 dataset identity (bind them via functools.partial); "
+            "repository evidence is never fabricated"
+        )
+
+    tables = result.capture.tables
+    resolved = result.resolved_profile
+    evaluation_config_hash = resolved.evaluation_config_hash
+
+    # 1. Invariant audit over the canonical (audit-disabled) core tables.
+    invariant = build_invariant_audit(
+        tables, data_access_audit=result.capture.access_policy.audit_dict()
+    )
+
+    # 2. The neutrality-gated child audit companion (refuses on any failure).
+    audit_build = build_child_fsm_audit(
+        core_replay_id=core.core_replay_id,
+        audit_capture=result.audit_capture,
+        neutrality=result.neutrality,
+        chain_dates=tuple(run.payload.allowlist),
+        warmup_days=0,  # Path A: 0 real warmup days; the slice cfg agrees and
+        # build_child_fsm_audit fail-closes on any stamp disagreement (B-M1)
+    )
+    reconciliation_passed = bool(audit_build.reconciliation_report.get("passed", True))
+
+    # 3. Immutable publications (each save->reload->reuse verified). The
+    #    gating neutrality evidence publishes FIRST so no stored companion can
+    #    ever exist without its stored gate evidence.
+    neutrality_envelope, neutrality_reused = save_or_reuse_envelope(
+        Path(store_root),
+        "neutrality_reports",
+        ChildAuditNeutralityEnvelope.from_payload(result.neutrality),
+    )
+    audit_envelope, audit_reused = publish_child_fsm_audit(
+        Path(store_root), audit_build
+    )
+
+    identity = DatasetIdentity(
+        repositories=tuple(repository_states),
+        authoritative_source_blob=(
+            authoritative_source_blob or "verification_slice_cached_artifacts_v1"
+        ),
+        resolved_profile_hash=resolved.section_config_hash,
+        evaluation_config_hash=evaluation_config_hash,
+        date_allowlist=tuple(run.payload.allowlist),
+        permitted_source_hashes=tuple(
+            (f"{ref.trading_day}/{ref.artifact_kind}", ref.manifest_payload_sha256)
+            for ref in bundle.payload.ordered_day_artifacts
+        ),
+    )
+    v2_dataset_id = dataset_id_for(identity)
+    v2_base = Path(store_root) / "v2_datasets"
+    v2_destination = v2_base / v2_dataset_id
+    v2_reused = v2_destination.exists()
+    if not v2_reused:
+        save_v2_dataset_immutable(
+            base_dir=v2_base,
+            identity=identity,
+            raw_config={
+                "verification_run_id": run.verification_run_id,
+                "core_replay_id": core.core_replay_id,
+                "allowlist": list(run.payload.allowlist),
+                "audit_capture_mode": "dual_drive_ab_v1",
+            },
+            effective_config={
+                "section": resolved.effective_config,
+                "evaluator": resolved.evaluator_config,
+                "source_access_policy": VERIFICATION_POLICY_ID,
+            },
+            tables=tables,
+            candidate_report=build_candidate_report(
+                tables.get(RecordTable.ENTRY_CANDIDATE, pd.DataFrame()),
+                tables.get(RecordTable.CANDIDATE_LABEL, pd.DataFrame()),
+                evaluation_config_hash=evaluation_config_hash,
+                max_candidates_per_day=None,
+            ),
+            decision_report=build_decision_report(
+                tables.get(RecordTable.ENTRY_CANDIDATE, pd.DataFrame()),
+                tables.get(RecordTable.ELIGIBLE_DECISION, pd.DataFrame()),
+                evaluation_config_hash=evaluation_config_hash,
+            ),
+            executed_trade_report=build_executed_trade_report(
+                tables.get(RecordTable.EXECUTED_TRADE, pd.DataFrame()),
+                cost_points=(
+                    cost_points
+                    if cost_points is not None
+                    else CostPolicy().cost_points_round_turn
+                ),
+                evaluation_config_hash=evaluation_config_hash,
+                tick_size=CostPolicy().tick_size,
+            ),
+            invariant_audit=invariant,
+            data_access_audit=result.capture.access_policy.audit_dict(),
+        )
+    manifest_path = v2_destination / "exploration" / "manifest.json"
+    import json as _json  # noqa: PLC0415
+
+    manifest = _json.loads(manifest_path.read_text(encoding="utf-8"))
+    artifact_reference = CoreReplayArtifactReference(
+        core_replay_id=core.core_replay_id,
+        v2_dataset_artifact_id=v2_dataset_id,
+        manifest_payload_sha256=manifest["manifest_payload_sha256"],
+        gross_trade_stream_hash=result.gross_trade_stream_hash,
+    )
+
+    # 4. Exact verifier drill-target resolution over the published evidence.
+    link = verify_exact_drill_targets(tables, audit_build.audit_tables)
+
+    return {
+        "invariants_passed": bool(
+            invariant.get("passed")
+            and reconciliation_passed
+            and result.neutrality.passed
+        ),
+        "published": True,
+        "verifier_link_resolves": bool(link["resolves"]),
+        "verifier_link_evidence": link,
+        "child_fsm_audit_id": audit_envelope.child_fsm_audit_id,
+        "child_fsm_audit_reused": audit_reused,
+        "neutrality_report_id": neutrality_envelope.neutrality_report_id,
+        "neutrality_report_reused": neutrality_reused,
+        "v2_dataset_artifact_id": v2_dataset_id,
+        "v2_dataset_reused": v2_reused,
+        "core_replay_artifact_reference": artifact_reference.model_dump(mode="json"),
+        "invariant_audit": invariant,
+        "reconciliation_report": audit_build.reconciliation_report,
+        "coverage_report": audit_build.coverage_report,
+    }
+
+
+register_identity_pair(
+    name="ChildAuditNeutrality",
+    envelope_cls=ChildAuditNeutralityEnvelope,
+    payload_cls=ChildAuditNeutralityReport,
+    id_field="neutrality_report_id",
+    example_factory=lambda: ChildAuditNeutralityReport(
+        core_replay_id="a" * 64,
+        mechanism="dual_drive_ab_v1",
+        audit_disabled_core_table_hashes={},
+        audit_enabled_core_table_hashes={},
+        tables_equal=True,
+        mechanism_evidence_refs=(),
+        core_trace_content_hash="b" * 64,
+        audit_stamp_referential_integrity=True,
+        passed=True,
+    ),
+)
 
 register_identity_pair(
     name="SeedSnapshot",

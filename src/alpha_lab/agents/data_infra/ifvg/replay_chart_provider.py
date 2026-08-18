@@ -385,9 +385,19 @@ def resolve_selection(
     candidate_id: str | None = None,
     decision_id: str | None = None,
     trade_id: str | None = None,
+    setup_id: str | None = None,
 ) -> str:
-    """Exact-ID selection; exactly one identifier kind, no fallback matching."""
-    given = [value for value in (candidate_id, decision_id, trade_id) if value]
+    """Exact-ID selection; exactly one identifier kind, no fallback matching.
+
+    ``setup_id`` is the fourth exact kind (``ifvg_prop_robust_config_search_v1``
+    R2): it resolves into the candidate verifier only when that exact setup has
+    exactly ONE entry candidate. A candidate-less or multi-candidate setup
+    refuses with the exact count — the setup-mode verifier is the drill surface
+    for those; nothing is ever picked by policy or fuzzy matching.
+    """
+    given = [
+        value for value in (candidate_id, decision_id, trade_id, setup_id) if value
+    ]
     if len(given) != 1:
         raise MissingEvidenceError("selection", "exactly one exact ID is required")
     candidates = _table(ctx.pair, RecordTable.ENTRY_CANDIDATE)
@@ -395,6 +405,22 @@ def resolve_selection(
         if candidate_id not in set(candidates["candidate_id"].astype(str)):
             raise MissingEvidenceError("selection", f"unknown candidate: {candidate_id}")
         return candidate_id
+    if setup_id is not None:
+        matches = candidates.loc[
+            candidates["setup_id"].astype(str) == str(setup_id), "candidate_id"
+        ]
+        if len(matches) == 1:
+            return str(matches.iloc[0])
+        if len(matches) == 0:
+            raise MissingEvidenceError(
+                "selection",
+                f"setup {setup_id} has no entry candidate; open it in setup mode",
+            )
+        raise MissingEvidenceError(
+            "selection",
+            f"setup {setup_id} has {len(matches)} entry candidates; open it in "
+            "setup mode or select one exact candidate_id",
+        )
     dossiers = _table(ctx.pair, RecordTable.GEOMETRY_DOSSIER)
     column = "decision_id" if decision_id is not None else "trade_id"
     value = decision_id if decision_id is not None else trade_id

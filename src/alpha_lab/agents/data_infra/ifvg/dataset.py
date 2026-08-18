@@ -287,6 +287,7 @@ class V2CaptureResult:
         access_policy: ExplorationDataPolicy,
         audit_frames: dict[str, pd.DataFrame] | None = None,
         end_seed: IfvgDaySeed | None = None,
+        trace_audit_rows: pd.DataFrame | None = None,
     ) -> None:
         self.tables = tables
         self.day_funnels = day_funnels
@@ -296,6 +297,12 @@ class V2CaptureResult:
         self.access_policy = access_policy
         self.audit_frames = audit_frames
         self.end_seed = end_seed
+        # Core-trace rows carrying the trace-cut audit kinds (with their global
+        # trace_ordinal already assigned) — retained ONLY under an audit
+        # capture mode so the per-child fsm-audit companion can be assembled
+        # without a second heavyweight replay. Never populated for the plain
+        # (audit-disabled) capture path.
+        self.trace_audit_rows = trace_audit_rows
 
     @property
     def candidates(self) -> pd.DataFrame:
@@ -501,6 +508,7 @@ def build_ifvg_v2_capture(
     rebuilt_days: list[str] = []
     cached_days: list[str] = []
     bars_by_day: dict[str, tuple] = {}
+    core_trace_offset = 0
 
     for chain_index, date_str in enumerate(chain_dates):
         expected_seeds = _chained_seeds(previous_artifacts) or first_expected
@@ -539,7 +547,24 @@ def build_ifvg_v2_capture(
         )
         seed = day_result.end_seed
         if day_result.audit_rows is not None:
-            audit_frames[date_str] = day_result.audit_rows
+            audit_frame = day_result.audit_rows.copy()
+            if not audit_frame.empty:
+                # identical stamps to the fsm-audit builder path, so the
+                # per-child companion assembly validates the same contracts
+                audit_frame["is_warmup"] = chain_index < cfg.warmup_days
+                audit_frame["days_of_htf_history"] = chain_index
+                audit_frame["evaluation_config_hash"] = (
+                    resolved_profile.evaluation_config_hash
+                )
+                audit_frame["core_trace_ordinal_before_global"] = (
+                    audit_frame["stamp_core_trace_ordinal_before"].astype(int)
+                    + core_trace_offset
+                )
+                audit_frame["core_trace_ordinal_after_global"] = (
+                    audit_frame["stamp_core_trace_ordinal_after"].astype(int)
+                    + core_trace_offset
+                )
+            audit_frames[date_str] = audit_frame
         frame = day_result.rows.copy()
         if not frame.empty:
             frame["is_warmup"] = chain_index < cfg.warmup_days
@@ -548,6 +573,7 @@ def build_ifvg_v2_capture(
                 resolved_profile.evaluation_config_hash
             )
         trace_frames.append(frame)
+        core_trace_offset += len(frame)
         day_funnels[date_str] = day_result.funnel
         bars_by_day[date_str] = tuple(artifacts.bars)
         previous_artifacts = artifacts
@@ -582,6 +608,17 @@ def build_ifvg_v2_capture(
         validate_table_identity(table, frame)
     validate_foreign_keys(tables)
     policy.assert_zero_forbidden_access()
+    trace_audit_rows: pd.DataFrame | None = None
+    if audit_capture_mode != "disabled":
+        from .audit_contracts import TRACE_AUDIT_KIND_BY_TABLE  # noqa: PLC0415
+
+        trace_audit_rows = (
+            trace.loc[
+                trace["kind"].isin(tuple(TRACE_AUDIT_KIND_BY_TABLE.values()))
+            ].reset_index(drop=True)
+            if not trace.empty and "kind" in trace.columns
+            else pd.DataFrame()
+        )
     return V2CaptureResult(
         tables=tables,
         day_funnels=day_funnels,
@@ -591,6 +628,7 @@ def build_ifvg_v2_capture(
         access_policy=policy,
         audit_frames=audit_frames if audit_capture_mode != "disabled" else None,
         end_seed=seed,
+        trace_audit_rows=trace_audit_rows,
     )
 
 

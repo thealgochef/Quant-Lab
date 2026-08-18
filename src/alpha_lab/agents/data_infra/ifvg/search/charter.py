@@ -9,7 +9,9 @@ scoped authorization — all fail-closed.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from enum import StrEnum
+from types import MappingProxyType
 from typing import ClassVar, Literal
 
 from pydantic import Field, model_validator
@@ -40,6 +42,7 @@ from .identities import (
 )
 
 __all__ = [
+    "OBJECTIVE_DIRECTIONS",
     "SearchMode",
     "ResolvedStrategyGateThresholds",
     "ResolvedPropGateThresholds",
@@ -111,6 +114,49 @@ class PlannedVsRealizedEdge(FrozenContract):
     slippage_commission_drag_r: float
 
 
+#: Registered optimization direction per objective metric (StrategyMetrics
+#: fields). Every charter objective/tie-break must resolve here (or be the
+#: ``core_replay_id`` deterministic final tie-break) — an unregistered metric
+#: name is refused at charter validation, never silently maximized.
+OBJECTIVE_DIRECTIONS: Mapping[str, str] = MappingProxyType(
+    {
+        # strategy metrics (CS §3.4)
+        "executed_trades": "maximize",
+        "independent_days": "maximize",
+        "gross_expectancy_r": "maximize",
+        "net_expectancy_r": "maximize",
+        "profit_factor": "maximize",
+        "max_drawdown_r": "minimize",
+        "time_under_water_days": "minimize",
+        "time_block_sign_consistency": "maximize",
+        "session_stability_score": "maximize",
+        "top_day_pnl_share": "minimize",
+        "top_setup_pnl_share": "minimize",
+        # prop result metrics (CS §5.6 — served by the frontier from R3)
+        "pass_probability": "maximize",
+        "median_days_to_pass": "minimize",
+        "breach_probability": "minimize",
+        "expiration_probability": "minimize",
+        "expected_fees_paid": "minimize",
+        "first_payout_probability_30d": "maximize",
+        "first_payout_probability_60d": "maximize",
+        "three_payout_probability": "maximize",
+        "breach_probability_90d": "minimize",
+        "median_account_lifetime_days": "maximize",
+        "expected_net_payout_90d": "maximize",
+        "p10_net_payout_90d": "maximize",
+        "median_days_between_payouts": "minimize",
+        "p90_payout_drought_days": "minimize",
+        "expected_replacement_cost": "minimize",
+        "payout_probability_per_rolling_30d": "maximize",
+        "probability_at_least_one_payout_90d": "maximize",
+        "probability_all_accounts_breach_90d": "minimize",
+        "expected_portfolio_net_payout_90d": "maximize",
+        "p10_portfolio_net_payout_90d": "maximize",
+    }
+)
+
+
 class ObjectivePolicy(FrozenContract):
     """No weight fields exist; a hidden weighted score is structurally impossible."""
 
@@ -119,6 +165,28 @@ class ObjectivePolicy(FrozenContract):
     robustness_gates: ResolvedRobustnessGateThresholds
     pareto_objectives: tuple[str, ...]
     lexicographic_tie_breaks: tuple[str, ...]
+
+    @model_validator(mode="after")
+    def _objectives_have_registered_directions(self):
+        unknown = sorted(
+            metric
+            for metric in self.pareto_objectives
+            if metric not in OBJECTIVE_DIRECTIONS
+        )
+        if unknown:
+            raise ValueError(
+                f"pareto objectives without a registered direction: {unknown}"
+            )
+        unknown_ties = sorted(
+            metric
+            for metric in self.lexicographic_tie_breaks
+            if metric != "core_replay_id" and metric not in OBJECTIVE_DIRECTIONS
+        )
+        if unknown_ties:
+            raise ValueError(
+                f"tie-break metrics without a registered direction: {unknown_ties}"
+            )
+        return self
 
 
 class DatePolicy(FrozenContract):
@@ -205,6 +273,10 @@ class SearchCharterPayload(FrozenContract):
     simulation_protocol: SimulationProtocol
     max_child_count: int = Field(gt=0, le=MAX_CHILD_COUNT_CEILING)
     search_algorithm: Literal["deterministic_exhaustive_v1"] = "deterministic_exhaustive_v1"
+    #: The FROZEN contrast declarations (DT §5): only DeclaredContrast ids
+    #: listed here may ever evaluate — post-hoc contrasts are structurally
+    #: refused because this tuple is inside the hashed charter identity.
+    declared_contrast_ids: tuple[str, ...] = ()
     seed: int
     cost_policy: CostPolicy
     strategy_core_commit: str

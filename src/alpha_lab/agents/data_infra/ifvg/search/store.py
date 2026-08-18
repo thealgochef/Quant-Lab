@@ -63,6 +63,8 @@ SEARCH_STORE_NAMES: tuple[str, ...] = (
     "coverage_matrices",
     "verification_runs",
     "neutrality_reports",
+    "fsm_audit_companions",
+    "lineage_reports",
 )
 
 _ENVELOPE_FILE = "envelope.json"
@@ -252,6 +254,30 @@ def save_or_reuse_envelope[E: EnvelopeBase](
             raise SearchStoreError(
                 f"store entry {store_name}/{envelope_id} exists with DIFFERENT content"
             )
+        if extra_files:
+            # sidecar bytes are outside the payload identity, so reuse must
+            # verify them against the stored manifest — a same-identity
+            # publication with DIFFERENT sidecar bytes fails closed instead of
+            # silently "reusing" the old bytes.
+            import hashlib  # noqa: PLC0415
+
+            manifest = json.loads(
+                (
+                    envelope_destination(root, store_name, envelope_id)
+                    / _MANIFEST_FILE
+                ).read_text(encoding="utf-8")
+            )
+            stored_hashes = {
+                entry["path"]: entry["sha256"]
+                for entry in manifest.get("artifacts", ())
+            }
+            for name, payload in sorted(extra_files.items()):
+                digest = hashlib.sha256(payload).hexdigest()
+                if stored_hashes.get(name) != digest:
+                    raise SearchStoreError(
+                        f"store entry {store_name}/{envelope_id} exists with "
+                        f"DIFFERENT sidecar content for {name!r}"
+                    )
         return stored, True
     save_envelope_immutable(root, store_name, envelope, extra_files=extra_files)
     return envelope, False

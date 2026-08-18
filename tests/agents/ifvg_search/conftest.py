@@ -12,6 +12,7 @@ from __future__ import annotations
 import random
 from datetime import UTC, date, datetime, timedelta
 
+import pandas as pd
 import pytest
 from strategy_core.candles._ids import make_bar_id
 from strategy_core.types import Bar, BarKind, CloseReason
@@ -168,6 +169,82 @@ def run_synthetic_chain(
         results.append(result)
         seed = result.end_seed
     return results
+
+
+def make_resolved_trades_frame(
+    days: tuple[str, ...],
+    *,
+    trades_per_day: int = 4,
+    loss_every: int = 4,
+    section_config_hash: str = "0" * 64,
+) -> pd.DataFrame:
+    """A fully valid resolved EXECUTED_TRADE table for gate/metric tests.
+
+    Satisfies every rule in ``_validate_and_normalize_executed_trades``:
+    exact risk/side/realized arithmetic, strictly increasing non-overlapping
+    intervals, resolution strictly after entry, distinct cursors, and the
+    complete envelope/table identity columns.
+    """
+
+    entry_ticks, risk_ticks = 80_000, 40
+    rows = []
+    ordinal = 0
+    for day in days:
+        base = datetime.fromisoformat(f"{day}T14:00:00+00:00")
+        for slot in range(trades_per_day):
+            ordinal += 1
+            is_loss = ordinal % loss_every == 0
+            entry_ts = base + timedelta(minutes=20 * slot)
+            resolution_ts = entry_ts + timedelta(minutes=5)
+            resolution = "stop" if is_loss else "target"
+            realized = -risk_ticks if is_loss else risk_ticks
+            rows.append(
+                {
+                    "record_table": "executed_trade",
+                    "record_schema_version": 2,
+                    "capture_schema_version": 2,
+                    "dataset_schema_version": 2,
+                    "trade_schema_version": 2,
+                    "envelope_strategy_id": "ifvg_smc",
+                    "envelope_strategy_version": "v2",
+                    "envelope_profile_hash": section_config_hash,
+                    "envelope_profile_name": "synthetic",
+                    "envelope_qualification_mode": "doc_strict",
+                    "envelope_section_config_hash": section_config_hash,
+                    "envelope_entry_family": "fresh",
+                    "envelope_label_family": "static_1r",
+                    "envelope_entry_session": "ny_am",
+                    "envelope_anchor_policy": "trading_day_18et_elapsed_v1",
+                    "envelope_resolver_policy": "next_1m_bar_stop_first_v1",
+                    "envelope_causality_parent": "required",
+                    "envelope_causality_opposing": "required",
+                    "envelope_causality_entry": "required",
+                    "envelope_timeout_policy": "none",
+                    "envelope_setup_id": f"setup-{ordinal:03d}",
+                    "setup_id": f"setup-{ordinal:03d}",
+                    "candidate_id": f"cand-{ordinal:03d}",
+                    "decision_id": f"dec-{ordinal:03d}",
+                    "trade_id": f"trade-{ordinal:03d}",
+                    "status": "resolved",
+                    "resolution": resolution,
+                    "trading_day": day,
+                    "direction": "LONG",
+                    "entry_session": "ny_am",
+                    "entry_ts_utc": entry_ts.isoformat(),
+                    "resolution_ts_utc": resolution_ts.isoformat(),
+                    "entry_cursor": f"cur-entry-{ordinal:03d}",
+                    "resolution_cursor": f"cur-res-{ordinal:03d}",
+                    "entry_ticks": entry_ticks,
+                    "stop_ticks": entry_ticks - risk_ticks,
+                    "target_ticks": entry_ticks + risk_ticks,
+                    "risk_ticks": risk_ticks,
+                    "bars_after_entry_to_resolution": 5,
+                    "realized_ticks": realized,
+                    "mfe_ticks": risk_ticks if not is_loss else 8,
+                    "mae_ticks": -8 if not is_loss else -risk_ticks,
+                }
+            )
+    return pd.DataFrame(rows)
 
 
 @pytest.fixture(scope="session")

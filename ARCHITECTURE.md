@@ -221,3 +221,54 @@ Load-bearing seams (D-039, D-040, D-042, D-043):
   provenance literal `legacy_verified_replay_source` is unqueryable by the
   feature layer. Order-flow activation is the R5B versioned registry event
   and remains research-only offline (owner decision R-6).
+
+R2 additions (multi-child search, lineage, deltas, verifier integration):
+
+- **Parent orchestrator** (`search/orchestrator.py`): deterministic
+  enumeration over registered axis values deduped on the resolved replay
+  identity (within and across studies), `GeneratedProfileCapability` enforced
+  BEFORE any replay, O_EXCL per-search lock with checkpoint heartbeats +
+  stale-orphan break (resume-after-kill), atomic `search_state.json`
+  checkpoints per child transition, `cancel.requested` honored at child
+  boundaries only, store-identity verified reuse. Launch shim:
+  `scripts/ifvg_search_job.py` (start/status/cancel; worker refuses execution
+  without an explicit runner entry — real executors land with the R5
+  pipeline).
+- **Profile-independent lineage** (`search/lineage.py`): setup → candidate →
+  decision → trade lineage payloads derived from source-stable evidence
+  (deterministic SC fvg ids + cursors); native→lineage one-to-one enforced
+  with persisted `LineageCollisionRecord`s; collisions or incomplete keys
+  disable the population (never deduped or fuzz-matched).
+- **Exact deltas** (`study/population_delta.py` · `funnel_delta.py`): every
+  population delta declares its `match_basis` (`native_id_exact` same-profile,
+  `profile_independent_lineage_exact` cross-profile, else `not_comparable`
+  with a reason); funnel deltas run over the union counter vocabulary with
+  typed conversions and terminal-reason deltas.
+- **Gates / frontier / robustness / insights** (`search/gates.py` ·
+  `strategy_metrics.py` · `frontier.py` · `robustness.py` · `insights.py`):
+  all eleven charter thresholds evaluated with human explanations (incl. the
+  bootstrap-CI-excludes-zero gate over the trading-day cluster bootstrap);
+  deterministic O(n²) dominance with a persisted lexicographic tie-break trace
+  selecting a `Development Exploratory Representative`; ±1-step neighbor
+  degradation + plateau widths + knife-edge warnings; seven fixed insight
+  categories with exact `EvidenceRef`s, match-basis-aware suppression, and a
+  structural forbidden-wording refusal.
+- **Declared contrasts** (`study/contrasts.py`): charter-declared only
+  (post-hoc refused), fully-crossed paired main effects with the seed-7
+  pair bootstrap CI, observational wording enforced by type.
+- **Companion wiring (DEV-R1-6 closed)**: `build_child_fsm_audit` +
+  `publish_child_fsm_audit` (`fsm_audit_preparation.py`) assemble the
+  per-child audit companion from the audit-enabled drive's retained trace and
+  channel rows, gated by the per-child `ChildAuditNeutralityReport` and the
+  exact funnel⇔audit reconciliation — parity-EXEMPT by design (the accepted
+  doc-default parity gate is untouched and remains doc-default-only);
+  `build_slice_companions` (`search/child_replay.py`) closes the vertical
+  slice's audit/publication/verifier-link gates (v2 tables via the existing
+  heavyweight saver; neutrality + audit companions into the immutable search
+  stores; exact drill-target resolution proven, vacuous-zero-targets recorded
+  honestly).
+- **Exact-setup drill-through**: `resolve_selection` gains the `setup_id`
+  exact-ID kind (unique-candidate resolution; zero/multi-candidate setups
+  refuse toward setup mode — never a policy pick); `queue_jump("setup_id", …)`
+  routes into the setup verifier's own exact resolver before the mode radio
+  instantiates.

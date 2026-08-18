@@ -38,10 +38,41 @@ def test_no_allow_sealed_parameter_anywhere() -> None:
 
 
 def test_queue_jump_accepts_only_exact_id_kinds() -> None:
-    with pytest.raises(ValueError, match="jump kind"):
-        tab.queue_jump("setup_id", "some-setup")
+    # setup_id is the fourth exact kind since ifvg_prop_robust_config_search_v1
+    # R2 (funnel-delta exact-setup drill-through); time/nearest kinds remain
+    # structurally impossible.
+    for kind in ("candidate_id", "decision_id", "trade_id", "setup_id"):
+        tab.queue_jump(kind, "some-exact-id")
+        assert tab.st.session_state.pop(tab._PENDING_JUMP_KEY) == (
+            kind,
+            "some-exact-id",
+        )
     with pytest.raises(ValueError, match="jump kind"):
         tab.queue_jump("nearest_time", "2026-01-07T10:00:00Z")
+    with pytest.raises(ValueError, match="jump kind"):
+        tab.queue_jump("fuzzy_geometry", "whatever")
+
+
+def test_setup_jump_routes_to_setup_mode_exact_resolver() -> None:
+    tab.queue_jump("setup_id", "exact-setup-id")
+
+    class _Stub:
+        pass
+
+    tab._route_pending_setup_jump(_Stub)
+    assert tab._PENDING_JUMP_KEY not in tab.st.session_state
+    assert tab.st.session_state.pop(f"{tab._STATE_PREFIX}selection_mode") == "setup"
+    assert (
+        tab.st.session_state.pop(f"{tab._STATE_PREFIX}setup_jump")
+        == "exact-setup-id"
+    )
+    # a queued candidate jump is untouched by the setup router
+    tab.queue_jump("candidate_id", "exact-candidate")
+    tab._route_pending_setup_jump(_Stub)
+    assert tab.st.session_state.pop(tab._PENDING_JUMP_KEY) == (
+        "candidate_id",
+        "exact-candidate",
+    )
 
 
 def test_sanitize_error_redacts_paths_and_secrets() -> None:

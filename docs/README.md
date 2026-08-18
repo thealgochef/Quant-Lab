@@ -68,7 +68,9 @@ v1). Authority: the approved plan package under
 `QL-FSM-PROP-SEARCH-DASHBOARD/FINAL-IMPLEMENTATION-PLAN-DOCS/`. Code:
 `src/alpha_lab/agents/data_infra/ifvg/{search,study,features}/`; suites:
 `tests/agents/ifvg_search/`. Decisions D-039, D-040, D-042, D-043 (D-041,
-D-044, D-045 reserved for R3/R5-R6/R4). R1 implementation is complete;
+D-044, D-045 reserved for R3/R5-R6/R4). R1 and R2 (multi-child search,
+lineage, exact deltas, verifier integration, `scripts/ifvg_search_job.py`)
+implementations are complete;
 **R1 acceptance is blocked pending the owner-approved verification fixture**
 (`VerificationAuthorizationRef`; owner decisions 21/R-5) — no real five-day
 slice runs until it exists, and no research interpretation attaches to any

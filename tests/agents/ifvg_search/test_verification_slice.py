@@ -198,6 +198,57 @@ def test_slice_composes_identity_publication_and_honest_gates(slice_env) -> None
     assert rerun["core_replay_reused"] is True
 
 
+def test_slice_refuses_failed_neutrality_before_any_publication(slice_env) -> None:
+    """F1: CS §3.3 — neutrality gates PUBLICATION, not just the gate booleans."""
+
+    from alpha_lab.agents.data_infra.ifvg.search.failure import ChildNeutralityError
+
+    def _failed_runner(**kwargs):
+        class _Policy:
+            def assert_zero_forbidden_access(self):
+                return None
+
+        capture = SimpleNamespace(tables={}, audit_frames=None, access_policy=_Policy())
+        neutrality = ChildAuditNeutralityReport(
+            core_replay_id=kwargs["core_replay_id"],
+            mechanism="dual_drive_ab_v1",
+            audit_disabled_core_table_hashes={},
+            audit_enabled_core_table_hashes={},
+            tables_equal=False,
+            mechanism_evidence_refs=(),
+            core_trace_content_hash="9" * 64,
+            audit_stamp_referential_integrity=True,
+            passed=False,
+        )
+        return SimpleNamespace(
+            capture=capture,
+            audit_capture=capture,
+            neutrality=neutrality,
+            gross_trade_stream_hash="8" * 64,
+        )
+
+    with pytest.raises(ChildNeutralityError, match="PASSING dual-drive"):
+        run_baseline_verification_slice(
+            run=slice_env.run,
+            authorization=slice_env.authorization,
+            pipeline_semantic_id="a" * 64,
+            store_root=slice_env.store_root,
+            repo_root=slice_env.repo_root,
+            data_dir=slice_env.data_dir,
+            ql_source_identity="e" * 64,
+            sc_identity=("f" * 40, "f" * 64),
+            replay_runner=_failed_runner,
+        )
+    # NOTHING was published for the refused slice
+    from alpha_lab.agents.data_infra.ifvg.search.store import SEARCH_STORE_NAMES
+
+    for store_name in ("core_replays", "replay_input_bundles"):
+        store_dir = slice_env.store_root / store_name
+        published = list(store_dir.iterdir()) if store_dir.exists() else []
+        assert published == [], f"{store_name} must stay empty on refusal"
+    del SEARCH_STORE_NAMES
+
+
 def test_slice_refuses_non_canonical_store_root(slice_env, tmp_path) -> None:
     with pytest.raises(VerificationRunValidationError, match="search_test/v1"):
         run_baseline_verification_slice(

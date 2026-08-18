@@ -15,9 +15,16 @@ import json
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
-from .audit_contracts import AuditTable, audit_contract_fingerprint
+from pydantic import Field
+
+from .audit_contracts import (
+    IFVG_FSM_AUDIT_SCHEMA_VERSION,
+    AuditTable,
+    audit_contract_fingerprint,
+    reconcile_funnel_to_audit,
+)
 from .config import (
     FSM_AUDIT_ACCEPTED_V2_DATASET_ID,
     FSM_AUDIT_ACCEPTED_V2_MANIFEST_SHA256,
@@ -30,7 +37,11 @@ from .context_experiment_contracts import (
     profile_capability,
 )
 from .data_access import hash_allowlisted_source_files
-from .dataset import FsmAuditBuildResult, build_ifvg_fsm_audit_v1
+from .dataset import (
+    FsmAuditBuildResult,
+    assemble_fsm_audit_tables,
+    build_ifvg_fsm_audit_v1,
+)
 from .development_access import (
     DEVELOPMENT_CUTOFF_UTC,
     FROZEN_WARMUP_DATES,
@@ -47,6 +58,12 @@ from .manifest import (
 )
 from .preparation import PREPARATION_JOB_ROOT, _profile_lock, _write_json_atomic
 from .profiles import resolve_profile_config
+from .search.identities import (
+    SHA256_PATTERN,
+    EnvelopeBase,
+    FsmAuditArtifactIdentity,
+    register_identity_pair,
+)
 from .verification import (
     _AUTHORITATIVE_SOURCE_BLOB,
     _repository_states,
@@ -56,6 +73,10 @@ from .verification import (
 __all__ = [
     "FsmAuditPreparationResult",
     "prepare_ifvg_fsm_audit_persisted",
+    "ChildFsmAuditBuild",
+    "ChildFsmAuditEnvelope",
+    "build_child_fsm_audit",
+    "publish_child_fsm_audit",
 ]
 
 _DROP_REASONS = (
@@ -295,6 +316,191 @@ def prepare_ifvg_fsm_audit_persisted(
         capacity_report=build.capacity_report,
         access_audit=audit_dict,
         replay_dates=replay_dates,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Per-child neutrality-aware audit build (ifvg_prop_robust_config_search_v1 R2)
+#
+# Search children replay arbitrary registered configurations, so the accepted-
+# dataset exact-parity gate above CANNOT apply to them (it is doc-default-
+# specific and stays untouched). The child audit companion is instead gated by
+# the per-child ChildAuditNeutralityReport (core tables byte-equal with the
+# audit channel on/off) plus the exact funnel ⇔ audit-event reconciliation —
+# a FAILED or absent neutrality report blocks the audit artifact and child
+# publication (CONTRACTS_AND_SCHEMAS.md §3.3).
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True, slots=True)
+class ChildFsmAuditBuild:
+    """One child's assembled, reconciled, neutrality-gated audit companion."""
+
+    core_replay_id: str
+    identity: FsmAuditArtifactIdentity
+    audit_tables: dict
+    reconciliation_report: dict
+    coverage_report: dict
+    chain_dates: tuple[str, ...]
+
+
+class ChildFsmAuditEnvelope(EnvelopeBase):
+    """Immutable-store envelope for one child audit companion (§1.5).
+
+    The payload is the plan's ``FsmAuditArtifactIdentity`` — no content hashes
+    (table bytes are post-materialization manifest facts, §0.1).
+    """
+
+    _ID_FIELD: ClassVar[str] = "child_fsm_audit_id"
+
+    child_fsm_audit_id: str = Field(pattern=SHA256_PATTERN)
+    payload: FsmAuditArtifactIdentity
+
+
+register_identity_pair(
+    name="ChildFsmAudit",
+    envelope_cls=ChildFsmAuditEnvelope,
+    payload_cls=FsmAuditArtifactIdentity,
+    id_field="child_fsm_audit_id",
+    example_factory=lambda: FsmAuditArtifactIdentity(
+        core_replay_id="a" * 64,
+        audit_schema_version=1,
+        audit_contract_fingerprint="b" * 64,
+        neutrality_mechanism_id="dual_drive_ab_v1",
+    ),
+)
+
+
+def build_child_fsm_audit(
+    *,
+    core_replay_id: str,
+    audit_capture,
+    neutrality,
+    chain_dates: tuple[str, ...],
+    warmup_days: int = 0,
+) -> ChildFsmAuditBuild:
+    """Assemble the typed audit tables for ONE child replay, fail-closed.
+
+    ``audit_capture`` is the audit-enabled :class:`~.dataset.V2CaptureResult`
+    drive (it must retain ``trace_audit_rows`` and per-day ``audit_frames``);
+    ``neutrality`` is the child's :class:`ChildAuditNeutralityReport`. The
+    doc-default exact-parity gate is NOT applied here — neutrality is the
+    child gate, and any failed/missing report refuses before assembly.
+    """
+
+    if neutrality is None:
+        raise PermissionError(
+            "a child audit artifact requires a ChildAuditNeutralityReport; "
+            "none was produced (run the dual-drive replay)"
+        )
+    if neutrality.core_replay_id != core_replay_id:
+        raise PermissionError(
+            "neutrality report is keyed to a different core replay id; refused"
+        )
+    if not neutrality.passed:
+        raise PermissionError(
+            "child audit-neutrality FAILED — the audit artifact is blocked and "
+            "the child cannot publish (core tables differ with the audit "
+            "channel enabled, or audit stamps broke referential integrity)"
+        )
+    if audit_capture is None or audit_capture.audit_frames is None:
+        raise PermissionError(
+            "the audit-enabled capture drive (audit_frames) is required to "
+            "assemble a child audit companion"
+        )
+    trace_rows = getattr(audit_capture, "trace_audit_rows", None)
+    if trace_rows is None:
+        raise PermissionError(
+            "the audit-enabled capture did not retain trace_audit_rows; "
+            "rebuild it with audit_capture_mode='fsm_audit_v1'"
+        )
+    import pandas as pd  # noqa: PLC0415
+
+    ordered_days = tuple(chain_dates)
+    audit_frames = [
+        frame if (frame := audit_capture.audit_frames.get(day)) is not None
+        else pd.DataFrame()
+        for day in ordered_days
+    ]
+    # B-M1 fail-closed consistency: the capture-time warmup stamps on the
+    # audit channel must agree with the DAY_FUNNEL stamps this build derives
+    # from ``warmup_days`` — one artifact may never carry two warmup truths.
+    for chain_index, (day, frame) in enumerate(
+        zip(ordered_days, audit_frames, strict=True)
+    ):
+        if frame.empty or "is_warmup" not in frame.columns:
+            continue
+        expected = chain_index < warmup_days
+        stamped = set(frame["is_warmup"].astype(bool).unique())
+        if stamped != {expected}:
+            raise PermissionError(
+                "child audit warmup stamps are inconsistent with warmup_days="
+                f"{warmup_days}: day {day} carries is_warmup={sorted(stamped)} "
+                f"but the chain position implies {expected}; rebuild the "
+                "capture with a matching cfg.warmup_days"
+            )
+    audit_tables = assemble_fsm_audit_tables(
+        trace=trace_rows,
+        audit_frames=audit_frames,
+        day_funnels=dict(audit_capture.day_funnels),
+        chain_dates=ordered_days,
+        warmup_days=warmup_days,
+    )
+    reconciliation = reconcile_funnel_to_audit(
+        audit_capture.day_funnels, audit_tables
+    )
+    build_view = _AuditTablesView(audit_tables=audit_tables)
+    coverage = build_evidence_coverage_report(build_view)
+    identity = FsmAuditArtifactIdentity(
+        core_replay_id=core_replay_id,
+        audit_schema_version=IFVG_FSM_AUDIT_SCHEMA_VERSION,
+        audit_contract_fingerprint=canonical_sha256(audit_contract_fingerprint()),
+        neutrality_mechanism_id=neutrality.mechanism,
+    )
+    return ChildFsmAuditBuild(
+        core_replay_id=core_replay_id,
+        identity=identity,
+        audit_tables=audit_tables,
+        reconciliation_report=reconciliation,
+        coverage_report=coverage,
+        chain_dates=ordered_days,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _AuditTablesView:
+    """Duck-typed shim so ``build_evidence_coverage_report`` serves children."""
+
+    audit_tables: dict
+
+
+def publish_child_fsm_audit(store_root, build: ChildFsmAuditBuild):
+    """Publish one child audit companion immutably (envelope + parquet sidecars).
+
+    The envelope payload is the §1.5 ``FsmAuditArtifactIdentity`` (no content
+    hashes — table bytes are post-materialization manifest facts, per §0.1);
+    reuse verifies byte-identical stored content. Returns ``(envelope, reused)``.
+    """
+
+    import io  # noqa: PLC0415
+
+    from .search.store import save_or_reuse_envelope  # noqa: PLC0415
+
+    envelope = ChildFsmAuditEnvelope.from_payload(build.identity)
+    sidecars: dict[str, bytes] = {}
+    for table, frame in sorted(build.audit_tables.items(), key=lambda kv: kv[0].value):
+        buffer = io.BytesIO()
+        frame.to_parquet(buffer, index=False)
+        sidecars[f"{table.value}.parquet"] = buffer.getvalue()
+    sidecars["reconciliation_report.json"] = (
+        json.dumps(build.reconciliation_report, indent=2, sort_keys=True, default=str)
+        + "\n"
+    ).encode("utf-8")
+    sidecars["coverage_report.json"] = (
+        json.dumps(build.coverage_report, indent=2, sort_keys=True, default=str) + "\n"
+    ).encode("utf-8")
+    return save_or_reuse_envelope(
+        store_root, "fsm_audit_companions", envelope, extra_files=sidecars
     )
 
 

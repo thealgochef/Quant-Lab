@@ -97,14 +97,33 @@ _PENDING_JUMP_KEY = f"{_STATE_PREFIX}pending_jump"
 
 
 def queue_jump(kind: str, value: str) -> None:
-    """Queue an exact-ID jump (candidate_id / decision_id / trade_id).
+    """Queue an exact-ID jump (candidate_id / decision_id / trade_id / setup_id).
 
     Resolution happens inside the verifier section through the provider's
-    exact-ID ``resolve_selection`` — never by fallback matching.
+    exact-ID ``resolve_selection`` — never by fallback matching. A ``setup_id``
+    jump (``ifvg_prop_robust_config_search_v1`` R2 — the funnel-delta
+    exact-setup drill-through) routes to the SETUP verifier mode, whose exact
+    resolver reviews every setup including candidate-less ones.
     """
-    if kind not in ("candidate_id", "decision_id", "trade_id"):
+    if kind not in ("candidate_id", "decision_id", "trade_id", "setup_id"):
         raise ValueError(f"unsupported jump kind: {kind}")
     st.session_state[_PENDING_JUMP_KEY] = (kind, str(value))
+
+
+def _route_pending_setup_jump(st_module) -> None:
+    """Route a queued setup_id jump into setup mode BEFORE the mode radio.
+
+    The setup section's own exact resolver (``resolve_setup_selection``) then
+    resolves it and reports any unresolved state with the existing sanitized
+    warning path; the candidate-mode resolver never guesses a candidate for a
+    multi- or zero-candidate setup.
+    """
+    pending = st.session_state.get(_PENDING_JUMP_KEY)
+    if not pending or pending[0] != "setup_id":
+        return
+    st.session_state.pop(_PENDING_JUMP_KEY, None)
+    st.session_state[f"{_STATE_PREFIX}selection_mode"] = "setup"
+    st.session_state[f"{_STATE_PREFIX}setup_jump"] = str(pending[1])
 
 
 def _apply_pending_jump(st_module, ctx: ReplayContext) -> None:
@@ -1172,6 +1191,8 @@ def render_verifier_section(st_module, pair, entry: dict) -> str | None:
     # Selection mode: candidate mode also serves the decision/trade exact-ID
     # jumps (they resolve into a candidate); setup mode reviews every setup,
     # including the candidate-less ones the candidate verifier cannot show.
+    # A queued setup_id jump switches the mode BEFORE the radio instantiates.
+    _route_pending_setup_jump(st_module)
     selection_mode = st_module.radio(
         "Selection mode",
         ("candidate", "setup"),

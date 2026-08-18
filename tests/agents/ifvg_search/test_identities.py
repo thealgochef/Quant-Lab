@@ -385,6 +385,27 @@ def test_canonical_profile_naming_is_study_independent() -> None:
     assert name_free_section_hash(base) != name_free_section_hash(child_a)
 
 
+def test_identical_content_under_a_wrong_registered_name_adopts_the_owner(
+) -> None:
+    """F12/CS §1.3: content identical to a registered baseline adopts THAT
+    baseline's registered name — two names for identical semantics are
+    impossible even across baselines."""
+
+    from strategy_core.strategies.ifvg_smc.section import IfvgSmcSection
+
+    from alpha_lab.agents.data_infra.ifvg.profiles import resolve_profile_config
+
+    source = resolve_profile_config(
+        {"profile_name": "ifvg_v2_doc_default_fresh_static_1r"}
+    ).section
+    # the same name-free content, carrying a generated-style (unregistered) name
+    imposter = IfvgSmcSection.model_validate(
+        {**source.model_dump(mode="json"), "profile_name": "ifvg_search_profile_feedbeeffeedbeef"}
+    )
+    adopted = canonicalize_section(imposter)
+    assert adopted.profile_name == "ifvg_v2_doc_default_fresh_static_1r"
+
+
 def test_baseline_profiles_keep_their_registered_names() -> None:
     from strategy_core.strategies.ifvg_smc.section import default_ifvg_smc_section
 
