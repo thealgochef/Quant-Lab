@@ -85,12 +85,14 @@ __all__ = [
     "build_ifvg_fsm_audit_v1",
     "build_ifvg_v2_capture",
     "CaptureChainResult",
+    "ChainStart",
     "FsmAuditBuildResult",
     "V2CaptureResult",
     "V3CaptureResult",
     "build_ifvg_v3_capture",
     "load_accepted_v2_tables",
     "reconcile_v3_core_to_accepted_v2",
+    "table_content_hash",
     "CAPTURE_UNION_SCHEMA",
     "LEGACY_CAPTURE_UNION_SCHEMA",
     "conform_capture_frame",
@@ -255,6 +257,22 @@ class CaptureChainResult:
         return out
 
 
+class ChainStart:
+    """QL-only mid-chain start for one sequential v2 replay.
+
+    ``seed`` is the reducer/registry state entering the first replayed day and
+    ``day_seeds`` the entering :class:`DaySeeds` expectations that day's
+    artifact must have been built with (both produced by the prior day of the
+    SAME profile's chain — seeds are profile-bound). This is the documented
+    ``start_after_artifact`` fallback of ``ifvg_prop_robust_config_search_v1``
+    R0→R1; it involves no Strategy-Core change.
+    """
+
+    def __init__(self, *, seed: IfvgDaySeed, day_seeds: DaySeeds) -> None:
+        self.seed = seed
+        self.day_seeds = day_seeds
+
+
 class V2CaptureResult:
     """In-memory result of one deterministic allowlisted replay."""
 
@@ -267,6 +285,8 @@ class V2CaptureResult:
         cached_artifact_days: list[str],
         bars_by_day: dict[str, tuple],
         access_policy: ExplorationDataPolicy,
+        audit_frames: dict[str, pd.DataFrame] | None = None,
+        end_seed: IfvgDaySeed | None = None,
     ) -> None:
         self.tables = tables
         self.day_funnels = day_funnels
@@ -274,6 +294,8 @@ class V2CaptureResult:
         self.cached_artifact_days = cached_artifact_days
         self.bars_by_day = bars_by_day
         self.access_policy = access_policy
+        self.audit_frames = audit_frames
+        self.end_seed = end_seed
 
     @property
     def candidates(self) -> pd.DataFrame:
@@ -427,12 +449,17 @@ def build_ifvg_v2_capture(
     access_policy: ExplorationDataPolicy | None = None,
     cached_artifacts_only: bool = False,
     progress_fn=None,
+    start_after_artifact: ChainStart | None = None,
+    audit_capture_mode: str = "disabled",
+    final_day_exhausts_dataset: bool = True,
 ) -> V2CaptureResult:
     """Replay an explicit allowlisted chain into typed v2 tables.
 
     Authorization of the complete date list occurs before any config path is
-    constructed.  The first date is a deliberate cold start; subsequent
-    artifact and reducer state is carried forward chronologically.  The last
+    constructed.  The first date is a deliberate cold start unless
+    ``start_after_artifact`` provides a verified profile-matching mid-chain
+    seed (the ``ifvg_prop_robust_config_search_v1`` R0→R1 fallback); a
+    profile/seed mismatch is refused BEFORE any source path exists.  The last
     day finalizes any open execution as ``open_unresolved`` without P&L.
     """
     if cfg.identity_lane != "v2":
@@ -440,6 +467,14 @@ def build_ifvg_v2_capture(
     if resolved_profile.section_config_hash != cfg.profile_hash:
         raise ValueError(
             "resolved profile hash does not match the capture section"
+        )
+    if (
+        start_after_artifact is not None
+        and start_after_artifact.seed.profile_hash != cfg.profile_hash
+    ):
+        raise PermissionError(
+            "start seed profile_hash does not match the capture section; "
+            "refused before any source read (seeds are profile-bound)"
         )
     policy = access_policy or ExplorationDataPolicy()
     require_fixed_exploration_allowlist(policy)
@@ -453,16 +488,22 @@ def build_ifvg_v2_capture(
         prev_ny_day=None,
         prev_ny_hl=None,
     )
-    seed: IfvgDaySeed | None = None
+    first_expected = (
+        cold if start_after_artifact is None else start_after_artifact.day_seeds
+    )
+    seed: IfvgDaySeed | None = (
+        None if start_after_artifact is None else start_after_artifact.seed
+    )
     previous_artifacts: DayArtifacts | None = None
     trace_frames: list[pd.DataFrame] = []
+    audit_frames: dict[str, pd.DataFrame] = {}
     day_funnels: dict[str, dict[str, int]] = {}
     rebuilt_days: list[str] = []
     cached_days: list[str] = []
     bars_by_day: dict[str, tuple] = {}
 
     for chain_index, date_str in enumerate(chain_dates):
-        expected_seeds = _chained_seeds(previous_artifacts) or cold
+        expected_seeds = _chained_seeds(previous_artifacts) or first_expected
         artifacts = load_day_artifacts(
             date_str,
             cfg,
@@ -491,9 +532,14 @@ def build_ifvg_v2_capture(
             cfg,
             artifacts=artifacts,
             seed=seed,
-            dataset_exhausted=chain_index == len(chain_dates) - 1,
+            dataset_exhausted=(
+                final_day_exhausts_dataset and chain_index == len(chain_dates) - 1
+            ),
+            audit_capture_mode=audit_capture_mode,
         )
         seed = day_result.end_seed
+        if day_result.audit_rows is not None:
+            audit_frames[date_str] = day_result.audit_rows
         frame = day_result.rows.copy()
         if not frame.empty:
             frame["is_warmup"] = chain_index < cfg.warmup_days
@@ -543,6 +589,8 @@ def build_ifvg_v2_capture(
         cached_artifact_days=cached_days,
         bars_by_day=bars_by_day,
         access_policy=policy,
+        audit_frames=audit_frames if audit_capture_mode != "disabled" else None,
+        end_seed=seed,
     )
 
 
@@ -1048,7 +1096,14 @@ def _canonical_cell(value):
     return value
 
 
-def _table_content_hash(table: RecordTable, frame: pd.DataFrame) -> str:
+def table_content_hash(table: RecordTable, frame: pd.DataFrame) -> str:
+    """Order-insensitive, dtype-normalized content hash of one typed v2 table.
+
+    Public per ``ifvg_prop_robust_config_search_v1`` R1 (promotion of the
+    former private helper): the search lane uses it for gross trade-stream
+    hashes and audit-neutrality table comparisons.
+    """
+
     from .manifest import canonical_sha256
 
     key_by_table = {
@@ -1070,6 +1125,10 @@ def _table_content_hash(table: RecordTable, frame: pd.DataFrame) -> str:
         for row in ordered.to_dict("records")
     ]
     return canonical_sha256({"columns": columns, "rows": rows})
+
+
+#: Backward-compatible private alias (pre-promotion callers).
+_table_content_hash = table_content_hash
 
 
 def reconcile_v3_core_to_accepted_v2(

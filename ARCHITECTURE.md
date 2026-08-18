@@ -166,3 +166,58 @@ The roadmap item "identify canonical data/model bundle location and verify file 
 - For dashboard-utility semantics, run Strategy-Core tests and Quant-Lab contract/no-drift tests before claiming v3 alignment.
 - For any model/backtest claim, report date range, data source, fees/slippage assumptions, trade count, return/expectancy, drawdown, and limitations.
 - Do not claim Trade-Lab runtime readiness until Trade-Lab is repointed to Strategy-Core v3 and end-to-end parity is proven.
+
+---
+
+## 2d. IFVG robust FSM configuration search & prop realization lane (`ifvg_prop_robust_config_search_v1`)
+
+Additive research lane beside the frozen M0-M3 context-experiment lane; zero
+Strategy-Core changes in v1. R1 (contracts/identities/access/stores) is
+implemented; its acceptance is BLOCKED pending the owner's verification-fixture
+authorization (`VerificationAuthorizationRef`, owner decisions 21/R-5).
+
+```text
+src/alpha_lab/agents/data_infra/ifvg/search/    identities · axis_registry · authorization ·
+                                                charter · failure · store · catalog ·
+                                                verification · child_replay
+src/alpha_lab/agents/data_infra/ifvg/study/     dimension_contracts · cohort · study_cell ·
+                                                computation_path · delta_outputs · comparison_contracts
+src/alpha_lab/agents/data_infra/ifvg/features/  feature_blocks · feature_bundles · mbp1_source_contract
+```
+
+Load-bearing seams (D-039, D-040, D-042, D-043):
+
+- **Decomposed replay identity**: `CoreStrategyReplayIdentity` hashes only
+  replay-defining facts (content-addressed `ReplayInputBundle` with exact
+  physical source partitions + day-artifact manifests, scoped QL/SC source
+  identities, resolved section hash, canonical profile id, seed identity,
+  resolver). Study membership, cost, audit/chart schema, and runtime access
+  audits never enter it — one replay is reusable across studies.
+- **Canonical child naming**: generated children are
+  `ifvg_search_profile_<name-free-hash16>` (study-independent record IDs);
+  baselines keep registered names; `GeneratedProfileCapability` gates children
+  (the fixed `PROFILE_CAPABILITY_REGISTRY` gates baselines only).
+- **Typed axis registry**: every `IfvgSmcSection` field except `profile_name`
+  is classified (locked invariants / thesis / approved axes / blocked incl.
+  the inert `break_even_enabled`/`legacy_candidate_row_limit` traps and
+  `parent_full_fill_invalidation` = `blocked_pending_owner_policy_review`);
+  values are individually ratifiable; no raw `section_overrides` surface.
+- **Two-path verification**: the ONLY real-data verification is one baseline
+  ≤5-trading-day vertical slice under `VerificationReplayPolicy` (third
+  trusted class in `require_fixed_exploration_allowlist`) with nonresearch
+  control-flow gates; everything multi-child is synthetic. One canonical
+  allowlist program-wide (marker-enforced); the real slice cannot construct a
+  source path without the owner's `VerificationAuthorizationRef`.
+- **Immutable stores + concurrency-safe catalog**: envelope stores under
+  `data/ifvg_datasets/search/v1/` (test namespace `search_test/v1/`) on the
+  manifest protocol (refuse-if-exists, tmp + `os.replace`, reload-assert);
+  the mutable catalog is a lock-guarded append-only `catalog_events.jsonl`
+  plus a deterministic rebuildable index (display annotations only).
+- **Study cells / comparisons**: 16 hashed semantic dimensions, annotations
+  never hashed; comparisons fail closed to `config_diff_only`; computation
+  paths derived from the fail-closed dimension registry.
+- **MBP-1 boundary**: MBP-1 is the maximum order-flow depth for every new
+  contract (deep-book identifier guard everywhere); the single opaque
+  provenance literal `legacy_verified_replay_source` is unqueryable by the
+  feature layer. Order-flow activation is the R5B versioned registry event
+  and remains research-only offline (owner decision R-6).

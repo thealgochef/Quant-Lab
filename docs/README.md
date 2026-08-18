@@ -60,3 +60,16 @@ When code behavior changes, update the matching docs in the same change:
 - Training UI/workflow changes -> `ML_TRAINING_WORKBENCH.md`.
 - Cache/model-bundle output changes -> `../ARCHITECTURE.md`, `pipeline_state.yaml`, and `AGENTS.md` / `CLAUDE.md` if agent start points change.
 - Do not recreate historical reports as current-state docs. If old audit context is needed, extract only the still-valid lessons into the canonical docs after code/test verification.
+
+## IFVG robust FSM configuration search & prop realization lane
+
+`ifvg_prop_robust_config_search_v1` (additive; zero Strategy-Core changes in
+v1). Authority: the approved plan package under
+`QL-FSM-PROP-SEARCH-DASHBOARD/FINAL-IMPLEMENTATION-PLAN-DOCS/`. Code:
+`src/alpha_lab/agents/data_infra/ifvg/{search,study,features}/`; suites:
+`tests/agents/ifvg_search/`. Decisions D-039, D-040, D-042, D-043 (D-041,
+D-044, D-045 reserved for R3/R5-R6/R4). R1 implementation is complete;
+**R1 acceptance is blocked pending the owner-approved verification fixture**
+(`VerificationAuthorizationRef`; owner decisions 21/R-5) — no real five-day
+slice runs until it exists, and no research interpretation attaches to any
+verification output (`verification_only=true`, `full_pipeline_not_run=true`).

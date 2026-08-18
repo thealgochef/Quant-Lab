@@ -33,6 +33,7 @@ __all__ = [
     "DevelopmentAccessAudit",
     "DevelopmentDataAccess",
     "DevelopmentReplayPolicy",
+    "VerificationReplayPolicy",
     "calendar_dates",
 ]
 
@@ -339,3 +340,68 @@ class DevelopmentReplayPolicy(ExplorationDataPolicy):
 
     def audit_dict(self) -> dict[str, Any]:
         return self.development_audit.as_dict()
+
+
+class VerificationReplayPolicy(DevelopmentReplayPolicy):
+    """The third trusted policy class: one frozen ≤5-day verification fixture.
+
+    Consumed by the real baseline vertical slice only
+    (``ifvg_prop_robust_config_search_v1`` §6 / TEST_MATRIX §1 Path A).
+    Compared to :class:`DevelopmentReplayPolicy` it authorizes at most five
+    real trading days, requires NO real warmup prefix (the slice starts from a
+    verified profile-matching seed snapshot instead), and still fails closed
+    before path construction for any protected, sealed, or off-allowlist date.
+    A sixth date, an off-allowlist date, or a rotated window is refused at
+    construction — before any source path exists.
+    """
+
+    _ifvg_development_policy_v2 = False
+    _ifvg_verification_policy_v1 = True
+    policy_id = "verification_fixed_allowlist_max5_v1"
+
+    def __init__(
+        self,
+        replay_dates: Iterable[str],
+        *,
+        development_audit: DevelopmentAccessAudit | None = None,
+    ) -> None:
+        ordered = tuple(str(day) for day in replay_dates)
+        if not ordered:
+            raise ValueError("the verification allowlist cannot be empty")
+        if ordered != tuple(sorted(ordered)) or len(ordered) != len(set(ordered)):
+            raise ValueError("verification dates must be unique and chronological")
+        if len(ordered) > 5:
+            raise PermissionError(
+                "the verification fixture admits at most five real trading days"
+            )
+        forbidden = [
+            day
+            for day in ordered
+            if _classify(day)
+            not in {
+                SourceDateClass.WARMUP,
+                SourceDateClass.PRIOR_RESEARCH,
+                SourceDateClass.EXPOSED_DEVELOPMENT,
+            }
+        ]
+        if forbidden:
+            raise PermissionError(
+                "verification dates must lie inside the permitted development "
+                f"window; refused before path construction: {forbidden}"
+            )
+        # Deliberately bypass DevelopmentReplayPolicy.__init__ (which demands
+        # the frozen ten-date warmup prefix): the slice warm-starts from a
+        # verified seed snapshot, never from real warmup replay days.
+        ExplorationDataPolicy.__init__(
+            self, audit=DataAccessAudit(), allowlist=frozenset(ordered)
+        )
+        self.allowed_dates = ordered
+        self.development_audit = development_audit or DevelopmentAccessAudit()
+
+    def audit_dict(self) -> dict[str, Any]:
+        payload = self.development_audit.as_dict()
+        payload["policy"] = self.policy_id
+        payload["authorized_date_sha256"] = hashlib.sha256(
+            "\n".join(self.allowed_dates).encode("utf-8")
+        ).hexdigest()
+        return payload

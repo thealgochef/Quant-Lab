@@ -221,7 +221,18 @@ def require_fixed_exploration_allowlist(
         "2026-01-01" <= day <= "2026-06-10" and day != "2026-06-11"
         for day in policy.allowlist
     )
-    if not fixed_repair and not trusted_development:
+    # Third trusted class (ifvg_prop_robust_config_search_v1): the frozen
+    # ≤5-day verification fixture. Same hard window, plus the day-count cap
+    # and a non-empty bound (an empty allowlist can never be "trusted").
+    trusted_verification = (
+        bool(getattr(policy, "_ifvg_verification_policy_v1", False))
+        and 1 <= len(policy.allowlist) <= 5
+        and all(
+            "2026-01-01" <= day <= "2026-06-10" and day != "2026-06-11"
+            for day in policy.allowlist
+        )
+    )
+    if not fixed_repair and not trusted_development and not trusted_verification:
         raise PermissionError(
             "IFVG v2 repair replay requires the exact fixed exploration allowlist"
         )

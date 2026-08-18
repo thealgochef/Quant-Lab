@@ -159,3 +159,35 @@ generated_outputs:
     - "cached parquet/csv outputs under data/"
     - "scratch chart HTML files"
     - "imported Databento parquet"
+
+ifvg_prop_robust_config_search_v1:
+  authority_package: "QL-FSM-PROP-SEARCH-DASHBOARD/FINAL-IMPLEMENTATION-PLAN-DOCS/"
+  strategy_core_changes: "none (v1 hard constraint)"
+  releases:
+    R1_contracts_identities_stores:
+      implementation_status: "complete"
+      acceptance_status: "blocked_verification_authorization"
+      blocker: "owner-approved coverage matrix + allowlist sign-off + VerificationAuthorizationRef (owner decisions 21/R-5)"
+    R2_multi_child_search: {implementation_status: "not_started", acceptance_status: "transitively_blocked_by_R1"}
+    R3_prop_lifecycle: {implementation_status: "not_started", acceptance_status: "transitively_blocked_by_R1"}
+    R4_trader_ui: {implementation_status: "not_started", acceptance_status: "transitively_blocked_by_R1"}
+    R5_pipeline_mbp1_readiness_ladder: {implementation_status: "not_started", acceptance_status: "transitively_blocked_by_R1"}
+    R5B_mbp1_offline_activation: {implementation_status: "not_started", acceptance_status: "transitively_blocked_by_R1"}
+    R6_kmeans_regime_lane: {implementation_status: "not_started", acceptance_status: "transitively_blocked_by_R1"}
+    V1_hardening: {implementation_status: "not_started", acceptance_status: "transitively_blocked_by_R1"}
+  verification_policy:
+    policy_id: "verification_fixed_allowlist_max5_v1"
+    proposed_allowlist: ["2026-06-04", "2026-06-05", "2026-06-08", "2026-06-09", "2026-06-10"]
+    allowlist_status: "PROPOSAL pending coverage-evidenced owner sign-off; one canonical allowlist program-wide"
+    gate_policy: "verification_control_flow_gates_v1 (nonresearch); research gates never applied to fixtures"
+    real_slice_executed: false
+    full_development_run_executed: false
+    operator_full_run_executed: false
+  protected_sealed:
+    june_11_touched: false
+    sealed_range_touched: false
+    counters: "zero (policy-enforced before path construction)"
+  stores:
+    immutable_root: "data/ifvg_datasets/search/v1/"
+    verification_namespace: "data/ifvg_datasets/search_test/v1/"
+    mutable_catalog: "lock-guarded append-only catalog_events.jsonl + rebuildable index (display annotations only)"

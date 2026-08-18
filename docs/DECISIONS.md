@@ -342,3 +342,49 @@ cited above by D-036 as the W3 training-config recon evidence, now lives at
 `experiment/key_levels.py` were deleted in the same window (dead code, pre-v3
 session semantics; recoverable from git history). D-016's
 `scripts/train_dashboard_model.py` export boundary is untouched.
+
+---
+
+## D-039: FSM Search Lane — Decomposed Core Replay Identity + Content-Addressed Replay Inputs
+
+**Date**: 2026-08-18
+**Context**: `ifvg_prop_robust_config_search_v1` (R1). The former single child-identity concept over-keyed replays (parent study, cost, audit, resource choices all invalidated the scientific replay), and `artifacts_tag()`/date hashes identify a *request*, not bytes — per-day bar/level caches are mutable files on disk. `profile_name` is hashed into `ifvg_profile_hash` and hence into every record ID (SC `section.py:324-331`, `records.py:76-85`), so study-specific child names would fork record identity per study.
+**Decision**: New additive lane `src/alpha_lab/agents/data_infra/ifvg/search/`. The reusable scientific identity is `CoreStrategyReplayIdentity` = content-addressed `ReplayInputBundle` (exact physical source partitions with `(source_partition_id, utc_date, logical_key)` keys, day-artifact manifests, schema era, deterministic preflight `ReplayAccessAuthorizationRef`) x scoped QL replay-source identity x SC identity x resolved section hash x canonical profile id x seed identity x resolver/anchor/schema pins. Study linkage lives in `SearchChildMembership`; cost/audit/chart concerns are separate companion/costed identities; the runtime `ReplayExecutionAccessAudit` NEVER enters replay identity. Generated children carry canonical, study-independent names `ifvg_search_profile_<name-free-hash16>`; baselines keep their registered names. Mid-chain start is the QL-only `start_after_artifact` driver fallback on `build_ifvg_v2_capture` (profile/seed mismatch refused before any source read; a snapshot-producing prefix must pass `final_day_exhausts_dataset=False` because dataset exhaustion alters the end seed).
+**Rationale**: One replay is reusable across studies exactly when its identity contains only replay-defining facts; content addressing (reusing `hash_allowlisted_source_files` + artifact stamps) makes cache mutation visible instead of silently reusable.
+**Trade-off**: Bundle assembly is metadata-only but identity-bearing caches remain mutable files — trust is enforced at load/stamp time, not by the filesystem.
+
+---
+
+## D-040: Two-Path Verification — One Canonical <=5-Day Allowlist + Real VerificationAuthorizationRef
+
+**Date**: 2026-08-18
+**Context**: Seeds are profile-bound (SC `replay.py:362`), so the <=5-real-day budget cannot warm-start changed-section children; and a per-release allowlist could accumulate real-data coverage.
+**Decision**: Path A = ONE real baseline vertical slice (exact baseline profile + profile-matching seed snapshot + the one canonical <=5-trading-day allowlist, program-wide, marker-enforced via `register_program_allowlist`) run under the new third trusted policy class `VerificationReplayPolicy` (`verification_fixed_allowlist_max5_v1`) and gated by `verification_control_flow_gates_v1` ONLY — research gates never apply to fixtures. Path B = all multi-child behavior is synthetic. The real slice requires an owner-approved immutable `VerificationAuthorizationRef` (allowlist hash + coverage-matrix artifact + seed snapshot + approver) bound through `VerificationRunPayload/Envelope`, validated before any source path is constructed; the synthetic marker is refused for it. Candidate allowlist `2026-06-04..06-10` (5 trading days) remains a PROPOSAL pending the coverage-evidenced owner sign-off (decisions 21/R-5). Reports stamp `verification_only` / `not_for_research_interpretation` / `full_pipeline_not_run`.
+**Rationale**: The physics of profile-bound seeds makes real multi-child verification impossible without covert full-history replays; capability-scoped blocking (BLOCKING-VERIFICATION) lets code authoring proceed while R1 acceptance stays blocked.
+**Trade-off**: Verification reads of dev-chain day-artifact caches need the `ArtifactProvenanceReadAdapter` (the cache stamp pins the writing policy's allowlist hash); the adapter exposes provenance dates for the stamp check while every authorization delegates to the strict 5-day policy.
+
+---
+
+## D-042: Non-Self-Referential Payload/Envelope Convention + Registry-Key/Resolved-Identity Split + GeneratedProfileCapability
+
+**Date**: 2026-08-18
+**Context**: Several earlier contract drafts hashed their own ids/artifact hashes (circular identity) and conflated stable registry names with resolved content identities; the fixed `PROFILE_CAPABILITY_REGISTRY` can never gate generated profile names.
+**Decision**: Every ID-producing contract in the lane is a Payload/Envelope pair (`x_id = canonical_contract_sha256(payload)`; payloads carry no self-id, no hash of their own artifact, no display metadata, annotations, or attempt fields), registered in `ID_PRODUCING_CONTRACTS` and enforced by the identity-projection audit test. Registry keys (`feature_block_key`, `decision_policy_key`, `algorithm_key`, ...) are distinct fields from resolved identities (`resolved_feature_block_id`, ...). Deep immutability: `ImmutableMap` (canonically sorted, defensively copied, serialized as sorted key/value records) + `deep_freeze` for `Any` payloads, with mutation-adversarial tests. Baselines are gated by the fixed registry; generated children by `GeneratedProfileCapability` (runnable baseline + registered/authorized values + valid canonical section; never inserted into, never failed by absence from, the fixed registry).
+**Rationale**: Identity must be computable before materialization and immune to display/runtime noise.
+**Trade-off**: `ImmutableMap` JSON-serializes int keys as strings (deterministic, documented); envelope validation re-hashes payloads on every construction.
+
+---
+
+## D-043: Study-Cell Semantic/Annotation Split, Dimension Registry, Comparison + Delta Taxonomy
+
+**Date**: 2026-08-18
+**Context**: Section 7A of the approved plan requires a universal study-cell identity whose engineering noise can never fork scientific identity, and comparisons that fail closed instead of fuzzing.
+**Decision**: `StudyCellSemanticPayload` hashes exactly 16 semantic dimensions (engineering protocol is a never-hashed `StudyCellAnnotation`); strategy-only cells carry typed `none_*_v1` identities and never an `ifvg_context_formula_v2` lineage (concrete optional-field `DataLineagePayload`; the pre-lane accepted dataset is referenced via the opaque `legacy_verified_replay_source` provenance literal, unqueryable by the feature layer). The `EXPERIMENT_DIMENSION_REGISTRY` fails closed on unknown/blocked/incompatible dimensions and seeds the plan's 7A.5 computation table, verified row-by-row against `derive_computation_path` (closure: full replay or gated replay implies cost+prop+bootstrap resimulation; the stream hash is reusable only when neither occurs). `build_comparison` refuses declared-class/observed-change mismatches and degrades failed required-equalities to `config_diff_only` with identity+compatibility deltas only; delta families are auto-selected per class (cohort classes never select execution/prop families). Feature blocks partition the frozen tier ladder exactly (module-level assertion); frozen tier bundles reproduce `TIER_FEATURE_REGISTRY` order-exact; planned-block activation (`with_activated_block`) is a versioned registry event minting the first resolved id. MBP-1 stage cutoffs are `StageEvidenceCutoff` objects (no `+inf` representable) with per-feature `WindowTriggerSemantics`; the deep-book identifier guard covers every namespace with the single legacy-provenance exemption.
+**Rationale**: Structural impossibility beats review discipline — annotations cannot reach the hash, blocked axes cannot reach enumeration, planned blocks cannot reach materialization.
+**Trade-off**: The R1 registry seeds representative-complete dimension entries; later releases extend entries without changing the fail-closed frame.
+
+---
+
+## Reservation note (2026-08-18, not rulings)
+
+D-041 (prop lifecycle fidelity-first contracts) lands with R3; D-044 (supervised ladder + regime algorithm registry + spectral restrictions, V1 = prevalence/logistic/CatBoost/KMeans) lands with R5/R6; D-045 (trader workspace UI + pipeline runner surfaces) lands with R4/R5 — all inside `ifvg_prop_robust_config_search_v1`, per the approved final plan package.
