@@ -45,7 +45,7 @@ from .charter import (
 )
 from .failure import ChildNeutralityError, FailureReason, sanitize_failure_message
 from .frontier import FrontierResult, ObjectiveSpec, build_frontier
-from .gates import StrategyGateReport, evaluate_strategy_gates
+from .gates import StrategyGateReport, evaluate_prop_gates, evaluate_strategy_gates
 from .identities import (
     SHA256_PATTERN,
     CostedEvaluationIdentity,
@@ -507,6 +507,7 @@ def run_search(
     prewarm: Callable[[tuple[ChildSpec, ...]], None] | None = None,
     progress_fn: Callable[[int, int, str], None] | None = None,
     stale_lock_seconds: float = 86_400.0,
+    prop_simulator: Callable[..., Any] | None = None,
 ) -> SearchRunResult:
     """Run (or resume) one frozen search charter, sequentially and safely.
 
@@ -696,11 +697,18 @@ def run_search(
                 objective_values: dict[str, float] = {}
                 missing_objectives: list[str] = []
                 for objective in payload.objective_policy.pareto_objectives:
-                    value = getattr(metrics, objective, None)
-                    if value is None:
+                    if hasattr(metrics, objective):
+                        value = getattr(metrics, objective)
+                        if value is None:
+                            missing_objectives.append(objective)
+                        else:
+                            objective_values[objective] = value
+                    elif prop_simulator is None:
+                        # a prop-owned objective with no simulator wired can
+                        # never be supplied; exclude explicitly, never silently
                         missing_objectives.append(objective)
-                    else:
-                        objective_values[objective] = value
+                    # else: prop-owned objective — the prop phase merges it
+                    # from the child's simulations (worst value across firms)
                 if missing_objectives:
                     outcome.explanation = (
                         "passed all strategy gates but objective metric(s) "
@@ -715,16 +723,98 @@ def run_search(
         phase = "underlying_edge_passed"
         _checkpoint(state_root, search_id, phase, outcomes, heartbeat=lock_path)
 
-        # The prop/robustness phases are R3-owned; the state file records the
-        # skip reason explicitly so the phase march never reads as a pass.
-        skip_notes = {
-            "prop_simulations": "skipped: the prop lifecycle lands in R3",
-            "prop_feasible": "skipped: the prop lifecycle lands in R3",
-            "robustness_passed": (
-                "skipped: robustness rides the comparison surfaces in R2 and "
-                "joins the parent run with prop metrics in R3"
-            ),
-        }
+        # Prop phases (R3 seam): ``prop_simulator(outcome=..., result=...)``
+        # returns {label -> PayoutReliabilityVector} per gates-passing child.
+        # Feasibility is the conservative ALL-legs rule (one failing sim
+        # rejects); the frontier consumes the WORST value per prop metric
+        # across the child's simulations (worst-firm semantics). Without the
+        # seam the phases stay explicitly skipped-with-reason.
+        if prop_simulator is None:
+            skip_notes = {
+                "prop_simulations": (
+                    "skipped: no prop simulator wired into this run"
+                ),
+                "prop_feasible": (
+                    "skipped: no prop simulator wired into this run"
+                ),
+                "robustness_passed": (
+                    "robustness is evaluated on the comparison surfaces; it "
+                    "joins the parent run with prop metrics"
+                ),
+            }
+        else:
+            skip_notes = {
+                "robustness_passed": (
+                    "robustness is evaluated on the comparison surfaces; it "
+                    "joins the parent run with prop metrics"
+                ),
+            }
+            prop_thresholds = payload.objective_policy.prop_feasibility_gates
+            for outcome in outcomes:
+                if (
+                    outcome.gate_report is None
+                    or not outcome.gate_report.passed
+                    or outcome.core_replay_id not in feasible_metrics
+                ):
+                    continue
+                # ``result`` is None for REUSED children (their tables were
+                # not rebuilt this run) — a simulator must handle both shapes.
+                result = tables_by_child.get(outcome.core_replay_id)
+                try:
+                    vectors = prop_simulator(outcome=outcome, result=result)
+                except Exception as error:  # noqa: BLE001 — per-child containment
+                    outcome.failure_reason = FailureReason.REPLAY
+                    outcome.explanation = (
+                        "prop simulation failed: "
+                        + sanitize_failure_message(str(error))
+                    )
+                    feasible_metrics.pop(outcome.core_replay_id, None)
+                    continue
+                if not vectors:
+                    outcome.explanation = (
+                        "prop simulator returned no simulations; excluded "
+                        "from the prop-feasible set"
+                    )
+                    feasible_metrics.pop(outcome.core_replay_id, None)
+                    continue
+                reports = {
+                    label: evaluate_prop_gates(vector, prop_thresholds)
+                    for label, vector in sorted(vectors.items())
+                }
+                failed = {
+                    label: report
+                    for label, report in reports.items()
+                    if not report.passed
+                }
+                if failed:
+                    label, report = next(iter(sorted(failed.items())))
+                    outcome.failure_reason = report.failure_reason
+                    outcome.explanation = (
+                        f"prop gates failed on {label}: "
+                        f"{report.human_explanation}"
+                    )
+                    feasible_metrics.pop(outcome.core_replay_id, None)
+                    continue
+                merged = feasible_metrics[outcome.core_replay_id]
+                for metric in payload.objective_policy.pareto_objectives:
+                    if metric in merged:
+                        continue  # a strategy metric, already present
+                    direction = OBJECTIVE_DIRECTIONS[metric]
+                    values = [
+                        getattr(vector, metric)
+                        for vector in vectors.values()
+                        if getattr(vector, metric, None) is not None
+                    ]
+                    if len(values) != len(vectors):
+                        outcome.explanation = (
+                            f"prop objective {metric!r} unavailable on at "
+                            "least one simulation; excluded from the frontier"
+                        )
+                        feasible_metrics.pop(outcome.core_replay_id, None)
+                        break
+                    merged[metric] = (
+                        min(values) if direction == "maximize" else max(values)
+                    )
         phase = "prop_simulations"
         _checkpoint(
             state_root, search_id, phase, outcomes,

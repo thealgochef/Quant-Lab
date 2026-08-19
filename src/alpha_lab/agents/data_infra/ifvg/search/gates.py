@@ -9,12 +9,17 @@ the resolved values live in the frozen charter identity.
 
 from __future__ import annotations
 
-from .charter import ResolvedStrategyGateThresholds
+from .charter import ResolvedPropGateThresholds, ResolvedStrategyGateThresholds
 from .failure import FailureReason
 from .identities import FrozenContract
 from .strategy_metrics import StrategyMetrics
 
-__all__ = ["GateCheck", "StrategyGateReport", "evaluate_strategy_gates"]
+__all__ = [
+    "GateCheck",
+    "StrategyGateReport",
+    "evaluate_strategy_gates",
+    "evaluate_prop_gates",
+]
 
 
 class GateCheck(FrozenContract):
@@ -233,5 +238,124 @@ def evaluate_strategy_gates(
         human_explanation=(
             f"failed {len(failures)} of {len(checks)} strategy gates; first: "
             f"{first.gate_id} — {first.explanation}"
+        ),
+    )
+
+
+def evaluate_prop_gates(vector, thresholds: ResolvedPropGateThresholds) -> StrategyGateReport:
+    """Prop feasibility gates over one PayoutReliabilityVector (§3.4).
+
+    Same fail-closed shape as the strategy gates: every configured threshold
+    evaluates with a human explanation; a None-configured optional threshold
+    is an explicit not-required pass. Thresholds remain proposals until
+    owner-ratified.
+    """
+
+    checks: list[GateCheck] = []
+
+    def _minimum(gate_id: str, observed, threshold, reason_word: str) -> None:
+        if threshold is None:
+            checks.append(
+                _check(gate_id, False, observed, True, f"{reason_word} not required")
+            )
+            return
+        missing = observed is None
+        passed = (not missing) and observed >= threshold
+        checks.append(
+            _check(
+                gate_id,
+                threshold,
+                observed,
+                passed,
+                (
+                    f"{reason_word} unavailable"
+                    if missing
+                    else f"{reason_word} {observed:g} vs required >= {threshold:g}"
+                ),
+            )
+        )
+
+    def _maximum(gate_id: str, observed, threshold, reason_word: str) -> None:
+        if threshold is None:
+            checks.append(
+                _check(gate_id, False, observed, True, f"{reason_word} not required")
+            )
+            return
+        missing = observed is None
+        passed = (not missing) and observed <= threshold
+        checks.append(
+            _check(
+                gate_id,
+                threshold,
+                observed,
+                passed,
+                (
+                    f"{reason_word} unavailable"
+                    if missing
+                    else f"{reason_word} {observed:g} vs allowed <= {threshold:g}"
+                ),
+            )
+        )
+
+    _minimum(
+        "minimum_first_payout_probability_60d",
+        vector.first_payout_probability_60d,
+        thresholds.minimum_first_payout_probability_60d,
+        "P(first payout within 60d)",
+    )
+    _maximum(
+        "maximum_breach_probability_90d",
+        vector.breach_probability_90d,
+        thresholds.maximum_breach_probability_90d,
+        "P(breach within 90d)",
+    )
+    _minimum(
+        "minimum_expected_net_payout_90d",
+        vector.expected_net_payout_90d,
+        thresholds.minimum_expected_net_payout_90d,
+        "expected net payout (90d)",
+    )
+    _minimum(
+        "minimum_p10_net_payout_90d",
+        vector.p10_net_payout_90d,
+        thresholds.minimum_p10_net_payout_90d,
+        "P10 net payout (90d)",
+    )
+    _maximum(
+        "maximum_p90_payout_drought_days",
+        vector.p90_payout_drought_days,
+        thresholds.maximum_p90_payout_drought_days,
+        "P90 payout drought days",
+    )
+    _minimum(
+        "minimum_three_payout_probability",
+        vector.three_payout_probability,
+        thresholds.minimum_three_payout_probability,
+        "P(three payouts)",
+    )
+    failures = [check for check in checks if not check.passed]
+    if not failures:
+        return StrategyGateReport(
+            passed=True,
+            checks=tuple(checks),
+            failure_reason=None,
+            human_explanation="all prop feasibility gates passed",
+        )
+    first = failures[0]
+    reason_by_gate = {
+        "minimum_first_payout_probability_60d": FailureReason.FUNDED_SURVIVAL,
+        "maximum_breach_probability_90d": FailureReason.BREACH,
+        "minimum_expected_net_payout_90d": FailureReason.FEES,
+        "minimum_p10_net_payout_90d": FailureReason.FEES,
+        "maximum_p90_payout_drought_days": FailureReason.FUNDED_SURVIVAL,
+        "minimum_three_payout_probability": FailureReason.FUNDED_SURVIVAL,
+    }
+    return StrategyGateReport(
+        passed=False,
+        checks=tuple(checks),
+        failure_reason=reason_by_gate.get(first.gate_id, FailureReason.FUNDED_SURVIVAL),
+        human_explanation=(
+            f"failed {len(failures)} of {len(checks)} prop gates; first: "
+            f"{first.gate_id} - {first.explanation}"
         ),
     )

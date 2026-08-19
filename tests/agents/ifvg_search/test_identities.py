@@ -6,6 +6,18 @@ import copy
 
 import pytest
 
+# Identity pairs register at module import. Force-import every propsim
+# identity module so the projection audit is self-contained and covers the
+# R3 pairs even when this file runs standalone (a full session would import
+# them at collection anyway; standalone runs previously audited only the
+# search-lane pairs).
+import alpha_lab.propsim.account  # noqa: F401
+import alpha_lab.propsim.contract_evidence  # noqa: F401
+import alpha_lab.propsim.firm_contracts  # noqa: F401
+import alpha_lab.propsim.risk  # noqa: F401
+import alpha_lab.propsim.simulation  # noqa: F401
+import alpha_lab.propsim.trade_path  # noqa: F401
+import alpha_lab.propsim.withdrawal  # noqa: F401
 from alpha_lab.agents.data_infra.ifvg.search.identities import (
     CoreStrategyReplayIdentity,
     CoreStrategyReplayPayload,
@@ -58,12 +70,25 @@ def test_identity_projection_audit_all_pairs() -> None:
         "Comparison",
         "FeatureBlockResolution",
         "FeatureBundleResolution",
+        # R3 propsim pairs — enumerated by the CANONICAL audit, never only
+        # by collection-order side effects
+        "TradePathArtifact",
+        "TradePathBundle",
+        "PropFirmContract",
+        "PropRiskPolicy",
+        "WithdrawalPolicy",
+        "AccountPolicySet",
+        "AccountSimulation",
+        "PortfolioPolicy",
+        "PortfolioSimulation",
     } <= names
     for pair in pairs:
         # payload → id → envelope → reload determinism
         assert pair.example_factory is not None, f"{pair.name} lacks an audit example"
         payload = pair.example_factory()
-        envelope = pair.envelope_cls.from_payload(payload)
+        # declared post-materialization envelope extras get placeholder facts
+        extras = {name: "0" * 64 for name in pair.extra_envelope_fields}
+        envelope = pair.envelope_cls.from_payload(payload, **extras)
         envelope_id = getattr(envelope, pair.id_field)
         assert envelope_id == canonical_contract_sha256(payload)
         reloaded = pair.envelope_cls.model_validate(envelope.model_dump(mode="json"))

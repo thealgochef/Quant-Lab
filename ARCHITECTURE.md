@@ -272,3 +272,56 @@ R2 additions (multi-child search, lineage, deltas, verifier integration):
   refuse toward setup mode — never a policy pick); `queue_jump("setup_id", …)`
   routes into the setup verifier's own exact resolver before the mode radio
   instantiates.
+
+R3 additions (prop lifecycle — fidelity contracts first, then the synthetic
+account engine; `alpha_lab.propsim` lifecycle modules, additive beside the
+untouched evaluation-only walker):
+
+- **Trade-path fidelity** (`propsim/trade_path.py`): typed path evidence and
+  bundles with payload/envelope identities; a 1m bar's
+  `observed_intrabar_order` can only be `"unknown"`; assumed intrabar paths
+  are registered SCENARIO policies (`bar_adverse_extreme_first_v1` /
+  `bar_favorable_extreme_first_v1` — two identities and, on order-sensitive
+  trades, two different results); rule support is capability-based
+  (`PropRulePathRequirement`: required path capabilities + accepted fidelity
+  classes, never enum ordering) and fails closed via `PathCapabilityReport`.
+- **Typed calendars** (`propsim/calendar.py`): `DayCountBasis`/`DurationRule`
+  under a `SimulatedClockPolicy`; a basis the active clock cannot represent
+  (calendar-month recurring fee under day-block bootstrap without a synthetic
+  calendar) fails closed with `UnsupportedCalendarRuleError`.
+- **Firm contracts + contract evidence** (`propsim/firm_contracts.py` ·
+  `contract_evidence.py`): permitted rules/thresholds/observation policies +
+  the rule→capability matrix; adverse/favorable ordering never inside
+  `PhaseRules` (scenario policies only); source documents → per-field
+  evidence → compilation → owner review → supersession on a one-way status
+  ladder where synthetic evidence can NEVER reach `first_party_verified`.
+- **Account walk** (`propsim/account.py`): full lifecycle (evaluation →
+  funded → payouts/fees/replacement) as ONE strictly ordered
+  `PropAccountEventEnvelope` stream (`prop_account_event_order_v1`, global
+  `event_ordinal`, exact source trade/decision/candidate/setup/path links);
+  the evaluation-only walker (`engine.py`) stays untouched, compatibility
+  proven by the one-contract `AccountWalk`≡`EvaluationWalk` parity fixture.
+- **Risk sizing + withdrawal behavior** (`propsim/risk.py` ·
+  `withdrawal.py`): every sizing family with typed skip reasons (never
+  silently forced to one contract); trader withdrawal choices are a separate
+  identity from the firm contract and both enter every simulation identity.
+- **Adapters + stream hash** (`propsim/adapters.py`): v2 executed-trade →
+  account-trade tick→point/cost mapping plus the stable ORDER-SENSITIVE
+  gross stream hash pinning the exact resolved trade sequence.
+- **Portfolio / stress / simulation identities** (`propsim/portfolio.py` ·
+  `stress.py` · `simulation.py`): copied accounts replay ONE common
+  correlated market path per draw (no per-account resampling path exists);
+  nine seeded deterministic stress scenarios ride the simulation identity;
+  account/portfolio simulation identities carry every result-changing policy
+  (constructor-surface audit: no result-changing constructor-only kwarg);
+  duplicate bootstrap index sequences are legal with a unique
+  `path_instance_id` + stored `sampled_index_sequence_hash` per draw.
+- **Prop metrics + search wiring** (`propsim/prop_metrics.py` ·
+  `search/gates.py` · `search/orchestrator.py`): lower-tail-first
+  `PayoutReliabilityVector`; `evaluate_prop_gates` fail-closed rows (None
+  thresholds are explicit not-required passes; missing observations fail);
+  the orchestrator `prop_simulator` seam applies the conservative ALL-legs
+  feasibility rule, merges each prop objective into the frontier as the
+  WORST value across the child's simulations, defers prop-owned pareto
+  objectives past the strategy stage only when a simulator is wired, and
+  records explicit skip notes otherwise.

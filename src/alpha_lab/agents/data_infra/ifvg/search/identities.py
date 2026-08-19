@@ -347,6 +347,16 @@ def register_identity_pair(
 def registered_identity_pairs() -> tuple[RegisteredIdentityPair, ...]:
     """Import every contract-bearing lane module, then list the registry."""
 
+    from alpha_lab.propsim import (  # noqa: F401, PLC0415
+        account,
+        contract_evidence,
+        firm_contracts,
+        risk,
+        simulation,
+        trade_path,
+        withdrawal,
+    )
+
     from .. import fsm_audit_preparation  # noqa: F401, PLC0415
     from ..features import feature_blocks, feature_bundles  # noqa: F401, PLC0415
     from ..study import cohort, comparison_contracts, contrasts, study_cell  # noqa: F401, PLC0415

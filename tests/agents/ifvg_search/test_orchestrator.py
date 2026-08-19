@@ -81,7 +81,14 @@ def _axis_values() -> dict[str, tuple[str, ...]]:
     return values
 
 
-def _charter(*, max_children: int = 4, seed: int = 7) -> SearchCharterEnvelope:
+def _charter(
+    *,
+    max_children: int = 4,
+    seed: int = 7,
+    pareto_objectives: tuple[str, ...] = ("net_expectancy_r", "profit_factor"),
+    lexicographic_tie_breaks: tuple[str, ...] = ("net_expectancy_r", "core_replay_id"),
+    prop_feasibility_gates: ResolvedPropGateThresholds | None = None,
+) -> SearchCharterEnvelope:
     payload = SearchCharterPayload(
         search_mode=SearchMode.FSM_CONFIG_SEARCH,
         baseline_profile_name="ifvg_v2_doc_default_fresh_static_1r",
@@ -99,13 +106,17 @@ def _charter(*, max_children: int = 4, seed: int = 7) -> SearchCharterEnvelope:
                 min_independent_days=3,
                 min_session_stability_score=0.5,
             ),
-            prop_feasibility_gates=ResolvedPropGateThresholds(
-                minimum_first_payout_probability_60d=0.5,
-                maximum_breach_probability_90d=0.35,
-                minimum_expected_net_payout_90d=None,
-                minimum_p10_net_payout_90d=None,
-                maximum_p90_payout_drought_days=None,
-                minimum_three_payout_probability=None,
+            prop_feasibility_gates=(
+                prop_feasibility_gates
+                if prop_feasibility_gates is not None
+                else ResolvedPropGateThresholds(
+                    minimum_first_payout_probability_60d=0.5,
+                    maximum_breach_probability_90d=0.35,
+                    minimum_expected_net_payout_90d=None,
+                    minimum_p10_net_payout_90d=None,
+                    maximum_p90_payout_drought_days=None,
+                    minimum_three_payout_probability=None,
+                )
             ),
             robustness_gates=ResolvedRobustnessGateThresholds(
                 maximum_neighbor_expectancy_degradation_r=None,
@@ -113,8 +124,8 @@ def _charter(*, max_children: int = 4, seed: int = 7) -> SearchCharterEnvelope:
                 maximum_worst_firm_breach_probability_90d=None,
                 minimum_time_block_sign_consistency=None,
             ),
-            pareto_objectives=("net_expectancy_r", "profit_factor"),
-            lexicographic_tie_breaks=("net_expectancy_r", "core_replay_id"),
+            pareto_objectives=pareto_objectives,
+            lexicographic_tie_breaks=lexicographic_tie_breaks,
         ),
         date_policy=DatePolicy(
             replay_dates=SYNTHETIC_DAYS,
@@ -274,7 +285,7 @@ def test_two_by_two_end_to_end(tmp_path) -> None:
     state = read_search_state(tmp_path / "state", charter.search_id)
     assert state["phase"] == "search_complete"
     assert len(state["children"]) == 4
-    assert "R3" in state["phase_notes"]["prop_simulations"]
+    assert "skipped" in state["phase_notes"]["prop_simulations"]
     # every evaluated child published its costed evaluation; the frontier is
     # persisted into the frontiers store (F5)
     from alpha_lab.agents.data_infra.ifvg.search.orchestrator import (
