@@ -31,7 +31,6 @@ _BOOTSTRAP_SAMPLES = 10_000
 _BOOTSTRAP_SEED = 7
 
 __all__ = [
-    "InteractionEvaluationUnavailableError",
     "DeclaredContrastPayload",
     "DeclaredContrastEnvelope",
     "ContrastResult",
@@ -47,15 +46,6 @@ class UnbalancedDesignError(ValueError):
 
 class PostHocContrastError(PermissionError):
     """The contrast is not declared in the frozen charter."""
-
-
-class InteractionEvaluationUnavailableError(ValueError):
-    """Interaction evaluation is not yet wired (declared contracts stand).
-
-    Two-axis interactions remain fully DECLARABLE (payload + identity are
-    complete); their evaluation lands with the comparison surfaces (R4,
-    §7A.19.11). Nothing silently computes in the meantime.
-    """
 
 
 class DeclaredContrastPayload(FrozenContract):
@@ -131,12 +121,31 @@ def evaluate_declared_contrast(
             "declared_contrast_ids; post-hoc contrasts are refused"
         )
     payload = contrast.payload
-    if len(payload.axis_dimension_ids) != 1:
-        raise InteractionEvaluationUnavailableError(
-            "two-axis interaction evaluation lands with the comparison "
-            "surfaces (R4); the declaration remains valid and unevaluated"
+    if len(payload.axis_dimension_ids) == 1:
+        return _evaluate_main_effect(
+            contrast,
+            cell_axis_values=cell_axis_values,
+            cell_metrics=cell_metrics,
+            metrics=metrics,
         )
-    axis = payload.axis_dimension_ids[0]
+    if len(payload.axis_dimension_ids) == 2:
+        return _evaluate_interaction(
+            contrast,
+            cell_axis_values=cell_axis_values,
+            cell_metrics=cell_metrics,
+            metrics=metrics,
+        )
+    raise UnbalancedDesignError(
+        "only main effects (1 axis) and two-way interactions (2 axes) are "
+        "declarable (DT §5); higher-order designs have no registered "
+        "adjustment method"
+    )
+
+
+def _declared_cells(
+    payload: DeclaredContrastPayload,
+    cell_axis_values: Mapping[str, Mapping[str, str]],
+) -> list[str]:
     cells = [cell for cell in payload.cell_ids if cell in cell_axis_values]
     if set(cells) != set(payload.cell_ids):
         missing = sorted(set(payload.cell_ids) - set(cells))
@@ -147,12 +156,58 @@ def evaluate_declared_contrast(
                 raise UnbalancedDesignError(
                     f"cell {cell[:12]}… is outside the conditioning slice"
                 )
+    return cells
+
+
+def _two_values(
+    axis: str,
+    cells: list[str],
+    cell_axis_values: Mapping[str, Mapping[str, str]],
+    *,
+    design: str,
+) -> list[str]:
     values = sorted({cell_axis_values[cell][axis] for cell in cells})
     if len(values) != 2:
         raise UnbalancedDesignError(
-            f"main effect requires exactly two registered values on {axis!r}; "
+            f"{design} requires exactly two registered values on {axis!r}; "
             f"got {values}"
         )
+    return values
+
+
+def _metric_value(
+    cell_metrics: Mapping[str, Mapping[str, float]], cell: str, metric: str
+) -> float:
+    value = cell_metrics.get(cell, {}).get(metric)
+    if value is None:
+        raise UnbalancedDesignError(f"metric {metric!r} is missing for a paired cell")
+    return value
+
+
+def _estimate_entry(deltas: list[float], *, n_key: str, wording: str) -> ImmutableMap:
+    return ImmutableMap(
+        {
+            "paired_mean_delta": sum(deltas) / len(deltas) if deltas else None,
+            "paired_deltas": tuple(deltas),
+            n_key: len(deltas),
+            "bootstrap_ci95": _paired_bootstrap_ci(deltas),
+            "bootstrap_protocol_id": CONTRAST_BOOTSTRAP_PROTOCOL_ID,
+            "wording": wording,
+        }
+    )
+
+
+def _evaluate_main_effect(
+    contrast: DeclaredContrastEnvelope,
+    *,
+    cell_axis_values: Mapping[str, Mapping[str, str]],
+    cell_metrics: Mapping[str, Mapping[str, float]],
+    metrics: tuple[str, ...],
+) -> ContrastResult:
+    payload = contrast.payload
+    axis = payload.axis_dimension_ids[0]
+    cells = _declared_cells(payload, cell_axis_values)
+    values = _two_values(axis, cells, cell_axis_values, design="main effect")
     other_axes = sorted(
         {key for cell in cells for key in cell_axis_values[cell] if key != axis}
     )
@@ -177,24 +232,105 @@ def evaluate_declared_contrast(
         pairs.append((by_value[values[0]], by_value[values[1]]))
     estimate: dict[str, Any] = {}
     for metric in metrics:
+        deltas = [
+            _metric_value(cell_metrics, right, metric)
+            - _metric_value(cell_metrics, left, metric)
+            for left, right in pairs
+        ]
+        estimate[metric] = _estimate_entry(
+            deltas,
+            n_key="n_pairs",
+            wording="observational paired difference; no causal claim",
+        )
+    return ContrastResult(
+        contrast_id=contrast.contrast_id,
+        matched_pairs=tuple(pairs),
+        effect_estimate=estimate,
+        denominator=len(cells),
+    )
+
+
+def _evaluate_interaction(
+    contrast: DeclaredContrastEnvelope,
+    *,
+    cell_axis_values: Mapping[str, Mapping[str, str]],
+    cell_metrics: Mapping[str, Mapping[str, float]],
+    metrics: tuple[str, ...],
+) -> ContrastResult:
+    """Balanced two-way interaction over the fully crossed 2×2 grid (R4).
+
+    Per stratum of every OTHER axis, the interaction delta is the
+    difference-of-differences with deterministic lexicographic orientation
+    (DEV-R2-6): ``(m[a1,b1] − m[a0,b1]) − (m[a1,b0] − m[a0,b0])`` where
+    ``a0 < a1`` and ``b0 < b1`` sort by value token. Any hole, duplicate
+    grid position, or missing metric refuses with
+    :class:`UnbalancedDesignError` — never an imputation.
+    ``matched_pairs`` records the two oriented A-pairs per stratum
+    (the ``b0`` pair first), so the double difference is reconstructible.
+    """
+
+    payload = contrast.payload
+    axis_a, axis_b = payload.axis_dimension_ids
+    cells = _declared_cells(payload, cell_axis_values)
+    values_a = _two_values(axis_a, cells, cell_axis_values, design="interaction")
+    values_b = _two_values(axis_b, cells, cell_axis_values, design="interaction")
+    other_axes = sorted(
+        {
+            key
+            for cell in cells
+            for key in cell_axis_values[cell]
+            if key not in (axis_a, axis_b)
+        }
+    )
+    strata: dict[tuple[str, ...], dict[tuple[str, str], str]] = {}
+    for cell in cells:
+        stratum = tuple(cell_axis_values[cell].get(key, "") for key in other_axes)
+        grid = strata.setdefault(stratum, {})
+        position = (cell_axis_values[cell][axis_a], cell_axis_values[cell][axis_b])
+        if position in grid and grid[position] != cell:
+            raise UnbalancedDesignError(
+                f"two declared cells occupy one grid position (stratum "
+                f"{stratum!r}, values {position!r}) — the design is ambiguous"
+            )
+        grid[position] = cell
+    quartets: list[dict[str, str]] = []
+    pairs: list[tuple[str, str]] = []
+    required = [(a, b) for b in values_b for a in values_a]
+    for stratum, grid in sorted(strata.items()):
+        if set(grid) != set(required):
+            missing = sorted(set(required) - set(grid))
+            raise UnbalancedDesignError(
+                f"interaction grid is not fully crossed at stratum "
+                f"{stratum!r} (missing positions {missing}) and no "
+                "adjustment method is registered"
+            )
+        quartet = {
+            "a0b0": grid[(values_a[0], values_b[0])],
+            "a1b0": grid[(values_a[1], values_b[0])],
+            "a0b1": grid[(values_a[0], values_b[1])],
+            "a1b1": grid[(values_a[1], values_b[1])],
+        }
+        quartets.append(quartet)
+        pairs.append((quartet["a0b0"], quartet["a1b0"]))
+        pairs.append((quartet["a0b1"], quartet["a1b1"]))
+    estimate: dict[str, Any] = {}
+    for metric in metrics:
         deltas = []
-        for left, right in pairs:
-            left_value = cell_metrics.get(left, {}).get(metric)
-            right_value = cell_metrics.get(right, {}).get(metric)
-            if left_value is None or right_value is None:
-                raise UnbalancedDesignError(
-                    f"metric {metric!r} is missing for a paired cell"
-                )
-            deltas.append(right_value - left_value)
-        estimate[metric] = ImmutableMap(
-            {
-                "paired_mean_delta": sum(deltas) / len(deltas) if deltas else None,
-                "paired_deltas": tuple(deltas),
-                "n_pairs": len(deltas),
-                "bootstrap_ci95": _paired_bootstrap_ci(deltas),
-                "bootstrap_protocol_id": CONTRAST_BOOTSTRAP_PROTOCOL_ID,
-                "wording": "observational paired difference; no causal claim",
-            }
+        for quartet in quartets:
+            low_b = _metric_value(
+                cell_metrics, quartet["a1b0"], metric
+            ) - _metric_value(cell_metrics, quartet["a0b0"], metric)
+            high_b = _metric_value(
+                cell_metrics, quartet["a1b1"], metric
+            ) - _metric_value(cell_metrics, quartet["a0b1"], metric)
+            deltas.append(high_b - low_b)
+        estimate[metric] = _estimate_entry(
+            deltas,
+            n_key="n_quartets",
+            wording=(
+                "observational paired difference-of-differences; "
+                "no causal claim"
+            ),
         )
     return ContrastResult(
         contrast_id=contrast.contrast_id,

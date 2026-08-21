@@ -842,13 +842,20 @@ def run_search(
                 objectives=objectives,
                 lexicographic_tie_breaks=payload.objective_policy.lexicographic_tie_breaks,
             )
-            save_or_reuse_envelope(
+            frontier_envelope, _ = save_or_reuse_envelope(
                 store_root,
                 "frontiers",
                 SearchFrontierEnvelope.from_payload(
                     SearchFrontierPayload(search_id=search_id, frontier=frontier)
                 ),
             )
+            # The stores are exact-ID-only (never listed); the state file is
+            # the monitor/results locator, so it records the exact frontier
+            # envelope id as a phase note (operational pointer, not identity).
+            skip_notes = {
+                **skip_notes,
+                "frontier_id": frontier_envelope.frontier_id,
+            }
         phase = "frontier_complete"
         _checkpoint(
             state_root, search_id, phase, outcomes,

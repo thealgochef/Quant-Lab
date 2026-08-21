@@ -10,7 +10,6 @@ from alpha_lab.agents.data_infra.ifvg.study.contrasts import (
     CONTRAST_BOOTSTRAP_PROTOCOL_ID,
     DeclaredContrastEnvelope,
     DeclaredContrastPayload,
-    InteractionEvaluationUnavailableError,
     PostHocContrastError,
     UnbalancedDesignError,
     evaluate_declared_contrast,
@@ -114,23 +113,113 @@ def test_post_hoc_contrast_is_refused() -> None:
         )
 
 
-def test_interaction_evaluation_is_a_typed_unavailable_refusal() -> None:
-    """DEV-R2-5/F17: interactions are declarable; evaluation refuses with its
-    own typed error naming the R4 landing — never a misleading imbalance."""
-
-    interaction = DeclaredContrastEnvelope.from_payload(
+def _interaction(cells=None) -> DeclaredContrastEnvelope:
+    return DeclaredContrastEnvelope.from_payload(
         DeclaredContrastPayload(
             charter_id="9" * 64,
             axis_dimension_ids=(_AXIS, _OTHER),
+            conditioning={},
+            cell_ids=tuple(cells or _CELLS),
+            effect_kind="interaction",
+        )
+    )
+
+
+def test_balanced_two_way_interaction_evaluates_at_r4() -> None:
+    """DEV-R2-5 closure (§7A.19.11): the declared 2×2 interaction computes
+    the deterministic lexicographic difference-of-differences."""
+
+    interaction = _interaction()
+    result = evaluate_declared_contrast(
+        interaction,
+        charter=_charter_for(interaction.contrast_id),
+        cell_axis_values=_CELLS,
+        cell_metrics=_METRICS,
+        metrics=("net_expectancy_r",),
+    )
+    assert result.denominator == 4
+    # one quartet → the two oriented A-pairs, low-B ("false") pair first
+    assert result.matched_pairs == (("b" * 64, "a" * 64), ("d" * 64, "c" * 64))
+    estimate = result.effect_estimate["net_expectancy_r"]
+    assert estimate["n_quartets"] == 1
+    # ("240" < "none", "false" < "within_40"):
+    # (0.05 − 0.13) − (0.10 − 0.16) = −0.02
+    assert estimate["paired_mean_delta"] == pytest.approx(-0.02)
+    assert estimate["bootstrap_ci95"] is None  # typed None below two quartets
+    assert estimate["bootstrap_protocol_id"] == CONTRAST_BOOTSTRAP_PROTOCOL_ID
+    assert "no causal claim" in estimate["wording"]
+    assert result.causal_language_permitted is False
+
+
+def test_stratified_interaction_pairs_and_seed7_determinism() -> None:
+    """Two strata of a third axis → two quartets, four recorded pairs, and a
+    deterministic seed-7 bootstrap interval over the interaction deltas."""
+
+    third = "strategy_profile.enable_shorts"
+    cells = {}
+    metrics = {}
+    values = {
+        ("none", "false"): 0.10,
+        ("240", "false"): 0.16,
+        ("none", "within_40"): 0.05,
+        ("240", "within_40"): 0.13,
+    }
+    for index, stratum in enumerate(("false", "true")):
+        for offset, ((a, b), value) in enumerate(sorted(values.items())):
+            cell = f"{index}{offset}" * 32
+            cells[cell] = {_AXIS: a, _OTHER: b, third: stratum}
+            metrics[cell] = {"net_expectancy_r": value + 0.01 * index}
+    interaction = _interaction(cells=cells)
+    result = evaluate_declared_contrast(
+        interaction,
+        charter=_charter_for(interaction.contrast_id),
+        cell_axis_values=cells,
+        cell_metrics=metrics,
+        metrics=("net_expectancy_r",),
+    )
+    estimate = result.effect_estimate["net_expectancy_r"]
+    assert estimate["n_quartets"] == 2
+    assert len(result.matched_pairs) == 4
+    # the constant per-stratum shift cancels in the double difference
+    assert estimate["paired_mean_delta"] == pytest.approx(-0.02)
+    first = estimate["bootstrap_ci95"]
+    rerun = evaluate_declared_contrast(
+        interaction,
+        charter=_charter_for(interaction.contrast_id),
+        cell_axis_values=cells,
+        cell_metrics=metrics,
+        metrics=("net_expectancy_r",),
+    )
+    assert rerun.effect_estimate["net_expectancy_r"]["bootstrap_ci95"] == first
+
+
+def test_interaction_grid_hole_refuses_never_imputes() -> None:
+    cells = {key: value for key, value in _CELLS.items() if key != "d" * 64}
+    interaction = _interaction(cells=cells)
+    with pytest.raises(UnbalancedDesignError, match="not fully crossed"):
+        evaluate_declared_contrast(
+            interaction,
+            charter=_charter_for(interaction.contrast_id),
+            cell_axis_values=cells,
+            cell_metrics=_METRICS,
+            metrics=("net_expectancy_r",),
+        )
+
+
+def test_higher_order_designs_are_refused() -> None:
+    three_way = DeclaredContrastEnvelope.from_payload(
+        DeclaredContrastPayload(
+            charter_id="9" * 64,
+            axis_dimension_ids=(_AXIS, _OTHER, "strategy_profile.enable_shorts"),
             conditioning={},
             cell_ids=tuple(_CELLS),
             effect_kind="interaction",
         )
     )
-    with pytest.raises(InteractionEvaluationUnavailableError, match="R4"):
+    with pytest.raises(UnbalancedDesignError, match="two-way interactions"):
         evaluate_declared_contrast(
-            interaction,
-            charter=_charter_for(interaction.contrast_id),
+            three_way,
+            charter=_charter_for(three_way.contrast_id),
             cell_axis_values=_CELLS,
             cell_metrics=_METRICS,
             metrics=("net_expectancy_r",),

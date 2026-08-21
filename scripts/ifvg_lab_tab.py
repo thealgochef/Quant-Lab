@@ -1105,7 +1105,12 @@ def render_ifvg_lab_tab() -> None:
         ["Experiments", "Replay / Verifier", "Data & Audit"]
     )
     with tab_experiments:
-        render_ifvg_experiments_tab(st)
+        # R4: the Experiments surface is the study-workspace sub-navigation
+        # (New Study | Active Runs | Results | History | Context Research);
+        # Context Research delegates back to the unchanged M0–M3 panel.
+        from ifvg_study_tab import render_ifvg_study_tab  # noqa: PLC0415
+
+        render_ifvg_study_tab(st, context_research=render_ifvg_experiments_tab)
     with tab_replay:
         render_ifvg_replay_tab(st)
     with tab_audit:

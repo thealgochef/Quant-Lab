@@ -107,6 +107,75 @@ def test_runner_entry_shape_is_validated() -> None:
         job._resolve_runner_entry("os.system('x')")
 
 
+def test_unregistered_runner_entries_are_refused_before_import(monkeypatch) -> None:
+    """R4 registry gate: a well-shaped but unregistered module:function can
+    never reach importlib — no user-shaped string executes."""
+
+    import importlib
+
+    def _boom(name):  # pragma: no cover — must never be called
+        raise AssertionError("import_module reached for an unregistered entry")
+
+    monkeypatch.setattr(importlib, "import_module", _boom)
+    with pytest.raises(SystemExit, match="not registered"):
+        job._resolve_runner_entry("os:system")
+    with pytest.raises(SystemExit, match="not registered"):
+        job._resolve_runner_entry("subprocess:run")
+
+
+def test_runner_entry_key_resolves_through_the_registry() -> None:
+    from types import SimpleNamespace
+
+    args = SimpleNamespace(
+        runner_entry_key="synthetic_search_job_fixture_v1", runner_entry=None
+    )
+    assert job._entry_from_args(args) == (
+        "tests.agents.ifvg_search.test_search_job_script:synthetic_runner_entry"
+    )
+    with pytest.raises(SystemExit, match="not registered"):
+        job._entry_from_args(
+            SimpleNamespace(runner_entry_key="nope_v1", runner_entry=None)
+        )
+
+
+def test_resume_command_reenters_the_idempotent_worker(tmp_path) -> None:
+    """`resume` exists and launches the same detached worker as `start`."""
+
+    import subprocess as real_subprocess
+
+    captured: dict = {}
+
+    class _FakeProcess:
+        pid = 4242
+
+    def _fake_popen(command, **kwargs):
+        captured["command"] = command
+        return _FakeProcess()
+
+    original = real_subprocess.Popen
+    real_subprocess.Popen = _fake_popen
+    try:
+        code = job.main(
+            [
+                "resume",
+                "--search-id",
+                "a" * 64,
+                "--store-root",
+                str(tmp_path / "store"),
+                "--state-root",
+                str(tmp_path / "state"),
+                "--runner-entry-key",
+                "synthetic_search_job_fixture_v1",
+            ]
+        )
+    finally:
+        real_subprocess.Popen = original
+    assert code == 0
+    assert "worker" in captured["command"]
+    assert "--runner-entry-key" in captured["command"]
+    assert "synthetic_search_job_fixture_v1" in captured["command"]
+
+
 def test_worker_runs_the_search_with_an_injected_runner(tmp_path, capsys) -> None:
     from alpha_lab.agents.data_infra.ifvg.search.store import save_or_reuse_envelope
     from tests.agents.ifvg_search.test_orchestrator import _charter

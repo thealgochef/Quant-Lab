@@ -170,7 +170,7 @@ ifvg_prop_robust_config_search_v1:
       blocker: "owner-approved coverage matrix + allowlist sign-off + VerificationAuthorizationRef (owner decisions 21/R-5)"
     R2_multi_child_search: {implementation_status: "complete", acceptance_status: "transitively_blocked_by_R1"}
     R3_prop_lifecycle: {implementation_status: "complete", acceptance_status: "transitively_blocked_by_R1"}
-    R4_trader_ui: {implementation_status: "not_started", acceptance_status: "transitively_blocked_by_R1"}
+    R4_trader_ui: {implementation_status: "complete", acceptance_status: "transitively_blocked_by_R1"}
     R5_pipeline_mbp1_readiness_ladder: {implementation_status: "not_started", acceptance_status: "transitively_blocked_by_R1"}
     R5B_mbp1_offline_activation: {implementation_status: "not_started", acceptance_status: "transitively_blocked_by_R1"}
     R6_kmeans_regime_lane: {implementation_status: "not_started", acceptance_status: "transitively_blocked_by_R1"}

@@ -6,11 +6,17 @@ immediately; the monitor polls the orchestrator's atomic
 ``search_state.json`` checkpoints; ``cancel`` writes the safe-boundary
 sentinel the orchestrator honors at child boundaries only.
 
-Execution scope is fail-closed: the worker refuses to run children unless an
-explicit ``--runner-entry module:function`` provides the replay wiring
-(identity resolver + child runner). The real full-scope executors land with
-the R5 pipeline (`PHASED_DELIVERY.md`); nothing here can silently start a
-full-development replay, and importing this module launches nothing.
+Execution scope is fail-closed and REGISTRY-GATED (the R2→R4 obligation):
+the worker refuses to run children unless the replay wiring is named by a
+REGISTERED runner entry — either ``--runner-entry-key <registered key>``
+(the only form the UI passes) or a ``--runner-entry module:function`` whose
+exact string is a registered value (`search/runner_registry.py`). No
+user-shaped string reaches ``importlib``. The real full-scope executors
+land with the R5 pipeline (`PHASED_DELIVERY.md`); nothing here can silently
+start a full-development replay, and importing this module launches
+nothing. ``resume`` re-enters the same idempotent worker: completed
+children reuse their published identities, so a killed run continues from
+its last atomic checkpoint.
 """
 
 from __future__ import annotations
@@ -49,22 +55,49 @@ def _state_payload(state_root: Path, search_id: str) -> dict | None:
 
 
 def _resolve_runner_entry(entry: str):
-    """``module:function`` → the callable providing the replay wiring.
+    """Registered ``module:function`` → the callable providing the wiring.
 
     The callable must return a mapping with ``identity_resolver`` and
     ``child_runner`` (optionally ``prewarm`` / ``cost_points``). It is the
     ONLY way this job can execute replays; no built-in real-data wiring
-    exists before the R5 pipeline executors.
+    exists before the R5 pipeline executors. The entry must be an exact
+    registered value (`runner_registry.py`) — raw strings are refused
+    before any import occurs.
     """
 
     if not _ENTRY.fullmatch(entry or ""):
         raise SystemExit("--runner-entry must be 'module:function'")
+    from alpha_lab.agents.data_infra.ifvg.search.runner_registry import (  # noqa: PLC0415
+        RunnerEntryError,
+        assert_runner_entry_registered,
+    )
+
+    try:
+        assert_runner_entry_registered(entry)
+    except RunnerEntryError as error:
+        raise SystemExit(str(error)) from None
     module_name, function_name = entry.split(":", 1)
     module = importlib.import_module(module_name)
     factory = getattr(module, function_name)
     if not callable(factory):
         raise SystemExit(f"runner entry {entry!r} is not callable")
     return factory
+
+
+def _entry_from_args(args) -> str | None:
+    """The effective registered entry string from key/raw arguments."""
+
+    if getattr(args, "runner_entry_key", None):
+        from alpha_lab.agents.data_infra.ifvg.search.runner_registry import (  # noqa: PLC0415
+            RunnerEntryError,
+            resolve_registered_runner_entry,
+        )
+
+        try:
+            return resolve_registered_runner_entry(args.runner_entry_key)
+        except RunnerEntryError as error:
+            raise SystemExit(str(error)) from None
+    return args.runner_entry
 
 
 def _worker(args) -> int:
@@ -83,13 +116,14 @@ def _worker(args) -> int:
     charter = load_verified_envelope(
         store_root, "charters", args.search_id, SearchCharterEnvelope
     )
-    if not args.runner_entry:
+    entry = _entry_from_args(args)
+    if not entry:
         raise SystemExit(
             "no runner entry was provided: replay execution is refused "
             "(the R5 pipeline registers the real executors; synthetic runs "
-            "pass an explicit --runner-entry)"
+            "pass --runner-entry-key or a registered --runner-entry)"
         )
-    wiring = _resolve_runner_entry(args.runner_entry)(charter)
+    wiring = _resolve_runner_entry(entry)(charter)
     result = run_search(
         charter,
         store_root=store_root,
@@ -105,14 +139,24 @@ def _worker(args) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("start", "status", "cancel", "worker"))
+    parser.add_argument(
+        "command", choices=("start", "status", "cancel", "resume", "worker")
+    )
     parser.add_argument("--search-id", required=True)
     parser.add_argument("--store-root", default=str(ROOT / "data/ifvg_datasets/search_test/v1"))
     parser.add_argument("--state-root", default=str(ROOT / SEARCH_JOB_ROOT))
     parser.add_argument(
         "--runner-entry",
         default=None,
-        help="module:function returning the replay wiring (worker mode only)",
+        help=(
+            "registered module:function returning the replay wiring "
+            "(refused unless it is an exact registered value)"
+        ),
+    )
+    parser.add_argument(
+        "--runner-entry-key",
+        default=None,
+        help="registered runner-entry key (the only form the UI passes)",
     )
     args = parser.parse_args(argv)
     search_id = _validated_search_id(args.search_id)
@@ -134,7 +178,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "worker":
         return _worker(args)
 
-    # start: detached worker launch; the monitor reads the state files.
+    # start / resume: detached worker launch; the monitor reads the state
+    # files. Resume re-enters the same idempotent worker (completed children
+    # reuse their published identities from the last atomic checkpoint).
     job_dir = state_root / search_id
     job_dir.mkdir(parents=True, exist_ok=True)
     command = [
@@ -148,7 +194,9 @@ def main(argv: list[str] | None = None) -> int:
         "--state-root",
         str(state_root),
     ]
-    if args.runner_entry:
+    if args.runner_entry_key:
+        command += ["--runner-entry-key", args.runner_entry_key]
+    elif args.runner_entry:
         command += ["--runner-entry", args.runner_entry]
     creation_flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(
         subprocess, "DETACHED_PROCESS", 0
