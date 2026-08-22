@@ -524,10 +524,18 @@ class PipelineWiring:
     bar_observations_for: Callable[..., Any] | None = None
     verification_run: VerificationRunEnvelope | None = None
     verification_authorization: object | None = None
-    #: the seed snapshot the runner will ACTUALLY load (safety review F3:
-    #: sourcing this from the run envelope itself would make the seed
-    #: equality check tautological); None falls back to the envelope value
+    #: OPTIONAL caller cross-check only (safety review F3). R5-FIX finding 7:
+    #: a caller-provided string is NOT evidence — the real scope requires
+    #: ``loaded_seed_snapshot_id_source`` and refuses without it; when both
+    #: are set they must agree.
     expected_seed_snapshot_id: str | None = None
+    #: R5-FIX finding 7: LOADS the seed-snapshot artifact the runner will
+    #: actually use (verified store load: manifest + file hashes +
+    #: id-hashes-payload + seed-bytes rehash + profile binding) and returns
+    #: its content-derived envelope id. The real verification scope REQUIRES
+    #: this seam; its result — never a caller string — is what
+    #: ``validate_verification_run`` checks against the authorization.
+    loaded_seed_snapshot_id_source: Callable[[], str] | None = None
 
 
 @dataclass
@@ -674,6 +682,39 @@ def _ensure_specs(context: _RunContext) -> tuple[Any, ...]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _loaded_seed_snapshot_id_for_real_scope(wiring: PipelineWiring) -> str:
+    """The seed-snapshot id the runner ACTUALLY loads (R5-FIX finding 7).
+
+    The real verification scope refuses without a wired
+    ``loaded_seed_snapshot_id_source`` — a caller-provided
+    ``expected_seed_snapshot_id`` string is a cross-check, never evidence.
+    The source performs a VERIFIED artifact load and returns the loaded
+    envelope's content-derived id; a wired-but-disagreeing caller
+    expectation refuses before any source path is constructed.
+    """
+
+    if wiring.loaded_seed_snapshot_id_source is None:
+        raise PermissionError(
+            "the real verification scope requires the loaded-seed-snapshot "
+            "source (PipelineWiring.loaded_seed_snapshot_id_source): the "
+            "expected seed must be derived from the verified artifact the "
+            "runner will load — a caller-provided id is not evidence "
+            "(fail-before-path)"
+        )
+    loaded = wiring.loaded_seed_snapshot_id_source()
+    if (
+        wiring.expected_seed_snapshot_id is not None
+        and wiring.expected_seed_snapshot_id != loaded
+    ):
+        raise PermissionError(
+            "the caller's expected seed snapshot id disagrees with the "
+            "verified loaded artifact; refused before any source path "
+            f"(expected {wiring.expected_seed_snapshot_id[:12]}…, loaded "
+            f"{loaded[:12]}…)"
+        )
+    return loaded
+
+
 def _stage_s00_validate(context: _RunContext) -> tuple[tuple[str, ...], str]:
     spec = context.semantic.payload
     charter = context.charter
@@ -762,9 +803,8 @@ def _stage_s00_validate(context: _RunContext) -> tuple[tuple[str, ...], str]:
                 expected_baseline_section_config_hash=(
                     charter.payload.baseline_section_config_hash
                 ),
-                expected_seed_snapshot_id=(
-                    wiring.expected_seed_snapshot_id
-                    or wiring.verification_run.payload.seed_snapshot_id
+                expected_seed_snapshot_id=_loaded_seed_snapshot_id_for_real_scope(
+                    wiring
                 ),
                 authorization=wiring.verification_authorization,
             )
@@ -1130,10 +1170,17 @@ def _stage_s09_train(context: _RunContext) -> tuple[tuple[str, ...], str]:
     context.ladder = run_supervised_ladder(
         context.view, context.labeled, context.folds, tier=tier
     )
+    oos_rows = context.ladder.parity["oos_row_count"]
+    # R5-FIX finding 5: zero OOS rows means the parity claim is NOT
+    # evaluable — saying "held over 0 rows" would overstate the evidence
+    parity_clause = (
+        f"identical-rows parity held over {oos_rows} OOS rows"
+        if oos_rows
+        else "identical-rows parity not evaluable (0 OOS rows)"
+    )
     return (context.ladder.ladder_id,), (
         f"supervised ladder ran {len(context.ladder.rungs)} rungs on tier "
-        f"{tier.value}; parity held over "
-        f"{context.ladder.parity['oos_row_count']} OOS rows"
+        f"{tier.value}; {parity_clause}"
     )
 
 
@@ -1495,6 +1542,7 @@ def _persist_cross_profile_deltas(context: _RunContext) -> str:
         ComparisonCompatibility,
         ComparisonResult,
         ComparisonResultEnvelope,
+        SearchDerivationComparisonSubject,
     )
     from ..study_providers import prepare_cross_profile_deltas  # noqa: PLC0415
 
@@ -1549,14 +1597,18 @@ def _persist_cross_profile_deltas(context: _RunContext) -> str:
             changed_axis_keys=changed_axes,
         )
         result = ComparisonResult(
-            comparison_id=canonical_contract_sha256(
-                {
-                    "kind": "cross_profile_population_delta_v1",
-                    "search_id": context.charter.search_id,
-                    "baseline_core_replay_id": baseline_row["core_replay_id"],
-                    "challenger_core_replay_id": row["core_replay_id"],
-                    "changed_axis_keys": list(changed_axes),
-                }
+            # R5-FIX finding 6: the search lane's reference is TYPED as a
+            # derivation, never as a study-cell ComparisonEnvelope id
+            subject=SearchDerivationComparisonSubject(
+                derivation_id=canonical_contract_sha256(
+                    {
+                        "kind": "cross_profile_population_delta_v1",
+                        "search_id": context.charter.search_id,
+                        "baseline_core_replay_id": baseline_row["core_replay_id"],
+                        "challenger_core_replay_id": row["core_replay_id"],
+                        "changed_axis_keys": list(changed_axes),
+                    }
+                )
             ),
             compatibility=ComparisonCompatibility(
                 per_dimension_match={

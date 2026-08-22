@@ -7,22 +7,31 @@ now REGISTRY-GATED — the UI only ever passes a registered KEY, and the
 worker refuses any entry string that is not an exact registered value, so no
 user-shaped string can reach ``importlib``.
 
-R5 registered the REAL executors beside the synthetic fixture wiring:
-the baseline-verification search/pipeline entries (``search/executors.py``)
-fail closed at CONSTRUCTION without the owner's persisted verification
-authorization, so registration unblocks the launch surface, never the
-data. Full-development execution has no registered entry — the operator
-run stays a separate, explicitly authorized action.
+R5 registered the REAL executors: the baseline-verification search/pipeline
+entries (``search/executors.py``) fail closed at CONSTRUCTION without the
+owner's persisted verification authorization, so registration unblocks the
+launch surface, never the data. Full-development execution has no registered
+entry — the operator run stays a separate, explicitly authorized action.
+
+R5-FIX (gate finding 3): the PRODUCTION registry no longer names any
+``tests.*`` module. Synthetic fixture wiring is DEVELOPMENT-side: the tests
+package registers its own entries through
+:func:`register_development_runner_entries` (guarded, idempotent-on-match),
+and a process where no such registration ran — every production worker —
+refuses the synthetic keys exactly like any unregistered entry.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from types import MappingProxyType
 
 __all__ = [
     "REGISTERED_RUNNER_ENTRIES",
     "RunnerEntryError",
+    "register_development_runner_entries",
+    "registered_runner_entries",
     "resolve_registered_runner_entry",
     "assert_runner_entry_registered",
     "runner_entry_key_for_charter",
@@ -36,22 +45,14 @@ class RunnerEntryError(PermissionError):
 
 #: key → ``module:function`` returning the replay wiring mapping
 #: (``identity_resolver`` + ``child_runner``, optional ``prewarm`` /
-#: ``cost_points``). Keys are the ONLY form the UI passes. The synthetic
-#: entry resolves inside a development checkout (the ``tests`` package);
-#: anywhere it cannot import, execution fails closed exactly like an
-#: unregistered entry. R5 registers the real pipeline executors.
+#: ``cost_points``). Keys are the ONLY form the UI passes. This map is the
+#: complete PRODUCTION registry: it names src executors exclusively and
+#: never resolves into the ``tests`` package (R5-FIX finding 3).
 REGISTERED_RUNNER_ENTRIES: Mapping[str, str] = MappingProxyType(
     {
-        "synthetic_search_job_fixture_v1": (
-            "tests.agents.ifvg_search.test_search_job_script:synthetic_runner_entry"
-        ),
         "search_baseline_verification_v1": (
             "alpha_lab.agents.data_infra.ifvg.search.executors:"
             "search_baseline_verification_entry"
-        ),
-        "pipeline_synthetic_fixture_v1": (
-            "tests.agents.ifvg_search.test_pipeline_job_script:"
-            "synthetic_pipeline_entry"
         ),
         "pipeline_baseline_verification_v1": (
             "alpha_lab.agents.data_infra.ifvg.search.executors:"
@@ -60,16 +61,69 @@ REGISTERED_RUNNER_ENTRIES: Mapping[str, str] = MappingProxyType(
     }
 )
 
+_ENTRY_SHAPE = re.compile(r"^[A-Za-z_][\w.]*:[A-Za-z_]\w*$")
+
+#: Development-only entries (synthetic fixture wiring), registered BY the
+#: development checkout's test code — never named by production source. In a
+#: production process this map stays empty, so the synthetic keys fail
+#: closed exactly like unregistered entries.
+_DEVELOPMENT_ENTRIES: dict[str, str] = {}
+
+
+def register_development_runner_entries(entries: Mapping[str, str]) -> None:
+    """Register synthetic-fixture wiring from the development checkout.
+
+    Guarded so the extension point can never widen the production surface:
+    every key must carry the ``synthetic`` marker, no key may shadow a
+    production entry, values must be exact ``module:function`` strings, and
+    re-registration is idempotent-on-match (a conflicting value for an
+    already-registered key is refused).
+    """
+
+    validated: dict[str, str] = {}
+    for key, entry in entries.items():
+        if key in REGISTERED_RUNNER_ENTRIES:
+            raise RunnerEntryError(
+                f"development registration may never shadow the production "
+                f"entry {key!r}"
+            )
+        if "synthetic" not in key:
+            raise RunnerEntryError(
+                f"development runner-entry key {key!r} must carry the "
+                "'synthetic' marker; real executors are registered in the "
+                "production registry only"
+            )
+        if not _ENTRY_SHAPE.match(entry or ""):
+            raise RunnerEntryError(
+                f"development runner entry for {key!r} must be module:function"
+            )
+        existing = _DEVELOPMENT_ENTRIES.get(key)
+        if existing is not None and existing != entry:
+            raise RunnerEntryError(
+                f"development runner-entry key {key!r} is already registered "
+                "with a different value; re-registration must match exactly"
+            )
+        validated[key] = entry
+    # validate-then-commit: a refused mapping registers nothing at all
+    _DEVELOPMENT_ENTRIES.update(validated)
+
+
+def registered_runner_entries() -> dict[str, str]:
+    """The merged (production + development) registry view, copied."""
+
+    return {**REGISTERED_RUNNER_ENTRIES, **_DEVELOPMENT_ENTRIES}
+
 
 def resolve_registered_runner_entry(key: str) -> str:
     """The registered ``module:function`` for ``key`` (fail-closed)."""
 
+    merged = registered_runner_entries()
     try:
-        return REGISTERED_RUNNER_ENTRIES[key]
+        return merged[key]
     except KeyError:
         raise RunnerEntryError(
             f"runner-entry key {key!r} is not registered; registered keys: "
-            f"{sorted(REGISTERED_RUNNER_ENTRIES)}"
+            f"{sorted(merged)}"
         ) from None
 
 
@@ -78,22 +132,26 @@ def assert_runner_entry_registered(entry: str) -> str:
 
     The worker calls this on every ``--runner-entry`` it receives, so a raw
     user-shaped ``module:function`` can never reach ``importlib`` — only
-    entries this registry (or a later release's registration) names.
+    entries the production registry (or an explicit development
+    registration in this process) names.
     """
 
-    if entry in REGISTERED_RUNNER_ENTRIES.values():
+    merged = registered_runner_entries()
+    if entry in merged.values():
         return entry
     raise RunnerEntryError(
         "runner entry is not registered; pass --runner-entry-key with one of "
-        f"{sorted(REGISTERED_RUNNER_ENTRIES)} (raw module:function strings "
-        "are refused; only registry-named executors can ever run)"
+        f"{sorted(merged)} (raw module:function strings are refused; only "
+        "registry-named executors can ever run)"
     )
 
 
 def runner_entry_key_for_charter(charter_envelope) -> str | None:
     """The registered key a frozen charter may launch with, or ``None``.
 
-    Synthetic-marker charters use the synthetic fixture wiring. Real
+    Synthetic-marker charters name the synthetic fixture KEY — resolvable
+    only where the development checkout has registered its wiring (a
+    production process refuses it as unregistered). Real
     verification-fixture charters resolve to the R5 baseline-verification
     executor — whose factory still fails closed (before any source path)
     until the owner's persisted verification authorization exists. Real
@@ -115,11 +173,12 @@ def pipeline_entry_key_for_charter(charter_envelope) -> str | None:
     """The registered PIPELINE executor key for a frozen charter, or None.
 
     Mirrors :func:`runner_entry_key_for_charter` for the 16-stage pipeline
-    job: synthetic charters run the synthetic fixture wiring; real
-    verification-fixture charters resolve to the baseline-verification
-    executor (whose factory fails closed without the owner's persisted
-    authorization); real full-development charters have no registered
-    pipeline executor — the operator full run is a separate action.
+    job: synthetic charters name the development fixture key (unresolvable
+    in production processes); real verification-fixture charters resolve to
+    the baseline-verification executor (whose factory fails closed without
+    the owner's persisted authorization); real full-development charters
+    have no registered pipeline executor — the operator full run is a
+    separate action.
     """
 
     authorization = charter_envelope.payload.owner_authorization

@@ -432,7 +432,7 @@ def _axis_card(st_module, axis_key: str, payload: Mapping[str, Any]) -> tuple[st
                 }
             )
         if rows:
-            st_module.dataframe(rows, use_container_width=True, hide_index=True)
+            st_module.dataframe(rows, width="stretch", hide_index=True)
         st_module.write(
             f"Artifact / profile impact: "
             f"{getattr(spec, 'expected_artifact_effect', '—')}; "

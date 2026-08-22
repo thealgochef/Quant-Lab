@@ -30,6 +30,9 @@ __all__ = [
     "ComparisonPayload",
     "ComparisonEnvelope",
     "ComparisonCompatibility",
+    "StudyCellComparisonSubject",
+    "SearchDerivationComparisonSubject",
+    "ComparisonSubjectRef",
     "ComparisonResult",
     "ComparisonResultEnvelope",
     "REQUIRED_EQUALITIES",
@@ -100,8 +103,39 @@ class ComparisonCompatibility(FrozenContract):
     differing_fields: tuple[str, ...]
 
 
-class ComparisonResult(FrozenContract):
+class StudyCellComparisonSubject(FrozenContract):
+    """The result's subject is a frozen study-cell ``ComparisonEnvelope``."""
+
+    subject_kind: Literal["study_cell_comparison_v1"] = "study_cell_comparison_v1"
+    #: names a persisted, frozen ``ComparisonEnvelope`` (exact-ID resolvable)
     comparison_id: str = Field(pattern=SHA256_PATTERN)
+
+
+class SearchDerivationComparisonSubject(FrozenContract):
+    """The result's subject is a search-lane cross-profile derivation.
+
+    Synthetic control-flow children carry no published v2 dataset
+    references, so no study-cell ``ComparisonEnvelope`` exists for them
+    (DEV-R5-8); the typed derivation id of DECISIONS_TAKEN #42 names the
+    (kind, search, baseline, challenger, changed-axes) tuple instead.
+    """
+
+    subject_kind: Literal["search_cross_profile_derivation_v1"] = (
+        "search_cross_profile_derivation_v1"
+    )
+    #: the DECISIONS_TAKEN #42 derivation id — NOT a store envelope id
+    derivation_id: str = Field(pattern=SHA256_PATTERN)
+
+
+#: R5-FIX (gate finding 6): the two reference domains are now separate
+#: TYPES discriminated on ``subject_kind`` — a consumer can no longer read
+#: a search-derivation id as a study-cell envelope reference (or vice
+#: versa) without the type telling it so.
+ComparisonSubjectRef = StudyCellComparisonSubject | SearchDerivationComparisonSubject
+
+
+class ComparisonResult(FrozenContract):
+    subject: ComparisonSubjectRef = Field(discriminator="subject_kind")
     compatibility: ComparisonCompatibility
     delta_reports: ImmutableMap[str, ImmutableMap[str, Any]]
     config_diff: ImmutableMap[str, Any] | None
@@ -111,15 +145,15 @@ class ComparisonResult(FrozenContract):
 class ComparisonResultEnvelope(EnvelopeBase):
     """Persisted comparison result (R5 S14; DEV-R4-16 closure).
 
-    ``comparison_id`` inside the payload is a FOREIGN reference: for
-    study-cell comparisons it names the frozen ``ComparisonEnvelope``; for
-    the search lane it is the typed cross-profile derivation id of
-    DECISIONS_TAKEN #42 (study cells require published v2 dataset
-    references synthetic control-flow children do not have — DEV-R5-8).
-    The envelope's own id hashes the complete result content, so
-    re-computed identical deltas reuse one immutable artifact
-    (``search_results`` store) and the UI consumes persisted contracts
-    instead of rebuilding deltas at render time.
+    ``payload.subject`` is the TYPED foreign reference (R5-FIX finding 6):
+    ``StudyCellComparisonSubject`` names a frozen ``ComparisonEnvelope``;
+    ``SearchDerivationComparisonSubject`` carries the search lane's
+    cross-profile derivation id (DECISIONS_TAKEN #42) — the identity
+    domains are enforced by the discriminated union, not by prose. The
+    envelope's own id hashes the complete result content, so re-computed
+    identical deltas reuse one immutable artifact (``search_results``
+    store) and the UI consumes persisted contracts instead of rebuilding
+    deltas at render time.
     """
 
     _ID_FIELD: ClassVar[str] = "comparison_result_id"
@@ -530,7 +564,7 @@ register_identity_pair(
 
 def _example_comparison_result() -> ComparisonResult:
     return ComparisonResult(
-        comparison_id="a" * 64,
+        subject=StudyCellComparisonSubject(comparison_id="a" * 64),
         compatibility=ComparisonCompatibility(
             per_dimension_match={"strategy_profile": False},
             required_equalities_satisfied=True,

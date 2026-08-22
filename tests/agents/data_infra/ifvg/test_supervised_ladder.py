@@ -70,6 +70,8 @@ def test_ladder_parity_identical_rows_across_rungs(ladder):
 
     assert ladder.parity["identical_rows"] is True
     assert ladder.parity["oos_row_count"] > 0
+    # R5-FIX finding 5: "held" is claimed only when rows exist to hold over
+    assert ladder.parity["status"] == "held"
     reference = ladder.rung("reference_prevalence_v1").predictions
     for rung in ladder.rungs:
         frame = rung.predictions

@@ -37,6 +37,7 @@ __all__ = [
     "REPO_ROOT",
     "synthetic_firm_specs",
     "real_verification_context",
+    "loaded_seed_snapshot_id_source",
     "search_baseline_verification_entry",
     "pipeline_baseline_verification_entry",
 ]
@@ -160,6 +161,33 @@ def _slice_identity_resolver(context: dict, store_root: Path):
     return _resolver
 
 
+def loaded_seed_snapshot_id_source(
+    store_root: Path, run: VerificationRunEnvelope, resolved_profile
+):
+    """R5-FIX (gate finding 7): the seed the runner will ACTUALLY load.
+
+    Returns a zero-argument callable that performs the VERIFIED store load
+    of the run's seed snapshot (`load_seed_snapshot`: manifest + file-hash +
+    id-hashes-payload verification, seed-bytes rehash, profile binding) and
+    returns the loaded envelope's content-derived id. A missing, tampered,
+    or profile-mismatched artifact refuses INSIDE the load — so the id the
+    S00 gate compares against the owner's authorization is evidence from
+    the artifact itself, never a caller-provided string.
+    """
+
+    def _source() -> str:
+        from .child_replay import load_seed_snapshot  # noqa: PLC0415
+
+        envelope, _chain_start = load_seed_snapshot(
+            Path(store_root),
+            run.payload.seed_snapshot_id,
+            expected_section_config_hash=resolved_profile.section_config_hash,
+        )
+        return envelope.seed_snapshot_id
+
+    return _source
+
+
 def search_baseline_verification_entry(charter_envelope, *, store_root=None) -> dict:
     """`ifvg_search_job` wiring for the real baseline verification slice."""
 
@@ -185,6 +213,11 @@ def pipeline_baseline_verification_entry(
         child_runner=_baseline_child_runner(context),
         verification_run=context["run"],
         verification_authorization=context["run"].payload.verification_authorization,
+        # R5-FIX finding 7: S00's seed check is fed by the VERIFIED artifact
+        # load, so the gate compares authorization ↔ loaded artifact
+        loaded_seed_snapshot_id_source=loaded_seed_snapshot_id_source(
+            root, context["run"], context["resolved_profile"]
+        ),
     )
 
 

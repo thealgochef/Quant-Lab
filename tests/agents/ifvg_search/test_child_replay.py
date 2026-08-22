@@ -292,3 +292,66 @@ def test_provenance_adapter_reads_dev_caches_under_strict_authorization(
     # provenance dates past the cutoff are unrepresentable
     with pytest.raises(PermissionError, match="development cutoff"):
         ArtifactProvenanceReadAdapter(inner, artifact_provenance_dates=("2026-06-12",))
+
+
+def test_executor_seed_source_returns_the_loaded_artifacts_id(
+    tmp_path, synthetic_chain
+) -> None:
+    """R5-FIX (gate finding 7): the pipeline's expected seed comes from the
+    VERIFIED artifact load — the source refuses when no such artifact
+    exists and returns the loaded envelope's content-derived id when it
+    does."""
+
+    from types import SimpleNamespace
+
+    from alpha_lab.agents.data_infra.ifvg.search.executors import (
+        loaded_seed_snapshot_id_source,
+    )
+    from alpha_lab.agents.data_infra.ifvg.search.store import SearchStoreError
+
+    seed = synthetic_chain[1].end_seed
+    envelope = save_seed_snapshot(tmp_path, _snapshot_payload(seed), seed)
+    run = SimpleNamespace(
+        payload=SimpleNamespace(seed_snapshot_id=envelope.seed_snapshot_id)
+    )
+    resolved = SimpleNamespace(section_config_hash=seed.profile_hash)
+    source = loaded_seed_snapshot_id_source(tmp_path, run, resolved)
+    assert source() == envelope.seed_snapshot_id
+
+    missing = SimpleNamespace(payload=SimpleNamespace(seed_snapshot_id="9" * 64))
+    with pytest.raises(SearchStoreError, match="missing search-store entry"):
+        loaded_seed_snapshot_id_source(tmp_path, missing, resolved)()
+
+    wrong_profile = SimpleNamespace(section_config_hash="8" * 64)
+    with pytest.raises(SeedSnapshotError, match="profile-bound"):
+        loaded_seed_snapshot_id_source(tmp_path, run, wrong_profile)()
+
+
+def test_real_scope_seed_requires_the_loaded_artifact_source() -> None:
+    """R5-FIX (gate finding 7): the real verification scope REFUSES a
+    caller-provided expected seed id without the loaded-artifact source;
+    a wired-but-disagreeing caller expectation also refuses."""
+
+    from dataclasses import replace as dc_replace
+
+    from alpha_lab.agents.data_infra.ifvg.search.pipeline import (
+        PipelineWiring,
+        _loaded_seed_snapshot_id_for_real_scope,
+    )
+
+    bare = PipelineWiring(
+        identity_resolver=lambda spec: None, child_runner=lambda **kwargs: None
+    )
+    with pytest.raises(PermissionError, match="not evidence"):
+        _loaded_seed_snapshot_id_for_real_scope(bare)
+    # a caller string ALONE is still refused — it is a cross-check only
+    caller_only = dc_replace(bare, expected_seed_snapshot_id="a" * 64)
+    with pytest.raises(PermissionError, match="not evidence"):
+        _loaded_seed_snapshot_id_for_real_scope(caller_only)
+    wired = dc_replace(bare, loaded_seed_snapshot_id_source=lambda: "a" * 64)
+    assert _loaded_seed_snapshot_id_for_real_scope(wired) == "a" * 64
+    agrees = dc_replace(wired, expected_seed_snapshot_id="a" * 64)
+    assert _loaded_seed_snapshot_id_for_real_scope(agrees) == "a" * 64
+    disagrees = dc_replace(wired, expected_seed_snapshot_id="b" * 64)
+    with pytest.raises(PermissionError, match="disagrees"):
+        _loaded_seed_snapshot_id_for_real_scope(disagrees)

@@ -20,6 +20,24 @@ from strategy_core.types import Bar, BarKind, CloseReason
 from alpha_lab.agents.data_infra.ifvg.capture_driver import capture_single_date
 from alpha_lab.agents.data_infra.ifvg.config import IfvgCaptureConfig
 from alpha_lab.agents.data_infra.ifvg.day_artifacts import DayArtifacts, DaySeeds
+from alpha_lab.agents.data_infra.ifvg.search.runner_registry import (
+    register_development_runner_entries,
+)
+
+# R5-FIX (gate finding 3): the synthetic fixture wiring is registered BY the
+# development checkout — the production registry never names tests.* modules.
+# Registration is idempotent-on-match, so repeated conftest imports are safe.
+register_development_runner_entries(
+    {
+        "synthetic_search_job_fixture_v1": (
+            "tests.agents.ifvg_search.test_search_job_script:synthetic_runner_entry"
+        ),
+        "pipeline_synthetic_fixture_v1": (
+            "tests.agents.ifvg_search.test_pipeline_job_script:"
+            "synthetic_pipeline_entry"
+        ),
+    }
+)
 
 SYNTHETIC_DAYS = ("2026-01-13", "2026-01-14", "2026-01-15")
 _DAY0 = date(2026, 1, 13)

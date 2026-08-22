@@ -199,7 +199,7 @@ def _render_monitor_body(
                 counts.robust,
             ),
         ),
-        use_container_width=True,
+        width="stretch",
         key=f"{_MON}funnel_fig",
     )
 
@@ -232,7 +232,7 @@ def _render_monitor_body(
     page_rows = rows[start:end]
     st_module.dataframe(
         [row.as_row() for row in page_rows],
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_order=list(ACTIVE_RUNS_COLUMNS),
     )

@@ -324,3 +324,57 @@ def test_prop_families_only_for_prop_paths() -> None:
                 "stress_scenario",
                 "composite_preregistered",
             }, cls
+
+
+def test_comparison_result_subject_is_a_typed_discriminated_reference() -> None:
+    """R5-FIX (gate finding 6): study-cell references and search-lane
+    derivation references are separate TYPES — the identity domain is
+    enforced by the contract, not by a docstring."""
+
+    import pytest as _pytest
+    from pydantic import ValidationError
+
+    from alpha_lab.agents.data_infra.ifvg.study.comparison_contracts import (
+        ComparisonCompatibility,
+        ComparisonResult,
+        SearchDerivationComparisonSubject,
+        StudyCellComparisonSubject,
+    )
+
+    compatibility = ComparisonCompatibility(
+        per_dimension_match={"strategy_profile": False},
+        required_equalities_satisfied=True,
+        registered_single_axis_delta_only=True,
+        compatible_for_metric_delta=True,
+        compatibility_status="compatible",
+        incompatibility_reasons=(),
+        differing_fields=(),
+    )
+    common = {
+        "compatibility": compatibility,
+        "delta_reports": {"population_delta": {"entity_kind": "setup"}},
+        "config_diff": None,
+        "evidence_links": ("b" * 64,),
+    }
+    study = ComparisonResult(
+        subject=StudyCellComparisonSubject(comparison_id="a" * 64), **common
+    )
+    search = ComparisonResult(
+        subject=SearchDerivationComparisonSubject(derivation_id="c" * 64), **common
+    )
+    assert study.subject.subject_kind == "study_cell_comparison_v1"
+    assert search.subject.subject_kind == "search_cross_profile_derivation_v1"
+    # the discriminator refuses an untyped/mislabeled reference outright
+    with _pytest.raises(ValidationError):
+        ComparisonResult(subject={"comparison_id": "a" * 64}, **common)
+    with _pytest.raises(ValidationError):
+        ComparisonResult(
+            subject={
+                "subject_kind": "study_cell_comparison_v1",
+                "derivation_id": "c" * 64,
+            },
+            **common,
+        )
+    # a bare 64-hex string is no longer a lawful subject at all
+    with _pytest.raises(ValidationError):
+        ComparisonResult(subject="a" * 64, **common)

@@ -284,7 +284,64 @@ def test_monitor_ladder_panel_shows_rungs_planned_and_s11(
     assert "ifvg_context_gam_v1" in dump  # planned rung stays visible
     captions = _caption_text(at)
     assert S11_BLOCKED_REASON in captions
-    assert "parity held" in captions
+    # R5-FIX finding 5: this run has 0 OOS rows — the parity claim is NOT
+    # evaluable and must never read "parity held over 0 OOS rows"
+    assert "parity not evaluable" in captions
+    assert "parity held" not in captions
+
+
+def test_ladder_frame_is_arrow_safe_with_nullable_dtypes() -> None:
+    """R5-FIX finding 1: the ladder table's numeric columns carry nullable
+    dtypes (Int64/Float64) with pd.NA for the planned rung — pyarrow
+    serializes the frame without the automatic-fix fallback that produced
+    the smoke run's 17 tracebacks."""
+
+    import pandas as pd
+    import pyarrow as pa
+
+    diagnostics = {
+        "rungs": {
+            "reference_prevalence_v1": {
+                "prediction_report": {
+                    "count": 12,
+                    "brier_score": 0.21,
+                    "brier_skill_score": 0.02,
+                    "auc": 0.5321,
+                    "status": "ok",
+                }
+            },
+            "ifvg_context_logistic_l2_v1": {
+                "prediction_report": {
+                    "count": 0,
+                    "status": "insufficient_class_coverage",
+                    "auc_reason": "no_oos_predictions",
+                }
+            },
+        },
+        "parity": {"identical_rows": True, "oos_row_count": 0},
+    }
+    frame = pipeline_tab._ladder_frame(diagnostics)
+    assert str(frame["OOS rows"].dtype) == "Int64"
+    assert str(frame["Brier"].dtype) == "Float64"
+    assert str(frame["Brier skill"].dtype) == "Float64"
+    assert str(frame["Rung"].dtype) == "string"
+    assert str(frame["AUC"].dtype) == "string"
+    assert str(frame["Status"].dtype) == "string"
+    # the planned GAM row is NA in numeric columns, never a string
+    planned = frame[frame["Rung"] == "ifvg_context_gam_v1"].iloc[0]
+    assert pd.isna(planned["OOS rows"]) and pd.isna(planned["Brier"])
+    # the exact regression: Arrow conversion succeeds directly
+    pa.Table.from_pandas(frame)
+
+
+def test_parity_caption_wording_for_zero_and_nonzero_rows() -> None:
+    """R5-FIX finding 5: 'held' only with rows to hold over."""
+
+    held = pipeline_tab._parity_caption({"oos_row_count": 236})
+    assert "parity held over 236 OOS rows" in held
+    empty = pipeline_tab._parity_caption({"oos_row_count": 0})
+    assert "not evaluable" in empty
+    assert "held" not in empty
 
 
 def test_monitor_without_runs_renders_the_dedicated_state(

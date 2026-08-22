@@ -161,6 +161,12 @@ def test_cross_profile_comparison_results_persisted(completed):
         comparison_ids[0],
         ComparisonResultEnvelope,
     )
+    # R5-FIX finding 6: the search lane's subject is TYPED as a derivation —
+    # it can never be read as a study-cell ComparisonEnvelope reference
+    assert envelope.payload.subject.subject_kind == (
+        "search_cross_profile_derivation_v1"
+    )
+    assert len(envelope.payload.subject.derivation_id) == 64
     deltas = dict(envelope.payload.delta_reports)
     assert set(deltas) == {"setup", "candidate", "decision", "trade"}
     # the fixture's tables carry only executed trades: the empty kinds have
@@ -230,6 +236,12 @@ def test_folds_and_ladder_hit_the_verification_safe_failure_state(completed):
         )
     )
     assert diagnostics["parity"]["oos_row_count"] == 0
+    # R5-FIX finding 5: zero OOS rows stamp the parity claim NOT EVALUABLE —
+    # in the persisted diagnostics and in the S09 stage explanation
+    assert diagnostics["parity"]["status"] == "not_evaluable"
+    s09 = state["stages"][QuantLabPipelineStage.S09_TRAIN_MODELS.value]
+    assert "parity not evaluable" in s09["explanation"]
+    assert "parity held" not in s09["explanation"]
     for rung in diagnostics["rungs"].values():
         assert rung["prediction_report"]["count"] == 0
 

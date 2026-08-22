@@ -423,7 +423,7 @@ def _render_frontier(st_module, bundle: Mapping[str, Any]) -> None:
     try:
         event = st_module.plotly_chart(
             figure,
-            use_container_width=True,
+            width="stretch",
             key=f"{_RES}frontier_fig",
             on_select="rerun",
             selection_mode="points",
@@ -438,7 +438,7 @@ def _render_frontier(st_module, bundle: Mapping[str, Any]) -> None:
         # older Streamlit without on_select: the selectbox twin carries the
         # complete semantics (FUX §4.1 fallback)
         st_module.plotly_chart(
-            figure, use_container_width=True, key=f"{_RES}frontier_fig"
+            figure, width="stretch", key=f"{_RES}frontier_fig"
         )
     for line in omissions.summary_lines():
         st_module.caption(f"Omission: {line}")
@@ -564,7 +564,7 @@ def _render_heatmap(st_module, bundle: Mapping[str, Any]) -> None:
         col_axis=col_axis if col_axis != "(single axis)" else "—",
         metric_label=metric_label,
     )
-    st_module.plotly_chart(figure, use_container_width=True, key=f"{_RES}heat_fig")
+    st_module.plotly_chart(figure, width="stretch", key=f"{_RES}heat_fig")
     for note in aggregated_notes:
         st_module.caption(f"Omission/aggregation: {note}")
     for line in omissions.summary_lines():
@@ -587,7 +587,7 @@ def _render_heatmap(st_module, bundle: Mapping[str, Any]) -> None:
             }
             for cell in cells
         ],
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 
@@ -632,7 +632,7 @@ def _render_firm_views(st_module, bundle: Mapping[str, Any]) -> None:
                 }
             )
     figure, omissions = build_firm_matrix_figure(cells, metric_label=metric_label)
-    st_module.plotly_chart(figure, use_container_width=True, key=f"{_RES}firm_fig")
+    st_module.plotly_chart(figure, width="stretch", key=f"{_RES}firm_fig")
     for line in omissions.summary_lines():
         st_module.caption(f"Omission: {line}")
 
@@ -670,7 +670,7 @@ def _render_firm_views(st_module, bundle: Mapping[str, Any]) -> None:
     if curves:
         figure, omissions = build_survival_figure(curves)
         st_module.plotly_chart(
-            figure, use_container_width=True, key=f"{_RES}surv_fig"
+            figure, width="stretch", key=f"{_RES}surv_fig"
         )
         table_rows = []
         for curve in curves:
@@ -692,7 +692,7 @@ def _render_firm_views(st_module, bundle: Mapping[str, Any]) -> None:
                         "P(alive)": display_metric(value, percent=True),
                     }
                 )
-        st_module.dataframe(table_rows, use_container_width=True, hide_index=True)
+        st_module.dataframe(table_rows, width="stretch", hide_index=True)
     else:
         st_module.caption(
             "No survival-curve blocks are persisted for this configuration."
@@ -733,7 +733,7 @@ def _render_firm_views(st_module, bundle: Mapping[str, Any]) -> None:
             ordered, horizon_label=horizon, quantiles=quantiles
         )
         st_module.plotly_chart(
-            figure, use_container_width=True, key=f"{_RES}payout_fig"
+            figure, width="stretch", key=f"{_RES}payout_fig"
         )
         st_module.caption(
             "Net of fees, withdrawals, and replacements per the simulated "
@@ -903,7 +903,7 @@ def _render_explorer(st_module, bundle: Mapping[str, Any], level: str) -> None:
             {column: row.get(column, "—") for column in seen}
             for row in page
         ],
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
     st_module.caption(

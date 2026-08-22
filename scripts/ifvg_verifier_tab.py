@@ -305,7 +305,7 @@ def _render_side_panel(st_module, ctx: ReplayContext, evidence, row: pd.Series) 
                     "source": gate.source_kind if reached else "—",
                 }
             )
-        st_module.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+        st_module.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
     with st_module.expander("Geometry", expanded=False):
         st_module.dataframe(
             pd.DataFrame(
@@ -322,7 +322,7 @@ def _render_side_panel(st_module, ctx: ReplayContext, evidence, row: pd.Series) 
                 ]
             ),
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
         )
         st_module.caption("Zone fill/invalidation times are not persisted — lifecycle end unknown.")
     with st_module.expander("Execution", expanded=False):
@@ -336,7 +336,7 @@ def _render_side_panel(st_module, ctx: ReplayContext, evidence, row: pd.Series) 
                 st_module.dataframe(
                     pd.DataFrame(list(evidence.counterfactual_labels)),
                     hide_index=True,
-                    use_container_width=True,
+                    width="stretch",
                 )
             elif point_in_time:
                 st_module.caption("Outcome evidence withheld before the resolution stage.")
@@ -364,7 +364,7 @@ def _render_side_panel(st_module, ctx: ReplayContext, evidence, row: pd.Series) 
                         ["label_family", "label", "censored", "mfe_r", "mae_r"]
                     ],
                     hide_index=True,
-                    use_container_width=True,
+                    width="stretch",
                 )
     with st_module.expander("Context", expanded=False):
         if len(evidence.structure_stage_summary):
@@ -372,7 +372,7 @@ def _render_side_panel(st_module, ctx: ReplayContext, evidence, row: pd.Series) 
             st_module.dataframe(
                 evidence.structure_stage_summary,
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
             )
         if len(evidence.displacement):
             st_module.caption("Displacement windows:")
@@ -390,7 +390,7 @@ def _render_side_panel(st_module, ctx: ReplayContext, evidence, row: pd.Series) 
                     ]
                 ],
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
             )
         if len(evidence.pools):
             st_module.caption("Nearest / linked pools:")
@@ -407,7 +407,7 @@ def _render_side_panel(st_module, ctx: ReplayContext, evidence, row: pd.Series) 
                     ]
                 ],
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
             )
         if len(evidence.sweep_links):
             st_module.caption("Sweep evidence:")
@@ -423,7 +423,7 @@ def _render_side_panel(st_module, ctx: ReplayContext, evidence, row: pd.Series) 
                     ]
                 ],
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
             )
     with st_module.expander(
         "Model probabilities — counterfactual development evidence", expanded=False
@@ -434,7 +434,7 @@ def _render_side_panel(st_module, ctx: ReplayContext, evidence, row: pd.Series) 
                 [{"tier": tier, **payload} for tier, payload in evidence.model.items()]
             ),
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
         )
     if evidence.gating_report.get("ungateable") or evidence.gating_report.get("hidden"):
         with st_module.expander("Gating report", expanded=False):
@@ -444,7 +444,7 @@ def _render_side_panel(st_module, ctx: ReplayContext, evidence, row: pd.Series) 
                 st_module.dataframe(
                     pd.DataFrame(list(ungateable)),
                     hide_index=True,
-                    use_container_width=True,
+                    width="stretch",
                 )
             hidden = evidence.gating_report.get("hidden", ())
             if hidden:
@@ -464,7 +464,7 @@ def _render_review_section(st_module, ctx: ReplayContext, evidence, row: pd.Seri
             st_module.dataframe(
                 existing[["reviewed_at", "reviewer", "overall_verdict", "tags", "notes"]],
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
             )
         reviewer = st_module.text_input(
             "Reviewer", key=f"{_STATE_PREFIX}review_reviewer"
@@ -868,7 +868,7 @@ def _render_setup_panel(st_module, ctx, bundle, evidence, row: pd.Series) -> Non
             st_module.dataframe(
                 evidence.events[columns],
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
                 height=280,
             )
     if len(evidence.slot_deaths):
@@ -892,7 +892,7 @@ def _render_setup_panel(st_module, ctx, bundle, evidence, row: pd.Series) -> Non
             st_module.dataframe(
                 evidence.slot_deaths[columns],
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
             )
             st_module.caption(
                 "Fill depth, prior/new reached extreme, and the window clocks "
@@ -938,7 +938,7 @@ def _render_setup_review_section(st_module, ctx, bundle, evidence) -> None:
             st_module.dataframe(
                 existing[["reviewed_at", "reviewer", "overall_verdict", "tags", "notes"]],
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
             )
         reviewer = st_module.text_input(
             "Reviewer", key=f"{_STATE_PREFIX}setup_review_reviewer"
@@ -1028,14 +1028,14 @@ def _render_setup_section(st_module, pair_ref: ArtifactPairRef) -> None:
         key=f"{_STATE_PREFIX}setup_prev",
         on_click=_step_setup,
         args=(options, -1),
-        use_container_width=True,
+        width="stretch",
     )
     nav2.button(
         "Next setup ▶",
         key=f"{_STATE_PREFIX}setup_next",
         on_click=_step_setup,
         args=(options, 1),
-        use_container_width=True,
+        width="stretch",
     )
     with jump_col:
         query = st_module.text_input(
@@ -1154,7 +1154,7 @@ def _render_setup_section(st_module, pair_ref: ArtifactPairRef) -> None:
         )
         st_module.plotly_chart(
             figure,
-            use_container_width=True,
+            width="stretch",
             key=f"{_STATE_PREFIX}setup_chart",
             config={
                 "scrollZoom": True,
@@ -1258,21 +1258,21 @@ def render_verifier_section(st_module, pair, entry: dict) -> str | None:
         key=f"{_STATE_PREFIX}verifier_prev",
         on_click=_step_candidate,
         args=(options, -1),
-        use_container_width=True,
+        width="stretch",
     )
     nav2.button(
         "Next candidate ▶",
         key=f"{_STATE_PREFIX}verifier_next",
         on_click=_step_candidate,
         args=(options, 1),
-        use_container_width=True,
+        width="stretch",
     )
     nav3.button(
         "◀ Prev trade",
         key=f"{_STATE_PREFIX}verifier_prev_trade",
         on_click=_step_candidate,
         args=(executed_options, -1),
-        use_container_width=True,
+        width="stretch",
         disabled=not executed_options,
     )
     nav4.button(
@@ -1280,7 +1280,7 @@ def render_verifier_section(st_module, pair, entry: dict) -> str | None:
         key=f"{_STATE_PREFIX}verifier_next_trade",
         on_click=_step_candidate,
         args=(executed_options, 1),
-        use_container_width=True,
+        width="stretch",
         disabled=not executed_options,
     )
     with pick:
@@ -1446,7 +1446,7 @@ def render_verifier_section(st_module, pair, entry: dict) -> str | None:
         )
         st_module.plotly_chart(
             figure,
-            use_container_width=True,
+            width="stretch",
             key=f"{_STATE_PREFIX}verifier_chart",
             config={
                 "scrollZoom": True,

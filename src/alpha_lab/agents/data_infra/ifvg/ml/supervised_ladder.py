@@ -214,6 +214,9 @@ def _assert_identical_rows(rungs: dict[str, pd.DataFrame]) -> dict[str, Any]:
     return {
         "identical_rows": True,
         "oos_row_count": len(reference_ids),
+        # R5-FIX (gate finding 5): with zero OOS rows there is nothing to
+        # compare — the claim is "not evaluable", never "parity held"
+        "status": "held" if reference_ids else "not_evaluable",
         "rung_ids": sorted(rungs),
     }
 

@@ -198,7 +198,7 @@ def _render_capability_registry(st_module) -> None:
         }
         for capability in PROFILE_CAPABILITY_REGISTRY.values()
     ]
-    st_module.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+    st_module.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
 
 
 def _legacy_read_only(st_module) -> None:
@@ -225,7 +225,7 @@ def _legacy_read_only(st_module) -> None:
                 for item in legacy
             ),
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
         )
 
 
@@ -430,19 +430,19 @@ def _render_candidate_report(st_module, report: dict[str, Any]) -> None:
             height=280,
         )
         st_module.dataframe(
-            adapted["thresholds"], hide_index=True, use_container_width=True, height=220
+            adapted["thresholds"], hide_index=True, width="stretch", height=220
         )
     st_module.markdown("**Walk-forward folds**")
     if adapted["folds"].empty:
         st_module.caption("No valid model folds were produced.")
     else:
         st_module.dataframe(
-            adapted["folds"], hide_index=True, use_container_width=True, height=300
+            adapted["folds"], hide_index=True, width="stretch", height=300
         )
     if not adapted["uncertainty"].empty:
         st_module.markdown("**Uncertainty intervals**")
         st_module.dataframe(
-            adapted["uncertainty"], hide_index=True, use_container_width=True
+            adapted["uncertainty"], hide_index=True, width="stretch"
         )
     if not adapted["feature_importance"].empty:
         st_module.markdown("**Feature importance (descriptive only)**")
@@ -454,7 +454,7 @@ def _render_candidate_report(st_module, report: dict[str, Any]) -> None:
             height=320,
         )
         st_module.dataframe(
-            importance, hide_index=True, use_container_width=True, height=300
+            importance, hide_index=True, width="stretch", height=300
         )
     with st_module.expander("Raw candidate report — audit", expanded=False):
         st_module.json(report, expanded=False)
@@ -516,7 +516,7 @@ def _render_execution_report(
             selection = st_module.dataframe(
                 displayed,
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
                 height=240,
                 on_select="rerun",
                 selection_mode="single-row",
@@ -539,7 +539,7 @@ def _render_execution_report(
     if not adapted["uncertainty"].empty:
         st_module.markdown("**Execution uncertainty**")
         st_module.dataframe(
-            adapted["uncertainty"], hide_index=True, use_container_width=True
+            adapted["uncertainty"], hide_index=True, width="stretch"
         )
     with st_module.expander("Raw actual-execution report — audit", expanded=False):
         st_module.json(report, expanded=False)
@@ -563,21 +563,21 @@ def _render_coverage_report(st_module, report: dict[str, Any]) -> None:
         st_module.markdown("**Feature coverage and missingness**")
         st_module.bar_chart(chart, horizontal=True, height=420)
         st_module.dataframe(
-            features, hide_index=True, use_container_width=True, height=360
+            features, hide_index=True, width="stretch", height=360
         )
     if not adapted["flags"].empty:
         st_module.warning("Constant or low-coverage features require interpretation caution.")
         st_module.dataframe(
-            adapted["flags"], hide_index=True, use_container_width=True
+            adapted["flags"], hide_index=True, width="stretch"
         )
     pool_col, leg_col = st_module.columns(2)
     pool_col.markdown("**Pool width and separation**")
     pool_col.dataframe(
-        adapted["pool_summary"], hide_index=True, use_container_width=True
+        adapted["pool_summary"], hide_index=True, width="stretch"
     )
     leg_col.markdown("**Opposing-leg coverage**")
     leg_col.dataframe(
-        adapted["opposing_leg_coverage"], hide_index=True, use_container_width=True
+        adapted["opposing_leg_coverage"], hide_index=True, width="stretch"
     )
     with st_module.expander("Raw feature-coverage report — audit", expanded=False):
         st_module.json(report, expanded=False)
@@ -591,18 +591,18 @@ def _render_reconciliation_report(st_module, report: dict[str, Any]) -> None:
         st_module.error("Reconciliation did not pass; this run must not be compared.")
     st_module.markdown("**Exact immutable identities**")
     st_module.dataframe(
-        adapted["identities"], hide_index=True, use_container_width=True
+        adapted["identities"], hide_index=True, width="stretch"
     )
     gate_col, access_col = st_module.columns(2)
     gate_col.markdown("**Gate cards**")
-    gate_col.dataframe(adapted["gates"], hide_index=True, use_container_width=True)
+    gate_col.dataframe(adapted["gates"], hide_index=True, width="stretch")
     access_col.markdown("**Access counters**")
     access_col.dataframe(
-        adapted["access_counters"], hide_index=True, use_container_width=True
+        adapted["access_counters"], hide_index=True, width="stretch"
     )
     st_module.markdown("**Context table rows**")
     st_module.dataframe(
-        adapted["table_rows"], hide_index=True, use_container_width=True, height=320
+        adapted["table_rows"], hide_index=True, width="stretch", height=320
     )
     evidence = st_module.columns(2)
     performance = adapted["performance"]
@@ -675,7 +675,7 @@ def _run_history(st_module) -> None:
             selection = st_module.dataframe(
                 displayed,
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
                 height=260,
                 on_select="rerun",
                 selection_mode="single-row",
@@ -707,7 +707,7 @@ def _run_history(st_module) -> None:
             st_module.dataframe(
                 _metric_delta_frame(stored, other),
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
             )
             paired = _metric_deltas(stored, other)[
                 "paired_trading_day_brier_loss_delta"
@@ -726,7 +726,7 @@ def _run_history(st_module) -> None:
                 other.config.model_dump(mode="json"),
             ),
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
         )
 
 
@@ -967,7 +967,7 @@ def render_ifvg_replay_tab(st_module=st) -> None:
         st_module.dataframe(
             lifecycle,
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
         )
         st_module.markdown("**Exact actual linkage**")
         st_module.json(
@@ -1010,7 +1010,7 @@ def render_ifvg_replay_tab(st_module=st) -> None:
         st_module.dataframe(
             windows.loc[windows["displacement_window_id"].astype(str).isin(map(str, ids))],
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
         )
     with pools_tab:
         sweep_ids = capture.get("opposing_leg_sweep_link_ids")
@@ -1023,7 +1023,7 @@ def render_ifvg_replay_tab(st_module=st) -> None:
         st_module.dataframe(
             sweeps.loc[sweeps["sweep_link_id"].astype(str).isin(map(str, sweep_ids))],
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
         )
 
 
@@ -1037,7 +1037,7 @@ def render_ifvg_data_audit_tab(st_module=st) -> None:
                 for profile, entry in sorted(catalog.items())
             ),
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
         )
     selected = _load_selected_pair(st_module, key=f"{_STATE_PREFIX}audit_pair")
     if selected is None:
@@ -1075,7 +1075,7 @@ def render_ifvg_data_audit_tab(st_module=st) -> None:
                 for table in ContextRecordTable
             ),
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
         )
     with access_tab:
         for name in (

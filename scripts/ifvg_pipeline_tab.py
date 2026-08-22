@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 import streamlit as st
 from ifvg_ui_common import (
     PIPELINE_STATE_PREFIX,
@@ -263,7 +264,7 @@ def _configure_fields(st_module) -> dict[str, Any]:
                 {"Entry": key, "Status / reason": reason}
                 for key, reason in blocked_bundles
             ],
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
     if planned_models:
@@ -273,7 +274,7 @@ def _configure_fields(st_module) -> dict[str, Any]:
                 {"Entry": key, "Status / reason": reason}
                 for key, reason in planned_models
             ],
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
     max_workers = st_module.slider(
@@ -400,7 +401,7 @@ def _render_preview(st_module, roots: Mapping[str, Any], draft, fields) -> None:
     ]
     st_module.dataframe(
         [{"Field": name, "Value": value} for name, value in rows],
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
     readiness = derive_stage_plan_readiness(spec)
@@ -414,7 +415,7 @@ def _render_preview(st_module, roots: Mapping[str, Any], draft, fields) -> None:
             }
             for entry in readiness.entries
         ],
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
     if not readiness.launchable:
@@ -659,26 +660,46 @@ def _render_monitor_body(st_module, *, roots: Mapping[str, Any], pipeline_id: st
     st_module.markdown("**Stages (all 16, canonical order)**")
     st_module.dataframe(
         [row.as_row() for row in derive_pipeline_stage_rows(state)],
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
     attempts = list(state.get("attempts") or ())
     if attempts:
         st_module.markdown("**Execution-attempt history** (operational, never identity)")
+        # Arrow-safe typed columns (R5-FIX finding 1's fix pattern): numeric
+        # columns stay nullable Int64 — no placeholder strings mixed in
         st_module.dataframe(
-            [
+            pd.DataFrame(
                 {
-                    "Attempt": attempt.get("attempt_number"),
-                    "Started": attempt.get("started_at"),
-                    "Ended": attempt.get("ended_at") or "—",
-                    "Workers": dict(attempt.get("worker_policy") or {}).get(
-                        "max_workers", "—"
+                    "Attempt": pd.array(
+                        [attempt.get("attempt_number") for attempt in attempts],
+                        dtype="Int64",
                     ),
-                    "Retry reason": attempt.get("operational_retry_reason") or "—",
+                    "Started": pd.array(
+                        [attempt.get("started_at") for attempt in attempts],
+                        dtype="string",
+                    ),
+                    "Ended": pd.array(
+                        [attempt.get("ended_at") or "—" for attempt in attempts],
+                        dtype="string",
+                    ),
+                    "Workers": pd.array(
+                        [
+                            dict(attempt.get("worker_policy") or {}).get("max_workers")
+                            for attempt in attempts
+                        ],
+                        dtype="Int64",
+                    ),
+                    "Retry reason": pd.array(
+                        [
+                            attempt.get("operational_retry_reason") or "—"
+                            for attempt in attempts
+                        ],
+                        dtype="string",
+                    ),
                 }
-                for attempt in attempts
-            ],
-            use_container_width=True,
+            ),
+            width="stretch",
             hide_index=True,
         )
     _render_ladder_panel(st_module, roots, state)
@@ -706,6 +727,73 @@ def _render_monitor_body(st_module, *, roots: Mapping[str, Any], pipeline_id: st
                 )
 
 
+def _ladder_frame(diagnostics: Mapping[str, Any]) -> pd.DataFrame:
+    """The ladder table as an Arrow-safe frame (R5-FIX gate finding 1).
+
+    Every column carries an explicit nullable dtype — the planned GAM row's
+    missing numbers are ``pd.NA`` inside Int64/Float64 columns, never a
+    placeholder string mixed into a numeric column (the exact shape that
+    produced the smoke run's 17 Arrow serialization tracebacks)."""
+
+    rows: list[dict[str, Any]] = []
+    for protocol_id, rung in sorted(dict(diagnostics.get("rungs") or {}).items()):
+        report = dict(rung.get("prediction_report") or {})
+        auc = report.get("auc")
+        rows.append(
+            {
+                "Rung": protocol_id,
+                "OOS rows": report.get("count", 0),
+                "Brier": report.get("brier_score"),
+                "Brier skill": report.get("brier_skill_score"),
+                "AUC": (
+                    f"{auc:.4f}"
+                    if isinstance(auc, (int, float))
+                    else report.get("auc_reason", "—")
+                ),
+                "Status": report.get("status", "—"),
+            }
+        )
+    rows.append(
+        {
+            "Rung": "ifvg_context_gam_v1",
+            "OOS rows": None,
+            "Brier": None,
+            "Brier skill": None,
+            "AUC": "—",
+            "Status": "planned: preregistered_basis_penalty_protocol_not_ratified",
+        }
+    )
+    return pd.DataFrame(
+        {
+            "Rung": pd.array([row["Rung"] for row in rows], dtype="string"),
+            "OOS rows": pd.array([row["OOS rows"] for row in rows], dtype="Int64"),
+            "Brier": pd.array([row["Brier"] for row in rows], dtype="Float64"),
+            "Brier skill": pd.array(
+                [row["Brier skill"] for row in rows], dtype="Float64"
+            ),
+            "AUC": pd.array([row["AUC"] for row in rows], dtype="string"),
+            "Status": pd.array([row["Status"] for row in rows], dtype="string"),
+        }
+    )
+
+
+def _parity_caption(parity: Mapping[str, Any]) -> str:
+    """R5-FIX gate finding 5: zero OOS rows ⇒ the parity claim is NOT
+    evaluable — never "held over 0 rows"."""
+
+    count = int(parity.get("oos_row_count", 0) or 0)
+    if count:
+        return (
+            f"Identical-rows parity held over {count} OOS rows "
+            "(identical rows/labels/folds across every rung)."
+        )
+    return (
+        "Identical-rows parity not evaluable — 0 OOS rows (no out-of-fold "
+        "predictions exist on this window; the rungs still shared identical "
+        "rows/labels/folds by construction)."
+    )
+
+
 def _render_ladder_panel(st_module, roots: Mapping[str, Any], state: Mapping[str, Any]) -> None:
     """Supervised-ladder result presentation (§35 R5) from the persisted S10
     diagnostics sidecar — planned/blocked entries and S11 stay truthful."""
@@ -731,35 +819,8 @@ def _render_ladder_panel(st_module, roots: Mapping[str, Any], state: Mapping[str
                 detail="the diagnostics stage has not completed for this run",
             )
             return
-        rows = []
-        for protocol_id, rung in sorted(dict(diagnostics.get("rungs") or {}).items()):
-            report = dict(rung.get("prediction_report") or {})
-            rows.append(
-                {
-                    "Rung": protocol_id,
-                    "OOS rows": report.get("count", 0),
-                    "Brier": report.get("brier_score", "—"),
-                    "Brier skill": report.get("brier_skill_score", "—"),
-                    "AUC": report.get("auc") or report.get("auc_reason", "—"),
-                    "Status": report.get("status", "—"),
-                }
-            )
-        rows.append(
-            {
-                "Rung": "ifvg_context_gam_v1",
-                "OOS rows": "—",
-                "Brier": "—",
-                "Brier skill": "—",
-                "AUC": "—",
-                "Status": "planned: preregistered_basis_penalty_protocol_not_ratified",
-            }
-        )
-        st_module.dataframe(rows, use_container_width=True, hide_index=True)
-        parity = dict(diagnostics.get("parity") or {})
-        st_module.caption(
-            f"Identical-rows parity held over {parity.get('oos_row_count', 0)} "
-            "OOS rows (identical rows/labels/folds across every rung)."
-        )
+        st_module.dataframe(_ladder_frame(diagnostics), width="stretch", hide_index=True)
+        st_module.caption(_parity_caption(dict(diagnostics.get("parity") or {})))
         st_module.caption(f"S11 (model-gated replays): BLOCKED — {S11_BLOCKED_REASON}.")
 
 
@@ -791,13 +852,37 @@ def _render_persisted_comparisons(
                 rows.append(
                     {
                         "Comparison": envelope.comparison_result_id[:12],
+                        "Subject": payload.subject.subject_kind,
                         "Entity": kind,
                         "match_basis": report.get("match_basis", "—"),
-                        "Jaccard": report.get("jaccard", "—"),
+                        "Jaccard": report.get("jaccard"),
                         "Status": payload.compatibility.compatibility_status,
                     }
                 )
-        st_module.dataframe(rows, use_container_width=True, hide_index=True)
+        # Arrow-safe typed columns: Jaccard is nullable Float64, never a
+        # float/em-dash mix (R5-FIX finding 1's fix pattern)
+        st_module.dataframe(
+            pd.DataFrame(
+                {
+                    "Comparison": pd.array(
+                        [row["Comparison"] for row in rows], dtype="string"
+                    ),
+                    "Subject": pd.array(
+                        [row["Subject"] for row in rows], dtype="string"
+                    ),
+                    "Entity": pd.array([row["Entity"] for row in rows], dtype="string"),
+                    "match_basis": pd.array(
+                        [row["match_basis"] for row in rows], dtype="string"
+                    ),
+                    "Jaccard": pd.array(
+                        [row["Jaccard"] for row in rows], dtype="Float64"
+                    ),
+                    "Status": pd.array([row["Status"] for row in rows], dtype="string"),
+                }
+            ),
+            width="stretch",
+            hide_index=True,
+        )
         st_module.caption(
             "Evidence links (lineage-uniqueness reports): "
             + "; ".join(
@@ -970,7 +1055,7 @@ def _render_publish(st_module, roots: Mapping[str, Any]) -> None:
                 {"Gate": gate, "Result": "✓ pass" if passed else "✕ fail"}
                 for gate, passed in gates.items()
             ],
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
     verification_scope = state.get("run_scope") == "verification_5d"

@@ -203,7 +203,7 @@ def render_comparison(
                 }
             )
         if rows:
-            st_module.dataframe(rows, use_container_width=True, hide_index=True)
+            st_module.dataframe(rows, width="stretch", hide_index=True)
         else:
             st_module.caption("Both configurations are the exact baseline.")
     with panels[1]:
@@ -211,7 +211,7 @@ def render_comparison(
             totals = funnel_delta.get("totals") or ()
             st_module.plotly_chart(
                 build_funnel_delta_figure(list(totals)),
-                use_container_width=True,
+                width="stretch",
                 key=f"{_CMP}fd_fig",
             )
             for row in funnel_delta.get("affected", ()):  # exact IDs (FUX §25)
@@ -287,7 +287,7 @@ def render_comparison(
                         "delta": display_metric(delta),
                     }
                 )
-            st_module.dataframe(rows, use_container_width=True, hide_index=True)
+            st_module.dataframe(rows, width="stretch", hide_index=True)
     with panels[3]:
         vectors = bundle["prop_vectors"]
         if not comparable:
@@ -345,7 +345,7 @@ def render_comparison(
                         ),
                     }
                 )
-            st_module.dataframe(rows, use_container_width=True, hide_index=True)
+            st_module.dataframe(rows, width="stretch", hide_index=True)
 
     if population_reports:
         st_module.markdown("**Population membership (exact lineage basis)**")
@@ -552,7 +552,7 @@ def render_account_timeline(st_module=st, *, roots: Mapping[str, Any]) -> None:
         events, eligibility_windows=windows
     )
     st_module.plotly_chart(
-        figure, use_container_width=True, key=f"{_CMP}timeline_fig"
+        figure, width="stretch", key=f"{_CMP}timeline_fig"
     )
     for line in omissions.summary_lines():
         st_module.caption(f"Omission: {line}")
@@ -572,7 +572,7 @@ def render_account_timeline(st_module=st, *, roots: Mapping[str, Any]) -> None:
         }
         for event in events
     ]
-    st_module.dataframe(table, use_container_width=True, hide_index=True)
+    st_module.dataframe(table, width="stretch", hide_index=True)
     ordinals = [str(event.get("event_ordinal")) for event in events]
     if not ordinals:
         return
