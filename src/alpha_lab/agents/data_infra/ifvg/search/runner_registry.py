@@ -7,10 +7,12 @@ now REGISTRY-GATED — the UI only ever passes a registered KEY, and the
 worker refuses any entry string that is not an exact registered value, so no
 user-shaped string can reach ``importlib``.
 
-The registry ships with the synthetic fixture wiring only. The real
-full-scope executors land with the R5 pipeline and register here; until
-then no real-data execution path exists and a real charter's launch stays
-capability-blocked with that reason.
+R5 registered the REAL executors beside the synthetic fixture wiring:
+the baseline-verification search/pipeline entries (``search/executors.py``)
+fail closed at CONSTRUCTION without the owner's persisted verification
+authorization, so registration unblocks the launch surface, never the
+data. Full-development execution has no registered entry — the operator
+run stays a separate, explicitly authorized action.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ __all__ = [
     "resolve_registered_runner_entry",
     "assert_runner_entry_registered",
     "runner_entry_key_for_charter",
+    "pipeline_entry_key_for_charter",
 ]
 
 
@@ -41,6 +44,18 @@ REGISTERED_RUNNER_ENTRIES: Mapping[str, str] = MappingProxyType(
     {
         "synthetic_search_job_fixture_v1": (
             "tests.agents.ifvg_search.test_search_job_script:synthetic_runner_entry"
+        ),
+        "search_baseline_verification_v1": (
+            "alpha_lab.agents.data_infra.ifvg.search.executors:"
+            "search_baseline_verification_entry"
+        ),
+        "pipeline_synthetic_fixture_v1": (
+            "tests.agents.ifvg_search.test_pipeline_job_script:"
+            "synthetic_pipeline_entry"
+        ),
+        "pipeline_baseline_verification_v1": (
+            "alpha_lab.agents.data_infra.ifvg.search.executors:"
+            "pipeline_baseline_verification_entry"
         ),
     }
 )
@@ -71,7 +86,7 @@ def assert_runner_entry_registered(entry: str) -> str:
     raise RunnerEntryError(
         "runner entry is not registered; pass --runner-entry-key with one of "
         f"{sorted(REGISTERED_RUNNER_ENTRIES)} (raw module:function strings "
-        "are refused — the R5 pipeline registers the real executors)"
+        "are refused; only registry-named executors can ever run)"
     )
 
 
@@ -79,12 +94,39 @@ def runner_entry_key_for_charter(charter_envelope) -> str | None:
     """The registered key a frozen charter may launch with, or ``None``.
 
     Synthetic-marker charters use the synthetic fixture wiring. Real
-    charters have NO registered executor before the R5 pipeline — the UI
-    renders the capability-blocked state instead of a launch control.
+    verification-fixture charters resolve to the R5 baseline-verification
+    executor — whose factory still fails closed (before any source path)
+    until the owner's persisted verification authorization exists. Real
+    full-development charters have no registered executor: the operator
+    full run is a separate, explicitly authorized action.
     """
 
     authorization = charter_envelope.payload.owner_authorization
     kind = getattr(authorization, "kind", None)
     if kind == "synthetic_test_authorization_v1":
         return "synthetic_search_job_fixture_v1"
+    date_policy = charter_envelope.payload.date_policy
+    if date_policy.access_policy_id == "verification_fixed_allowlist_max5_v1":
+        return "search_baseline_verification_v1"
+    return None
+
+
+def pipeline_entry_key_for_charter(charter_envelope) -> str | None:
+    """The registered PIPELINE executor key for a frozen charter, or None.
+
+    Mirrors :func:`runner_entry_key_for_charter` for the 16-stage pipeline
+    job: synthetic charters run the synthetic fixture wiring; real
+    verification-fixture charters resolve to the baseline-verification
+    executor (whose factory fails closed without the owner's persisted
+    authorization); real full-development charters have no registered
+    pipeline executor — the operator full run is a separate action.
+    """
+
+    authorization = charter_envelope.payload.owner_authorization
+    kind = getattr(authorization, "kind", None)
+    if kind == "synthetic_test_authorization_v1":
+        return "pipeline_synthetic_fixture_v1"
+    date_policy = charter_envelope.payload.date_policy
+    if date_policy.access_policy_id == "verification_fixed_allowlist_max5_v1":
+        return "pipeline_baseline_verification_v1"
     return None

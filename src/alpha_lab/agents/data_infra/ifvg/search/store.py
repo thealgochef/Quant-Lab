@@ -59,6 +59,8 @@ SEARCH_STORE_NAMES: tuple[str, ...] = (
     "frontiers",
     "insights",
     "search_results",
+    "pipeline_stage_results",
+    "pipeline_specs",
     "seed_snapshots",
     "coverage_matrices",
     "verification_runs",
@@ -81,6 +83,10 @@ def _validate_store_name(store_name: str) -> None:
 
 
 _ENVELOPE_ID_PATTERN = re.compile(r"[0-9a-f]{64}")
+
+#: sidecar names are simple filenames only — no separators, no leading dot,
+#: no drive-relative (`C:evil`) or ADS (`name:stream`) colons (R5 safety F5)
+_SIDECAR_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
 def envelope_destination(root: Path, store_name: str, envelope_id: str) -> Path:
@@ -140,7 +146,10 @@ def save_envelope_immutable(
             }
         ]
         for name, payload in sorted((extra_files or {}).items()):
-            if "/" in name or "\\" in name or name in (_ENVELOPE_FILE, _MANIFEST_FILE):
+            if not _SIDECAR_NAME_PATTERN.fullmatch(name) or name in (
+                _ENVELOPE_FILE,
+                _MANIFEST_FILE,
+            ):
                 raise SearchStoreError(f"invalid sidecar file name {name!r}")
             sidecar = temporary / name
             sidecar.write_bytes(payload)

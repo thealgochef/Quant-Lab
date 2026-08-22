@@ -430,10 +430,20 @@ def test_full_scope_requires_the_exact_typed_confirmation(
     assert not _button(at, "Freeze Search Charter and Launch").disabled
 
 
-def test_full_pipeline_mode_renders_the_planned_capability_state(
+def test_full_pipeline_mode_renders_the_operator_workflow(
     monkeypatch, tmp_path
 ) -> None:
+    """R5 flip of the R4 planned-capability assertion: mode-5 step 8 now
+    delegates to the real §30 workflow — no planned state, no search-freeze
+    button, the pipeline phase radio present (full coverage in
+    test_ifvg_pipeline_tab.py)."""
+
+    import ifvg_pipeline_tab as pipeline_tab
+
     roots = _patched_roots(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        pipeline_tab, "PIPELINE_STATE_ROOT", tmp_path / "pipeline_jobs"
+    )
     draft = _seed_draft(roots["drafts"], step=7, mode="full_pipeline_run")
     draft.steps["objective"]["question_id"] = "find_robust_fsm"
     save_draft(roots["drafts"], draft)
@@ -442,10 +452,12 @@ def test_full_pipeline_mode_renders_the_planned_capability_state(
     at.run()
     assert not at.exception
     headings = " ".join(str(h.value) for h in at.subheader)
-    assert "planned / unavailable" in headings.lower()
+    assert "planned / unavailable" not in headings.lower()
     assert not any(
         b.label == "Freeze Search Charter and Launch" for b in at.button
     )
+    phase_options = {tuple(radio.options) for radio in at.radio}
+    assert any("Monitor" in options for options in phase_options)
 
 
 def test_risk_step_renders_the_universal_policy_hierarchy(

@@ -206,6 +206,49 @@ HEATMAP_GLYPHS: Mapping[str, str] = MappingProxyType(
     }
 )
 
+#: FUX §30.4 — the 16 pipeline stages' short human titles (order-exact).
+PIPELINE_STAGE_TITLES: Mapping[str, str] = MappingProxyType(
+    {
+        "00_validate_inputs": "Validate Inputs",
+        "01_prepare_strategy_profiles": "Prepare Strategy Profiles",
+        "02_run_or_reuse_sequential_replays": "Run / Reuse Sequential Replays",
+        "03_build_or_reuse_fsm_audit": "Build / Reuse FSM Audit",
+        "04_build_or_reuse_replay_charts": "Build / Reuse Replay Charts",
+        "05_materialize_feature_views": "Materialize Feature Views",
+        "06_validate_feature_coverage": "Validate Feature Coverage",
+        "07_derive_labels": "Derive Labels",
+        "08_build_folds": "Build Folds",
+        "09_train_models": "Train Models",
+        "10_generate_predictions_and_diagnostics": "Predictions & Diagnostics",
+        "11_run_frozen_model_gated_replays": "Frozen Model-Gated Replays",
+        "12_run_prop_historical_replays": "Prop Historical Replays",
+        "13_run_bootstrap_and_stress": "Bootstrap & Stress",
+        "14_build_frontier_and_insights": "Frontier & Insights",
+        "15_verify_and_publish": "Verify & Publish",
+    }
+)
+
+#: FUX §30.4 — glyph + word per pipeline stage status (color never sole
+#: carrier; the "not required" presentation covers stages outside the plan).
+PIPELINE_STAGE_STATUS_PRESENTATIONS: Mapping[str, tuple[str, str]] = MappingProxyType(
+    {
+        "pending": ("·", "Pending"),
+        "queued": ("·", "Queued"),
+        "running": ("▶", "Running"),
+        "checkpointed": ("▶", "Checkpointed"),
+        "completed": ("✓", "Completed"),
+        "reused": ("↺", "Reused"),
+        "failed": ("✕", "Failed"),
+        "cancel_requested": ("⊘", "Cancel Requested"),
+        "cancelled_at_safe_boundary": ("⊘", "Cancelled (safe boundary)"),
+        "blocked": ("⛔", "Blocked"),
+    }
+)
+
+#: The word rendered for a stage the selected plan does not include.
+PIPELINE_STAGE_NOT_REQUIRED = ("—", "Not required")
+
+
 #: FUX §28 — the exact account-timeline marker shapes.
 TIMELINE_MARKERS: Mapping[str, str] = MappingProxyType(
     {
@@ -474,29 +517,35 @@ EMPTY_STATE_PRESENTATIONS: Mapping[str, EmptyStatePresentation] = MappingProxyTy
         ),
         "runner_executor_planned": EmptyStatePresentation(
             key=EmptyStateKey.CAPABILITY_PLANNED,
-            heading="Search executor planned / unavailable",
+            heading="No registered executor for this charter",
             explanation=(
-                "No registered runner executor exists for a real charter "
-                "before the R5 pipeline registers the real executors. The "
-                "frozen charter is immutable and launches once one is "
-                "registered; only the synthetic fixture wiring exists today."
+                "Real full-development charters have no registered runner "
+                "executor: the operator full run is a separate, explicitly "
+                "authorized owner action, never an implementation launch. "
+                "The frozen charter stays immutable and reusable."
             ),
-            owning_gate="runner-entry registry (fail-closed; R5 registers executors)",
+            owning_gate=(
+                "runner-entry registry (fail-closed; the operator full run "
+                "is a separate authorized action)"
+            ),
             next_action=(
-                "Launch later via the CLI once R5 lands, or run synthetic "
-                "charters in the verification namespace."
+                "Run verification-fixture or synthetic charters, or wait for "
+                "the owner-authorized operator run."
             ),
         ),
-        "pipeline_runner_planned": EmptyStatePresentation(
-            key=EmptyStateKey.CAPABILITY_PLANNED,
-            heading="Full Pipeline Run workflow planned / unavailable",
+        "pipeline_no_runs": EmptyStatePresentation(
+            key=EmptyStateKey.ARTIFACT_UNAVAILABLE,
+            heading="No pipeline runs exist yet",
             explanation=(
-                "The standardized operator workflow (Configure / Preview / "
-                "Launch / Monitor / Resume-Retry / Publish) lands with R5. "
-                "This draft stays reusable; nothing about it is lost."
+                "No 16-stage pipeline has been launched against this "
+                "namespace. Configure and freeze a pipeline specification "
+                "from the Full Pipeline Run wizard mode to create one."
             ),
-            owning_gate="R5 — Pipeline Runner release",
-            next_action="Reopen this draft when the R5 pipeline surface lands.",
+            owning_gate=None,
+            next_action=(
+                "Open New Study → Full Pipeline Run, complete the wizard, "
+                "and launch from the Review step."
+            ),
         ),
         "regime_algorithm_planned": EmptyStatePresentation(
             key=EmptyStateKey.CAPABILITY_PLANNED,

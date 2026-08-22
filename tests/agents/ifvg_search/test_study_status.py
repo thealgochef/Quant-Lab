@@ -134,7 +134,10 @@ def test_every_section31_state_is_registered() -> None:
         "feature_block_planned",
         "regime_algorithm_planned",
         "runner_executor_planned",
-        "pipeline_runner_planned",
+        # R5: the Full Pipeline Run surface exists — the R4-era
+        # "pipeline_runner_planned" capability state is retired (no dead
+        # vocabulary) and the dedicated no-runs presentation replaces it
+        "pipeline_no_runs",
         "lineage_not_comparable",
         "browser_qa_unavailable",
     }

@@ -22,6 +22,7 @@ _UI_SCRIPTS = (
     "ifvg_results_tab.py",
     "ifvg_results_compare.py",
     "ifvg_results_charts.py",
+    "ifvg_pipeline_tab.py",
 )
 
 _SRC_MODULES = (
@@ -145,10 +146,19 @@ def test_process_launch_exists_only_in_the_designated_seams() -> None:
             assert spawn_at < popen_at < next_def  # inside the seam only
             assert source.count("subprocess.run") == 1  # git rev-parse only
             assert '"git", "rev-parse", "HEAD"' in source
+        elif name == "ifvg_pipeline_tab.py":
+            # FUX-PIPE-003: one detached seam, inside _spawn_pipeline_job only
+            assert source.count("subprocess.Popen") == 1
+            popen_at = source.index("subprocess.Popen")
+            spawn_at = source.index("def _spawn_pipeline_job")
+            next_def = source.index("\ndef ", spawn_at + 1)
+            assert spawn_at < popen_at < next_def
+            assert "subprocess.run" not in source
         else:
             assert "subprocess" not in source, name
-    shim = (_REPO / "scripts" / "ifvg_search_job.py").read_text(encoding="utf-8")
-    assert shim.count("subprocess.Popen") == 1
+    for shim_name in ("ifvg_search_job.py", "ifvg_pipeline_job.py"):
+        shim = (_REPO / "scripts" / shim_name).read_text(encoding="utf-8")
+        assert shim.count("subprocess.Popen") == 1, shim_name
 
 
 def test_session_namespace_is_the_contracted_prefix() -> None:
@@ -158,10 +168,14 @@ def test_session_namespace_is_the_contracted_prefix() -> None:
 
     known_prefix_names = {
         "STATE_PREFIX",
+        "PIPELINE_STATE_PREFIX",
         "_W",
         "_MON",
         "_RES",
         "_CMP",
+        "_PIPE",
+        "_PHASE_KEY",
+        "_SELECTED_KEY",
         "ROUTE_KEY",
         "NAMESPACE_KEY",
         "_PENDING_ROUTE_KEY",
@@ -174,10 +188,15 @@ def test_session_namespace_is_the_contracted_prefix() -> None:
         "confirm_key",
         "size_key",
         "page_key",
+        "gate_cache_key",  # per-pipeline gate cache (adversarial m-6)
         "key",
     }
     sources = _sources()
     assert 'STATE_PREFIX = "ifvg_study_v1_"' in sources["ifvg_ui_common.py"]
+    assert (
+        'PIPELINE_STATE_PREFIX = "ifvg_pipeline_v1_"'
+        in sources["ifvg_ui_common.py"]
+    )
     write_pattern = re.compile(r"session_state\[\s*(f?)([\"'])(.*?)\2\s*\]\s*=")
     var_pattern = re.compile(r"session_state\[\s*([A-Za-z_][\w.]*)\s*\]\s*=")
     for name, source in sources.items():
@@ -190,8 +209,10 @@ def test_session_namespace_is_the_contracted_prefix() -> None:
                 variable = first.group(1).split(".")[-1]
                 assert variable in known_prefix_names, (name, key)
             else:
-                assert key.startswith("ifvg_study_v1_") or key == (
-                    "ifvg_context_v1_replay_pair"
+                assert (
+                    key.startswith("ifvg_study_v1_")
+                    or key.startswith("ifvg_pipeline_v1_")
+                    or key == "ifvg_context_v1_replay_pair"
                 ), (name, key)
         for variable in var_pattern.findall(source):
             assert variable.split(".")[-1] in known_prefix_names, (

@@ -1356,8 +1356,18 @@ def _assemble_charter(
         for key, spec in SEARCH_AXIS_REGISTRY_V1.items()
         if spec.classification is AxisClassification.BLOCKED
     )
+    if draft.mode_id in {mode.value for mode in SearchMode}:
+        search_mode = SearchMode(draft.mode_id)
+    else:
+        # Full Pipeline Run drafts (mode 5) freeze the underlying SEARCH
+        # charter their pipeline runs over: a config search when axes were
+        # selected, the single baseline configuration otherwise
+        # (engineering default, DECISIONS_TAKEN R5).
+        search_mode = (
+            SearchMode.FSM_CONFIG_SEARCH if axes else SearchMode.SINGLE_CONFIGURATION
+        )
     return SearchCharterPayload(
-        search_mode=SearchMode(draft.mode_id),
+        search_mode=search_mode,
         baseline_profile_name=str(baseline.get("baseline_profile_name")),
         baseline_section_config_hash=str(
             baseline.get("baseline_section_config_hash") or ""
@@ -1610,7 +1620,11 @@ def render_new_study(st_module=st, *, roots: Mapping[str, Any]) -> None:
                 STUDY_MODES[0],
             )
             if mode.search_mode is None:
-                render_empty_state(st_module, "pipeline_runner_planned")
+                st_module.caption(
+                    "Full Pipeline Run drafts freeze and launch from the "
+                    "operator workflow below (Configure / Preview / Launch / "
+                    "Monitor / Resume-Retry / Publish)."
+                )
             elif st_module.button(
                 "Freeze Search Charter and Launch",
                 key=f"{_W}freeze",
@@ -1620,3 +1634,17 @@ def render_new_study(st_module=st, *, roots: Mapping[str, Any]) -> None:
                 draft.steps[_STEP_KEY_BY_INDEX[step]] = dict(fields)
                 save_draft(draft_root, draft)
                 _freeze_and_launch(st_module, draft, roots)
+    if step == len(WIZARD_STEP_TITLES) - 1:
+        mode = next(
+            (m for m in STUDY_MODES if m.mode_id == draft.mode_id),
+            STUDY_MODES[0],
+        )
+        if mode.search_mode is None:
+            # R5: the standardized §30 operator workflow replaces the R4-era
+            # planned-capability state; the draft's visible fields persist
+            # before the surface renders so Launch assembles the same state.
+            draft.steps[_STEP_KEY_BY_INDEX[step]] = dict(fields)
+            save_draft(draft_root, draft)
+            from ifvg_pipeline_tab import render_pipeline_run  # noqa: PLC0415
+
+            render_pipeline_run(st_module, roots=roots, draft=draft)

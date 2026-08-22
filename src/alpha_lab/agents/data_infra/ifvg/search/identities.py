@@ -358,7 +358,12 @@ def registered_identity_pairs() -> tuple[RegisteredIdentityPair, ...]:
     )
 
     from .. import fsm_audit_preparation  # noqa: F401, PLC0415
-    from ..features import feature_blocks, feature_bundles  # noqa: F401, PLC0415
+    from ..features import (  # noqa: F401, PLC0415
+        bundle_feature_view,
+        feature_blocks,
+        feature_bundles,
+    )
+    from ..ml import decision_policies  # noqa: F401, PLC0415
     from ..study import cohort, comparison_contracts, contrasts, study_cell  # noqa: F401, PLC0415
     from . import (  # noqa: F401, PLC0415
         authorization,
@@ -366,6 +371,7 @@ def registered_identity_pairs() -> tuple[RegisteredIdentityPair, ...]:
         child_replay,
         lineage,
         orchestrator,
+        pipeline,
         verification,
     )
 

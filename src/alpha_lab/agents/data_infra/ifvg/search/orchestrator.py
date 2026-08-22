@@ -71,6 +71,8 @@ __all__ = [
     "CHILD_STATES",
     "ChildSpec",
     "ChildOutcome",
+    "PropMergeOutcome",
+    "merge_prop_vectors",
     "SearchRunResult",
     "SearchChildMembershipEnvelope",
     "enumerate_children",
@@ -225,6 +227,87 @@ class SearchRunResult:
     children: list[ChildOutcome] = field(default_factory=list)
     frontier: FrontierResult | None = None
     state_path: Path | None = None
+
+
+@dataclass(frozen=True)
+class PropMergeOutcome:
+    """One child's prop-phase verdict under the conservative semantics.
+
+    ALL-legs feasibility (one failing simulation rejects the child) and the
+    worst-firm merge (min for maximize metrics, max for minimize) are ONE
+    implementation shared by ``run_search`` and the R5 pipeline's S12/S13
+    executors — the semantics can never drift between the two lanes.
+    """
+
+    verdict: Literal["ok", "no_vectors", "gate_failed", "objective_unavailable"]
+    failure_reason: FailureReason | None
+    explanation: str | None
+    merged_objectives: dict[str, float] | None
+
+
+def merge_prop_vectors(
+    vectors: Mapping[str, Any],
+    *,
+    prop_thresholds,
+    pareto_objectives: tuple[str, ...],
+    strategy_objectives: Mapping[str, float],
+) -> PropMergeOutcome:
+    """Evaluate prop gates on every leg and merge worst-firm objectives."""
+
+    if not vectors:
+        return PropMergeOutcome(
+            verdict="no_vectors",
+            failure_reason=None,
+            explanation=(
+                "prop simulator returned no simulations; excluded "
+                "from the prop-feasible set"
+            ),
+            merged_objectives=None,
+        )
+    reports = {
+        label: evaluate_prop_gates(vector, prop_thresholds)
+        for label, vector in sorted(vectors.items())
+    }
+    failed = {
+        label: report for label, report in reports.items() if not report.passed
+    }
+    if failed:
+        label, report = next(iter(sorted(failed.items())))
+        return PropMergeOutcome(
+            verdict="gate_failed",
+            failure_reason=report.failure_reason,
+            explanation=(
+                f"prop gates failed on {label}: {report.human_explanation}"
+            ),
+            merged_objectives=None,
+        )
+    merged = dict(strategy_objectives)
+    for metric in pareto_objectives:
+        if metric in merged:
+            continue  # a strategy metric, already present
+        direction = OBJECTIVE_DIRECTIONS[metric]
+        values = [
+            getattr(vector, metric)
+            for vector in vectors.values()
+            if getattr(vector, metric, None) is not None
+        ]
+        if len(values) != len(vectors):
+            return PropMergeOutcome(
+                verdict="objective_unavailable",
+                failure_reason=None,
+                explanation=(
+                    f"prop objective {metric!r} unavailable on at "
+                    "least one simulation; excluded from the frontier"
+                ),
+                merged_objectives=None,
+            )
+        merged[metric] = min(values) if direction == "maximize" else max(values)
+    return PropMergeOutcome(
+        verdict="ok",
+        failure_reason=None,
+        explanation=None,
+        merged_objectives=merged,
+    )
 
 
 def _locked_invariant_violations(
@@ -770,51 +853,21 @@ def run_search(
                     )
                     feasible_metrics.pop(outcome.core_replay_id, None)
                     continue
-                if not vectors:
-                    outcome.explanation = (
-                        "prop simulator returned no simulations; excluded "
-                        "from the prop-feasible set"
-                    )
+                merge = merge_prop_vectors(
+                    vectors,
+                    prop_thresholds=prop_thresholds,
+                    pareto_objectives=payload.objective_policy.pareto_objectives,
+                    strategy_objectives=feasible_metrics[outcome.core_replay_id],
+                )
+                if merge.verdict != "ok":
+                    if merge.failure_reason is not None:
+                        outcome.failure_reason = merge.failure_reason
+                    outcome.explanation = merge.explanation or ""
                     feasible_metrics.pop(outcome.core_replay_id, None)
                     continue
-                reports = {
-                    label: evaluate_prop_gates(vector, prop_thresholds)
-                    for label, vector in sorted(vectors.items())
-                }
-                failed = {
-                    label: report
-                    for label, report in reports.items()
-                    if not report.passed
-                }
-                if failed:
-                    label, report = next(iter(sorted(failed.items())))
-                    outcome.failure_reason = report.failure_reason
-                    outcome.explanation = (
-                        f"prop gates failed on {label}: "
-                        f"{report.human_explanation}"
-                    )
-                    feasible_metrics.pop(outcome.core_replay_id, None)
-                    continue
-                merged = feasible_metrics[outcome.core_replay_id]
-                for metric in payload.objective_policy.pareto_objectives:
-                    if metric in merged:
-                        continue  # a strategy metric, already present
-                    direction = OBJECTIVE_DIRECTIONS[metric]
-                    values = [
-                        getattr(vector, metric)
-                        for vector in vectors.values()
-                        if getattr(vector, metric, None) is not None
-                    ]
-                    if len(values) != len(vectors):
-                        outcome.explanation = (
-                            f"prop objective {metric!r} unavailable on at "
-                            "least one simulation; excluded from the frontier"
-                        )
-                        feasible_metrics.pop(outcome.core_replay_id, None)
-                        break
-                    merged[metric] = (
-                        min(values) if direction == "maximize" else max(values)
-                    )
+                feasible_metrics[outcome.core_replay_id] = dict(
+                    merge.merged_objectives or {}
+                )
         phase = "prop_simulations"
         _checkpoint(
             state_root, search_id, phase, outcomes,

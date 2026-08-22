@@ -39,6 +39,8 @@ __all__ = [
     "LineageUniquenessEnvelope",
     "NativeLineageMap",
     "build_native_lineage_map",
+    "serialize_native_lineage_map",
+    "deserialize_native_lineage_map",
     "persist_lineage_uniqueness",
     "derive_lineage_validity",
     "parse_fvg_id",
@@ -446,3 +448,48 @@ register_identity_pair(
         collisions=(),
     ),
 )
+
+
+def serialize_native_lineage_map(lineage_map: NativeLineageMap) -> dict:
+    """JSON-portable projection of the map (R5 S02 stage sidecar).
+
+    Lineage payloads are deliberately NOT serialized — delta building needs
+    only the native→lineage key projections plus the usability evidence
+    (uniqueness verdicts + incomplete kinds); the payload contracts stay
+    reconstructible from the replay tables.
+    """
+
+    return {
+        "schema_version": 1,
+        "core_replay_id": lineage_map.core_replay_id,
+        "native_to_lineage": {
+            kind: dict(mapping)
+            for kind, mapping in lineage_map.native_to_lineage.items()
+        },
+        "uniqueness_report": lineage_map.uniqueness_report.model_dump(mode="json"),
+        "incomplete_kinds": dict(lineage_map.incomplete_kinds),
+    }
+
+
+def deserialize_native_lineage_map(data: dict) -> NativeLineageMap:
+    """Rebuild a delta-capable map from :func:`serialize_native_lineage_map`.
+
+    The reconstructed map carries empty ``lineage_payloads`` — enough for
+    population-delta building and the usability gates, which read only the
+    key projections and the uniqueness evidence.
+    """
+
+    if int(data.get("schema_version", 0)) != 1:
+        raise ValueError("unsupported native-lineage-map serialization version")
+    return NativeLineageMap(
+        core_replay_id=str(data["core_replay_id"]),
+        native_to_lineage={
+            kind: dict(mapping)
+            for kind, mapping in dict(data["native_to_lineage"]).items()
+        },
+        lineage_payloads={},
+        uniqueness_report=LineageUniquenessReport.model_validate(
+            data["uniqueness_report"]
+        ),
+        incomplete_kinds=dict(data.get("incomplete_kinds", {})),
+    )

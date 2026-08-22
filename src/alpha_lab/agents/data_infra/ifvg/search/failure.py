@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 
 from pydantic import Field
@@ -43,12 +44,19 @@ class FailureReason(StrEnum):
 _SENSITIVE_TOKENS = ("C:\\", "c:\\", "/Users/", "\\Users\\", "Traceback (most recent")
 
 
+#: any drive-letter rooted path (D:\..., x:/...) — safety review R5 F9:
+#: the token list alone missed non-C: drives
+_DRIVE_ROOTED = re.compile(r"\b[A-Za-z]:[\\/]")
+
+
 def sanitize_failure_message(message: str, *, limit: int = 400) -> str:
     """Strip local paths and raw tracebacks from user-facing failure text."""
 
     cleaned_lines = []
     for line in str(message).splitlines():
         if any(token in line for token in _SENSITIVE_TOKENS):
+            continue
+        if _DRIVE_ROOTED.search(line):
             continue
         cleaned_lines.append(line.strip())
     cleaned = " ".join(part for part in cleaned_lines if part)

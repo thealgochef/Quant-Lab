@@ -66,6 +66,10 @@ __all__ = [
     "load_prop_vectors",
     "VerificationAuthorizationState",
     "verification_authorization_state",
+    "PipelineRunSummary",
+    "list_pipeline_runs",
+    "load_comparison_results_for_search",
+    "load_ladder_diagnostics",
     "prepare_cross_profile_deltas",
     "CrossProfileDeltas",
 ]
@@ -498,3 +502,111 @@ def prepare_cross_profile_deltas(
         lineage_invalid_reason=invalid_reason,
         reports=reports,
     )
+
+
+@dataclass(frozen=True)
+class PipelineRunSummary:
+    """One pipeline run discovered from the MUTABLE job root (stores are
+    exact-ID-only and never listed — same locator rule as search runs)."""
+
+    pipeline_semantic_id: str
+    run_scope: str
+    current_stage: str | None
+    attempt_count: int
+    publication_state: str
+    failed: bool
+
+
+def list_pipeline_runs(state_root: Path) -> tuple[PipelineRunSummary, ...]:
+    from .search.pipeline import read_pipeline_state  # noqa: PLC0415
+
+    root = Path(state_root)
+    if not root.exists():
+        return ()
+    summaries: list[tuple[float, PipelineRunSummary]] = []
+    for entry in root.iterdir():
+        if not entry.is_dir() or len(entry.name) != _HEX64:
+            continue
+        state = read_pipeline_state(root, entry.name)
+        if state is None:
+            continue
+        stages = dict(state.get("stages") or {})
+        failed = any(
+            isinstance(row, dict) and row.get("status") == "failed"
+            for row in stages.values()
+        )
+        publication = dict(state.get("publication") or {})
+        state_file = entry / "pipeline_state.json"
+        try:
+            mtime = state_file.stat().st_mtime
+        except OSError:
+            mtime = 0.0
+        summaries.append(
+            (
+                mtime,
+                PipelineRunSummary(
+                    pipeline_semantic_id=str(state.get("pipeline_semantic_id")),
+                    run_scope=str(state.get("run_scope") or "unknown"),
+                    current_stage=state.get("current_stage"),
+                    attempt_count=len(state.get("attempts") or ()),
+                    publication_state=str(publication.get("state") or "not_prepared"),
+                    failed=failed,
+                ),
+            )
+        )
+    summaries.sort(key=lambda pair: pair[0], reverse=True)
+    return tuple(summary for _mtime, summary in summaries)
+
+
+def load_comparison_results_for_search(
+    store_root: Path, state: Mapping[str, Any] | None
+) -> tuple[Any, ...]:
+    """Persisted ComparisonResult envelopes named by a pipeline state's S14
+    stage outputs (DEV-R4-16: the UI consumes persisted contracts, exact-ID
+    loads only — nothing is rebuilt at render time)."""
+
+    from .study.comparison_contracts import ComparisonResultEnvelope  # noqa: PLC0415
+
+    if not state:
+        return ()
+    stages = dict(state.get("stages") or {})
+    s14 = dict(stages.get("14_build_frontier_and_insights") or {})
+    results = []
+    for artifact_id in s14.get("output_artifact_ids") or ():
+        try:
+            results.append(
+                load_verified_envelope(
+                    Path(store_root),
+                    "search_results",
+                    str(artifact_id),
+                    ComparisonResultEnvelope,
+                )
+            )
+        except Exception:  # noqa: BLE001 — frontier/insight ids share the list
+            continue
+    return tuple(results)
+
+
+def load_ladder_diagnostics(
+    store_root: Path, state: Mapping[str, Any] | None
+) -> dict[str, Any] | None:
+    """The persisted S10 supervised-ladder diagnostics for a pipeline run
+    (manifest-verified stage-result sidecar; exact-ID access only)."""
+
+    if not state:
+        return None
+    stages = dict(state.get("stages") or {})
+    s10 = dict(stages.get("10_generate_predictions_and_diagnostics") or {})
+    stage_result_id = s10.get("stage_result_id")
+    if not stage_result_id or s10.get("status") not in ("completed", "reused"):
+        return None
+    try:
+        raw = load_sidecar_bytes(
+            Path(store_root),
+            "pipeline_stage_results",
+            str(stage_result_id),
+            "supervised_ladder.json",
+        )
+    except Exception:  # noqa: BLE001 — absence is a rendered state, not a crash
+        return None
+    return json.loads(raw.decode("utf-8"))

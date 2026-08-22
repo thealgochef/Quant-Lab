@@ -67,9 +67,9 @@ When code behavior changes, update the matching docs in the same change:
 v1). Authority: the approved plan package under
 `QL-FSM-PROP-SEARCH-DASHBOARD/FINAL-IMPLEMENTATION-PLAN-DOCS/`. Code:
 `src/alpha_lab/agents/data_infra/ifvg/{search,study,features}/`; suites:
-`tests/agents/ifvg_search/`. Decisions D-039 through D-043 + D-045's
-trader-workspace half (D-044 and D-045's pipeline half reserved for
-R5–R6). R1, R2 (multi-child search, lineage, exact deltas, verifier
+`tests/agents/ifvg_search/`. Decisions D-039 through D-045 (D-044's
+supervised-ladder half and D-045's pipeline half landed with R5; D-044's
+KMeans regime half lands with R6). R1, R2 (multi-child search, lineage, exact deltas, verifier
 integration, `scripts/ifvg_search_job.py`), R3 (prop lifecycle:
 fidelity-first trade paths, typed calendars, field-level contract
 evidence, the full account walk, portfolio/stress/simulation identities,
@@ -79,8 +79,14 @@ sub-navigation, eight-step five-mode wizard with disk drafts, registry-
 gated launch, Active Runs monitor, Results/History/comparison/insights/
 account-timeline surfaces — `scripts/ifvg_study_*.py`,
 `ifvg_active_runs_tab.py`, `ifvg_results_*.py`, `ifvg_ui_common.py` +
-`ifvg/study_{status,presentation,drafts,providers}.py`) implementations
-are complete;
+`ifvg/study_{status,presentation,drafts,providers}.py`), and R5 (pipeline
+runner + MBP-1 contract readiness + supervised model ladder:
+`ifvg/search/pipeline.py` with the semantic/attempt split and 16-stage
+executors, `ifvg/ml/` ladder + decision/calibration registries + core
+drift builders, `ifvg/features/bundle_feature_view.py`, the real
+baseline-verification executors in `ifvg/search/executors.py`, and the
+Full Pipeline Run surface `scripts/ifvg_pipeline_tab.py` +
+`ifvg_pipeline_job.py`) implementations are complete;
 **R1 acceptance is blocked pending the owner-approved verification fixture**
 (`VerificationAuthorizationRef`; owner decisions 21/R-5) — no real five-day
 slice runs until it exists, and no research interpretation attaches to any

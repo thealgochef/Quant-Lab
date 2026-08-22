@@ -37,6 +37,10 @@ from .study_status import (
 )
 
 __all__ = [
+    "PipelineStageRow",
+    "PipelineProgress",
+    "derive_pipeline_stage_rows",
+    "derive_pipeline_progress",
     "AXIS_GROUP_ORDER",
     "AXIS_GROUP_ASSIGNMENTS",
     "CLASSIFICATION_LABELS",
@@ -1318,3 +1322,111 @@ def viewport_class(width_px: int | None) -> Literal["desktop", "tablet", "mobile
     if width_px >= 768:
         return "tablet"
     return "mobile"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# R5 — Full Pipeline Run presentation derivations (FUX §30.4)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class PipelineStageRow:
+    """One monitor row: glyph + word + explanation for one of the 16 stages."""
+
+    stage_value: str
+    title: str
+    glyph: str
+    word: str
+    explanation: str
+    stage_result_id: str | None
+    in_plan: bool
+
+    def as_row(self) -> dict[str, str]:
+        return {
+            "Stage": f"{self.stage_value[:2]} · {self.title}",
+            "Status": f"{self.glyph} {self.word}",
+            "Explanation": self.explanation,
+            "Stage result": (self.stage_result_id or "")[:12],
+        }
+
+
+@dataclass(frozen=True)
+class PipelineProgress:
+    planned_count: int
+    terminal_count: int
+    failed: bool
+    current_stage_title: str | None
+    attempt_count: int
+    publication_state: str
+
+    @property
+    def fraction(self) -> float:
+        if not self.planned_count:
+            return 0.0
+        return self.terminal_count / self.planned_count
+
+
+_TERMINAL_STAGE_STATUSES = frozenset({"completed", "reused", "blocked"})
+
+
+def derive_pipeline_stage_rows(state: Mapping[str, Any] | None) -> tuple[PipelineStageRow, ...]:
+    """All 16 stages, canonical order, with the exact FUX §30.4 states —
+    including ``reused``, ``blocked``, ``failed``, and ``not required``."""
+
+    from .study_status import (  # noqa: PLC0415
+        PIPELINE_STAGE_NOT_REQUIRED,
+        PIPELINE_STAGE_STATUS_PRESENTATIONS,
+        PIPELINE_STAGE_TITLES,
+    )
+
+    stages = dict((state or {}).get("stages") or {})
+    rows: list[PipelineStageRow] = []
+    for stage_value, title in PIPELINE_STAGE_TITLES.items():
+        entry = dict(stages.get(stage_value) or {})
+        in_plan = bool(entry.get("in_plan"))
+        if not in_plan:
+            glyph, word = PIPELINE_STAGE_NOT_REQUIRED
+            explanation = str(entry.get("explanation") or "not required by this stage plan")
+        else:
+            status = str(entry.get("status") or "pending")
+            glyph, word = PIPELINE_STAGE_STATUS_PRESENTATIONS.get(status, ("·", status))
+            explanation = str(entry.get("explanation") or "")
+        rows.append(
+            PipelineStageRow(
+                stage_value=stage_value,
+                title=title,
+                glyph=glyph,
+                word=word,
+                explanation=explanation,
+                stage_result_id=entry.get("stage_result_id"),
+                in_plan=in_plan,
+            )
+        )
+    return tuple(rows)
+
+
+def derive_pipeline_progress(state: Mapping[str, Any] | None) -> PipelineProgress:
+    from .study_status import PIPELINE_STAGE_TITLES  # noqa: PLC0415
+
+    stages = dict((state or {}).get("stages") or {})
+    planned = [
+        dict(entry)
+        for entry in stages.values()
+        if isinstance(entry, Mapping) and entry.get("in_plan")
+    ]
+    terminal = sum(
+        1 for entry in planned if str(entry.get("status")) in _TERMINAL_STAGE_STATUSES
+    )
+    failed = any(str(entry.get("status")) == "failed" for entry in planned)
+    current_value = (state or {}).get("current_stage")
+    publication = dict((state or {}).get("publication") or {})
+    return PipelineProgress(
+        planned_count=len(planned),
+        terminal_count=terminal,
+        failed=failed,
+        current_stage_title=(
+            PIPELINE_STAGE_TITLES.get(str(current_value)) if current_value else None
+        ),
+        attempt_count=len((state or {}).get("attempts") or ()),
+        publication_state=str(publication.get("state") or "not_prepared"),
+    )

@@ -31,6 +31,7 @@ __all__ = [
     "ComparisonEnvelope",
     "ComparisonCompatibility",
     "ComparisonResult",
+    "ComparisonResultEnvelope",
     "REQUIRED_EQUALITIES",
     "REQUIRED_DIFFERENCES",
     "ComparisonClassMismatchError",
@@ -105,6 +106,26 @@ class ComparisonResult(FrozenContract):
     delta_reports: ImmutableMap[str, ImmutableMap[str, Any]]
     config_diff: ImmutableMap[str, Any] | None
     evidence_links: tuple[str, ...]
+
+
+class ComparisonResultEnvelope(EnvelopeBase):
+    """Persisted comparison result (R5 S14; DEV-R4-16 closure).
+
+    ``comparison_id`` inside the payload is a FOREIGN reference: for
+    study-cell comparisons it names the frozen ``ComparisonEnvelope``; for
+    the search lane it is the typed cross-profile derivation id of
+    DECISIONS_TAKEN #42 (study cells require published v2 dataset
+    references synthetic control-flow children do not have — DEV-R5-8).
+    The envelope's own id hashes the complete result content, so
+    re-computed identical deltas reuse one immutable artifact
+    (``search_results`` store) and the UI consumes persisted contracts
+    instead of rebuilding deltas at render time.
+    """
+
+    _ID_FIELD: ClassVar[str] = "comparison_result_id"
+
+    comparison_result_id: str = Field(pattern=SHA256_PATTERN)
+    payload: ComparisonResult
 
 
 #: Required equalities per class (§7A.15) — technical keys resolved against
@@ -504,4 +525,31 @@ register_identity_pair(
     payload_cls=ComparisonPayload,
     id_field="comparison_id",
     example_factory=_example_comparison_payload,
+)
+
+
+def _example_comparison_result() -> ComparisonResult:
+    return ComparisonResult(
+        comparison_id="a" * 64,
+        compatibility=ComparisonCompatibility(
+            per_dimension_match={"strategy_profile": False},
+            required_equalities_satisfied=True,
+            registered_single_axis_delta_only=True,
+            compatible_for_metric_delta=True,
+            compatibility_status="compatible",
+            incompatibility_reasons=(),
+            differing_fields=(),
+        ),
+        delta_reports={"population_delta": {"entity_kind": "setup"}},
+        config_diff=None,
+        evidence_links=("b" * 64,),
+    )
+
+
+register_identity_pair(
+    name="ComparisonResult",
+    envelope_cls=ComparisonResultEnvelope,
+    payload_cls=ComparisonResult,
+    id_field="comparison_result_id",
+    example_factory=_example_comparison_result,
 )

@@ -26,6 +26,7 @@ from alpha_lab.agents.data_infra.ifvg.study_status import (
 
 __all__ = [
     "STATE_PREFIX",
+    "PIPELINE_STATE_PREFIX",
     "sanitize_error",
     "sanitize_select",
     "display_metric",
@@ -45,6 +46,9 @@ __all__ = [
 #: ``ifvg_context_v1_*`` keys are written only by the registered cross-lane
 #: interactions (the verifier jump in :func:`queue_replay_drilldown`).
 STATE_PREFIX = "ifvg_study_v1_"
+
+#: FUX §3.2 — the Full Pipeline Run surface's dedicated session namespace.
+PIPELINE_STATE_PREFIX = "ifvg_pipeline_v1_"
 
 #: Quoted paths first (spaces inside quotes survive a bare-token pass),
 #: then bare drive-letter / UNC / rooted tokens.

@@ -88,6 +88,7 @@ def _charter(
     pareto_objectives: tuple[str, ...] = ("net_expectancy_r", "profit_factor"),
     lexicographic_tie_breaks: tuple[str, ...] = ("net_expectancy_r", "core_replay_id"),
     prop_feasibility_gates: ResolvedPropGateThresholds | None = None,
+    simulation_protocol: SimulationProtocol | None = None,
 ) -> SearchCharterEnvelope:
     payload = SearchCharterPayload(
         search_mode=SearchMode.FSM_CONFIG_SEARCH,
@@ -132,7 +133,9 @@ def _charter(
             warmup_dates=(),
             access_policy_id="verification_fixed_allowlist_max5_v1",
         ),
-        simulation_protocol=SimulationProtocol(
+        simulation_protocol=simulation_protocol
+        if simulation_protocol is not None
+        else SimulationProtocol(
             modes=("historical_closed_trade",),
             stress_scenario_ids=(),
             trade_path_capability_policy_id="path_capability_policy_v1",

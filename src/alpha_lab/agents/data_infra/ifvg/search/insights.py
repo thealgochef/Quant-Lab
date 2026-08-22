@@ -9,10 +9,12 @@ replace this panel. Forbidden publishable wording is structurally refused.
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Literal
+from typing import ClassVar, Literal
+
+from pydantic import Field
 
 from ..study.population_delta import PopulationDeltaReport
-from .identities import FrozenContract
+from .identities import SHA256_PATTERN, EnvelopeBase, FrozenContract, register_identity_pair
 from .robustness import RobustnessReport
 from .strategy_metrics import StrategyMetrics
 
@@ -21,6 +23,8 @@ __all__ = [
     "EvidenceRef",
     "Insight",
     "InsightPanel",
+    "InsightPanelPayload",
+    "InsightPanelEnvelope",
     "render_insight_panel",
     "FORBIDDEN_INSIGHT_WORDING",
 ]
@@ -76,6 +80,26 @@ class InsightPanel(FrozenContract):
 
     def by_category(self, category: InsightCategory) -> tuple[Insight, ...]:
         return tuple(i for i in self.insights if i.category is category)
+
+
+class InsightPanelPayload(FrozenContract):
+    """One persisted deterministic insight panel (S14; DEV-R4-7 closure).
+
+    The subject binding (search × child) is the hashed content together with
+    the panel itself, so re-running S14 for the same search reuses the same
+    immutable artifact and a different child/search can never alias it.
+    """
+
+    search_id: str = Field(pattern=SHA256_PATTERN)
+    subject_core_replay_id: str = Field(pattern=SHA256_PATTERN)
+    panel: InsightPanel
+
+
+class InsightPanelEnvelope(EnvelopeBase):
+    _ID_FIELD: ClassVar[str] = "insight_panel_id"
+
+    insight_panel_id: str = Field(pattern=SHA256_PATTERN)
+    payload: InsightPanelPayload
 
 
 def _assert_wording_lawful(text: str) -> str:
@@ -299,3 +323,28 @@ def render_insight_panel(
         )
     )
     return InsightPanel(insights=tuple(insights))
+
+
+def _example_insight_panel_payload() -> InsightPanelPayload:
+    return InsightPanelPayload(
+        search_id="a" * 64,
+        subject_core_replay_id="b" * 64,
+        panel=InsightPanel(
+            insights=(
+                Insight(
+                    category=InsightCategory.WHAT_CHANGED,
+                    text="Compared 1 changed axis against the study baseline.",
+                    evidence=(EvidenceRef(kind="child", identifier="b" * 64),),
+                ),
+            )
+        ),
+    )
+
+
+register_identity_pair(
+    name="InsightPanel",
+    envelope_cls=InsightPanelEnvelope,
+    payload_cls=InsightPanelPayload,
+    id_field="insight_panel_id",
+    example_factory=_example_insight_panel_payload,
+)
