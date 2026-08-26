@@ -3,10 +3,21 @@
 The stable registry definition (:class:`FeatureBlockDefinition`) and one
 resolved materialization (:class:`FeatureBlockResolutionPayload/Envelope`) are
 separate objects. Blocks partition the frozen tier ladder DISJOINTLY, and the
-union of the available blocks reproduces ``TIER_FEATURE_REGISTRY[M3]``
+union of the v2/v3 available blocks reproduces ``TIER_FEATURE_REGISTRY[M3]``
 feature-for-feature (module assertion + unit test). Activation of a planned
 block publishes a new definition version and mints its first resolved id — a
 registry-hash-changing event, never a bare status flip (revision P1-5).
+
+**R5B activation (owner P1-D ruling; boundary decision R-6):** the published
+registry IS the activation event applied to the R5-era planned state —
+``IFVG_ORDER_FLOW_MBP1_V1`` at ``block_version=2``, status ``available``,
+with its first resolved id minted from the real Arrow schema hashes, formula
+version, materializer version, and the frozen window registry. The
+pre-activation state stays exported (``PRE_ACTIVATION_*``) so the versioned
+event itself remains provable. The activated block is **research-only
+offline**: it cannot become a live model feature, an execution gate, or a
+Trade-Lab serving feature without a later Strategy-Core formula/parity
+contract and a separately approved sequential model-gated replay.
 """
 
 from __future__ import annotations
@@ -48,14 +59,23 @@ __all__ = [
     "FeatureBlockResolutionEnvelope",
     "FEATURE_BLOCK_REGISTRY",
     "FEATURE_BLOCK_RESOLUTION_REGISTRY",
+    "PRE_ACTIVATION_FEATURE_BLOCK_REGISTRY",
+    "PRE_ACTIVATION_RESOLUTION_REGISTRY",
+    "MBP1_ACTIVATION_ENVELOPE",
+    "MBP1_RESEARCH_BOUNDARY_PATH",
     "resolve_block_definition",
     "resolve_available_block",
     "feature_block_registry_hash",
     "with_activated_block",
+    "mbp1_activation_resolution_payload",
     "BlockUnavailableError",
     "SESSION_FEATURES",
     "CORE_BASELINE_FEATURES",
 ]
+
+#: The definition-level promotion boundary (owner decision R-6): the MBP-1
+#: block's computation path is offline research materialization, permanently.
+MBP1_RESEARCH_BOUNDARY_PATH = "offline_research_feature_materialization_v1"
 
 
 class FeatureBlockStatus(StrEnum):
@@ -178,6 +198,7 @@ def _definition(
     stage: AvailabilityStage = AvailabilityStage.ENTRY_DECISION,
     reason: str | None = None,
     flags: tuple[str, ...] = (),
+    computation_path: str = "feature_materialization_plus_model_refit",
 ) -> FeatureBlockDefinition:
     return FeatureBlockDefinition(
         feature_block_key=key,
@@ -189,6 +210,7 @@ def _definition(
         source_kind=source_kind,  # type: ignore[arg-type]
         availability_stage=stage,
         experimental_flags=flags,
+        expected_computation_path=computation_path,
     )
 
 
@@ -309,7 +331,7 @@ _DEFINITIONS: dict[str, FeatureBlockDefinition] = {
         ),
         _definition(
             "IFVG_ORDER_FLOW_MBP1_V1",
-            "MBP-1 order-flow (planned through R5; research-only offline at R5B)",
+            "MBP-1 order-flow (research-only offline)",
             FeatureBlockStatus.PLANNED,
             family="order_flow",
             source_kind="mbp1_parquet",
@@ -317,6 +339,7 @@ _DEFINITIONS: dict[str, FeatureBlockDefinition] = {
                 "activation is the R5B versioned event; the activated block is "
                 "research_only_offline (owner decision R-6)"
             ),
+            computation_path=MBP1_RESEARCH_BOUNDARY_PATH,
         ),
         _definition(
             "IFVG_REGIME_CONTEXT_V1",
@@ -392,10 +415,13 @@ _RESOLUTIONS: dict[str, FeatureBlockResolutionEnvelope] = {
     ),
 }
 
-FEATURE_BLOCK_REGISTRY: MappingProxyType[str, FeatureBlockDefinition] = MappingProxyType(
-    dict(_DEFINITIONS)
+#: The R5-era planned state, exported so the R5B activation stays provable
+#: as a versioned event (version bump + first resolved id + registry-hash
+#: change) rather than an unwitnessed in-place flip.
+PRE_ACTIVATION_FEATURE_BLOCK_REGISTRY: MappingProxyType[str, FeatureBlockDefinition] = (
+    MappingProxyType(dict(_DEFINITIONS))
 )
-FEATURE_BLOCK_RESOLUTION_REGISTRY: MappingProxyType[str, FeatureBlockResolutionEnvelope] = (
+PRE_ACTIVATION_RESOLUTION_REGISTRY: MappingProxyType[str, FeatureBlockResolutionEnvelope] = (
     MappingProxyType(dict(_RESOLUTIONS))
 )
 
@@ -502,6 +528,76 @@ def with_activated_block(
     return registry, resolved, envelope
 
 
+# ── R5B: the published registry IS the activation event (revision P1-5) ─────
+
+
+def mbp1_activation_resolution_payload() -> FeatureBlockResolutionPayload:
+    """The REAL first resolution of ``IFVG_ORDER_FLOW_MBP1_V1``.
+
+    Exact Arrow schema hashes, the frozen window registry, the formula and
+    materializer versions, and the typed-null join policy all enter the
+    resolved identity — any later change mints a new resolved block id.
+    ``source_artifact_refs`` stays empty by the same C17 rule as every other
+    block: resolutions are artifact-independent; study cells pin the concrete
+    MBP-1 source/feature artifacts through their data lineage.
+    """
+
+    from .mbp1_arrow_schemas import (  # noqa: PLC0415 — leaf module, no cycle
+        MBP1_FEATURE_TABLE_SCHEMA_HASH,
+        MBP1_SOURCE_EVENT_SCHEMA_HASH,
+        mbp1_window_missing_reason_fields,
+        mbp1_window_validity_fields,
+    )
+    from .mbp1_source_contract import (  # noqa: PLC0415
+        MBP1_FORMULA_VERSION,
+        MBP1_MATERIALIZER_VERSION,
+        MIN_DAY_COVERAGE_FRACTION,
+    )
+
+    names = mbp1_feature_names()
+    return FeatureBlockResolutionPayload(
+        feature_block_key="IFVG_ORDER_FLOW_MBP1_V1",
+        block_version=_DEFINITIONS["IFVG_ORDER_FLOW_MBP1_V1"].block_version + 1,
+        formula_version=MBP1_FORMULA_VERSION,
+        source_artifact_refs=(),
+        source_schema_hash=MBP1_SOURCE_EVENT_SCHEMA_HASH,
+        feature_schema_hash=MBP1_FEATURE_TABLE_SCHEMA_HASH,
+        materializer_version=MBP1_MATERIALIZER_VERSION,
+        feature_names=names,
+        numeric_features=names,
+        categorical_features=(),
+        validity_fields=mbp1_window_validity_fields(),
+        missing_reason_fields=mbp1_window_missing_reason_fields(),
+        source_timeframes=(),
+        source_interval_policy="event_stream_v1",
+        as_of_policy="stage_evidence_cutoff_v2",
+        join_keys=("candidate_id",),
+        join_policy="one_to_one_typed_null_on_missing",
+        direction_normalization="none",
+        session_normalization="none",
+        warmup_requirement="exclude_warmup_v1",
+        coverage_requirements={"min_day_coverage_fraction": MIN_DAY_COVERAGE_FRACTION},
+        mbp1_feature_windows=R5B_WINDOW_SPECS,
+    )
+
+
+_ACTIVATED_DEFINITIONS, _ACTIVATED_RESOLUTIONS, MBP1_ACTIVATION_ENVELOPE = (
+    with_activated_block(
+        feature_block_key="IFVG_ORDER_FLOW_MBP1_V1",
+        resolution_payload=mbp1_activation_resolution_payload(),
+        definitions=_DEFINITIONS,
+        resolutions=_RESOLUTIONS,
+    )
+)
+
+FEATURE_BLOCK_REGISTRY: MappingProxyType[str, FeatureBlockDefinition] = MappingProxyType(
+    dict(_ACTIVATED_DEFINITIONS)
+)
+FEATURE_BLOCK_RESOLUTION_REGISTRY: MappingProxyType[str, FeatureBlockResolutionEnvelope] = (
+    MappingProxyType(dict(_ACTIVATED_RESOLUTIONS))
+)
+
+
 # ── module-level invariants (fail at import if the partition drifts) ─────────
 
 _AVAILABLE_UNION = (
@@ -520,6 +616,17 @@ assert_no_deep_book_identifiers(_AVAILABLE_UNION)
 assert_no_deep_book_identifiers(mbp1_feature_names())
 for _spec in R5B_WINDOW_SPECS:
     assert_no_deep_book_identifiers(_spec.feature_names)
+
+# R5B activation invariants: the published registry is the versioned event
+_activated = FEATURE_BLOCK_REGISTRY["IFVG_ORDER_FLOW_MBP1_V1"]
+if _activated.status is not FeatureBlockStatus.AVAILABLE or _activated.block_version != 2:
+    raise AssertionError("the R5B MBP-1 activation must publish version 2 as available")
+if _activated.expected_computation_path != MBP1_RESEARCH_BOUNDARY_PATH:
+    raise AssertionError("the MBP-1 block lost its research-only offline boundary")
+if feature_block_registry_hash() == feature_block_registry_hash(
+    PRE_ACTIVATION_FEATURE_BLOCK_REGISTRY, PRE_ACTIVATION_RESOLUTION_REGISTRY
+):
+    raise AssertionError("activation must change the block-registry hash")
 
 
 register_identity_pair(

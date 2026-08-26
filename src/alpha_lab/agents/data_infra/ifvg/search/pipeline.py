@@ -420,6 +420,8 @@ def derive_stage_plan_readiness(
     from ..features.feature_blocks import BlockUnavailableError  # noqa: PLC0415
     from ..features.feature_bundles import resolve_bundle  # noqa: PLC0415
     from ..ml.model_protocols import (  # noqa: PLC0415
+        CATBOOST_PROTOCOL_ID,
+        LOGISTIC_PROTOCOL_ID,
         MODEL_PROTOCOL_REGISTRY,
         ModelProtocolStatus,
     )
@@ -432,7 +434,19 @@ def derive_stage_plan_readiness(
             bundle_block_reason = sanitize_failure_message(str(error))
             break
     model_block_reason: str | None = None
-    if spec.model_protocol_id:
+    if (
+        bundle_block_reason is None
+        and spec.model_protocol_id == CATBOOST_PROTOCOL_ID
+        and _mbp1_bearing_bundles(spec.feature_bundle_ids)
+    ):
+        # R5B: bundle-parametrized rungs exist for the logistic protocol only —
+        # the CatBoost fold runner is tier-locked in the frozen M0-M3 lane
+        model_block_reason = (
+            f"{CATBOOST_PROTOCOL_ID} has no bundle-parametrized wiring for "
+            "MBP-1-bearing bundles (the CatBoost fold runner is tier-locked "
+            f"in the frozen M0-M3 lane); select {LOGISTIC_PROTOCOL_ID}"
+        )
+    elif spec.model_protocol_id:
         if spec.model_protocol_id in POST_V1_REGIME_ALGORITHM_KEYS:
             model_block_reason = (
                 f"{spec.model_protocol_id} is a post-V1 regime-expansion "
@@ -524,6 +538,11 @@ class PipelineWiring:
     bar_observations_for: Callable[..., Any] | None = None
     verification_run: VerificationRunEnvelope | None = None
     verification_authorization: object | None = None
+    #: R5B: the offline MBP-1 evidence seam — a zero-argument callable
+    #: returning ``(Mbp1SourceArtifactEnvelope, events_by_day, anchor_frame)``.
+    #: Required whenever the plan's bundles resolve MBP-1 order-flow
+    #: features; the stage never fabricates order-flow evidence.
+    mbp1_evidence_source: Callable[[], tuple[Any, Mapping[str, Any], Any]] | None = None
     #: OPTIONAL caller cross-check only (safety review F3). R5-FIX finding 7:
     #: a caller-provided string is NOT evidence — the real scope requires
     #: ``loaded_seed_snapshot_id_source`` and refuses without it; when both
@@ -568,6 +587,8 @@ class _RunContext:
     label_artifact_id: str | None = None
     folds: Any = None
     ladder: Any = None
+    mbp1_evidence: dict[str, Any] = field(default_factory=dict)
+    controlled_study: Any = None
     prop_vectors: dict[str, dict[str, Any]] = field(default_factory=dict)
     frontier_id: str | None = None
     insight_ids: tuple[str, ...] = ()
@@ -715,6 +736,24 @@ def _loaded_seed_snapshot_id_for_real_scope(wiring: PipelineWiring) -> str:
     return loaded
 
 
+def _mbp1_bearing_bundles(feature_bundle_ids: tuple[str, ...]) -> tuple[str, ...]:
+    """The subset of RESOLVABLE bundles that carry MBP-1 order-flow features."""
+
+    from ..features.bundle_feature_view import mbp1_block_keys_in_bundle  # noqa: PLC0415
+    from ..features.feature_blocks import BlockUnavailableError  # noqa: PLC0415
+    from ..features.feature_bundles import resolve_bundle  # noqa: PLC0415
+
+    bearing: list[str] = []
+    for bundle_key in feature_bundle_ids:
+        try:
+            envelope = resolve_bundle(bundle_key)
+        except (BlockUnavailableError, ValueError):
+            continue  # unresolvable bundles are the readiness layer's refusal
+        if mbp1_block_keys_in_bundle(envelope):
+            bearing.append(bundle_key)
+    return tuple(bearing)
+
+
 def _stage_s00_validate(context: _RunContext) -> tuple[tuple[str, ...], str]:
     spec = context.semantic.payload
     charter = context.charter
@@ -742,6 +781,15 @@ def _stage_s00_validate(context: _RunContext) -> tuple[tuple[str, ...], str]:
     ):
         if stage in planned and getattr(wiring, attribute) is None:
             problems.append(f"{stage.value} planned but no {attribute} is wired")
+    if (
+        QuantLabPipelineStage.S05_MATERIALIZE_FEATURE_VIEWS in planned
+        and _mbp1_bearing_bundles(spec.feature_bundle_ids)
+        and wiring.mbp1_evidence_source is None
+    ):
+        problems.append(
+            "an MBP-1-bearing bundle is planned but no mbp1_evidence_source "
+            "is wired (order-flow evidence is never fabricated)"
+        )
     prop_planned = QuantLabPipelineStage.S12_RUN_PROP_HISTORICAL_REPLAYS in planned
     if prop_planned and not wiring.firm_specs:
         problems.append("12_run_prop_historical_replays planned but no firm specs wired")
@@ -1042,27 +1090,122 @@ def _stage_s04_charts(context: _RunContext) -> tuple[tuple[str, ...], str]:
     return _companion_stage(context, context.wiring.chart_builder, "replay-chart")
 
 
+def _ensure_mbp1_evidence(context: _RunContext) -> dict[str, Any]:
+    """Materialize + immutably persist the MBP-1 evidence exactly once.
+
+    Runs the offline materializer over the wired evidence (source artifact,
+    its per-day events, and the candidate stage anchors), persists the
+    source artifact, feature artifact, and coverage report through the
+    verified stores (save-or-reuse — identical evidence reuses one
+    artifact), and caches the joinable frame for S05/S09.
+    """
+
+    if context.mbp1_evidence:
+        return context.mbp1_evidence
+    from ..features.feature_blocks import (  # noqa: PLC0415
+        FEATURE_BLOCK_RESOLUTION_REGISTRY,
+    )
+    from ..features.mbp1_coverage import (  # noqa: PLC0415
+        build_mbp1_coverage_report,
+        save_mbp1_coverage_report,
+    )
+    from ..features.mbp1_feature_materializer import (  # noqa: PLC0415
+        materialize_mbp1_features,
+        save_mbp1_feature_artifact,
+    )
+    from ..features.mbp1_source_artifact import (  # noqa: PLC0415
+        save_mbp1_source_artifact,
+    )
+
+    assert context.wiring.mbp1_evidence_source is not None
+    source_envelope, events_by_day, anchors = context.wiring.mbp1_evidence_source()
+    resolved_block = FEATURE_BLOCK_RESOLUTION_REGISTRY["IFVG_ORDER_FLOW_MBP1_V1"]
+    feature_envelope, feature_frame, evidence_frame = materialize_mbp1_features(
+        source_envelope,
+        anchors,
+        resolved_block=resolved_block,
+        events_by_day=events_by_day,
+    )
+    coverage_envelope = build_mbp1_coverage_report(
+        source_envelope, feature_envelope, feature_frame, evidence_frame
+    )
+    save_mbp1_source_artifact(
+        context.store_root,
+        source_envelope,
+        {day: _canonical_day_bytes(events_by_day[day]) for day in events_by_day}
+        if source_envelope.events_stored
+        else {},
+    )
+    save_mbp1_feature_artifact(
+        context.store_root, feature_envelope, feature_frame, evidence_frame
+    )
+    save_mbp1_coverage_report(context.store_root, coverage_envelope)
+    context.mbp1_evidence = {
+        "source_id": source_envelope.mbp1_source_artifact_id,
+        "feature_artifact_id": feature_envelope.mbp1_feature_artifact_id,
+        "feature_envelope": feature_envelope,
+        "coverage_report_id": coverage_envelope.mbp1_coverage_report_id,
+        "feature_frame": feature_frame,
+        "resolved_block_id": resolved_block.resolved_feature_block_id,
+    }
+    return context.mbp1_evidence
+
+
+def _canonical_day_bytes(frame) -> bytes:
+    from ..features.mbp1_source_artifact import _canonical_event_bytes  # noqa: PLC0415
+
+    return _canonical_event_bytes(frame)
+
+
 def _stage_s05_feature_views(context: _RunContext) -> tuple[tuple[str, ...], str]:
     from ..features.bundle_feature_view import (  # noqa: PLC0415
+        mbp1_block_keys_in_bundle,
         resolve_available_bundle_view,
     )
+    from ..features.feature_bundles import resolve_bundle  # noqa: PLC0415
 
     assert context.wiring.candidate_view_source is not None
     context.view = context.wiring.candidate_view_source()
     outputs: list[str] = []
     dumped: dict[str, Any] = {}
+    mbp1_note = ""
     for bundle_key in context.semantic.payload.feature_bundle_ids:
-        envelope, frame = resolve_available_bundle_view(context.view, bundle_key)
+        if mbp1_block_keys_in_bundle(resolve_bundle(bundle_key)):
+            evidence = _ensure_mbp1_evidence(context)
+            envelope, frame = resolve_available_bundle_view(
+                context.view,
+                bundle_key,
+                mbp1_features=evidence["feature_frame"],
+                mbp1_feature_artifact=evidence["feature_envelope"],
+            )
+            for artifact_id in (
+                evidence["source_id"],
+                evidence["feature_artifact_id"],
+                evidence["coverage_report_id"],
+            ):
+                if artifact_id not in outputs:
+                    outputs.append(artifact_id)
+            mbp1_note = (
+                "; MBP-1 evidence materialized offline (research-only, "
+                "owner decision R-6) and joined one-to-one with typed nulls"
+            )
+        else:
+            envelope, frame = resolve_available_bundle_view(context.view, bundle_key)
         context.bundle_views[bundle_key] = envelope
         context.bundle_frames[bundle_key] = frame
         outputs.append(envelope.bundle_feature_view_id)
         dumped[bundle_key] = envelope.model_dump(mode="json")
+    if context.mbp1_evidence:
+        dumped["__mbp1_evidence__"] = {
+            key: context.mbp1_evidence[key]
+            for key in ("source_id", "feature_artifact_id", "coverage_report_id")
+        }
     context.stage_sidecars["bundle_feature_views.json"] = (
         json.dumps(dumped, sort_keys=True) + "\n"
     ).encode("utf-8")
     return tuple(outputs), (
-        f"{len(outputs)} bundle feature views materialized over the immutable "
-        "candidate view (available blocks only)"
+        f"{len(context.bundle_views)} bundle feature views materialized over "
+        f"the immutable candidate view (available blocks only){mbp1_note}"
     )
 
 
@@ -1161,11 +1304,14 @@ def _stage_s09_train(context: _RunContext) -> tuple[tuple[str, ...], str]:
         raise ValueError("training requires labels and folds (run 07/08)")
     primary_bundle = context.semantic.payload.feature_bundle_ids[0]
     envelope = context.bundle_views[primary_bundle]
+    if envelope.payload.mbp1_feature_artifact_id is not None:
+        return _run_controlled_mbp1_stage(context, primary_bundle)
     tier = frozen_tier_for_bundle(envelope.payload.resolved_feature_names)
     if tier is None:
         raise ValueError(
             f"bundle {primary_bundle} does not resolve to a frozen tier "
-            "feature set; no ladder wiring exists for it in R5 (fail closed)"
+            "feature set and carries no MBP-1 evidence; no ladder wiring "
+            "exists for it (fail closed)"
         )
     context.ladder = run_supervised_ladder(
         context.view, context.labeled, context.folds, tier=tier
@@ -1184,6 +1330,66 @@ def _stage_s09_train(context: _RunContext) -> tuple[tuple[str, ...], str]:
     )
 
 
+def _run_controlled_mbp1_stage(
+    context: _RunContext, primary_bundle: str
+) -> tuple[tuple[str, ...], str]:
+    """S09's R5B path: the controlled Baseline vs Baseline+MBP-1 study.
+
+    Both arms run bundle-parametrized (prevalence + logistic; the CatBoost
+    fold runner is tier-locked in the frozen lane) on identical rows,
+    labels, and folds; the persisted study envelope carries the paired
+    Brier delta and the ``research_only_offline`` boundary.
+    """
+
+    from ..ml.controlled_feature_study import (  # noqa: PLC0415
+        run_controlled_mbp1_study,
+        save_controlled_feature_study,
+    )
+    from ..ml.model_protocols import LOGISTIC_PROTOCOL_ID  # noqa: PLC0415
+
+    pinned = context.semantic.payload.model_protocol_id
+    if pinned != LOGISTIC_PROTOCOL_ID:
+        raise ValueError(
+            f"the controlled MBP-1 study runs the {LOGISTIC_PROTOCOL_ID!r} "
+            f"protocol on both arms; the pinned protocol {pinned!r} has no "
+            "bundle-parametrized wiring (the CatBoost fold runner is "
+            "tier-locked in the frozen M0-M3 lane)"
+        )
+    evidence = context.mbp1_evidence
+    if not evidence:
+        raise ValueError("MBP-1 evidence was not materialized (run stage 05)")
+    study = run_controlled_mbp1_study(
+        context.view,
+        context.labeled,
+        context.folds,
+        challenger_bundle_key=primary_bundle,
+        mbp1_features=evidence["feature_frame"],
+        mbp1_feature_artifact=evidence["feature_envelope"],
+    )
+    save_controlled_feature_study(context.store_root, study)
+    context.controlled_study = study
+    context.ladder = study.challenger
+    oos_rows = study.challenger.parity["oos_row_count"]
+    parity_clause = (
+        f"identical-rows parity held over {oos_rows} OOS rows in both arms"
+        if oos_rows
+        else "identical-rows parity not evaluable (0 OOS rows; the legitimate "
+        "safe-failure shape on verification windows)"
+    )
+    return (
+        (
+            study.envelope.controlled_feature_study_id,
+            study.baseline.ladder_id,
+            study.challenger.ladder_id,
+        ),
+        (
+            f"controlled Baseline vs Baseline+MBP-1 study over "
+            f"{study.envelope.payload.baseline_bundle_key} → {primary_bundle} "
+            f"(research-only offline); {parity_clause}"
+        ),
+    )
+
+
 def _stage_s10_diagnostics(context: _RunContext) -> tuple[tuple[str, ...], str]:
     if context.ladder is None:
         raise ValueError("diagnostics require the trained ladder (run 09)")
@@ -1192,6 +1398,7 @@ def _stage_s10_diagnostics(context: _RunContext) -> tuple[tuple[str, ...], str]:
         "ladder_id": ladder.ladder_id,
         "view_id": ladder.view_id,
         "tier": ladder.tier,
+        "feature_source": ladder.feature_source,
         "calibration_policy_id": ladder.calibration_policy_id,
         "parity": ladder.parity,
         "rungs": {
@@ -1204,6 +1411,10 @@ def _stage_s10_diagnostics(context: _RunContext) -> tuple[tuple[str, ...], str]:
         },
         "paired_deltas": ladder.paired_deltas,
     }
+    if context.controlled_study is not None:
+        diagnostics["controlled_feature_study"] = context.controlled_study.envelope.model_dump(
+            mode="json"
+        )
     context.stage_sidecars["supervised_ladder.json"] = (
         json.dumps(diagnostics, sort_keys=True, default=str) + "\n"
     ).encode("utf-8")

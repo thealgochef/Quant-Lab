@@ -150,14 +150,92 @@ def _companion_builder(kind: str):
     return _builder
 
 
+def build_mbp1_evidence(view) -> tuple[Any, dict[str, Any], Any]:
+    """Synthetic MBP-1 evidence for the mini view (R5B pipeline path).
+
+    Per synthetic day: a clean 30-second event stream from 13:45:01Z to
+    15:00:01Z (offset one second from the minute anchors, so no boundary
+    tie exists) plus exact per-candidate stage anchors derived from each
+    candidate's entry timestamp.
+    """
+
+    from alpha_lab.agents.data_infra.ifvg.features.mbp1_source_artifact import (
+        build_mbp1_source_artifact,
+        normalize_mbp1_events,
+    )
+    from alpha_lab.agents.data_infra.ifvg.features.mbp1_source_contract import (
+        MIN_DAY_COVERAGE_FRACTION,
+        R5B_WINDOW_SPECS,
+        Mbp1SourceContract,
+    )
+    from tests.agents.ifvg_search.mbp1_fixture import raw_event
+
+    events_by_day: dict[str, Any] = {}
+    days = tuple(sorted(set(view.frame["trading_day"].astype(str))))
+    for day in days:
+        base = int(pd.Timestamp(f"{day}T13:45:01Z").value)
+        rows = [
+            raw_event(
+                ts_event=base + i * 30 * 1_000_000_000,
+                sequence=1000 + i,
+                bid_ticks=20000 + (i % 3),
+                ask_ticks=20001 + (i % 3),
+                bid_sz=4 + (i % 4),
+                ask_sz=6 - (i % 3),
+                action="T" if i % 5 == 0 else "A",
+                side="B" if i % 10 == 0 else ("A" if i % 5 == 0 else "N"),
+                size=1 + (i % 2),
+            )
+            for i in range(151)  # 13:45:01 … 15:00:01
+        ]
+        events_by_day[day] = normalize_mbp1_events(
+            pd.DataFrame(rows), instrument="NQ", trading_day=day
+        )
+    anchor_rows = []
+    for _, row in view.frame.iterrows():
+        entry = pd.Timestamp(row["entry_ts_utc"])
+        anchor_rows.append(
+            {
+                "candidate_id": str(row["candidate_id"]),
+                "setup_id": str(row["setup_id"]),
+                "trading_day": str(row["trading_day"]),
+                "tap_ts_utc": (entry - pd.Timedelta(minutes=8)).isoformat(),
+                "lock_ts_utc": (entry - pd.Timedelta(minutes=6)).isoformat(),
+                "armed_ts_utc": (entry - pd.Timedelta(minutes=4)).isoformat(),
+                "inversion_ts_utc": (entry - pd.Timedelta(minutes=2)).isoformat(),
+                "entry_ts_utc": entry.isoformat(),
+            }
+        )
+    anchors = pd.DataFrame(anchor_rows)
+    contract = Mbp1SourceContract(
+        instrument="NQ",
+        contract_roll_policy_id="front_month_open_interest_roll_v1",
+        feature_window_specs=R5B_WINDOW_SPECS,
+        coverage_policy={"min_day_coverage_fraction": MIN_DAY_COVERAGE_FRACTION},
+    )
+    source_envelope, _event_bytes = build_mbp1_source_artifact(
+        events_by_day,
+        contract=contract,
+        authorized_date_set_id="synthetic_fixture_days_v1",
+        events_stored=True,
+    )
+    return source_envelope, events_by_day, anchors
+
+
 def build_pipeline_fixture(
     tmp_root: Path,
     *,
     stage_plan: tuple[QuantLabPipelineStage, ...] = FULL_STAGE_PLAN,
     bootstrap_n_paths: int = 32,
     label_builder=None,
+    mbp1: bool = False,
 ) -> dict[str, Any]:
-    """Everything one `run_pipeline` invocation needs, on temporary roots."""
+    """Everything one `run_pipeline` invocation needs, on temporary roots.
+
+    ``mbp1=True`` pins the B2 order-flow bundle + the logistic protocol and
+    wires the synthetic MBP-1 evidence seam — the R5B controlled-study
+    pipeline path.
+    """
 
     tmp_root = Path(tmp_root)
     simulation_protocol = SimulationProtocol(
@@ -183,10 +261,12 @@ def build_pipeline_fixture(
         warmup_policy_id="zero_real_warmup_seed_snapshot_v1",
         search_charter_id=charter.search_id,
         source_artifact_ids=(),
-        feature_bundle_ids=("B0_CORE",),
+        feature_bundle_ids=("B2_CORE_ORDER_FLOW",) if mbp1 else ("B0_CORE",),
         label_policy_id=LABEL_POLICY_ID,
         fold_protocol_id=FOLD_PROTOCOL_ID_V1,
-        model_protocol_id="ifvg_context_catboost_binary_v1",
+        model_protocol_id=(
+            "ifvg_context_logistic_l2_v1" if mbp1 else "ifvg_context_catboost_binary_v1"
+        ),
         cost_policy_sha256=canonical_contract_sha256(charter.payload.cost_policy),
         account_policy_set_ids=policy_ids,
         portfolio_policy_ids=(),
@@ -221,6 +301,7 @@ def build_pipeline_fixture(
             ),
         )
 
+    mbp1_evidence = build_mbp1_evidence(view) if mbp1 else None
     wiring = PipelineWiring(
         identity_resolver=_identity_resolver,
         child_runner=_runner,
@@ -229,6 +310,7 @@ def build_pipeline_fixture(
         candidate_view_source=lambda: view,
         label_builder=label_builder or _default_label_builder,
         firm_specs=specs,
+        mbp1_evidence_source=(lambda: mbp1_evidence) if mbp1 else None,
     )
     return {
         "charter": charter,

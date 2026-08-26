@@ -207,8 +207,12 @@ def test_worker_runs_the_search_with_an_injected_runner(tmp_path, capsys) -> Non
     assert len(state["children"]) == 4
 
 
-def synthetic_runner_entry(charter):
-    """The injected wiring the worker test uses (synthetic control flow only)."""
+def synthetic_runner_entry(charter, *, store_root=None):
+    """The injected wiring the worker test uses (synthetic control flow only).
+
+    Accepts the worker's ``store_root`` per the aligned shim contract
+    (DEV-R5-10 closure) — the synthetic wiring itself has no store to root.
+    """
 
     from types import SimpleNamespace
 

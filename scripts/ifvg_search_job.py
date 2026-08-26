@@ -123,7 +123,10 @@ def _worker(args) -> int:
             "(the R5 pipeline registers the real executors; synthetic runs "
             "pass --runner-entry-key or a registered --runner-entry)"
         )
-    wiring = _resolve_runner_entry(entry)(charter)
+    # DEV-R5-10 closure (safety F4): the worker's --store-root is passed to
+    # the factory explicitly, matching the pipeline shim's contract — the
+    # real search entry no longer defaults to the canonical namespace.
+    wiring = _resolve_runner_entry(entry)(charter, store_root=store_root)
     result = run_search(
         charter,
         store_root=store_root,

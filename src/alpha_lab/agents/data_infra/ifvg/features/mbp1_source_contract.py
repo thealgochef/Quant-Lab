@@ -36,6 +36,9 @@ __all__ = [
     "MBP1_STAGES",
     "MBP1_SNAPSHOT_METRICS",
     "MBP1_TRANSITION_METRICS",
+    "MBP1_FORMULA_VERSION",
+    "MBP1_MATERIALIZER_VERSION",
+    "MIN_DAY_COVERAGE_FRACTION",
     "R5B_WINDOW_SPECS",
     "mbp1_feature_names",
     "DEEP_BOOK_IDENTIFIER_REGEX",
@@ -43,8 +46,25 @@ __all__ = [
     "assert_no_deep_book_identifiers",
 ]
 
-#: Deeper-than-MBP-1 identifier guard (acceptance §7A.19.13).
-DEEP_BOOK_IDENTIFIER_REGEX = re.compile(r"mbp[\W_]?(10|\d{2,})", re.IGNORECASE)
+#: The R5B activation's formula/materializer identities. Any change to the
+#: registered formulas or the materializer semantics bumps these and mints a
+#: new resolved block id (DELTA_TAXONOMY.md §6.2).
+MBP1_FORMULA_VERSION = "ifvg_order_flow_mbp1_formula_v1"
+MBP1_MATERIALIZER_VERSION = "mbp1_feature_materializer_v1"
+
+#: Engineering default (DECISIONS_TAKEN R5B): a day whose sequence-gap-
+#: adjusted coverage falls below this fraction marks every window of that
+#: day ``coverage_below_threshold``. Unratified for research, like every
+#: engineering default.
+MIN_DAY_COVERAGE_FRACTION = 0.95
+
+#: Deeper-than-MBP-1 identifier guard (acceptance §7A.19.13). Strengthened
+#: beyond the plan's literal ``mbp[\W_]?(10|\d{2,})`` (safety review S2): any
+#: ``mbp<N>`` token whose depth is not exactly 1 — mbp2…mbp9 included — is
+#: unrepresentable, matching the §9 boundary statement ("MBP-1 is the
+#: maximum") rather than only its MBP-10 example. The plan's mandated
+#: pattern is a strict subset of this one.
+DEEP_BOOK_IDENTIFIER_REGEX = re.compile(r"mbp[\W_]?(?!1(?!\d))\d+", re.IGNORECASE)
 
 #: The single exemption: opaque legacy replay provenance (V3 P0-3). It is a
 #: provenance literal, not a queryable feature/control identifier.
@@ -105,9 +125,15 @@ class StageEvidenceCutoff(FrozenContract):
         ):
             raise ValueError("completed-bar cutoff requires the bar close ts")
         if self.exact_source_order_key is not None:
-            ts_event = self.exact_source_order_key[0]
-            if "inf" in ts_event.lower():
-                raise ValueError("an artificial +inf cutoff bound is unrepresentable")
+            # review F6: BOTH timestamp elements of the exact key are decimal
+            # nanosecond strings — an artificial infinity in either position
+            # is unrepresentable (the withdrawn +inf rule can never resurface)
+            for element in self.exact_source_order_key[:2]:
+                if "inf" in element.lower() or not element.lstrip("-").isdigit():
+                    raise ValueError(
+                        "an artificial +inf (or non-numeric) cutoff bound is "
+                        "unrepresentable"
+                    )
         return self
 
 

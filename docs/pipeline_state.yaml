@@ -172,7 +172,7 @@ ifvg_prop_robust_config_search_v1:
     R3_prop_lifecycle: {implementation_status: "complete", acceptance_status: "transitively_blocked_by_R1"}
     R4_trader_ui: {implementation_status: "complete", acceptance_status: "transitively_blocked_by_R1"}
     R5_pipeline_mbp1_readiness_ladder: {implementation_status: "complete", acceptance_status: "transitively_blocked_by_R1"}
-    R5B_mbp1_offline_activation: {implementation_status: "not_started", acceptance_status: "transitively_blocked_by_R1"}
+    R5B_mbp1_offline_activation: {implementation_status: "complete", acceptance_status: "transitively_blocked_by_R1"}
     R6_kmeans_regime_lane: {implementation_status: "not_started", acceptance_status: "transitively_blocked_by_R1"}
     V1_hardening: {implementation_status: "not_started", acceptance_status: "transitively_blocked_by_R1"}
   verification_policy:

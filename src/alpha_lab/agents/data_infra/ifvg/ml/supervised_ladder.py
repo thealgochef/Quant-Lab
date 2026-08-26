@@ -14,7 +14,7 @@ surface (brief §7B.3).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
@@ -39,6 +39,7 @@ from .model_protocols import (
 
 __all__ = [
     "DEFAULT_LADDER_PROTOCOLS",
+    "CATBOOST_BUNDLE_REFUSAL",
     "LadderRung",
     "SupervisedLadderRun",
     "run_supervised_ladder",
@@ -86,6 +87,9 @@ class SupervisedLadderRun:
     rungs: tuple[LadderRung, ...]
     parity: dict[str, Any]
     paired_deltas: dict[str, dict[str, Any]]
+    #: What supplied the feature list: the frozen tier registry (R5) or one
+    #: exact resolved feature bundle (R5B bundle-parametrized rungs).
+    feature_source: dict[str, Any] = field(default_factory=dict)
 
     def rung(self, protocol_id: str) -> LadderRung:
         for rung in self.rungs:
@@ -270,12 +274,25 @@ def _with_brier_loss(predictions: pd.DataFrame) -> pd.DataFrame:
     return frame
 
 
+#: The exact fail-closed reason for a CatBoost rung requested under a
+#: bundle-parametrized ladder: the CatBoost fold runner lives in the frozen
+#: M0–M3 lane and is tier-locked — never modified in v1.
+CATBOOST_BUNDLE_REFUSAL = (
+    "the ifvg_context_catboost_binary_v1 fold runner is tier-locked inside "
+    "the frozen M0-M3 lane (never modified in v1); bundle-parametrized "
+    "ladders run the prevalence reference and the logistic protocol"
+)
+
+
 def run_supervised_ladder(
     view: CandidateFeatureView,
     labeled_candidates: pd.DataFrame,
     folds: ContextFoldSet,
     *,
-    tier: ContextFeatureTier,
+    tier: ContextFeatureTier | None = None,
+    bundle_features: tuple[str, ...] | None = None,
+    bundle_ref: str | None = None,
+    bundle_evidence_ref: str | None = None,
     protocols: tuple[str, ...] = DEFAULT_LADDER_PROTOCOLS,
     manual_feature_overrides: dict[str, Any] | None = None,
     calibration_policy_id: str = "raw_probability_diagnostics_v1",
@@ -285,8 +302,36 @@ def run_supervised_ladder(
     ``protocols`` accepts registered protocol IDS only (unknown → ValueError;
     planned → fail-closed refusal). The prevalence reference is mandatory —
     a ladder without its reference rung has no skill baseline.
+
+    Feature parametrization is EXACTLY one of:
+
+    * ``tier`` — the R5 frozen-tier registry path (all three rungs);
+    * ``bundle_features`` + ``bundle_ref`` — the R5B bundle-parametrized
+      path (DECISIONS_TAKEN #41): the exact resolved feature names of one
+      resolved bundle, whose ``resolved_feature_bundle_id`` (``bundle_ref``)
+      enters the ladder identity, together with ``bundle_evidence_ref``
+      (review F2) — the exact evidence artifact (e.g. the MBP-1 feature
+      artifact id) whose joined columns the arm's frame carries, so two
+      ladders over different evidence can never share one ``ladder_id``.
+      The CatBoost rung refuses fail-closed under this path — its fold
+      runner is tier-locked in the frozen lane.
     """
 
+    if (tier is None) == (bundle_features is None):
+        raise ValueError(
+            "exactly one feature parametrization is lawful: tier XOR "
+            "(bundle_features + bundle_ref)"
+        )
+    if bundle_features is not None and not bundle_ref:
+        raise ValueError(
+            "bundle-parametrized ladders require the resolved bundle id "
+            "(bundle_ref) inside the ladder identity"
+        )
+    if tier is not None and bundle_evidence_ref is not None:
+        raise ValueError(
+            "an evidence artifact reference is lawful only on the "
+            "bundle-parametrized path"
+        )
     if len(set(protocols)) != len(protocols):
         raise ValueError("ladder protocols contain duplicates")
     for protocol_id in protocols:
@@ -295,10 +340,12 @@ def run_supervised_ladder(
         raise ValueError(
             "the training-prevalence reference rung is mandatory for every ladder"
         )
+    if bundle_features is not None and CATBOOST_PROTOCOL_ID in protocols:
+        raise ValueError(CATBOOST_BUNDLE_REFUSAL)
     assert_single_frozen_selection("calibrator", (calibration_policy_id,))
     assert_calibration_policy_executable(calibration_policy_id)
 
-    features = features_for_tier(tier)
+    features = features_for_tier(tier) if tier is not None else tuple(bundle_features)
     rungs: list[LadderRung] = []
     frames: dict[str, pd.DataFrame] = {}
     for protocol_id in protocols:
@@ -421,10 +468,23 @@ def run_supervised_ladder(
             ]
         }
     )
+    feature_source: dict[str, Any] = (
+        {"kind": "frozen_tier", "tier": tier.value}
+        if tier is not None
+        else {
+            "kind": "resolved_bundle",
+            "resolved_feature_bundle_id": bundle_ref,
+            "feature_names": list(features),
+            # review F2: the exact evidence artifact behind any joined
+            # columns rides the identity — None means the bundle's columns
+            # come entirely from the immutable candidate view
+            "evidence_ref": bundle_evidence_ref,
+        }
+    )
     ladder_id = canonical_contract_sha256(
         {
             "view_id": view.view_id,
-            "tier": tier.value,
+            "feature_source": feature_source,
             "calibration_policy_id": calibration_policy_id,
             "label_content_hash": label_content_hash,
             "fold_set_hash": fold_set_hash,
@@ -436,9 +496,10 @@ def run_supervised_ladder(
     return SupervisedLadderRun(
         ladder_id=ladder_id,
         view_id=view.view_id,
-        tier=tier.value,
+        tier=tier.value if tier is not None else "resolved_bundle",
         calibration_policy_id=calibration_policy_id,
         rungs=tuple(rungs),
         parity=parity,
         paired_deltas=paired_deltas,
+        feature_source=feature_source,
     )

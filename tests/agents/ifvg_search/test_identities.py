@@ -87,7 +87,15 @@ def test_identity_projection_audit_all_pairs() -> None:
         assert pair.example_factory is not None, f"{pair.name} lacks an audit example"
         payload = pair.example_factory()
         # declared post-materialization envelope extras get placeholder facts
-        extras = {name: "0" * 64 for name in pair.extra_envelope_fields}
+        # (typed: boolean facts like storage mode get a bool, hashes a 64-hex)
+        extras = {
+            name: (
+                True
+                if pair.envelope_cls.model_fields[name].annotation is bool
+                else "0" * 64
+            )
+            for name in pair.extra_envelope_fields
+        }
         envelope = pair.envelope_cls.from_payload(payload, **extras)
         envelope_id = getattr(envelope, pair.id_field)
         assert envelope_id == canonical_contract_sha256(payload)

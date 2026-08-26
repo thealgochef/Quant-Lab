@@ -70,6 +70,7 @@ __all__ = [
     "list_pipeline_runs",
     "load_comparison_results_for_search",
     "load_ladder_diagnostics",
+    "mbp1_stage_evidence_defaults",
     "prepare_cross_profile_deltas",
     "CrossProfileDeltas",
 ]
@@ -610,3 +611,57 @@ def load_ladder_diagnostics(
     except Exception:  # noqa: BLE001 — absence is a rendered state, not a crash
         return None
     return json.loads(raw.decode("utf-8"))
+
+
+def mbp1_stage_evidence_defaults(
+    state_root: Path, store_root: Path, pipeline_id: str | None
+) -> tuple[dict[str, str], str | None]:
+    """Exact MBP-1 artifact ids from a run's persisted stage evidence (R5B).
+
+    Reads the S05 stage result's manifest-verified sidecar for the
+    ``__mbp1_evidence__`` block and the S09 outputs for the controlled-study
+    id. Returns ``(defaults, note)``: absence of evidence yields empty
+    defaults silently, but a VERIFICATION failure on persisted evidence
+    (tampered sidecar/manifest) yields a note the UI must surface — an
+    integrity failure never renders as a cosmetic blank (safety review S6).
+    """
+
+    from .search.pipeline import read_pipeline_state  # noqa: PLC0415
+    from .search.store import SearchStoreError  # noqa: PLC0415
+
+    defaults: dict[str, str] = {}
+    if not pipeline_id:
+        return defaults, None
+    state = read_pipeline_state(Path(state_root), str(pipeline_id))
+    if not state:
+        return defaults, None
+    s05 = dict((state.get("stages") or {}).get("05_materialize_feature_views") or {})
+    result_id = s05.get("stage_result_id")
+    if not result_id:
+        return defaults, None
+    try:
+        sidecar = json.loads(
+            load_sidecar_bytes(
+                Path(store_root),
+                "pipeline_stage_results",
+                str(result_id),
+                "bundle_feature_views.json",
+            ).decode("utf-8")
+        )
+    except SearchStoreError:
+        return {}, (
+            "the selected run's persisted MBP-1 stage evidence failed store "
+            "verification; enter exact artifact ids manually"
+        )
+    except Exception:  # noqa: BLE001 — absence renders as empty inputs
+        return defaults, None
+    evidence = dict(sidecar.get("__mbp1_evidence__") or {})
+    if evidence.get("coverage_report_id"):
+        defaults["coverage_report_id"] = str(evidence["coverage_report_id"])
+    if evidence.get("feature_artifact_id"):
+        defaults["feature_artifact_id"] = str(evidence["feature_artifact_id"])
+    s09 = dict((state.get("stages") or {}).get("09_train_models") or {})
+    outputs = list(s09.get("output_artifact_ids") or ())
+    if evidence and outputs:
+        defaults["controlled_study_id"] = str(outputs[0])
+    return defaults, None

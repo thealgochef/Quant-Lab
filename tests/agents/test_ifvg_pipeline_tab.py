@@ -132,8 +132,10 @@ def test_configure_renders_capability_scoped_fields(monkeypatch, tmp_path) -> No
     radio_options = {tuple(radio.options) for radio in at.radio}
     assert any("Full 16-stage pipeline" in " ".join(options) for options in radio_options)
     dump = _dataframe_dump(at)
-    # planned/blocked entries VISIBLE with status/reason (never hidden)
-    assert "B2_CORE_ORDER_FLOW" in dump
+    # planned/blocked entries VISIBLE with status/reason (never hidden);
+    # since the R5B activation the ORDER_FLOW bundles left this table and
+    # only the still-planned regime/execution-liquidity bundles remain
+    assert "B5_CORE_STRUCTURE_ORDER_FLOW_REGIME" in dump
     assert "planned" in dump
     assert "spectral_clustering_train_only_v1" in dump
     assert "post-V1" in dump
@@ -151,10 +153,33 @@ def test_full_plan_exposes_available_bundle_and_model_selectors(
     assert not at.exception
     bundle = next(box for box in at.selectbox if box.key == f"{_PIPE}bundle")
     assert "B0_CORE" in bundle.options
-    assert all("ORDER_FLOW" not in option for option in bundle.options)
+    # R5B: the activated order-flow bundles are selectable
+    assert "B2_CORE_ORDER_FLOW" in bundle.options
+    assert "B3_CORE_STRUCTURE_ORDER_FLOW" in bundle.options
     model = next(box for box in at.selectbox if box.key == f"{_PIPE}model")
     assert "ifvg_context_catboost_binary_v1" in model.options
     assert "ifvg_context_gam_v1" not in model.options
+
+
+def test_mbp1_bundle_selection_pins_logistic_and_shows_the_boundary(
+    monkeypatch, tmp_path
+) -> None:
+    """FUX §35 R5B: bundle selection after the versioned activation — an
+    MBP-1-bearing selection restricts the model protocol to the one
+    bundle-parametrized wiring and renders the persistent
+    research_only_offline label."""
+
+    at, _roots, _draft = _run(monkeypatch, tmp_path, phase="Configure")
+    plan_radio = next(radio for radio in at.radio if radio.key == f"{_PIPE}plan")
+    plan_radio.set_value(pipeline_tab._FULL_PLAN_LABEL).run()
+    bundle = next(box for box in at.selectbox if box.key == f"{_PIPE}bundle")
+    bundle.set_value("B2_CORE_ORDER_FLOW").run()
+    assert not at.exception
+    model = next(box for box in at.selectbox if box.key == f"{_PIPE}model")
+    assert list(model.options) == ["ifvg_context_logistic_l2_v1"]
+    warnings = "\n".join(str(block.value) for block in at.warning)
+    assert "research_only_offline" in warnings
+    assert "tier-locked" in _caption_text(at)
 
 
 # ── FUX-PIPE-002 — Preview: exact counts and disclosure ─────────────────────
@@ -485,3 +510,90 @@ def test_wizard_mode5_step8_renders_the_pipeline_surface(
     )
     phase_options = {tuple(radio.options) for radio in at.radio}
     assert any("Monitor" in options and "Publish" in options for options in phase_options)
+
+
+# ── R5B — the MBP-1 Order Flow panel (FUX §35 R5B rows) ─────────────────────
+
+
+@pytest.fixture(scope="module")
+def mbp1_pipeline(tmp_path_factory):
+    """One completed synthetic MBP-1 (B2) 16-stage run on module tmp roots."""
+
+    tmp_root = tmp_path_factory.mktemp("pipeline_tab_mbp1")
+    fixture = build_pipeline_fixture(tmp_root, mbp1=True)
+    from alpha_lab.agents.data_infra.ifvg.search.charter import save_charter
+    from alpha_lab.agents.data_infra.ifvg.search.store import save_or_reuse_envelope
+
+    save_charter(fixture["store_root"], fixture["charter"])
+    save_or_reuse_envelope(fixture["store_root"], "pipeline_specs", fixture["semantic"])
+    result = run_pipeline(
+        fixture["semantic"],
+        fixture["charter"],
+        store_root=fixture["store_root"],
+        state_root=fixture["state_root"],
+        wiring=fixture["wiring"],
+        worker_policy=fixture["worker_policy"],
+    )
+    return {**fixture, "result": result, "tmp_root": tmp_root}
+
+
+def test_mbp1_panel_renders_availability_and_the_persistent_boundary(
+    monkeypatch, mbp1_pipeline
+) -> None:
+    at = _run_over_completed(monkeypatch, mbp1_pipeline, phase="Monitor")
+    warnings = "\n".join(str(block.value) for block in at.warning)
+    assert "research_only_offline" in warnings
+    dump = _dataframe_dump(at)
+    # availability: the activated block at version 2 with a resolved id
+    assert "IFVG_ORDER_FLOW_MBP1_V1" in dump
+    assert "available" in dump
+    # the window registry drill-down table
+    assert "ofl_win_inversion_entry" in dump
+    assert "post_trigger_inclusive" in dump
+    # both registry hashes (pre/post activation) render as identities
+    codes = "\n".join(str(block.value) for block in at.code)
+    assert len([c for c in codes.splitlines() if len(c.strip()) == 64]) >= 2
+
+
+def test_mbp1_panel_autofills_and_renders_coverage_and_comparison(
+    monkeypatch, mbp1_pipeline
+) -> None:
+    at = _run_over_completed(monkeypatch, mbp1_pipeline, phase="Monitor")
+    dump = _dataframe_dump(at)
+    # coverage evidence (per-day + per-window) from the exact-ID auto-fill
+    assert "2026-01-13" in dump
+    assert "Sequence gaps" in dump or "sequence_gap_count" in dump
+    assert "ofl_snap_entry" in dump
+    # the controlled comparison renders both arms with resolved identities
+    assert "Baseline+MBP-1" in dump
+    assert "B2_CORE_ORDER_FLOW" in dump
+    body = "\n".join(str(block.value) for block in at.markdown)
+    assert "not evaluable" in body or "not_evaluable" in _caption_text(at) + dump
+
+
+def test_mbp1_panel_drilldown_requires_exact_ids(monkeypatch, mbp1_pipeline) -> None:
+    import ifvg_mbp1_panels as mbp1_panels
+
+    at = _run_over_completed(monkeypatch, mbp1_pipeline, phase="Monitor")
+    candidate_input = next(
+        box for box in at.text_input if box.key == f"{mbp1_panels._MBP1}candidate_id"
+    )
+    candidate_input.set_value("pcand_0000").run()
+    assert not at.exception
+    dump = _dataframe_dump(at)
+    assert "completed_bar_boundary" in dump
+    assert "✓ valid" in dump
+    # a wrong exact id renders the sanitized unavailable state — no fuzzy
+    candidate_input.set_value("no_such_candidate").run()
+    assert not at.exception
+    body = " ".join(str(block.value) for block in at.markdown) + _caption_text(at)
+    assert "no fuzzy" in body
+
+
+def test_mbp1_panel_with_no_runs_renders_manual_input_guidance(
+    monkeypatch, tmp_path
+) -> None:
+    at, _roots, _draft = _run(monkeypatch, tmp_path, phase="Configure")
+    captions = _caption_text(at)
+    assert "mbp1_coverage_report_id" in captions
+    assert "controlled_feature_study_id" in captions

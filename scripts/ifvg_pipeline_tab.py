@@ -84,6 +84,60 @@ def _stage_plan(full: bool):
     )
 
 
+def _logistic_protocol_id() -> str:
+    """The one bundle-parametrized model protocol (R5B; the CatBoost fold
+    runner is tier-locked in the frozen M0–M3 lane) — always the registered
+    constant, never a drifting literal."""
+
+    from alpha_lab.agents.data_infra.ifvg.ml.model_protocols import (  # noqa: PLC0415
+        LOGISTIC_PROTOCOL_ID,
+    )
+
+    return LOGISTIC_PROTOCOL_ID
+
+
+def _bundle_is_mbp1_bearing(bundle_key: str) -> bool:
+    from alpha_lab.agents.data_infra.ifvg.features.bundle_feature_view import (  # noqa: PLC0415
+        mbp1_block_keys_in_bundle,
+    )
+    from alpha_lab.agents.data_infra.ifvg.features.feature_blocks import (  # noqa: PLC0415
+        BlockUnavailableError,
+    )
+    from alpha_lab.agents.data_infra.ifvg.features.feature_bundles import (  # noqa: PLC0415
+        resolve_bundle,
+    )
+
+    try:
+        return mbp1_block_keys_in_bundle(resolve_bundle(bundle_key))
+    except (BlockUnavailableError, ValueError):
+        return False
+
+
+def _mbp1_default_ids(
+    st_module, roots: Mapping[str, Any]
+) -> tuple[dict[str, str], str | None]:
+    """Exact artifact ids for the MBP-1 panel via the provider layer
+    (`mbp1_stage_evidence_defaults`): manifest-verified exact-ID reads;
+    absence yields empty inputs, but a store-integrity failure yields a
+    sanitized note the panel surfaces (safety review S6)."""
+
+    from alpha_lab.agents.data_infra.ifvg.study_providers import (  # noqa: PLC0415
+        list_pipeline_runs,
+        mbp1_stage_evidence_defaults,
+    )
+
+    try:
+        runs = list_pipeline_runs(PIPELINE_STATE_ROOT)
+        pipeline_id = st_module.session_state.get(_SELECTED_KEY) or (
+            runs[0].pipeline_semantic_id if runs else None
+        )
+        return mbp1_stage_evidence_defaults(
+            PIPELINE_STATE_ROOT, Path(roots["store_root"]), pipeline_id
+        )
+    except Exception:  # noqa: BLE001 — defaults are a convenience, never a gate
+        return {}, None
+
+
 def _resolvable_bundles() -> tuple[tuple[str, ...], tuple[tuple[str, str], ...]]:
     """(resolvable bundle keys, ((blocked key, reason), ...)) — planned and
     blocked entries stay VISIBLE with their status, never silently hidden."""
@@ -238,10 +292,24 @@ def _configure_fields(st_module) -> dict[str, Any]:
             list(available_bundles),
             key=f"{_PIPE}bundle",
         )
-        sanitize_select(st_module, f"{_PIPE}model", list(available_models))
+        mbp1_selected = bool(bundle) and _bundle_is_mbp1_bearing(str(bundle))
+        if mbp1_selected:
+            from ifvg_mbp1_panels import research_only_offline_badge  # noqa: PLC0415
+
+            research_only_offline_badge(st_module)
+            model_options = [_logistic_protocol_id()]
+            st_module.caption(
+                "MBP-1-bearing bundles train the controlled Baseline vs "
+                "Baseline+MBP-1 study under the logistic protocol on both "
+                "arms — the CatBoost fold runner is tier-locked in the "
+                "frozen M0–M3 lane."
+            )
+        else:
+            model_options = list(available_models)
+        sanitize_select(st_module, f"{_PIPE}model", model_options)
         model_protocol = st_module.selectbox(
             "Model protocol (the ladder always includes the prevalence reference)",
-            list(available_models),
+            model_options,
             key=f"{_PIPE}model",
         )
         label_policy = st_module.selectbox(
@@ -1113,3 +1181,10 @@ def render_pipeline_run(st_module=st, *, roots: Mapping[str, Any], draft=None) -
         _render_resume(st_module, roots)
     elif phase == "Publish":
         _render_publish(st_module, roots)
+    with st_module.expander("MBP-1 Order Flow (research-only offline)"):
+        from ifvg_mbp1_panels import render_mbp1_order_flow  # noqa: PLC0415
+
+        default_ids, integrity_note = _mbp1_default_ids(st_module, roots)
+        if integrity_note:
+            st_module.error(integrity_note)
+        render_mbp1_order_flow(st_module, roots=roots, default_ids=default_ids)

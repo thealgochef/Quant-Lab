@@ -175,10 +175,42 @@ def test_strategy_only_plan_is_launchable_without_r5b_or_r6():
     assert all(entry.state == "available" for entry in report.entries)
 
 
-def test_mbp1_study_plan_refuses_before_r5b():
-    """`IFVG_ORDER_FLOW_MBP1_V1` is planned through R5: a bundle carrying it
-    (B2_CORE_ORDER_FLOW) blocks every feature/model stage and the launch —
-    no baseline-vs-MBP-1 study is constructible."""
+def test_mbp1_study_plan_is_launchable_at_r5b_under_the_logistic_protocol():
+    """TEST_MATRIX §3.9 capability-gated readiness, R5B half: an MBP-1 study
+    plan is launchable once the block activates — under the one
+    bundle-parametrized protocol (logistic); still-planned regime bundles
+    keep refusing."""
+
+    spec = _spec(
+        stage_plan=_FULL_ML_PLAN,
+        feature_bundle_ids=("B2_CORE_ORDER_FLOW",),
+        label_policy_id="x_v1",
+        fold_protocol_id="ifvg_context_walkforward_40_5_5_2_v1",
+        model_protocol_id="ifvg_context_logistic_l2_v1",
+    )
+    report = assert_stage_plan_launchable(spec)
+    assert report.launchable
+    assert (
+        report.entry(QuantLabPipelineStage.S05_MATERIALIZE_FEATURE_VIEWS).state
+        == "available"
+    )
+    regime_spec = _spec(
+        stage_plan=_FULL_ML_PLAN,
+        feature_bundle_ids=("B5_CORE_STRUCTURE_ORDER_FLOW_REGIME",),
+        label_policy_id="x_v1",
+        fold_protocol_id="ifvg_context_walkforward_40_5_5_2_v1",
+        model_protocol_id="ifvg_context_logistic_l2_v1",
+    )
+    regime_report = derive_stage_plan_readiness(regime_spec)
+    assert not regime_report.launchable
+    assert "planned" in regime_report.entry(
+        QuantLabPipelineStage.S05_MATERIALIZE_FEATURE_VIEWS
+    ).reason
+
+
+def test_mbp1_plan_with_catboost_refuses_with_the_tier_lock_reason():
+    """The CatBoost fold runner is tier-locked in the frozen M0–M3 lane: an
+    MBP-1-bearing plan pinning it blocks the model stages before launch."""
 
     spec = _spec(
         stage_plan=_FULL_ML_PLAN,
@@ -189,9 +221,13 @@ def test_mbp1_study_plan_refuses_before_r5b():
     )
     report = derive_stage_plan_readiness(spec)
     assert not report.launchable
-    blocked = report.entry(QuantLabPipelineStage.S05_MATERIALIZE_FEATURE_VIEWS)
+    blocked = report.entry(QuantLabPipelineStage.S09_TRAIN_MODELS)
     assert blocked.state == "blocked_capability"
-    assert "planned" in blocked.reason
+    assert "tier-locked" in blocked.reason
+    assert (
+        report.entry(QuantLabPipelineStage.S05_MATERIALIZE_FEATURE_VIEWS).state
+        == "available"
+    )
     with pytest.raises(StagePlanBlockedError, match="unavailable capabilities"):
         assert_stage_plan_launchable(spec)
 

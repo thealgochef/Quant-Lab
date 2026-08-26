@@ -67,9 +67,10 @@ When code behavior changes, update the matching docs in the same change:
 v1). Authority: the approved plan package under
 `QL-FSM-PROP-SEARCH-DASHBOARD/FINAL-IMPLEMENTATION-PLAN-DOCS/`. Code:
 `src/alpha_lab/agents/data_infra/ifvg/{search,study,features}/`; suites:
-`tests/agents/ifvg_search/`. Decisions D-039 through D-045 (D-044's
-supervised-ladder half and D-045's pipeline half landed with R5; D-044's
-KMeans regime half lands with R6). R1, R2 (multi-child search, lineage, exact deltas, verifier
+`tests/agents/ifvg_search/`. Decisions D-039 through D-046 (D-044's
+supervised-ladder half and D-045's pipeline half landed with R5; the
+MBP-1 activation D-046 landed with R5B; D-044's KMeans regime half lands
+with R6). R1, R2 (multi-child search, lineage, exact deltas, verifier
 integration, `scripts/ifvg_search_job.py`), R3 (prop lifecycle:
 fidelity-first trade paths, typed calendars, field-level contract
 evidence, the full account walk, portfolio/stress/simulation identities,
@@ -86,7 +87,13 @@ executors, `ifvg/ml/` ladder + decision/calibration registries + core
 drift builders, `ifvg/features/bundle_feature_view.py`, the real
 baseline-verification executors in `ifvg/search/executors.py`, and the
 Full Pipeline Run surface `scripts/ifvg_pipeline_tab.py` +
-`ifvg_pipeline_job.py`) implementations are complete;
+`ifvg_pipeline_job.py`), and R5B (offline MBP-1 feature activation,
+research-only: `ifvg/features/mbp1_{arrow_schemas,source_artifact,
+stage_windows,feature_materializer,coverage,feature_join}.py`, the
+versioned `IFVG_ORDER_FLOW_MBP1_V1` activation in `feature_blocks.py`,
+the controlled Baseline vs Baseline+MBP-1 study
+`ifvg/ml/controlled_feature_study.py`, and the MBP-1 dashboard panels
+`scripts/ifvg_mbp1_panels.py`) implementations are complete;
 **R1 acceptance is blocked pending the owner-approved verification fixture**
 (`VerificationAuthorizationRef`; owner decisions 21/R-5) — no real five-day
 slice runs until it exists, and no research interpretation attaches to any

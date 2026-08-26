@@ -67,6 +67,11 @@ SEARCH_STORE_NAMES: tuple[str, ...] = (
     "neutrality_reports",
     "fsm_audit_companions",
     "lineage_reports",
+    # R5B — the offline MBP-1 lane (research-only)
+    "mbp1_source_artifacts",
+    "mbp1_feature_artifacts",
+    "mbp1_coverage_reports",
+    "controlled_feature_studies",
 )
 
 _ENVELOPE_FILE = "envelope.json"

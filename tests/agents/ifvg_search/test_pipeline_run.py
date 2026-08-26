@@ -466,3 +466,154 @@ def test_cancel_sentinel_halts_at_the_stage_boundary(tmp_path):
     assert result.stage_statuses[
         QuantLabPipelineStage.S15_VERIFY_AND_PUBLISH.value
     ] == StageStatus.COMPLETED.value
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# R5B — the MBP-1 controlled-study pipeline path (B2 bundle, logistic arms)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture(scope="module")
+def mbp1_completed(tmp_path_factory):
+    fixture = build_pipeline_fixture(
+        tmp_path_factory.mktemp("pipeline_mbp1_e2e"), mbp1=True
+    )
+    result = run_pipeline(
+        fixture["semantic"],
+        fixture["charter"],
+        store_root=fixture["store_root"],
+        state_root=fixture["state_root"],
+        wiring=fixture["wiring"],
+        worker_policy=fixture["worker_policy"],
+    )
+    return {**fixture, "result": result}
+
+
+def test_mbp1_pipeline_reaches_all_sixteen_terminal_states(mbp1_completed):
+    statuses = mbp1_completed["result"].stage_statuses
+    assert len(statuses) == 16
+    terminal = {
+        StageStatus.COMPLETED.value,
+        StageStatus.REUSED.value,
+        StageStatus.BLOCKED.value,
+    }
+    assert set(statuses.values()) <= terminal, statuses
+    blocked = [stage for stage, status in statuses.items() if status == "blocked"]
+    assert blocked == [QuantLabPipelineStage.S11_RUN_FROZEN_MODEL_GATED_REPLAYS.value]
+
+
+def test_mbp1_s05_persists_the_evidence_artifacts_and_binds_the_view(mbp1_completed):
+    """R5B deliverables 1/5/9/13 in the pipeline: source artifact, feature
+    artifact, and coverage report persist immutably, and the bundle view
+    payload pins the exact feature artifact it joined."""
+
+    state = read_pipeline_state(
+        mbp1_completed["state_root"], mbp1_completed["result"].pipeline_semantic_id
+    )
+    s05 = state["stages"][QuantLabPipelineStage.S05_MATERIALIZE_FEATURE_VIEWS.value]
+    sidecar = json.loads(
+        load_sidecar_bytes(
+            mbp1_completed["store_root"],
+            "pipeline_stage_results",
+            s05["stage_result_id"],
+            "bundle_feature_views.json",
+        ).decode("utf-8")
+    )
+    evidence = sidecar["__mbp1_evidence__"]
+    for store_name, key in (
+        ("mbp1_source_artifacts", "source_id"),
+        ("mbp1_feature_artifacts", "feature_artifact_id"),
+        ("mbp1_coverage_reports", "coverage_report_id"),
+    ):
+        assert has_envelope(mbp1_completed["store_root"], store_name, evidence[key])
+        assert evidence[key] in s05["output_artifact_ids"]
+    view_dump = sidecar["B2_CORE_ORDER_FLOW"]
+    assert view_dump["payload"]["mbp1_feature_artifact_id"] == (
+        evidence["feature_artifact_id"]
+    )
+    from alpha_lab.agents.data_infra.ifvg.features.mbp1_coverage import (
+        Mbp1CoverageReportEnvelope,
+    )
+
+    coverage = load_verified_envelope(
+        mbp1_completed["store_root"],
+        "mbp1_coverage_reports",
+        evidence["coverage_report_id"],
+        Mbp1CoverageReportEnvelope,
+    )
+    assert coverage.payload.research_boundary == "research_only_offline"
+    assert coverage.payload.candidate_count == 24
+
+
+def test_mbp1_s09_runs_the_controlled_study_in_the_safe_failure_shape(mbp1_completed):
+    """S09's R5B path persists the controlled Baseline vs Baseline+MBP-1
+    study; on the three-day verification window the frozen 40/5/5/2
+    protocol legitimately yields zero valid folds, so both arms record the
+    same safe-failure shape (parity not evaluable, no delta) — the
+    control-flow proof, exactly like the R5 ladder half (DEV-R5-6)."""
+
+    state = read_pipeline_state(
+        mbp1_completed["state_root"], mbp1_completed["result"].pipeline_semantic_id
+    )
+    s09 = state["stages"][QuantLabPipelineStage.S09_TRAIN_MODELS.value]
+    assert "controlled Baseline vs Baseline+MBP-1 study" in s09["explanation"]
+    assert "research-only offline" in s09["explanation"]
+    study_id = s09["output_artifact_ids"][0]
+    from alpha_lab.agents.data_infra.ifvg.ml.controlled_feature_study import (
+        ControlledFeatureStudyEnvelope,
+    )
+
+    study = load_verified_envelope(
+        mbp1_completed["store_root"],
+        "controlled_feature_studies",
+        study_id,
+        ControlledFeatureStudyEnvelope,
+    )
+    payload = study.payload
+    assert payload.baseline_bundle_key == "B0_CORE"
+    assert payload.challenger_bundle_key == "B2_CORE_ORDER_FLOW"
+    assert payload.model_protocol_id == "ifvg_context_logistic_l2_v1"
+    assert payload.parity_status == "not_evaluable"
+    assert payload.oos_row_count == 0
+    assert payload.paired_brier_delta is None
+    assert payload.research_boundary == "research_only_offline"
+    # the S10 diagnostics sidecar carries the study envelope for the monitor
+    s10 = state["stages"][
+        QuantLabPipelineStage.S10_GENERATE_PREDICTIONS_AND_DIAGNOSTICS.value
+    ]
+    diagnostics = json.loads(
+        load_sidecar_bytes(
+            mbp1_completed["store_root"],
+            "pipeline_stage_results",
+            s10["stage_result_id"],
+            "supervised_ladder.json",
+        ).decode("utf-8")
+    )
+    assert diagnostics["controlled_feature_study"]["controlled_feature_study_id"] == (
+        study_id
+    )
+    assert diagnostics["feature_source"]["kind"] == "resolved_bundle"
+
+
+def test_mbp1_plan_without_the_evidence_seam_fails_s00(tmp_path):
+    """S00's wiring check: an MBP-1-bearing plan with no mbp1_evidence_source
+    refuses before any stage work — order-flow evidence is never fabricated."""
+
+    import dataclasses
+
+    fixture = build_pipeline_fixture(tmp_path, mbp1=True)
+    stripped = dataclasses.replace(fixture["wiring"], mbp1_evidence_source=None)
+    result = run_pipeline(
+        fixture["semantic"],
+        fixture["charter"],
+        store_root=fixture["store_root"],
+        state_root=fixture["state_root"],
+        wiring=stripped,
+        worker_policy=fixture["worker_policy"],
+    )
+    state = read_pipeline_state(
+        fixture["state_root"], result.pipeline_semantic_id
+    )
+    s00 = state["stages"][QuantLabPipelineStage.S00_VALIDATE_INPUTS.value]
+    assert s00["status"] == StageStatus.FAILED.value
+    assert "mbp1_evidence_source" in s00["explanation"]

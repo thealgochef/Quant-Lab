@@ -14,7 +14,6 @@ from alpha_lab.agents.data_infra.ifvg.features.feature_blocks import (
     FEATURE_BLOCK_RESOLUTION_REGISTRY,
     SESSION_FEATURES,
     BlockUnavailableError,
-    FeatureBlockResolutionPayload,
     FeatureBlockStatus,
     feature_block_registry_hash,
     resolve_available_block,
@@ -65,8 +64,9 @@ def test_frozen_tier_bundles_are_order_exact() -> None:
 
 
 def test_planned_blocks_fail_closed_everywhere() -> None:
+    """R5B state: MBP-1 is ACTIVE; the other planned blocks still refuse."""
+
     for key in (
-        "IFVG_ORDER_FLOW_MBP1_V1",
         "IFVG_VOLATILITY_CONTEXT_V1",
         "IFVG_REGIME_CONTEXT_V1",
         "IFVG_KEY_LEVEL_CONTEXT_V1",
@@ -75,13 +75,38 @@ def test_planned_blocks_fail_closed_everywhere() -> None:
         assert FEATURE_BLOCK_REGISTRY[key].status is FeatureBlockStatus.PLANNED
         with pytest.raises(BlockUnavailableError):
             resolve_available_block(key)
+    # bundles that still depend on a planned block refuse exactly as before
     for bundle in (
-        "B2_CORE_ORDER_FLOW",
-        "B3_CORE_STRUCTURE_ORDER_FLOW",
         "B5_CORE_STRUCTURE_ORDER_FLOW_REGIME",
+        "B6_CORE_STRUCTURE_ORDER_FLOW_EXECUTION_LIQUIDITY",
     ):
         with pytest.raises(BlockUnavailableError, match="unresolvable"):
             resolve_bundle(bundle)
+
+
+def test_mbp1_block_is_active_at_r5b_with_the_research_boundary() -> None:
+    """TEST_MATRIX §3.8 'MBP-1 activation state', R5B half: available as a
+    NEW block version with its resolution envelope; the research-only
+    offline boundary (owner decision R-6) rides the definition."""
+
+    from alpha_lab.agents.data_infra.ifvg.features.feature_blocks import (
+        MBP1_RESEARCH_BOUNDARY_PATH,
+    )
+
+    definition = FEATURE_BLOCK_REGISTRY["IFVG_ORDER_FLOW_MBP1_V1"]
+    assert definition.status is FeatureBlockStatus.AVAILABLE
+    assert definition.block_version == 2
+    assert definition.expected_computation_path == MBP1_RESEARCH_BOUNDARY_PATH
+    assert definition.can_affect_execution is False
+    envelope = resolve_available_block("IFVG_ORDER_FLOW_MBP1_V1")
+    assert envelope.payload.feature_names == mbp1_feature_names()
+    assert envelope.payload.mbp1_feature_windows == R5B_WINDOW_SPECS
+    assert envelope.payload.join_policy == "one_to_one_typed_null_on_missing"
+    # MBP-1-bearing bundles resolve now — a baseline-vs-MBP-1 study is
+    # constructible for the first time
+    for bundle in ("B2_CORE_ORDER_FLOW", "B3_CORE_STRUCTURE_ORDER_FLOW"):
+        resolved = resolve_bundle(bundle)
+        assert envelope.resolved_feature_block_id in resolved.payload.resolved_block_ids
 
 
 def test_experimental_block_needs_the_explicit_flag() -> None:
@@ -127,61 +152,76 @@ def test_legacy_provenance_is_not_a_block_source_kind() -> None:
 
 
 def test_activation_is_a_versioned_registry_event() -> None:
-    baseline_hash = feature_block_registry_hash()
-    baseline_b1 = resolve_bundle("B1_CORE_STRUCTURE")
-    planned = FEATURE_BLOCK_REGISTRY["IFVG_ORDER_FLOW_MBP1_V1"]
-    payload = FeatureBlockResolutionPayload(
-        feature_block_key="IFVG_ORDER_FLOW_MBP1_V1",
-        block_version=planned.block_version + 1,
-        formula_version="ifvg_order_flow_mbp1_v1",
-        source_artifact_refs=("a" * 64,),
-        source_schema_hash="b" * 64,
-        feature_schema_hash="c" * 64,
-        materializer_version="mbp1_feature_materializer_v1",
-        feature_names=mbp1_feature_names(),
-        numeric_features=mbp1_feature_names(),
-        categorical_features=(),
-        validity_fields=(),
-        missing_reason_fields=(),
-        source_timeframes=(),
-        source_interval_policy="event_stream_v1",
-        as_of_policy="stage_evidence_cutoff_v2",
-        join_keys=("candidate_id",),
-        join_policy="one_to_one_typed_null_on_missing",
-        direction_normalization="none",
-        session_normalization="none",
-        warmup_requirement="exclude_warmup_v1",
-        coverage_requirements={},
-        mbp1_feature_windows=R5B_WINDOW_SPECS,
+    """The PUBLISHED R5B registry is exactly the activation event applied to
+    the exported pre-activation (R5 planned) state: version bump, first
+    resolved id minted, registry-hash change, dependent bundles re-minted,
+    unrelated bundles untouched."""
+
+    from alpha_lab.agents.data_infra.ifvg.features.feature_blocks import (
+        MBP1_ACTIVATION_ENVELOPE,
+        PRE_ACTIVATION_FEATURE_BLOCK_REGISTRY,
+        PRE_ACTIVATION_RESOLUTION_REGISTRY,
+        mbp1_activation_resolution_payload,
     )
+
+    planned = PRE_ACTIVATION_FEATURE_BLOCK_REGISTRY["IFVG_ORDER_FLOW_MBP1_V1"]
+    assert planned.status is FeatureBlockStatus.PLANNED
+    assert planned.block_version == 1
+    assert "IFVG_ORDER_FLOW_MBP1_V1" not in PRE_ACTIVATION_RESOLUTION_REGISTRY
+    pre_hash = feature_block_registry_hash(
+        PRE_ACTIVATION_FEATURE_BLOCK_REGISTRY, PRE_ACTIVATION_RESOLUTION_REGISTRY
+    )
+    baseline_b1_pre = resolve_bundle(
+        "B1_CORE_STRUCTURE",
+        definitions=PRE_ACTIVATION_FEATURE_BLOCK_REGISTRY,
+        resolutions=PRE_ACTIVATION_RESOLUTION_REGISTRY,
+    )
+    # replaying the event over the pre-activation state reproduces the
+    # published registry EXACTLY
     definitions, resolutions, envelope = with_activated_block(
-        feature_block_key="IFVG_ORDER_FLOW_MBP1_V1", resolution_payload=payload
+        feature_block_key="IFVG_ORDER_FLOW_MBP1_V1",
+        resolution_payload=mbp1_activation_resolution_payload(),
+        definitions=PRE_ACTIVATION_FEATURE_BLOCK_REGISTRY,
+        resolutions=PRE_ACTIVATION_RESOLUTION_REGISTRY,
     )
+    assert envelope.resolved_feature_block_id == (
+        MBP1_ACTIVATION_ENVELOPE.resolved_feature_block_id
+    )
+    assert dict(definitions) == dict(FEATURE_BLOCK_REGISTRY)
+    assert {k: v.model_dump(mode="json") for k, v in resolutions.items()} == {
+        k: v.model_dump(mode="json") for k, v in FEATURE_BLOCK_RESOLUTION_REGISTRY.items()
+    }
     # version bump + first resolved id minted + registry hash changed
-    assert definitions["IFVG_ORDER_FLOW_MBP1_V1"].block_version == planned.block_version + 1
+    assert definitions["IFVG_ORDER_FLOW_MBP1_V1"].block_version == 2
     assert definitions["IFVG_ORDER_FLOW_MBP1_V1"].status is FeatureBlockStatus.AVAILABLE
     assert envelope.resolved_feature_block_id not in {
-        e.resolved_feature_block_id for e in FEATURE_BLOCK_RESOLUTION_REGISTRY.values()
+        e.resolved_feature_block_id for e in PRE_ACTIVATION_RESOLUTION_REGISTRY.values()
     }
-    assert feature_block_registry_hash(definitions, resolutions) != baseline_hash
+    assert feature_block_registry_hash() != pre_hash
     # every dependent bundle gains a NEW resolved id; the logical key is stable
-    activated_b2 = resolve_bundle(
-        "B2_CORE_ORDER_FLOW", definitions=definitions, resolutions=resolutions
-    )
+    activated_b2 = resolve_bundle("B2_CORE_ORDER_FLOW")
     assert activated_b2.payload.feature_bundle_key == "B2_CORE_ORDER_FLOW"
     assert envelope.resolved_feature_block_id in activated_b2.payload.resolved_block_ids
-    # unrelated bundles keep their resolved ids
+    # unrelated bundles keep their resolved ids across the activation
     assert (
-        resolve_bundle(
-            "B1_CORE_STRUCTURE", definitions=definitions, resolutions=resolutions
-        ).resolved_feature_bundle_id
-        == baseline_b1.resolved_feature_bundle_id
+        resolve_bundle("B1_CORE_STRUCTURE").resolved_feature_bundle_id
+        == baseline_b1_pre.resolved_feature_bundle_id
     )
-    # a wrong-version activation is refused
+    # re-activating the published (already-available) block refuses
+    with pytest.raises(ValueError, match="not planned"):
+        with_activated_block(
+            feature_block_key="IFVG_ORDER_FLOW_MBP1_V1",
+            resolution_payload=mbp1_activation_resolution_payload(),
+        )
+    # a wrong-version activation over the planned state is refused
     with pytest.raises(ValueError, match="block_version"):
         with_activated_block(
             feature_block_key="IFVG_ORDER_FLOW_MBP1_V1",
-            resolution_payload=payload.model_copy(update={"block_version": 9}),
+            resolution_payload=mbp1_activation_resolution_payload().model_copy(
+                update={"block_version": 9}
+            ),
+            definitions=PRE_ACTIVATION_FEATURE_BLOCK_REGISTRY,
+            resolutions=PRE_ACTIVATION_RESOLUTION_REGISTRY,
         )
 
 
