@@ -93,7 +93,12 @@ stage_windows,feature_materializer,coverage,feature_join}.py`, the
 versioned `IFVG_ORDER_FLOW_MBP1_V1` activation in `feature_blocks.py`,
 the controlled Baseline vs Baseline+MBP-1 study
 `ifvg/ml/controlled_feature_study.py`, and the MBP-1 dashboard panels
-`scripts/ifvg_mbp1_panels.py`) implementations are complete;
+`scripts/ifvg_mbp1_panels.py`), and R6 (the V1 KMeans regime lane:
+`ifvg/ml/regime_{contracts,algorithms,preprocessing,service,alignment,
+diagnostics,store}.py`, ML fixtures 2 + 4-KMeans, and the Regime Lane
+panel `scripts/ifvg_regime_panels.py` — kmeans_v1 only; the
+GMM/minibatch/spectral/Nyström implementations are the post-V1
+regime-expansion release) implementations are complete;
 **R1 acceptance is blocked pending the owner-approved verification fixture**
 (`VerificationAuthorizationRef`; owner decisions 21/R-5) — no real five-day
 slice runs until it exists, and no research interpretation attaches to any

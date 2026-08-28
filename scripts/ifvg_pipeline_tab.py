@@ -1188,3 +1188,7 @@ def render_pipeline_run(st_module=st, *, roots: Mapping[str, Any], draft=None) -
         if integrity_note:
             st_module.error(integrity_note)
         render_mbp1_order_flow(st_module, roots=roots, default_ids=default_ids)
+    with st_module.expander("Regime Lane (V1 KMeans, development)"):
+        from ifvg_regime_panels import render_regime_lane  # noqa: PLC0415
+
+        render_regime_lane(st_module, roots=roots)

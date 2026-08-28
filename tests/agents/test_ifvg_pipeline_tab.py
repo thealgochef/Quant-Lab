@@ -597,3 +597,286 @@ def test_mbp1_panel_with_no_runs_renders_manual_input_guidance(
     captions = _caption_text(at)
     assert "mbp1_coverage_report_id" in captions
     assert "controlled_feature_study_id" in captions
+
+
+# ── R6 — the Regime Lane panel (FUX §35 R6 rows) ────────────────────────────
+
+
+@pytest.fixture(scope="module")
+def regime_persisted(completed_pipeline):
+    """Persisted KMeans regime runs (fixture 2) in the completed pipeline's
+    verification store: a HEALTHY run (protocol, every fold fit, assessment,
+    a first promotion decision), an UNDER-SAMPLED run, and a panel-grain
+    protocol (grain identity only)."""
+
+    from alpha_lab.agents.data_infra.ifvg.context_folds import build_context_folds
+    from alpha_lab.agents.data_infra.ifvg.features.feature_bundles import resolve_bundle
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_contracts import (
+        ObservationGranularity,
+        RegimePromotionDecision,
+        RegimePromotionDecisionEnvelope,
+        RegimeRole,
+        RegimeStatus,
+    )
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_service import (
+        resolve_kmeans_protocol,
+        run_regime_protocol,
+    )
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_store import (
+        persist_regime_assessment,
+        persist_regime_fit,
+        persist_regime_promotion,
+        persist_regime_protocol,
+    )
+    from tests.agents.data_infra.ifvg.ml_fixtures.synthetic_clusters import (
+        REGIME_INPUT_FEATURES,
+        known_cluster_fixture,
+    )
+
+    bundle = resolve_bundle("B0_CORE").resolved_feature_bundle_id
+    root = completed_pipeline["store_root"]
+    results = {}
+    for label, n, winsorization in (
+        ("healthy", 600, "none"),
+        ("undersampled", 170, "clip_p01_p99_train_fitted_v1"),  # a DISTINCT protocol
+    ):
+        fixture = known_cluster_fixture(k=3, n=n)
+        folds = build_context_folds(
+            fixture.labeled_candidates, authorized_trading_days=fixture.trading_days
+        )
+        protocol = resolve_kmeans_protocol(
+            input_feature_bundle_ref=bundle,
+            resolved_input_features=fixture.regime_input_features,
+            winsorization_policy=winsorization,
+        )
+        run = run_regime_protocol(
+            fixture.view.frame,
+            folds,
+            protocol,
+            source_artifact_ids=(fixture.view.view_id,),
+            bootstrap_refits=3,
+        )
+        persist_regime_protocol(root, protocol)
+        for fold_fit in run.fold_fits:
+            persist_regime_fit(
+                root,
+                fold_fit,
+                run.assignments[run.assignments["fold_index"] == fold_fit.fold_index],
+                observation_frame=fixture.view.frame,
+            )
+        persist_regime_assessment(root, run.assessment)
+        decision = RegimePromotionDecisionEnvelope.from_payload(
+            RegimePromotionDecision(
+                resolved_regime_protocol_id=protocol.resolved_regime_protocol_id,
+                role=RegimeRole.DESCRIPTIVE_ONLY,
+                status=RegimeStatus.DESCRIPTIVE_ONLY,
+                previous_status=RegimeStatus.PLANNED,
+                previous_decision_ref=None,
+                capability_assessment_ref=run.assessment.regime_capability_assessment_id,
+                owner_ratification_ref=None,
+                decided_at="2026-08-26T00:00:00Z",
+            )
+        )
+        persist_regime_promotion(root, decision)
+        results[label] = {
+            "protocol_id": protocol.resolved_regime_protocol_id,
+            "assessment_id": run.assessment.regime_capability_assessment_id,
+            "fit_id": run.fold_fits[0].fit_envelope.regime_fit_id,
+            "decision_id": decision.regime_promotion_decision_id,
+        }
+    panel_protocol = resolve_kmeans_protocol(
+        input_feature_bundle_ref=bundle,
+        resolved_input_features=REGIME_INPUT_FEATURES,
+        observation_granularity=ObservationGranularity.CONTEXT_BAR_PANEL,
+        panel_interval_seconds=300,
+        panel_source_artifact_id="b" * 64,
+        panel_as_of_policy_id="completed_bars_last_at_or_before_v1",
+    )
+    persist_regime_protocol(root, panel_protocol)
+    results["panel"] = {"protocol_id": panel_protocol.resolved_regime_protocol_id}
+    return results
+
+
+def _regime_input(at, name: str):
+    import ifvg_regime_panels as regime_panels
+
+    return next(box for box in at.text_input if box.key == f"{regime_panels._REG}{name}")
+
+
+def _everything(at) -> str:
+    return (
+        _dataframe_dump(at)
+        + _caption_text(at)
+        + "\n".join(str(block.value) for block in at.markdown)
+        + "\n".join(str(getattr(block, "value", "")) for block in at.subheader)
+        + "\n".join(str(getattr(block, "value", "")) for block in at.code)
+    )
+
+
+def test_regime_panel_renders_registry_stamps_and_the_spectral_warning(
+    monkeypatch, mbp1_pipeline
+) -> None:
+    at = _run_over_completed(monkeypatch, mbp1_pipeline, phase="Configure")
+    dump = _dataframe_dump(at)
+    # every algorithm visible; kmeans implemented; post-V1 planned-disabled
+    assert "kmeans_v1" in dump and "implemented (V1)" in dump
+    for planned in (
+        "minibatch_kmeans_v1",
+        "gaussian_mixture_v1",
+        "spectral_clustering_train_only_v1",
+        "nystrom_kmeans_v1",
+    ):
+        assert planned in dump
+    assert "post_v1_regime_expansion" in dump
+    warnings = "\n".join(str(block.value) for block in at.warning)
+    assert "Training-only exploratory clustering" in warnings
+    # proposal stamps surfaced with the ratification requirement
+    assert "proposed_protocol_default" in dump
+    assert "before feature-eligible" in dump
+    assert "fixed_cluster_count" in dump
+    assert "minimum_training_observations_decision_row" in dump
+
+
+def test_regime_model_card_renders_coverage_occupancy_and_stability(
+    monkeypatch, completed_pipeline, regime_persisted
+) -> None:
+    at = _run_over_completed(monkeypatch, completed_pipeline, phase="Configure")
+    _regime_input(at, "protocol_id").set_value(
+        regime_persisted["healthy"]["protocol_id"]
+    ).run()
+    _regime_input(at, "assessment_id").set_value(
+        regime_persisted["healthy"]["assessment_id"]
+    ).run()
+    assert not at.exception
+    dump = _dataframe_dump(at)
+    assert "kmeans_v1" in dump
+    assert "candidate_stage_row" in dump
+    assert "fixed_k — proposed_protocol_default" in dump
+    assert "centroid_predict_v1" in dump
+    assert "k-means++_n_init_10_v1" in dump
+    # coverage / per-fold coverage / fit identities / occupancy / stability
+    assert "OOS assignment coverage" in dump
+    assert "regime 0" in dump and "regime 2" in dump
+    assert "Bootstrap aligned AMI" in dump
+    assert "Temporal transitions counted" in dump
+    assert "scaled_input_features_v1" in dump
+    assert regime_persisted["healthy"]["fit_id"] in dump
+    body = "\n".join(str(block.value) for block in at.markdown)
+    assert "Per-fold coverage" in body
+    assert "Centroid profiles" in body
+    assert "Per-cluster bootstrap agreement" in body
+    assert "NOMINAL" in body  # never regime 2 > regime 1
+    assert "✓ passed" in body
+    assert "nothing here can promote" in body
+    codes = "\n".join(str(getattr(block, "value", "")) for block in at.code)
+    assert regime_persisted["healthy"]["assessment_id"] in codes  # identity block
+
+
+def test_regime_sample_adequacy_blocked_state(
+    monkeypatch, completed_pipeline, regime_persisted
+) -> None:
+    at = _run_over_completed(monkeypatch, completed_pipeline, phase="Configure")
+    _regime_input(at, "protocol_id").set_value(
+        regime_persisted["undersampled"]["protocol_id"]
+    ).run()
+    _regime_input(at, "assessment_id").set_value(
+        regime_persisted["undersampled"]["assessment_id"]
+    ).run()
+    assert not at.exception
+    everything = _everything(at)
+    assert "promotion is blocked" in everything
+    assert "k is never shrunk" in everything
+    body = "\n".join(str(block.value) for block in at.markdown)
+    assert "✕ failed" in body
+    assert "sample_adequacy" in body
+
+
+def test_regime_panel_grain_identity_renders_the_panel_fields(
+    monkeypatch, completed_pipeline, regime_persisted
+) -> None:
+    at = _run_over_completed(monkeypatch, completed_pipeline, phase="Configure")
+    _regime_input(at, "protocol_id").set_value(
+        regime_persisted["panel"]["protocol_id"]
+    ).run()
+    assert not at.exception
+    dump = _dataframe_dump(at)
+    assert "context_bar_panel" in dump
+    assert "interval 300s" in dump
+    assert "completed_bars_last_at_or_before_v1" in dump
+
+
+def test_regime_assignment_and_stratification_views_render_by_exact_fit_id(
+    monkeypatch, completed_pipeline, regime_persisted
+) -> None:
+    at = _run_over_completed(monkeypatch, completed_pipeline, phase="Configure")
+    _regime_input(at, "protocol_id").set_value(
+        regime_persisted["healthy"]["protocol_id"]
+    ).run()
+    _regime_input(at, "fit_id").set_value(regime_persisted["healthy"]["fit_id"]).run()
+    assert not at.exception
+    body = "\n".join(str(block.value) for block in at.markdown)
+    assert "Assignment view" in body
+    assert "Coverage by partition" in body
+    assert "Stratification of the assignment frame" in body
+    assert "Regime timeline" in body
+    dump = _dataframe_dump(at)
+    assert "train" in dump and "test" in dump
+    assert "Margin d2−d1" in dump
+    assert "Training feature matrix hash" in dump
+    # a fit of ANOTHER protocol is refused as unavailable (exact reason)
+    _regime_input(at, "fit_id").set_value(regime_persisted["undersampled"]["fit_id"]).run()
+    assert not at.exception
+    assert "the fit references a different regime protocol id" in _caption_text(at)
+    assert "Assignment view" in "\n".join(str(block.value) for block in at.markdown)
+    assert "Coverage by partition" not in "\n".join(str(block.value) for block in at.markdown)
+
+
+def test_regime_promotion_view_renders_role_and_status(
+    monkeypatch, completed_pipeline, regime_persisted
+) -> None:
+    at = _run_over_completed(monkeypatch, completed_pipeline, phase="Configure")
+    _regime_input(at, "protocol_id").set_value(
+        regime_persisted["healthy"]["protocol_id"]
+    ).run()
+    _regime_input(at, "decision_id").set_value(
+        regime_persisted["healthy"]["decision_id"]
+    ).run()
+    assert not at.exception
+    dump = _dataframe_dump(at)
+    assert "descriptive_only" in dump
+    assert "first decision" in dump
+    assert "feature-eligible and beyond are unreachable" in dump
+    captions = _caption_text(at)
+    assert "unrepresentable in V1" in captions
+
+
+def test_regime_panel_bogus_id_renders_the_unavailable_state(
+    monkeypatch, completed_pipeline
+) -> None:
+    at = _run_over_completed(monkeypatch, completed_pipeline, phase="Configure")
+
+    def _unavailable_count() -> int:
+        return sum(
+            "Artifact unavailable" in str(getattr(block, "value", ""))
+            for block in at.subheader
+        )
+
+    before = _unavailable_count()  # the Configure draft empty state may already show one
+    _regime_input(at, "protocol_id").set_value("f" * 64).run()
+    assert not at.exception
+    assert _unavailable_count() == before + 1
+    assert "missing search-store entry" in _caption_text(at)
+
+
+def test_regime_panel_exposes_no_control_that_promotes_launches_or_retrains() -> None:
+    """FUX §35 R6 / kickoff §9: the Regime Lane is read-only — no button,
+    form, toggle, or select exists in the panel source, and nothing in it
+    can promote, launch, rank, or retrain."""
+
+    source = (Path(__file__).resolve().parents[2] / "scripts" / "ifvg_regime_panels.py").read_text(
+        encoding="utf-8"
+    )
+    for control in (".button(", ".form(", ".toggle(", ".selectbox(", ".form_submit_button("):
+        assert control not in source, control
+    for verb in ("promote(", "launch(", "retrain(", "rank(", "subprocess", "session_state["):
+        assert verb not in source, verb

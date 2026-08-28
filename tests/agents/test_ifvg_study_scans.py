@@ -23,6 +23,8 @@ _UI_SCRIPTS = (
     "ifvg_results_compare.py",
     "ifvg_results_charts.py",
     "ifvg_pipeline_tab.py",
+    "ifvg_mbp1_panels.py",  # R5B panel (coverage gap closed by R6 review S5)
+    "ifvg_regime_panels.py",  # R6 Regime Lane panel
 )
 
 _SRC_MODULES = (

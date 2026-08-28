@@ -366,7 +366,11 @@ def registered_identity_pairs() -> tuple[RegisteredIdentityPair, ...]:
         mbp1_feature_materializer,
         mbp1_source_artifact,
     )
-    from ..ml import controlled_feature_study, decision_policies  # noqa: F401, PLC0415
+    from ..ml import (  # noqa: F401, PLC0415
+        controlled_feature_study,
+        decision_policies,
+        regime_contracts,
+    )
     from ..study import cohort, comparison_contracts, contrasts, study_cell  # noqa: F401, PLC0415
     from . import (  # noqa: F401, PLC0415
         authorization,

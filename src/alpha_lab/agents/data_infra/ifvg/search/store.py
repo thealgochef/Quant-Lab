@@ -11,6 +11,7 @@ isolated ``data/ifvg_datasets/search_test/v1/`` namespace.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -72,6 +73,11 @@ SEARCH_STORE_NAMES: tuple[str, ...] = (
     "mbp1_feature_artifacts",
     "mbp1_coverage_reports",
     "controlled_feature_studies",
+    # R6 — the V1 KMeans regime lane
+    "regime_protocols",
+    "regime_fits",
+    "regime_assessments",
+    "regime_promotions",
 )
 
 _ENVELOPE_FILE = "envelope.json"
@@ -231,15 +237,33 @@ def load_verified_envelope[E: EnvelopeBase](
 
 
 def load_sidecar_bytes(root: Path, store_name: str, envelope_id: str, name: str) -> bytes:
-    """Load one manifest-verified sidecar file from a store entry."""
+    """Load one manifest-verified sidecar file from a store entry.
 
+    The sidecar NAME is held to the save-side whitelist (a bare file name —
+    never a path), the manifest's own hash is verified before its entries
+    are trusted, and the returned bytes are the bytes that were hashed
+    (R6 safety review S6 — no second read, no traversal, no stale manifest).
+    """
+
+    if not _SIDECAR_NAME_PATTERN.fullmatch(name or "") or name in (
+        _ENVELOPE_FILE,
+        _MANIFEST_FILE,
+    ):
+        raise SearchStoreError(f"invalid sidecar file name {name!r}")
     destination = envelope_destination(root, store_name, envelope_id)
-    manifest = json.loads((destination / _MANIFEST_FILE).read_text(encoding="utf-8"))
+    manifest_path = destination / _MANIFEST_FILE
+    if not manifest_path.exists():
+        raise SearchStoreError(f"missing search-store entry {store_name}/{envelope_id}")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    core = {k: v for k, v in manifest.items() if k != "manifest_payload_sha256"}
+    if manifest.get("manifest_payload_sha256") != canonical_sha256(core):
+        raise SearchStoreError(f"manifest hash mismatch for {store_name}/{envelope_id}")
+    if manifest.get("envelope_id") != envelope_id or manifest.get("store_name") != store_name:
+        raise SearchStoreError(f"manifest identity mismatch for {store_name}/{envelope_id}")
     for entry in manifest.get("artifacts", ()):
         if entry["path"] == name:
-            path = destination / name
-            data = path.read_bytes()
-            if file_sha256(path) != entry["sha256"]:
+            data = (destination / name).read_bytes()
+            if hashlib.sha256(data).hexdigest() != entry["sha256"]:
                 raise SearchStoreError(
                     f"sidecar {name} failed hash verification in {store_name}/{envelope_id}"
                 )
@@ -273,8 +297,6 @@ def save_or_reuse_envelope[E: EnvelopeBase](
             # verify them against the stored manifest — a same-identity
             # publication with DIFFERENT sidecar bytes fails closed instead of
             # silently "reusing" the old bytes.
-            import hashlib  # noqa: PLC0415
-
             manifest = json.loads(
                 (
                     envelope_destination(root, store_name, envelope_id)
