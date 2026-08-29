@@ -93,7 +93,10 @@ stage_windows,feature_materializer,coverage,feature_join}.py`, the
 versioned `IFVG_ORDER_FLOW_MBP1_V1` activation in `feature_blocks.py`,
 the controlled Baseline vs Baseline+MBP-1 study
 `ifvg/ml/controlled_feature_study.py`, and the MBP-1 dashboard panels
-`scripts/ifvg_mbp1_panels.py`), and R6 (the V1 KMeans regime lane:
+`scripts/ifvg_mbp1_panels.py`; R5B.1 replaced the withdrawn
+sequence-jump gap rule with the evidence-based coverage policy v2 —
+`ifvg/features/mbp1_coverage_{evidence,diagnostic}.py`, block re-resolution
+v3, `scripts/ifvg_mbp1_coverage_diagnostic.py`), and R6 (the V1 KMeans regime lane:
 `ifvg/ml/regime_{contracts,algorithms,preprocessing,service,alignment,
 diagnostics,store}.py`, ML fixtures 2 + 4-KMeans, and the Regime Lane
 panel `scripts/ifvg_regime_panels.py` — kmeans_v1 only; the

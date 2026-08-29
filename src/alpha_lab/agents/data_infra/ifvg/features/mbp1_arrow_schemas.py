@@ -99,12 +99,19 @@ MBP1_SOURCE_EVENT_SCHEMA: pa.Schema = pa.schema(
 #: converted to ticks under ``PRICE_SCALE_POLICY_ID`` + the pinned tick size;
 #: ``source_ordinal`` is the deterministic row ordinal within one source
 #: partition — the final tie-break of the complete four-part order key.
+#: R5B.1 adds ``publisher_id`` and ``flags`` (a schema-hash change → every
+#: source artifact identity is re-minted under coverage policy v2).
 MBP1_NORMALIZED_EVENT_SCHEMA: pa.Schema = pa.schema(
     [
         pa.field("ts_event", pa.int64()),
         pa.field("ts_recv", pa.int64()),
         pa.field("sequence", pa.int64()),
         pa.field("source_ordinal", pa.int64()),
+        # R5B.1: the vendor's publisher id and DBN flags are RETAINED — the
+        # coverage policy v2 reads F_MAYBE_BAD_BOOK from ``flags`` and scopes
+        # it to the publisher/physical partition
+        pa.field("publisher_id", pa.int64()),
+        pa.field("flags", pa.int64()),
         pa.field("action", pa.large_string()),
         pa.field("side", pa.large_string()),
         pa.field("size", pa.int64()),

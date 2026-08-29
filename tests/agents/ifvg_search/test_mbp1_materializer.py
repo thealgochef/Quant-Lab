@@ -41,6 +41,7 @@ from tests.agents.ifvg_search.mbp1_fixture import (
     MBP1_RESOLVED_BLOCK,
     anchor_row,
     build_fixture_source,
+    declared_interval,
     default_anchors,
     default_day_events,
     normalized_day,
@@ -49,8 +50,10 @@ from tests.agents.ifvg_search.mbp1_fixture import (
 )
 
 
-def _materialize(anchors: pd.DataFrame | None = None, events=None):
-    source, _bytes, events_by_day = build_fixture_source(events)
+def _materialize(anchors: pd.DataFrame | None = None, events=None, *, intervals=None):
+    source, _bytes, events_by_day = build_fixture_source(
+        events, intervals_by_day={FIXTURE_DAY: tuple(intervals or ())}
+    )
     return materialize_mbp1_features(
         source,
         anchors if anchors is not None else default_anchors(),
@@ -140,19 +143,64 @@ def test_missing_day_marks_every_window_no_mbp1_partition() -> None:
 
 
 def test_low_coverage_day_marks_windows_coverage_below_threshold() -> None:
+    """A VERIFIED declared interval invalidating ~97% of the physical span
+    drops the day below the contract's coverage policy (policy v2)."""
+
+    anchors = pd.DataFrame([anchor_row("cand_cov")])
+    _envelope, features, _evidence = _materialize(
+        anchors, intervals=(declared_interval(ns_at(10), ns_at(590)),)
+    )
+    row = _row(features, "cand_cov")
+    assert row["ofl_snap_entry_missing_reason"] == "coverage_below_threshold"
+
+
+def test_giant_sequence_jump_never_lowers_coverage() -> None:
+    """R5B.1: the R5B fixture's 'giant sequence gap' is now a diagnostic —
+    the day stays evidenced_complete and every window that has events stays
+    valid (no window is silently typed from raw sequence continuity)."""
+
     rows = [
         raw_event(ts_event=ns_at(0), sequence=100),
         raw_event(ts_event=ns_at(10), sequence=101),
-        # a giant sequence gap invalidating ~98% of the span
         raw_event(ts_event=ns_at(590), sequence=900),
         raw_event(ts_event=ns_at(600), sequence=901),
     ]
     anchors = pd.DataFrame([anchor_row("cand_cov")])
-    _envelope, features, _evidence = _materialize(
-        anchors, events={FIXTURE_DAY: normalized_day(rows)}
+    events = {FIXTURE_DAY: normalized_day(rows)}
+    source, _bytes, events_by_day = build_fixture_source(events)
+    _envelope, features, _evidence = materialize_mbp1_features(
+        source, anchors, resolved_block=MBP1_RESOLVED_BLOCK, events_by_day=events_by_day
     )
     row = _row(features, "cand_cov")
-    assert row["ofl_snap_entry_missing_reason"] == "coverage_below_threshold"
+    assert row["ofl_snap_entry_missing_reason"] != "coverage_below_threshold"
+    assert row["ofl_snap_entry_valid"]  # the 10 s quote is admitted (< 360 s)
+    partition = source.payload.ordered_partitions[0]
+    assert partition.coverage_fraction == 1.0
+    assert partition.sequence_jump_diagnostics.positive_jump_count == 1
+
+
+def test_superseded_resolution_is_refused_by_the_materializer() -> None:
+    """Review F8: the HISTORICAL v1 resolution (R5B activation) can never be
+    materialized under the v2 semantics — the block's formula/materializer
+    versions are the identity this materializer implements."""
+
+    from alpha_lab.agents.data_infra.ifvg.features.feature_blocks import (
+        MBP1_ACTIVATION_ENVELOPE,
+    )
+
+    source, _bytes, events_by_day = build_fixture_source()
+    with pytest.raises(ValueError, match="superseded resolution is refused"):
+        materialize_mbp1_features(
+            source,
+            default_anchors(),
+            resolved_block=MBP1_ACTIVATION_ENVELOPE,
+            events_by_day=events_by_day,
+        )
+    envelope, _features, _evidence = _materialize()
+    assert envelope.payload.formula_version == MBP1_RESOLVED_BLOCK.payload.formula_version
+    assert envelope.payload.materializer_version == (
+        MBP1_RESOLVED_BLOCK.payload.materializer_version
+    )
 
 
 def test_missing_anchor_and_out_of_span_anchor_mark_stage_outside_coverage() -> None:
@@ -186,26 +234,65 @@ def test_boundary_tie_marks_same_timestamp_order_unavailable() -> None:
     assert bool(scoped.iloc[0]["same_timestamp_ambiguous"])
 
 
-def test_gap_overlapping_window_marks_sequence_gap() -> None:
+def test_declared_gap_overlapping_window_marks_declared_source_gap() -> None:
+    """An explicitly DECLARED real source gap (partition-scope manifest)
+    becomes typed missing evidence on exactly the intersecting windows; no
+    window is widened or imputed; the candidate row is preserved."""
+
     rows = [
         raw_event(ts_event=ns_at(0), sequence=100),
         raw_event(ts_event=ns_at(100), sequence=101),
         raw_event(ts_event=ns_at(200), sequence=102),
         raw_event(ts_event=ns_at(280), sequence=103),
-        raw_event(ts_event=ns_at(300), sequence=110),  # gap 103→110 over (280,300)
+        raw_event(ts_event=ns_at(300), sequence=110),  # a raw jump — diagnostic only
         raw_event(ts_event=ns_at(340), sequence=111),
         raw_event(ts_event=ns_at(600), sequence=112),
     ]
     anchors = pd.DataFrame([anchor_row("cand_gap")])
+    # WITHOUT a declared interval the jump types nothing
     _envelope, features, _evidence = _materialize(
         anchors, events={FIXTURE_DAY: normalized_day(rows)}
     )
     row = _row(features, "cand_gap")
-    # the 20 s gap keeps the DAY above the 0.95 coverage threshold, and
-    # (inversion 240s, entry 360s] intersects the invalid (280s, 300s) interval
-    assert row["ofl_win_inversion_entry_missing_reason"] == "sequence_gap"
-    # the pre-gap htf_tap snapshot (cutoff 60s) is untouched
+    assert row["ofl_win_inversion_entry_valid"]
+    # WITH the declared (280 s, 300 s) interval: the 20 s gap keeps the DAY
+    # above the 0.95 coverage threshold, and (inversion 240s, entry 360s]
+    # intersects it → declared_source_gap on exactly that window
+    _envelope, features, evidence = _materialize(
+        anchors,
+        events={FIXTURE_DAY: normalized_day(rows)},
+        intervals=(declared_interval(ns_at(280), ns_at(300)),),
+    )
+    row = _row(features, "cand_gap")
+    assert row["ofl_win_inversion_entry_missing_reason"] == "declared_source_gap"
+    assert not row["ofl_win_inversion_entry_valid"]
+    # the pre-gap htf_tap snapshot (cutoff 60s) is untouched; row preserved
     assert row["ofl_snap_htf_tap_valid"]
+    assert list(features["candidate_id"]) == ["cand_gap"]
+    scoped = evidence[
+        (evidence["candidate_id"] == "cand_gap")
+        & (evidence["feature_window_key"] == "ofl_win_inversion_entry")
+    ]
+    assert scoped.iloc[0]["missing_reason"] == "declared_source_gap"
+
+
+def test_day_without_partition_evidence_is_coverage_evidence_unavailable() -> None:
+    """A day with events but NO partition-scope completeness evidence is
+    ``completeness_unknown`` → every window typed
+    ``coverage_evidence_unavailable`` (fail closed); the row is preserved."""
+
+    events = {FIXTURE_DAY: default_day_events()}
+    source, _bytes, events_by_day = build_fixture_source(events, coverage_evidence={})
+    anchors = pd.DataFrame([anchor_row("cand_unknown")])
+    _envelope, features, evidence = materialize_mbp1_features(
+        source, anchors, resolved_block=MBP1_RESOLVED_BLOCK, events_by_day=events_by_day
+    )
+    row = _row(features, "cand_unknown")
+    assert set(evidence["missing_reason"]) == {"coverage_evidence_unavailable"}
+    assert not row["ofl_snap_entry_valid"]
+    assert source.payload.ordered_partitions[0].completeness_status.value == (
+        "completeness_unknown"
+    )
 
 
 def test_roll_boundary_marks_instrument_roll_boundary() -> None:
@@ -397,8 +484,11 @@ def test_coverage_report_aggregates_and_persists(tmp_path) -> None:
     report = build_mbp1_coverage_report(source, envelope, features, evidence)
     payload = report.payload
     assert payload.research_boundary == "research_only_offline"
+    assert payload.coverage_policy_id == "mbp1_source_coverage_declared_evidence_v2"
     assert payload.candidate_count == 2
     assert payload.day_rows[0].trading_day == FIXTURE_DAY
+    assert payload.day_rows[0].completeness_status.value == "evidenced_complete"
+    assert payload.day_rows[0].sequence_positive_jump_count == 0
     entry_row = next(
         row for row in payload.window_rows if row.feature_window_key == "ofl_snap_entry"
     )

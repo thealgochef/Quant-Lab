@@ -1,8 +1,10 @@
 """MBP-1 feature coverage/validity reports (R5B deliverables 6 and 9).
 
-One report freezes, per materialization: per-day source coverage (rows,
-gaps, coverage fraction), per-window validity with typed missing-reason
-counts, and per-feature non-null fractions. The report pins the exact
+One report freezes, per materialization: per-day EVIDENCE-BASED source
+coverage (policy v2 — rows, completeness status, verified gap intervals,
+open-uncertainty facts, the dataset-condition status, and the raw
+sequence-jump DIAGNOSTIC count), per-window validity with typed
+missing-reason counts, and per-feature non-null fractions. The report pins the exact
 source and feature artifact ids it describes, carries the permanent
 ``research_only_offline`` boundary stamp (owner decision R-6), and is
 content-addressed — identical coverage evidence reuses one immutable
@@ -26,8 +28,13 @@ from ..search.identities import (
 )
 from ..search.store import load_verified_envelope, save_or_reuse_envelope
 from .mbp1_arrow_schemas import mbp1_window_keys
+from .mbp1_coverage_evidence import (
+    MBP1_COVERAGE_POLICY_V2,
+    Mbp1CompletenessStatus,
+    Mbp1DatasetConditionStatus,
+)
 from .mbp1_feature_materializer import Mbp1FeatureArtifactEnvelope
-from .mbp1_source_artifact import Mbp1SourceArtifactEnvelope
+from .mbp1_source_artifact import Mbp1SourceArtifactEnvelope, day_coverage_views
 from .mbp1_source_contract import MBP1_MISSING_REASONS, mbp1_feature_names
 from .mbp1_stage_windows import ns_to_ts_utc
 
@@ -47,9 +54,15 @@ MBP1_COVERAGE_REPORT_STORE = "mbp1_coverage_reports"
 
 class Mbp1DayCoverageRow(FrozenContract):
     trading_day: str
+    partition_count: int = Field(ge=1)
     row_count: int = Field(ge=0)
     coverage_fraction: float = Field(ge=0.0, le=1.0)
-    sequence_gap_count: int = Field(ge=0)
+    completeness_status: Mbp1CompletenessStatus
+    dataset_condition_status: Mbp1DatasetConditionStatus
+    declared_gap_count: int = Field(ge=0)
+    open_uncertainty_to_partition_end: bool
+    #: DIAGNOSTIC only — never coverage evidence (policy v2)
+    sequence_positive_jump_count: int = Field(ge=0)
     first_ts_utc: str | None
     last_ts_utc: str | None
 
@@ -68,6 +81,9 @@ class Mbp1CoverageReportPayload(FrozenContract):
     day_rows: tuple[Mbp1DayCoverageRow, ...]
     window_rows: tuple[Mbp1WindowCoverageRow, ...]
     per_feature_nonnull_fraction: ImmutableMap[str, float]
+    coverage_policy_id: Literal["mbp1_source_coverage_declared_evidence_v2"] = (
+        MBP1_COVERAGE_POLICY_V2
+    )
     research_boundary: Literal["research_only_offline"] = "research_only_offline"
 
 
@@ -86,14 +102,19 @@ def build_mbp1_coverage_report(
 ) -> Mbp1CoverageReportEnvelope:
     day_rows = tuple(
         Mbp1DayCoverageRow(
-            trading_day=partition.trading_day,
-            row_count=partition.row_count,
-            coverage_fraction=partition.coverage_fraction,
-            sequence_gap_count=len(partition.sequence_gap_intervals),
-            first_ts_utc=ns_to_ts_utc(partition.first_ts_event),
-            last_ts_utc=ns_to_ts_utc(partition.last_ts_event),
+            trading_day=view.trading_day,
+            partition_count=view.partition_count,
+            row_count=view.row_count,
+            coverage_fraction=view.coverage_fraction,
+            completeness_status=view.completeness_status,
+            dataset_condition_status=view.dataset_condition_status,
+            declared_gap_count=len(view.gap_intervals),
+            open_uncertainty_to_partition_end=view.open_uncertainty_to_partition_end,
+            sequence_positive_jump_count=view.sequence_positive_jump_count,
+            first_ts_utc=ns_to_ts_utc(view.first_ts_event),
+            last_ts_utc=ns_to_ts_utc(view.last_ts_event),
         )
-        for partition in source.payload.ordered_partitions
+        for _day, view in sorted(day_coverage_views(source).items())
     )
     window_rows: list[Mbp1WindowCoverageRow] = []
     for key in mbp1_window_keys():

@@ -15,6 +15,21 @@ import pandas as pd
 from alpha_lab.agents.data_infra.ifvg.features.feature_blocks import (
     FEATURE_BLOCK_RESOLUTION_REGISTRY,
 )
+from alpha_lab.agents.data_infra.ifvg.features.mbp1_coverage_evidence import (
+    Mbp1CompletenessCompilationReportEnvelope,
+    Mbp1CompletenessCompilationReportPayload,
+    Mbp1CoverageEvidenceKind,
+    Mbp1DatasetConditionRecord,
+    Mbp1DeclaredGapInterval,
+    Mbp1EvidenceProvenance,
+    Mbp1EvidenceScope,
+    Mbp1EvidenceScopeLevel,
+    Mbp1PartitionEvidence,
+    Mbp1RecoveryBoundary,
+    Mbp1RecoveryBoundaryKind,
+    Mbp1UncertaintyStartKind,
+    compile_mbp1_partition_gap_manifest,
+)
 from alpha_lab.agents.data_infra.ifvg.features.mbp1_source_artifact import (
     build_mbp1_source_artifact,
     normalize_mbp1_events,
@@ -161,17 +176,226 @@ def default_anchors() -> pd.DataFrame:
     return pd.DataFrame([anchor_row("cand_a"), anchor_row("cand_b", entry_s=550.0)])
 
 
+# ── coverage policy v2 synthetic evidence (R5B.1) ────────────────────────────
+
+SYNTHETIC_DATASET = "SYNTHETIC.FIXTURE"
+SYNTHETIC_SOURCE_DOC_SHA = "5" * 64
+
+
+def synthetic_scope(
+    day: str,
+    *,
+    start_ns: int,
+    end_ns: int,
+    partition_key: str = "day_utc_date/mbp1",
+    scope_level: Mbp1EvidenceScopeLevel = Mbp1EvidenceScopeLevel.PUBLISHER_PARTITION,
+    channel_id: int | None = None,
+    utc_date: str | None = None,
+) -> Mbp1EvidenceScope:
+    """One physical partition's scope: the expected span is DECLARED by the
+    fixture (synthetic span source) — never inferred from the events."""
+
+    return Mbp1EvidenceScope(
+        scope_level=scope_level,
+        dataset=SYNTHETIC_DATASET,
+        publisher_id=1,
+        channel_id=channel_id,
+        instrument_id=None,
+        symbol=None,
+        physical_partition_key=partition_key,
+        source_partition_id=f"synthetic/NQ/{utc_date or day}/{partition_key}",
+        utc_date=utc_date or day,
+        partition_expected_start_ts=int(start_ns),
+        partition_expected_end_ts=int(end_ns),
+        partition_span_source_id="synthetic_fixture_span_v1",
+    )
+
+
+def declared_interval(
+    start_ns: int,
+    end_ns: int,
+    *,
+    kind: Mbp1CoverageEvidenceKind = Mbp1CoverageEvidenceKind.DECLARED_PARTITION_GAP_MANIFEST,
+    recovery: Mbp1RecoveryBoundaryKind = Mbp1RecoveryBoundaryKind.MANIFEST_DECLARED_END,
+    scope_level: Mbp1EvidenceScopeLevel = Mbp1EvidenceScopeLevel.PUBLISHER_PARTITION,
+) -> Mbp1DeclaredGapInterval:
+    return Mbp1DeclaredGapInterval(
+        start_ts=int(start_ns),
+        end_ts=int(end_ns),
+        evidence_kind=kind,
+        start_kind=Mbp1UncertaintyStartKind.MANIFEST_DECLARED_START,
+        recovery_boundary_kind=recovery,
+        scope_level=scope_level,
+    )
+
+
+#: the content hash a synthetic report certifies when the caller passes none
+#: (a placeholder — the artifact builder refuses it against real bytes)
+SYNTHETIC_PLACEHOLDER_CONTENT_REF = "6" * 64
+SYNTHETIC_OWNER_REVIEW_ID = "d" * 64
+
+
+def canonical_content_sha256(frame: pd.DataFrame) -> str:
+    """The content hash the source artifact will assign to ``frame``."""
+
+    from alpha_lab.agents.data_infra.ifvg.features.mbp1_source_artifact import (
+        _bytes_sha256,
+        _canonical_event_bytes,
+    )
+
+    return _bytes_sha256(_canonical_event_bytes(frame))
+
+
+def recovery_boundary(
+    scope: Mbp1EvidenceScope,
+    ts: int,
+    kind: Mbp1RecoveryBoundaryKind,
+    *,
+    source_document_sha256: str = "9" * 64,
+) -> Mbp1RecoveryBoundary:
+    """A documented recovery boundary bound to ``scope``'s partition."""
+
+    return Mbp1RecoveryBoundary(
+        ts=int(ts),
+        kind=kind,
+        source_document_sha256=source_document_sha256,
+        utc_date=scope.utc_date,
+        physical_partition_key=scope.physical_partition_key,
+    )
+
+
+def synthetic_completeness_report(
+    scope: Mbp1EvidenceScope,
+    *,
+    intervals: tuple[Mbp1DeclaredGapInterval, ...] = (),
+    positive_completeness_authorized: bool = True,
+    content_refs: tuple[str, ...] = (SYNTHETIC_PLACEHOLDER_CONTENT_REF,),
+) -> Mbp1CompletenessCompilationReportEnvelope:
+    """A SYNTHETIC-provenance compilation report (lawful in synthetic scope
+    only; the real path refuses it). ``content_refs`` are the partition
+    content hashes the report certifies (review F1)."""
+
+    return Mbp1CompletenessCompilationReportEnvelope.from_payload(
+        Mbp1CompletenessCompilationReportPayload(
+            scope=scope,
+            source_inventory_id="synthetic_inventory_v1",
+            verified_partition_refs=tuple(content_refs),
+            evidence_refs=(SYNTHETIC_SOURCE_DOC_SHA, "7" * 64),
+            owner_review_decision_id=SYNTHETIC_OWNER_REVIEW_ID,
+            provenance="synthetic_fixture",
+            compiled_intervals=intervals,
+            positive_completeness_authorized=positive_completeness_authorized,
+            compiled_at="2026-08-28T00:00:00Z",
+        )
+    )
+
+
+def synthetic_partition_evidence(
+    scope: Mbp1EvidenceScope,
+    *,
+    intervals: tuple[Mbp1DeclaredGapInterval, ...] = (),
+    positive_completeness_authorized: bool = True,
+    with_manifest: bool = True,
+    recovery_boundaries: tuple[Mbp1RecoveryBoundary, ...] = (),
+    channel_map_verified: bool = False,
+    dataset_condition: str | None = "available",
+    content_refs: tuple[str, ...] = (SYNTHETIC_PLACEHOLDER_CONTENT_REF,),
+) -> Mbp1PartitionEvidence:
+    """Complete synthetic evidence for one physical partition."""
+
+    manifest = None
+    report = None
+    if with_manifest:
+        report = synthetic_completeness_report(
+            scope,
+            intervals=intervals,
+            positive_completeness_authorized=positive_completeness_authorized,
+            content_refs=content_refs,
+        )
+        manifest = compile_mbp1_partition_gap_manifest(
+            report,
+            source_document_sha256=SYNTHETIC_SOURCE_DOC_SHA,
+            declared_by="synthetic_fixture",
+            declared_at="2026-08-28T00:00:00Z",
+        )
+    condition = (
+        Mbp1DatasetConditionRecord(
+            dataset=scope.dataset,
+            utc_date=scope.utc_date,
+            condition=dataset_condition,  # type: ignore[arg-type]
+            source_document_sha256="8" * 64,
+            recorded_at="2026-08-28T00:00:00Z",
+        )
+        if dataset_condition is not None
+        else None
+    )
+    return Mbp1PartitionEvidence(
+        scope=scope,
+        gap_manifest=manifest,
+        completeness_report=(
+            report if manifest is not None and manifest.payload.completeness_compilation_report_id
+            else None
+        ),
+        recovery_boundaries=recovery_boundaries,
+        channel_map_verified=channel_map_verified,
+        dataset_condition=condition,
+        provenance=(
+            Mbp1EvidenceProvenance.SYNTHETIC_FIXTURE
+            if with_manifest
+            else Mbp1EvidenceProvenance.NONE
+        ),
+    )
+
+
+def default_partition_evidence(
+    events_by_day: dict[str, pd.DataFrame],
+    *,
+    intervals_by_day: dict[str, tuple[Mbp1DeclaredGapInterval, ...]] | None = None,
+) -> dict[str, tuple[Mbp1PartitionEvidence, ...]]:
+    """Synthetic partition-scope evidence for every fixture day: the expected
+    span is the DECLARED fixture span (first…last event of the crafted
+    stream), positive completeness compiled, ``available`` condition."""
+
+    evidence: dict[str, tuple[Mbp1PartitionEvidence, ...]] = {}
+    for day, frame in events_by_day.items():
+        start = int(frame["ts_event"].min()) if len(frame) else ns_at(0)
+        # the declared span is HALF-OPEN: one nanosecond past the last event
+        end = int(frame["ts_event"].max()) + 1 if len(frame) else ns_at(600)
+        if end <= start:
+            end = start + 1_000_000_000
+        scope = synthetic_scope(day, start_ns=start, end_ns=end)
+        evidence[day] = (
+            synthetic_partition_evidence(
+                scope,
+                intervals=tuple((intervals_by_day or {}).get(day, ())),
+                content_refs=(canonical_content_sha256(frame),),
+            ),
+        )
+    return evidence
+
+
 def build_fixture_source(
     events_by_day: dict[str, pd.DataFrame] | None = None,
+    *,
+    coverage_evidence: dict[str, tuple[Mbp1PartitionEvidence, ...]] | None = None,
+    intervals_by_day: dict[str, tuple[Mbp1DeclaredGapInterval, ...]] | None = None,
 ):
-    """(source envelope, event bytes, events_by_day) over the fixture day."""
+    """(source envelope, event bytes, events_by_day) over the fixture day
+    under coverage policy v2 — default synthetic partition-scope evidence
+    (positive completeness compiled) unless ``coverage_evidence`` is given."""
 
     events = events_by_day or {FIXTURE_DAY: default_day_events()}
+    evidence = (
+        coverage_evidence
+        if coverage_evidence is not None
+        else default_partition_evidence(events, intervals_by_day=intervals_by_day)
+    )
     envelope, event_bytes = build_mbp1_source_artifact(
         events,
         contract=synthetic_contract(),
         authorized_date_set_id="synthetic_fixture_days_v1",
         events_stored=True,
+        coverage_evidence=evidence,
     )
     return envelope, event_bytes, events
 

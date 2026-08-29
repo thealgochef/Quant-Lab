@@ -18,6 +18,15 @@ event itself remains provable. The activated block is **research-only
 offline**: it cannot become a live model feature, an execution gate, or a
 Trade-Lab serving feature without a later Strategy-Core formula/parity
 contract and a separately approved sequential model-gated replay.
+
+**R5B.1 re-resolution (coverage policy v2):** the withdrawal of the
+sequence-jump gap rule changed the block's coverage semantics, so the
+published registry applies a SECOND versioned event on top of the R5B
+activation — ``with_reresolved_block`` mints ``block_version=3`` with the
+``ifvg_order_flow_mbp1_formula_v2`` / ``mbp1_feature_materializer_v2``
+resolution (new resolved block id, new registry hash, new B2/B3 bundle
+ids). The R5B state stays exported (``PRE_R5B1_*``) so both events remain
+provable; the activation payload keeps the HISTORICAL v1 versions.
 """
 
 from __future__ import annotations
@@ -62,12 +71,17 @@ __all__ = [
     "PRE_ACTIVATION_FEATURE_BLOCK_REGISTRY",
     "PRE_ACTIVATION_RESOLUTION_REGISTRY",
     "MBP1_ACTIVATION_ENVELOPE",
+    "PRE_R5B1_FEATURE_BLOCK_REGISTRY",
+    "PRE_R5B1_RESOLUTION_REGISTRY",
+    "MBP1_COVERAGE_V2_ENVELOPE",
     "MBP1_RESEARCH_BOUNDARY_PATH",
     "resolve_block_definition",
     "resolve_available_block",
     "feature_block_registry_hash",
     "with_activated_block",
+    "with_reresolved_block",
     "mbp1_activation_resolution_payload",
+    "mbp1_coverage_v2_resolution_payload",
     "BlockUnavailableError",
     "SESSION_FEATURES",
     "CORE_BASELINE_FEATURES",
@@ -549,8 +563,8 @@ def mbp1_activation_resolution_payload() -> FeatureBlockResolutionPayload:
         mbp1_window_validity_fields,
     )
     from .mbp1_source_contract import (  # noqa: PLC0415
-        MBP1_FORMULA_VERSION,
-        MBP1_MATERIALIZER_VERSION,
+        MBP1_FORMULA_VERSION_V1,
+        MBP1_MATERIALIZER_VERSION_V1,
         MIN_DAY_COVERAGE_FRACTION,
     )
 
@@ -558,11 +572,12 @@ def mbp1_activation_resolution_payload() -> FeatureBlockResolutionPayload:
     return FeatureBlockResolutionPayload(
         feature_block_key="IFVG_ORDER_FLOW_MBP1_V1",
         block_version=_DEFINITIONS["IFVG_ORDER_FLOW_MBP1_V1"].block_version + 1,
-        formula_version=MBP1_FORMULA_VERSION,
+        # the HISTORICAL R5B event: v1 formula/materializer (never rewritten)
+        formula_version=MBP1_FORMULA_VERSION_V1,
         source_artifact_refs=(),
         source_schema_hash=MBP1_SOURCE_EVENT_SCHEMA_HASH,
         feature_schema_hash=MBP1_FEATURE_TABLE_SCHEMA_HASH,
-        materializer_version=MBP1_MATERIALIZER_VERSION,
+        materializer_version=MBP1_MATERIALIZER_VERSION_V1,
         feature_names=names,
         numeric_features=names,
         categorical_features=(),
@@ -590,11 +605,98 @@ _ACTIVATED_DEFINITIONS, _ACTIVATED_RESOLUTIONS, MBP1_ACTIVATION_ENVELOPE = (
     )
 )
 
+#: The R5B state (activation applied, coverage policy v1) — exported so the
+#: R5B.1 re-resolution stays provable as a second versioned event.
+PRE_R5B1_FEATURE_BLOCK_REGISTRY: MappingProxyType[str, FeatureBlockDefinition] = (
+    MappingProxyType(dict(_ACTIVATED_DEFINITIONS))
+)
+PRE_R5B1_RESOLUTION_REGISTRY: MappingProxyType[str, FeatureBlockResolutionEnvelope] = (
+    MappingProxyType(dict(_ACTIVATED_RESOLUTIONS))
+)
+
+
+def with_reresolved_block(
+    *,
+    feature_block_key: str,
+    resolution_payload: FeatureBlockResolutionPayload,
+    definitions=None,
+    resolutions=None,
+) -> tuple[dict, dict, FeatureBlockResolutionEnvelope]:
+    """Pure RE-RESOLUTION event for an already-available block (R5B.1).
+
+    A formula/materializer/coverage-semantics change never edits the
+    existing resolution in place: the definition's ``block_version`` bumps
+    by exactly one, the new resolution envelope is minted, and every
+    dependent bundle's resolved id changes with the registry hash. Refuses
+    a block that is not AVAILABLE (activation is a different event) and any
+    payload whose version is not the successor.
+    """
+
+    registry = dict(definitions if definitions is not None else FEATURE_BLOCK_REGISTRY)
+    resolved = dict(resolutions if resolutions is not None else FEATURE_BLOCK_RESOLUTION_REGISTRY)
+    definition = registry.get(feature_block_key)
+    if definition is None:
+        raise ValueError(f"unregistered feature block {feature_block_key!r}")
+    if definition.status is not FeatureBlockStatus.AVAILABLE:
+        raise ValueError(
+            f"block {feature_block_key} is {definition.status.value}; only an "
+            "available block can be re-resolved (activation is a separate event)"
+        )
+    new_version = definition.block_version + 1
+    if resolution_payload.feature_block_key != feature_block_key:
+        raise ValueError("resolution payload key mismatch")
+    if resolution_payload.block_version != new_version:
+        raise ValueError(
+            f"re-resolution must mint block_version {new_version} "
+            f"(got {resolution_payload.block_version})"
+        )
+    previous = resolved.get(feature_block_key)
+    envelope = FeatureBlockResolutionEnvelope.from_payload(resolution_payload)
+    if previous is not None and (
+        previous.resolved_feature_block_id == envelope.resolved_feature_block_id
+    ):
+        raise ValueError("a re-resolution must change the resolved block identity")
+    registry[feature_block_key] = definition.model_copy(update={"block_version": new_version})
+    resolved[feature_block_key] = envelope
+    return registry, resolved, envelope
+
+
+def mbp1_coverage_v2_resolution_payload() -> FeatureBlockResolutionPayload:
+    """The R5B.1 re-resolution of ``IFVG_ORDER_FLOW_MBP1_V1`` (block v3).
+
+    Same window registry and schemas; the formula/materializer versions
+    move to v2 because the coverage semantics changed (evidence-based
+    policy; ``declared_source_gap`` / ``coverage_evidence_unavailable``;
+    raw sequence jumps diagnostic only). Every affected identity re-mints.
+    """
+
+    from .mbp1_source_contract import (  # noqa: PLC0415
+        MBP1_FORMULA_VERSION,
+        MBP1_MATERIALIZER_VERSION,
+    )
+
+    activation = mbp1_activation_resolution_payload()
+    return activation.model_copy(
+        update={
+            "block_version": activation.block_version + 1,
+            "formula_version": MBP1_FORMULA_VERSION,
+            "materializer_version": MBP1_MATERIALIZER_VERSION,
+        }
+    )
+
+
+_V2_DEFINITIONS, _V2_RESOLUTIONS, MBP1_COVERAGE_V2_ENVELOPE = with_reresolved_block(
+    feature_block_key="IFVG_ORDER_FLOW_MBP1_V1",
+    resolution_payload=mbp1_coverage_v2_resolution_payload(),
+    definitions=_ACTIVATED_DEFINITIONS,
+    resolutions=_ACTIVATED_RESOLUTIONS,
+)
+
 FEATURE_BLOCK_REGISTRY: MappingProxyType[str, FeatureBlockDefinition] = MappingProxyType(
-    dict(_ACTIVATED_DEFINITIONS)
+    dict(_V2_DEFINITIONS)
 )
 FEATURE_BLOCK_RESOLUTION_REGISTRY: MappingProxyType[str, FeatureBlockResolutionEnvelope] = (
-    MappingProxyType(dict(_ACTIVATED_RESOLUTIONS))
+    MappingProxyType(dict(_V2_RESOLUTIONS))
 )
 
 
@@ -617,16 +719,26 @@ assert_no_deep_book_identifiers(mbp1_feature_names())
 for _spec in R5B_WINDOW_SPECS:
     assert_no_deep_book_identifiers(_spec.feature_names)
 
-# R5B activation invariants: the published registry is the versioned event
-_activated = FEATURE_BLOCK_REGISTRY["IFVG_ORDER_FLOW_MBP1_V1"]
-if _activated.status is not FeatureBlockStatus.AVAILABLE or _activated.block_version != 2:
+# R5B activation + R5B.1 re-resolution invariants: the published registry is
+# the composition of the two versioned events
+_r5b = PRE_R5B1_FEATURE_BLOCK_REGISTRY["IFVG_ORDER_FLOW_MBP1_V1"]
+if _r5b.status is not FeatureBlockStatus.AVAILABLE or _r5b.block_version != 2:
     raise AssertionError("the R5B MBP-1 activation must publish version 2 as available")
+_activated = FEATURE_BLOCK_REGISTRY["IFVG_ORDER_FLOW_MBP1_V1"]
+if _activated.status is not FeatureBlockStatus.AVAILABLE or _activated.block_version != 3:
+    raise AssertionError("the R5B.1 MBP-1 re-resolution must publish version 3 as available")
 if _activated.expected_computation_path != MBP1_RESEARCH_BOUNDARY_PATH:
     raise AssertionError("the MBP-1 block lost its research-only offline boundary")
-if feature_block_registry_hash() == feature_block_registry_hash(
+if feature_block_registry_hash(
+    PRE_R5B1_FEATURE_BLOCK_REGISTRY, PRE_R5B1_RESOLUTION_REGISTRY
+) == feature_block_registry_hash(
     PRE_ACTIVATION_FEATURE_BLOCK_REGISTRY, PRE_ACTIVATION_RESOLUTION_REGISTRY
 ):
     raise AssertionError("activation must change the block-registry hash")
+if feature_block_registry_hash() == feature_block_registry_hash(
+    PRE_R5B1_FEATURE_BLOCK_REGISTRY, PRE_R5B1_RESOLUTION_REGISTRY
+):
+    raise AssertionError("the coverage-v2 re-resolution must change the block-registry hash")
 
 
 register_identity_pair(

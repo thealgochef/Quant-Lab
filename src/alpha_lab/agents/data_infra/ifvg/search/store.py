@@ -73,6 +73,10 @@ SEARCH_STORE_NAMES: tuple[str, ...] = (
     "mbp1_feature_artifacts",
     "mbp1_coverage_reports",
     "controlled_feature_studies",
+    # R5B.1 — MBP-1 coverage policy v2 evidence artifacts
+    "mbp1_gap_manifests",
+    "mbp1_completeness_reports",
+    "mbp1_coverage_diagnostics",
     # R6 — the V1 KMeans regime lane
     "regime_protocols",
     "regime_fits",

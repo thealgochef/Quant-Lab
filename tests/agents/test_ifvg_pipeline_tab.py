@@ -555,6 +555,22 @@ def test_mbp1_panel_renders_availability_and_the_persistent_boundary(
     assert len([c for c in codes.splitlines() if len(c.strip()) == 64]) >= 2
 
 
+def test_mbp1_panel_renders_the_stamped_coverage_policy_defaults(
+    monkeypatch, mbp1_pipeline
+) -> None:
+    """R5B.1 review F10: the R-6-family coverage defaults are surfaced as
+    proposed_protocol_default rows, never as silent constants."""
+
+    at = _run_over_completed(monkeypatch, mbp1_pipeline, phase="Configure")
+    dump = _dataframe_dump(at)
+    assert "completeness_evidence_required" in dump
+    assert "expected_span_source" in dump
+    assert "verified_physical_partition_intersect_authorized_session_v2" in dump
+    assert "bad_book_scope_fallback" in dump
+    assert "proposed_protocol_default" in dump
+    assert "before research use" in dump
+
+
 def test_mbp1_panel_autofills_and_renders_coverage_and_comparison(
     monkeypatch, mbp1_pipeline
 ) -> None:
@@ -562,7 +578,10 @@ def test_mbp1_panel_autofills_and_renders_coverage_and_comparison(
     dump = _dataframe_dump(at)
     # coverage evidence (per-day + per-window) from the exact-ID auto-fill
     assert "2026-01-13" in dump
-    assert "Sequence gaps" in dump or "sequence_gap_count" in dump
+    # R5B.1: evidence-based coverage facts; sequence jumps are diagnostics
+    assert "Completeness" in dump and "evidenced_complete" in dump
+    assert "Sequence jumps (diagnostic)" in dump
+    assert "Sequence gaps" not in dump
     assert "ofl_snap_entry" in dump
     # the controlled comparison renders both arms with resolved identities
     assert "Baseline+MBP-1" in dump

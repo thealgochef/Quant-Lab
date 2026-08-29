@@ -1114,11 +1114,17 @@ def _ensure_mbp1_evidence(context: _RunContext) -> dict[str, Any]:
         save_mbp1_feature_artifact,
     )
     from ..features.mbp1_source_artifact import (  # noqa: PLC0415
+        assert_evidence_provenance_permitted,
         save_mbp1_source_artifact,
     )
 
     assert context.wiring.mbp1_evidence_source is not None
     source_envelope, events_by_day, anchors = context.wiring.mbp1_evidence_source()
+    # R5B.1: synthetic coverage evidence is lawful only under the synthetic
+    # marker — a real scope refuses it before the artifact is trusted
+    assert_evidence_provenance_permitted(
+        source_envelope.payload.ordered_partitions, synthetic_scope=context.synthetic
+    )
     resolved_block = FEATURE_BLOCK_RESOLUTION_REGISTRY["IFVG_ORDER_FLOW_MBP1_V1"]
     feature_envelope, feature_frame, evidence_frame = materialize_mbp1_features(
         source_envelope,

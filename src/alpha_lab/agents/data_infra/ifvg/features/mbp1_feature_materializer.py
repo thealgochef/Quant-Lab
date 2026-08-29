@@ -8,17 +8,22 @@ nulls with a registered reason — the cohort never changes (acceptance
 exactly; admission runs on the complete four-part order key through
 :mod:`mbp1_stage_windows`; no ``+inf`` bound exists anywhere.
 
-Typed-missing precedence (deterministic, day → anchor → boundary → content):
+Typed-missing precedence (deterministic, day → anchor → boundary → content;
+coverage policy v2 — R5B.1):
 
 1. ``no_mbp1_partition``   — the candidate's day is not covered
-2. ``coverage_below_threshold`` — day coverage under the contract policy
-3. ``stage_outside_coverage``   — anchor missing, or outside the evidence span
-4. ``same_timestamp_order_unavailable`` — unorderable boundary ties
-5. ``sequence_gap``        — a gap interval intersects the window
-6. ``instrument_roll_boundary`` — admitted events span >1 instrument id
-7. ``minimum_event_count_not_met``
+2. ``coverage_evidence_unavailable`` — the day has no partition-scope
+   completeness evidence (``completeness_unknown``; fail closed)
+3. ``coverage_below_threshold`` — evidence-based day coverage under the policy
+4. ``stage_outside_coverage``   — anchor missing, or outside the evidence span
+5. ``same_timestamp_order_unavailable`` — unorderable boundary ties
+6. ``declared_source_gap`` — a VERIFIED declared/uncertainty interval
+   intersects the window (raw sequence jumps never type this)
+7. ``instrument_roll_boundary`` — admitted events span >1 instrument id
+8. ``minimum_event_count_not_met``
 
-Formulas (``ifvg_order_flow_mbp1_formula_v1``): snapshots read the LAST
+Formulas (``ifvg_order_flow_mbp1_formula_v2`` — numerically identical to
+v1; the version bump records the coverage-semantics change): snapshots read the LAST
 admitted event's top-of-book state; transition aggregates run over the
 admitted events only — OFI uses the Cont–Kukanov–Stoikov event formula on
 consecutive admitted pairs, aggressor fractions read Databento trade
@@ -67,8 +72,10 @@ from .mbp1_arrow_schemas import (
     mbp1_window_missing_reason_fields,
     mbp1_window_validity_fields,
 )
+from .mbp1_coverage_evidence import Mbp1CompletenessStatus
 from .mbp1_source_artifact import (
     Mbp1SourceArtifactEnvelope,
+    day_coverage_views,
     load_partition_events,
 )
 from .mbp1_source_contract import (
@@ -172,6 +179,7 @@ def _verify_events_against_source(
 
     coverage_by_day = {row.trading_day: row for row in source.payload.ordered_partitions}
     unknown = sorted(set(events_by_day) - set(coverage_by_day))
+    # every physical partition of one day shares the day's canonical bytes
     if unknown:
         raise ValueError(
             f"supplied events for days the source artifact does not cover: {unknown}"
@@ -325,6 +333,19 @@ def _boundary_ns(cutoff: StageEvidenceCutoff | None) -> int | None:
 
 
 def _validate_window_specs(resolved_block) -> tuple[Mbp1FeatureWindowSpec, ...]:
+    # review F8: the resolution's formula/materializer versions ARE the
+    # identity this materializer implements — a superseded (v1) resolution
+    # can never be stamped with the v2 semantics
+    if resolved_block.payload.formula_version != MBP1_FORMULA_VERSION or (
+        resolved_block.payload.materializer_version != MBP1_MATERIALIZER_VERSION
+    ):
+        raise ValueError(
+            "resolved block versions "
+            f"({resolved_block.payload.formula_version} / "
+            f"{resolved_block.payload.materializer_version}) are not the versions this "
+            f"materializer implements ({MBP1_FORMULA_VERSION} / "
+            f"{MBP1_MATERIALIZER_VERSION}); a superseded resolution is refused"
+        )
     specs = tuple(resolved_block.payload.mbp1_feature_windows)
     union: list[str] = []
     for spec in specs:
@@ -372,9 +393,10 @@ def materialize_mbp1_features(
     )
     specs = _validate_window_specs(resolved_block)
     build_cutoffs = cutoff_builder or stage_cutoffs_from_candidate_row
-    coverage_by_day = {
-        row.trading_day: row for row in source.payload.ordered_partitions
-    }
+    # policy v2: the DAY view aggregates every physical partition of the
+    # trading day (duration-weighted coverage, weakest status, unioned
+    # verified intervals) — the source of every day-level typed reason
+    coverage_by_day = day_coverage_views(source)
     min_coverage = float(
         dict(source.payload.source_contract.coverage_policy).get(
             "min_day_coverage_fraction", 0.0
@@ -395,6 +417,11 @@ def materialize_mbp1_features(
         day_reason: str | None = None
         if coverage is None or day_events is None or coverage.row_count == 0:
             day_reason = "no_mbp1_partition"
+        elif coverage.completeness_status is Mbp1CompletenessStatus.COMPLETENESS_UNKNOWN:
+            # no partition-scope completeness evidence (or a downgrading
+            # dataset condition): the day's windows are typed, never
+            # inferred complete from raw sequence continuity (fail closed)
+            day_reason = "coverage_evidence_unavailable"
         elif coverage.coverage_fraction < min_coverage:
             day_reason = "coverage_below_threshold"
         cutoffs = build_cutoffs(anchor_row)
@@ -435,13 +462,23 @@ def materialize_mbp1_features(
                 ambiguous = admission.same_timestamp_ambiguous
                 if ambiguous:
                     reason = "same_timestamp_order_unavailable"
-            if reason is None:
-                window_start = from_ns if from_ns is not None else coverage.first_ts_event
-                if any(
-                    gap_start < to_ns and gap_end > window_start
-                    for gap_start, gap_end in coverage.sequence_gap_intervals
-                ):
-                    reason = "sequence_gap"
+            window_start = from_ns if from_ns is not None else (
+                coverage.first_ts_event if coverage is not None else None
+            )
+            # review F2: a window that touches session time NO declared
+            # physical partition evidences has no completeness evidence
+            if reason is None and any(
+                hole_start < to_ns and hole_end > window_start
+                for hole_start, hole_end in coverage.uncovered_session_intervals
+            ):
+                reason = "coverage_evidence_unavailable"
+            # a window whose span intersects a VERIFIED declared or
+            # uncertainty interval is typed — never widened, never imputed
+            if reason is None and any(
+                gap_start < to_ns and gap_end > window_start
+                for gap_start, gap_end in coverage.gap_intervals
+            ):
+                reason = "declared_source_gap"
             if reason is None:
                 admitted = day_events.loc[admission.mask]
                 if admitted["instrument_id"].nunique() > 1:
@@ -507,8 +544,9 @@ def materialize_mbp1_features(
         resolved_feature_block_id=resolved_block.resolved_feature_block_id,
         candidate_anchor_hash=candidate_anchor_hash(anchors),
         cutoff_policy_id=cutoff_policy_id,
-        formula_version=MBP1_FORMULA_VERSION,
-        materializer_version=MBP1_MATERIALIZER_VERSION,
+        # stamped FROM the validated resolution (review F8)
+        formula_version=resolved_block.payload.formula_version,
+        materializer_version=resolved_block.payload.materializer_version,
         feature_table_schema_hash=MBP1_FEATURE_TABLE_SCHEMA_HASH,
         stage_window_evidence_schema_hash=MBP1_STAGE_WINDOW_EVIDENCE_SCHEMA_HASH,
         candidate_count=int(len(feature_frame)),

@@ -95,10 +95,13 @@ def test_mbp1_block_is_active_at_r5b_with_the_research_boundary() -> None:
 
     definition = FEATURE_BLOCK_REGISTRY["IFVG_ORDER_FLOW_MBP1_V1"]
     assert definition.status is FeatureBlockStatus.AVAILABLE
-    assert definition.block_version == 2
+    # R5B activated version 2; the R5B.1 coverage-v2 re-resolution is version 3
+    assert definition.block_version == 3
     assert definition.expected_computation_path == MBP1_RESEARCH_BOUNDARY_PATH
     assert definition.can_affect_execution is False
     envelope = resolve_available_block("IFVG_ORDER_FLOW_MBP1_V1")
+    assert envelope.payload.formula_version == "ifvg_order_flow_mbp1_formula_v2"
+    assert envelope.payload.materializer_version == "mbp1_feature_materializer_v2"
     assert envelope.payload.feature_names == mbp1_feature_names()
     assert envelope.payload.mbp1_feature_windows == R5B_WINDOW_SPECS
     assert envelope.payload.join_policy == "one_to_one_typed_null_on_missing"
@@ -161,6 +164,8 @@ def test_activation_is_a_versioned_registry_event() -> None:
         MBP1_ACTIVATION_ENVELOPE,
         PRE_ACTIVATION_FEATURE_BLOCK_REGISTRY,
         PRE_ACTIVATION_RESOLUTION_REGISTRY,
+        PRE_R5B1_FEATURE_BLOCK_REGISTRY,
+        PRE_R5B1_RESOLUTION_REGISTRY,
         mbp1_activation_resolution_payload,
     )
 
@@ -187,19 +192,35 @@ def test_activation_is_a_versioned_registry_event() -> None:
     assert envelope.resolved_feature_block_id == (
         MBP1_ACTIVATION_ENVELOPE.resolved_feature_block_id
     )
-    assert dict(definitions) == dict(FEATURE_BLOCK_REGISTRY)
+    # the activation replay reproduces the R5B state EXACTLY (the published
+    # registry is one further event on top — see the R5B.1 test below)
+    assert dict(definitions) == dict(PRE_R5B1_FEATURE_BLOCK_REGISTRY)
     assert {k: v.model_dump(mode="json") for k, v in resolutions.items()} == {
-        k: v.model_dump(mode="json") for k, v in FEATURE_BLOCK_RESOLUTION_REGISTRY.items()
+        k: v.model_dump(mode="json") for k, v in PRE_R5B1_RESOLUTION_REGISTRY.items()
     }
+    # the historical activation payload keeps the v1 formula/materializer
+    assert envelope.payload.formula_version == "ifvg_order_flow_mbp1_formula_v1"
     # version bump + first resolved id minted + registry hash changed
     assert definitions["IFVG_ORDER_FLOW_MBP1_V1"].block_version == 2
     assert definitions["IFVG_ORDER_FLOW_MBP1_V1"].status is FeatureBlockStatus.AVAILABLE
     assert envelope.resolved_feature_block_id not in {
         e.resolved_feature_block_id for e in PRE_ACTIVATION_RESOLUTION_REGISTRY.values()
     }
+    assert (
+        feature_block_registry_hash(
+            PRE_R5B1_FEATURE_BLOCK_REGISTRY, PRE_R5B1_RESOLUTION_REGISTRY
+        )
+        != pre_hash
+    )
     assert feature_block_registry_hash() != pre_hash
     # every dependent bundle gains a NEW resolved id; the logical key is stable
-    activated_b2 = resolve_bundle("B2_CORE_ORDER_FLOW")
+    # (resolved against the R5B state — the published registry carries the
+    # R5B.1 coverage-v2 re-resolution on top)
+    activated_b2 = resolve_bundle(
+        "B2_CORE_ORDER_FLOW",
+        definitions=PRE_R5B1_FEATURE_BLOCK_REGISTRY,
+        resolutions=PRE_R5B1_RESOLUTION_REGISTRY,
+    )
     assert activated_b2.payload.feature_bundle_key == "B2_CORE_ORDER_FLOW"
     assert envelope.resolved_feature_block_id in activated_b2.payload.resolved_block_ids
     # unrelated bundles keep their resolved ids across the activation
@@ -249,3 +270,90 @@ def test_bundle_resolution_is_deterministic() -> None:
         resolve_bundle("B4_CORE_STRUCTURE_LIQUIDITY").resolved_feature_bundle_id
         == resolve_bundle("B4_CORE_STRUCTURE_LIQUIDITY").resolved_feature_bundle_id
     )
+
+
+def test_coverage_v2_reresolution_is_a_second_versioned_event() -> None:
+    """R5B.1: the coverage-policy correction re-mints the MBP-1 resolution as
+    a SECOND versioned event over the R5B state — block v3, new resolved id,
+    new registry hash, new B2/B3 bundle ids; B0/B1/B4 untouched; the
+    activation event stays byte-identical (v1 formula kept)."""
+
+    from alpha_lab.agents.data_infra.ifvg.features.feature_blocks import (
+        MBP1_ACTIVATION_ENVELOPE,
+        MBP1_COVERAGE_V2_ENVELOPE,
+        PRE_R5B1_FEATURE_BLOCK_REGISTRY,
+        PRE_R5B1_RESOLUTION_REGISTRY,
+        FeatureBlockResolutionEnvelope,
+        mbp1_coverage_v2_resolution_payload,
+        with_reresolved_block,
+    )
+
+    definitions, resolutions, envelope = with_reresolved_block(
+        feature_block_key="IFVG_ORDER_FLOW_MBP1_V1",
+        resolution_payload=mbp1_coverage_v2_resolution_payload(),
+        definitions=PRE_R5B1_FEATURE_BLOCK_REGISTRY,
+        resolutions=PRE_R5B1_RESOLUTION_REGISTRY,
+    )
+    assert envelope.resolved_feature_block_id == (
+        MBP1_COVERAGE_V2_ENVELOPE.resolved_feature_block_id
+    )
+    assert dict(definitions) == dict(FEATURE_BLOCK_REGISTRY)
+    assert {k: v.model_dump(mode="json") for k, v in resolutions.items()} == {
+        k: v.model_dump(mode="json") for k, v in FEATURE_BLOCK_RESOLUTION_REGISTRY.items()
+    }
+    assert definitions["IFVG_ORDER_FLOW_MBP1_V1"].block_version == 3
+    assert envelope.payload.block_version == 3
+    assert envelope.payload.formula_version == "ifvg_order_flow_mbp1_formula_v2"
+    assert envelope.payload.materializer_version == "mbp1_feature_materializer_v2"
+    assert envelope.resolved_feature_block_id != (
+        MBP1_ACTIVATION_ENVELOPE.resolved_feature_block_id
+    )
+    assert MBP1_ACTIVATION_ENVELOPE.payload.formula_version == (
+        "ifvg_order_flow_mbp1_formula_v1"
+    )
+    assert feature_block_registry_hash() != feature_block_registry_hash(
+        PRE_R5B1_FEATURE_BLOCK_REGISTRY, PRE_R5B1_RESOLUTION_REGISTRY
+    )
+    for bundle in ("B2_CORE_ORDER_FLOW", "B3_CORE_STRUCTURE_ORDER_FLOW"):
+        pre = resolve_bundle(
+            bundle,
+            definitions=PRE_R5B1_FEATURE_BLOCK_REGISTRY,
+            resolutions=PRE_R5B1_RESOLUTION_REGISTRY,
+        )
+        post = resolve_bundle(bundle)
+        assert pre.resolved_feature_bundle_id != post.resolved_feature_bundle_id
+        assert envelope.resolved_feature_block_id in post.payload.resolved_block_ids
+    for bundle in ("B0_CORE", "B1_CORE_STRUCTURE", "B4_CORE_STRUCTURE_LIQUIDITY"):
+        pre = resolve_bundle(
+            bundle,
+            definitions=PRE_R5B1_FEATURE_BLOCK_REGISTRY,
+            resolutions=PRE_R5B1_RESOLUTION_REGISTRY,
+        )
+        assert pre.resolved_feature_bundle_id == resolve_bundle(bundle).resolved_feature_bundle_id
+    # a re-resolution can never target a planned block, a wrong version, or
+    # an unchanged identity
+    with pytest.raises(ValueError, match="only an available block"):
+        with_reresolved_block(
+            feature_block_key="IFVG_REGIME_CONTEXT_V1",
+            resolution_payload=mbp1_coverage_v2_resolution_payload().model_copy(
+                update={"feature_block_key": "IFVG_REGIME_CONTEXT_V1"}
+            ),
+        )
+    with pytest.raises(ValueError, match="block_version"):
+        with_reresolved_block(
+            feature_block_key="IFVG_ORDER_FLOW_MBP1_V1",
+            resolution_payload=mbp1_coverage_v2_resolution_payload(),
+        )  # the published block is already v3
+    unchanged = mbp1_coverage_v2_resolution_payload().model_copy(update={"block_version": 4})
+    with pytest.raises(ValueError, match="must change the resolved block identity"):
+        with_reresolved_block(
+            feature_block_key="IFVG_ORDER_FLOW_MBP1_V1",
+            resolution_payload=unchanged,
+            definitions=dict(FEATURE_BLOCK_REGISTRY),
+            resolutions={
+                **FEATURE_BLOCK_RESOLUTION_REGISTRY,
+                "IFVG_ORDER_FLOW_MBP1_V1": FeatureBlockResolutionEnvelope.from_payload(
+                    unchanged
+                ),
+            },
+        )

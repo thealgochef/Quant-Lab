@@ -363,6 +363,8 @@ def registered_identity_pairs() -> tuple[RegisteredIdentityPair, ...]:
         feature_blocks,
         feature_bundles,
         mbp1_coverage,
+        mbp1_coverage_diagnostic,
+        mbp1_coverage_evidence,
         mbp1_feature_materializer,
         mbp1_source_artifact,
     )

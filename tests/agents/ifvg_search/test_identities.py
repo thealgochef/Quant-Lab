@@ -81,6 +81,11 @@ def test_identity_projection_audit_all_pairs() -> None:
         "AccountSimulation",
         "PortfolioPolicy",
         "PortfolioSimulation",
+        # R5B.1 coverage policy v2 pairs — enumerated canonically, never by
+        # collection order
+        "Mbp1PartitionGapManifest",
+        "Mbp1CompletenessCompilationReport",
+        "Mbp1CoverageDiagnosticReport",
     } <= names
     for pair in pairs:
         # payload → id → envelope → reload determinism

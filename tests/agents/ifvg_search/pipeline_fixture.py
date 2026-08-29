@@ -213,11 +213,17 @@ def build_mbp1_evidence(view) -> tuple[Any, dict[str, Any], Any]:
         feature_window_specs=R5B_WINDOW_SPECS,
         coverage_policy={"min_day_coverage_fraction": MIN_DAY_COVERAGE_FRACTION},
     )
+    from tests.agents.ifvg_search.mbp1_fixture import default_partition_evidence
+
     source_envelope, _event_bytes = build_mbp1_source_artifact(
         events_by_day,
         contract=contract,
         authorized_date_set_id="synthetic_fixture_days_v1",
         events_stored=True,
+        # R5B.1: coverage policy v2 — synthetic partition-scope evidence
+        # (positive completeness compiled under synthetic provenance; lawful
+        # only under the synthetic marker, which this fixture carries)
+        coverage_evidence=default_partition_evidence(events_by_day),
     )
     return source_envelope, events_by_day, anchors
 

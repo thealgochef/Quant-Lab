@@ -121,12 +121,16 @@ def test_unknown_instrument_refuses_instead_of_guessing_scale() -> None:
         )
 
 
-def test_sequence_gaps_mark_intervals_and_resets_do_not() -> None:
+def test_sequence_jumps_and_resets_are_diagnostics_never_gaps() -> None:
+    """R5B.1 (owner Q1 #1/#3): the withdrawn rule cannot resurface — a raw
+    venue sequence jump is COUNTED as a diagnostic, never an interval, never
+    a reduced coverage; resets are counted separately."""
+
     rows = [
         raw_event(ts_event=ns_at(0), sequence=100),
         raw_event(ts_event=ns_at(10), sequence=101),
-        raw_event(ts_event=ns_at(20), sequence=105),  # gap 101→105
-        raw_event(ts_event=ns_at(30), sequence=3),  # vendor reset — NOT a gap
+        raw_event(ts_event=ns_at(20), sequence=105),  # jump 101→105 (legitimate)
+        raw_event(ts_event=ns_at(30), sequence=3),  # vendor reset
         raw_event(ts_event=ns_at(40), sequence=4),
     ]
     envelope, _bytes, _events = build_fixture_source(
@@ -137,8 +141,17 @@ def test_sequence_gaps_mark_intervals_and_resets_do_not() -> None:
         }
     )
     coverage = envelope.payload.ordered_partitions[0]
-    assert coverage.sequence_gap_intervals == ((ns_at(10), ns_at(20)),)
-    assert 0.0 < coverage.coverage_fraction < 1.0
+    assert coverage.declared_gap_intervals == ()
+    assert coverage.coverage_fraction == 1.0
+    assert coverage.completeness_status.value == "evidenced_complete"
+    diagnostics = coverage.sequence_jump_diagnostics
+    assert diagnostics.semantics == "sequence_jump_diagnostic_only_v2"
+    assert diagnostics.positive_jump_count == 1
+    assert diagnostics.max_positive_jump == 4
+    assert diagnostics.total_skipped_numbers == 3
+    assert diagnostics.reset_count == 1
+    assert "sequence_gap" not in coverage.model_dump(mode="json")
+    assert not hasattr(coverage, "sequence_gap_intervals")
 
 
 # ── identity sensitivity, save/reload/reuse ──────────────────────────────────

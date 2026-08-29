@@ -19,11 +19,21 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 from enum import StrEnum
+from types import MappingProxyType
 from typing import Literal
 
 from pydantic import Field, model_validator
 
 from ..search.identities import FrozenContract, ImmutableMap
+from .mbp1_coverage_evidence import (
+    BAD_BOOK_SCOPE_FALLBACK_V1,
+    COMPLETENESS_COMPILER_POLICY_V1,
+    EVIDENCE_KINDS_ACCEPTED,
+    EXPECTED_SPAN_SOURCE_V2,
+    MBP1_COVERAGE_POLICY_V2,
+    RECOVERY_BOUNDARY_KINDS_ACCEPTED,
+    SEQUENCE_JUMP_SEMANTICS_V2,
+)
 
 __all__ = [
     "StageCutoffKind",
@@ -38,7 +48,10 @@ __all__ = [
     "MBP1_TRANSITION_METRICS",
     "MBP1_FORMULA_VERSION",
     "MBP1_MATERIALIZER_VERSION",
+    "MBP1_FORMULA_VERSION_V1",
+    "MBP1_MATERIALIZER_VERSION_V1",
     "MIN_DAY_COVERAGE_FRACTION",
+    "MBP1_PROPOSED_DEFAULTS",
     "R5B_WINDOW_SPECS",
     "mbp1_feature_names",
     "DEEP_BOOK_IDENTIFIER_REGEX",
@@ -46,17 +59,51 @@ __all__ = [
     "assert_no_deep_book_identifiers",
 ]
 
-#: The R5B activation's formula/materializer identities. Any change to the
-#: registered formulas or the materializer semantics bumps these and mints a
-#: new resolved block id (DELTA_TAXONOMY.md §6.2).
-MBP1_FORMULA_VERSION = "ifvg_order_flow_mbp1_formula_v1"
-MBP1_MATERIALIZER_VERSION = "mbp1_feature_materializer_v1"
+#: The R5B activation's formula/materializer identities (the HISTORICAL
+#: versioned event — kept so the activation stays reproducible) and the
+#: CURRENT identities after the R5B.1 coverage-policy correction. Any change
+#: to the registered formulas or the materializer semantics bumps these and
+#: mints a new resolved block id (DELTA_TAXONOMY.md §6.2).
+MBP1_FORMULA_VERSION_V1 = "ifvg_order_flow_mbp1_formula_v1"
+MBP1_MATERIALIZER_VERSION_V1 = "mbp1_feature_materializer_v1"
+#: R5B.1: the coverage semantics changed (evidence-based policy v2; the
+#: withdrawn sequence-jump rule; the ``declared_source_gap`` /
+#: ``coverage_evidence_unavailable`` reasons), so every affected identity is
+#: re-minted under the v2 formula/materializer versions.
+MBP1_FORMULA_VERSION = "ifvg_order_flow_mbp1_formula_v2"
+MBP1_MATERIALIZER_VERSION = "mbp1_feature_materializer_v2"
 
-#: Engineering default (DECISIONS_TAKEN R5B): a day whose sequence-gap-
-#: adjusted coverage falls below this fraction marks every window of that
+#: Engineering default (DECISIONS_TAKEN R5B): a day whose EVIDENCE-based
+#: coverage (policy v2) falls below this fraction marks every window of that
 #: day ``coverage_below_threshold``. Unratified for research, like every
-#: engineering default.
+#: engineering default. A day WITHOUT partition-scope evidence never reaches
+#: this threshold: it is typed ``coverage_evidence_unavailable`` first.
 MIN_DAY_COVERAGE_FRACTION = 0.95
+
+
+def _stamped(value, decision: str) -> dict:
+    return {
+        "value": value,
+        "stamp": "proposed_protocol_default",
+        "owner_ratification_required_before_research_use": True,
+        "owner_decision": decision,
+    }
+
+
+#: Every scientific/engineering default of the MBP-1 coverage lane, STAMPED
+#: (review F10; plan §8 "MBP-1 (decision R-6 family)"): nothing here carries
+#: research weight before the owner's decision evidence exists.
+MBP1_PROPOSED_DEFAULTS = MappingProxyType(
+    {
+        "min_day_coverage_fraction": _stamped(MIN_DAY_COVERAGE_FRACTION, "R-6"),
+        "completeness_evidence_required": _stamped(True, "R-6"),
+        "evidence_kinds_accepted": _stamped(EVIDENCE_KINDS_ACCEPTED, "R-6"),
+        "recovery_boundary_kinds_accepted": _stamped(RECOVERY_BOUNDARY_KINDS_ACCEPTED, "R-6"),
+        "expected_span_source": _stamped(EXPECTED_SPAN_SOURCE_V2, "R-6"),
+        "bad_book_scope_fallback": _stamped(BAD_BOOK_SCOPE_FALLBACK_V1, "R-6"),
+        "completeness_compiler_policy_id": _stamped(COMPLETENESS_COMPILER_POLICY_V1, "R-6"),
+    }
+)
 
 #: Deeper-than-MBP-1 identifier guard (acceptance §7A.19.13). Strengthened
 #: beyond the plan's literal ``mbp[\W_]?(10|\d{2,})`` (safety review S2): any
@@ -156,9 +203,15 @@ class Mbp1FeatureWindowSpec(FrozenContract):
         return self
 
 
+#: Typed missing reasons (policy v2). ``sequence_gap`` is WITHDRAWN: a raw
+#: venue sequence jump is a diagnostic, never evidence of missing data.
+#: ``declared_source_gap`` types a window whose span intersects a VERIFIED
+#: declared/uncertainty interval; ``coverage_evidence_unavailable`` types
+#: every window of a day without partition-scope completeness evidence.
 MBP1_MISSING_REASONS: tuple[str, ...] = (
     "no_mbp1_partition",
-    "sequence_gap",
+    "coverage_evidence_unavailable",
+    "declared_source_gap",
     "coverage_below_threshold",
     "stage_outside_coverage",
     "instrument_roll_boundary",
@@ -275,7 +328,44 @@ class Mbp1SourceContract(FrozenContract):
     feature_window_specs: tuple[Mbp1FeatureWindowSpec, ...]
     source_partitions: str = "data/databento/NQ/<date>/mbp1.parquet"
     coverage_policy: ImmutableMap[str, float]
-    gap_semantics: str = "sequence_gap_marks_interval_invalid_v1"
+    #: R5B.1: the withdrawn ``sequence_gap_marks_interval_invalid_v1`` rule is
+    #: UNREPRESENTABLE — the only lawful gap semantics is the evidence-based
+    #: policy v2; raw sequence jumps are diagnostics only.
+    gap_semantics: Literal["mbp1_source_coverage_declared_evidence_v2"] = (
+        MBP1_COVERAGE_POLICY_V2
+    )
+    sequence_jump_semantics: Literal["sequence_jump_diagnostic_only_v2"] = (
+        SEQUENCE_JUMP_SEMANTICS_V2
+    )
+    completeness_evidence_required: Literal[True] = True
+    evidence_kinds_accepted: tuple[str, ...] = EVIDENCE_KINDS_ACCEPTED
+    recovery_boundary_kinds_accepted: tuple[str, ...] = RECOVERY_BOUNDARY_KINDS_ACCEPTED
+    expected_span_source: Literal[
+        "verified_physical_partition_intersect_authorized_session_v2"
+    ] = EXPECTED_SPAN_SOURCE_V2
+    bad_book_scope_fallback: Literal["publisher_physical_partition_v1"] = (
+        BAD_BOOK_SCOPE_FALLBACK_V1
+    )
+    completeness_compiler_policy_id: Literal["mbp1_completeness_compiler_v1"] = (
+        COMPLETENESS_COMPILER_POLICY_V1
+    )
     trades_derivation: Literal["trades_from_mbp1_d_p_17"] = "trades_from_mbp1_d_p_17"
 
     model_config = FrozenContract.model_config | {"populate_by_name": True}
+
+    @model_validator(mode="after")
+    def _evidence_policy_pinned(self):
+        # ORDERED equality (review F10): the registered tuples are the
+        # identity; a re-ordered spelling is not a second lawful contract
+        if tuple(self.evidence_kinds_accepted) != tuple(EVIDENCE_KINDS_ACCEPTED):
+            raise ValueError(
+                "evidence_kinds_accepted must be the registered v2 tuple, in order"
+            )
+        if tuple(self.recovery_boundary_kinds_accepted) != tuple(
+            RECOVERY_BOUNDARY_KINDS_ACCEPTED
+        ):
+            raise ValueError(
+                "recovery_boundary_kinds_accepted must be the registered documented "
+                "tuple, in order"
+            )
+        return self

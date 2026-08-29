@@ -133,6 +133,32 @@ def _render_availability(st_module) -> None:
     )
 
 
+def _render_coverage_policy_stamps(st_module) -> None:
+    from alpha_lab.agents.data_infra.ifvg.features.mbp1_source_contract import (  # noqa: PLC0415
+        MBP1_PROPOSED_DEFAULTS,
+    )
+
+    st_module.markdown(
+        "**Coverage-policy defaults (R5B.1)** — every value is a "
+        "`proposed_protocol_default` of the owner's R-6 family: unratified for "
+        "research; nothing here carries research weight"
+    )
+    st_module.dataframe(
+        [
+            {
+                "Default": name,
+                "Proposed value": str(entry["value"]),
+                "Stamp": entry["stamp"],
+                "Owner decision": entry["owner_decision"],
+                "Ratification required": "yes — before research use",
+            }
+            for name, entry in MBP1_PROPOSED_DEFAULTS.items()
+        ],
+        width="stretch",
+        hide_index=True,
+    )
+
+
 def _render_window_registry(st_module) -> None:
     from alpha_lab.agents.data_infra.ifvg.features.mbp1_source_contract import (  # noqa: PLC0415
         R5B_WINDOW_SPECS,
@@ -189,14 +215,27 @@ def _render_coverage(st_module, store_root: Path, default_id: str | None) -> Non
     )
     identity_block(st_module, "Source artifact", payload.mbp1_source_artifact_id)
     identity_block(st_module, "Feature artifact", payload.mbp1_feature_artifact_id)
-    st_module.markdown("Per-day source coverage")
+    st_module.markdown(
+        "Per-day source coverage — **evidence-based (policy v2)**: coverage "
+        "comes from verified partition-scope evidence only; raw sequence "
+        "jumps are diagnostics, never gaps"
+    )
     st_module.dataframe(
         [
             {
                 "Trading day": row.trading_day,
+                "Partitions": str(row.partition_count),
                 "Events": str(row.row_count),
-                "Coverage": f"{row.coverage_fraction:.4f}",
-                "Sequence gaps": str(row.sequence_gap_count),
+                "Completeness": row.completeness_status.value,
+                "Coverage": (
+                    "—"
+                    if row.completeness_status.value == "completeness_unknown"
+                    else f"{row.coverage_fraction:.4f}"
+                ),
+                "Declared gaps": str(row.declared_gap_count),
+                "Open to partition end": "yes" if row.open_uncertainty_to_partition_end else "no",
+                "Dataset condition": row.dataset_condition_status.value,
+                "Sequence jumps (diagnostic)": str(row.sequence_positive_jump_count),
                 "First event": row.first_ts_utc or "—",
                 "Last event": row.last_ts_utc or "—",
             }
@@ -204,6 +243,11 @@ def _render_coverage(st_module, store_root: Path, default_id: str | None) -> Non
         ],
         width="stretch",
         hide_index=True,
+    )
+    st_module.caption(
+        f"Coverage policy: `{payload.coverage_policy_id}` — a day without "
+        "partition-scope completeness evidence is `completeness_unknown` and "
+        "every window of that day is typed `coverage_evidence_unavailable`."
     )
     st_module.markdown("Per-window validity and typed missing reasons")
     st_module.dataframe(
@@ -406,6 +450,7 @@ def render_mbp1_order_flow(
     store_root = Path(roots["store_root"])
     defaults = dict(default_ids or {})
     _render_availability(st_module)
+    _render_coverage_policy_stamps(st_module)
     _render_window_registry(st_module)
     _render_coverage(st_module, store_root, defaults.get("coverage_report_id"))
     _render_drilldown(st_module, store_root, defaults.get("feature_artifact_id"))
