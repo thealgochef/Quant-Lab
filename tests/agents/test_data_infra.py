@@ -148,7 +148,10 @@ class TestPolygonDataProvider:
         assert "NQ" in provider.supported_symbols
         assert "ES" in provider.supported_symbols
 
-    def test_connect_without_api_key_raises(self):
+    def test_connect_without_api_key_raises(self, monkeypatch):
+        # hermetic (R6.1 DEV-R6.1-G1): the provider falls back to the process
+        # environment, so the test must not depend on the session's keys
+        monkeypatch.delenv("POLYGON_API_KEY", raising=False)
         provider = PolygonDataProvider(api_key="")
         with pytest.raises(ValueError, match="POLYGON_API_KEY"):
             provider.connect()

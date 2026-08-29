@@ -20,7 +20,7 @@ from datetime import date, timedelta
 from typing import ClassVar, Literal
 
 import numpy as np
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from alpha_lab.agents.data_infra.ifvg.search.identities import (
     SHA256_PATTERN,
@@ -43,6 +43,15 @@ from alpha_lab.propsim.calendar import (
 from alpha_lab.propsim.contract_evidence import (
     PropContractSupersession,
     assert_contract_not_superseded,
+)
+from alpha_lab.propsim.event_detail import (
+    EVENT_DETAIL_POLICY_NONE,
+    EVENT_DETAIL_SCHEMA_VERSION_NONE,
+    EVENT_DETAIL_STORAGE_NONE,
+    EventDetailBudget,
+    EventDetailPersistencePolicy,
+    EventDetailStoragePolicy,
+    assert_event_detail_policy_coherent,
 )
 from alpha_lab.propsim.firm_contracts import PropFirmContractPayload
 from alpha_lab.propsim.risk import PropRiskPolicyPayload
@@ -69,6 +78,7 @@ __all__ = [
     "PortfolioSimulationEnvelope",
     "AccountSimulationRun",
     "run_account_simulation",
+    "clock_policy_for_mode",
     "bootstrap_horizon_for",
     "UnsupportedSimulationModeError",
     "SimulationIdentityError",
@@ -138,6 +148,25 @@ class AccountSimulationPayload(FrozenContract):
     stress_scenario_id: str | None
     seed: int
     n_paths: int = Field(ge=1)
+    #: R6.1 D15 — the prop-event detail representation is part of the
+    #: identity: policy, storage representation, schema version, and the
+    #: registered budget (``none_v0`` = the R3–R6 representation; changing
+    #: any of them mints a new simulation id — persisted artifacts are never
+    #: widened).
+    event_detail_persistence_policy_id: EventDetailPersistencePolicy = EVENT_DETAIL_POLICY_NONE
+    event_detail_storage_policy_id: EventDetailStoragePolicy = EVENT_DETAIL_STORAGE_NONE
+    event_detail_schema_version: int = Field(default=EVENT_DETAIL_SCHEMA_VERSION_NONE, ge=0)
+    event_detail_budget: EventDetailBudget | None = None
+
+    @model_validator(mode="after")
+    def _event_detail_coherent(self):
+        assert_event_detail_policy_coherent(
+            self.event_detail_persistence_policy_id,
+            self.event_detail_storage_policy_id,
+            self.event_detail_schema_version,
+            self.event_detail_budget,
+        )
+        return self
 
 
 class AccountSimulationEnvelope(EnvelopeBase):
@@ -182,6 +211,23 @@ class PortfolioSimulationPayload(FrozenContract):
     stress_scenario_id: str | None
     seed: int
     n_paths: int = Field(ge=1)
+    #: R6.1 D15 — same identity-bearing representation fields as the account
+    #: simulation (no portfolio detail writer is wired in R6.1; the fields
+    #: keep the two identities structurally aligned).
+    event_detail_persistence_policy_id: EventDetailPersistencePolicy = EVENT_DETAIL_POLICY_NONE
+    event_detail_storage_policy_id: EventDetailStoragePolicy = EVENT_DETAIL_STORAGE_NONE
+    event_detail_schema_version: int = Field(default=EVENT_DETAIL_SCHEMA_VERSION_NONE, ge=0)
+    event_detail_budget: EventDetailBudget | None = None
+
+    @model_validator(mode="after")
+    def _event_detail_coherent(self):
+        assert_event_detail_policy_coherent(
+            self.event_detail_persistence_policy_id,
+            self.event_detail_storage_policy_id,
+            self.event_detail_schema_version,
+            self.event_detail_budget,
+        )
+        return self
 
 
 class PortfolioSimulationEnvelope(EnvelopeBase):
@@ -219,6 +265,14 @@ def _synthetic_days(count: int) -> list[date]:
             days.append(cursor)
         cursor += timedelta(days=1)
     return days
+
+
+def clock_policy_for_mode(mode: str) -> SimulatedClockPolicy:
+    """The simulated clock a mode walks under (historical calendar vs the
+    synthetic bootstrap/stress trading-day clock) — the single source both
+    the runner and the event-detail writer use."""
+
+    return HISTORICAL_CLOCK_POLICY if mode.startswith("historical") else BOOTSTRAP_CLOCK_POLICY
 
 
 def _breach_mode_for(mode: str, intrabar_scenario_policy_id: str | None) -> str:
@@ -450,11 +504,7 @@ def run_account_simulation(
     simulation_id = envelope.account_simulation_id
     mode = payload.simulation_mode
     breach_mode = _breach_mode_for(mode, payload.intrabar_scenario_policy_id)
-    clock_policy: SimulatedClockPolicy = (
-        HISTORICAL_CLOCK_POLICY
-        if mode.startswith("historical")
-        else BOOTSTRAP_CLOCK_POLICY
-    )
+    clock_policy: SimulatedClockPolicy = clock_policy_for_mode(mode)
 
     def _walk(
         blocks: Sequence[tuple[date, Sequence[AccountTrade]]],

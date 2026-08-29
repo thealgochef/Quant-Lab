@@ -61,7 +61,10 @@ class TestDatabentDataProvider:
         assert "NQ" in provider.supported_symbols
         assert "ES" in provider.supported_symbols
 
-    def test_connect_without_key_raises(self):
+    def test_connect_without_key_raises(self, monkeypatch):
+        # hermetic (R6.1 DEV-R6.1-G1): the provider falls back to the process
+        # environment, so the test must not depend on the session's keys
+        monkeypatch.delenv("DATABENTO_API_KEY", raising=False)
         provider = DatabentDataProvider(api_key="")
         with pytest.raises(ValueError, match="DATABENTO_API_KEY"):
             provider.connect()

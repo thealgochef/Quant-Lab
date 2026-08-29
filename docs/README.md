@@ -101,7 +101,19 @@ v3, `scripts/ifvg_mbp1_coverage_diagnostic.py`), and R6 (the V1 KMeans regime la
 diagnostics,store}.py`, ML fixtures 2 + 4-KMeans, and the Regime Lane
 panel `scripts/ifvg_regime_panels.py` — kmeans_v1 only; the
 GMM/minibatch/spectral/Nyström implementations are the post-V1
-regime-expansion release) implementations are complete;
+regime-expansion release), and R6.1 (the regime-lane correction: the
+5m/15m context-bar panel materializer + `IFVG_CONTEXT_BAR_PANEL_V1` /
+`BP0_CONTEXT_BAR_PANEL`, fold schedules + fold-set artifacts, the verified
+observation seam + executor, the descriptive OOS-assignment and fold-local
+feature artifacts, the regime study inside the 16-stage pipeline
+(`ifvg/ml/regime_study.py`, `ifvg/search/pipeline_regime.py`), verified
+owner-decision evidence `ifvg/search/owner_decisions.py` + the
+`ifvg_regime_promotion.py` CLI, the five stratification classes
+`ifvg/ml/regime_strat*.py`, the bundle-aware CatBoost rung
+`ifvg/ml/catboost_bundle_model.py` + D13 comparison rows, the D15 prop-event
+detail `alpha_lab/propsim/event_detail.py`, per-fold stability + grain
+transition policies, and the regime surfaces of the pipeline tab)
+implementations are complete;
 **R1 acceptance is blocked pending the owner-approved verification fixture**
 (`VerificationAuthorizationRef`; owner decisions 21/R-5) — no real five-day
 slice runs until it exists, and no research interpretation attaches to any

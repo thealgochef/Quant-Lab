@@ -86,6 +86,17 @@ def test_identity_projection_audit_all_pairs() -> None:
         "Mbp1PartitionGapManifest",
         "Mbp1CompletenessCompilationReport",
         "Mbp1CoverageDiagnosticReport",
+        # R6.1 pairs — panel artifact, fold schedule / set, OOS assignment,
+        # owner decision, stratified report
+        "ContextBarPanelArtifact",
+        "FoldSchedule",
+        "FoldSetArtifact",
+        "RegimeOosAssignment",
+        "OwnerDecisionArtifact",
+        "RegimeStratifiedReport",
+        "RegimeFoldFeatureArtifact",
+        "RegimeControlledStudy",
+        "RegimeCohortModelStudy",
     } <= names
     for pair in pairs:
         # payload → id → envelope → reload determinism

@@ -175,6 +175,7 @@ ifvg_prop_robust_config_search_v1:
     R5B_mbp1_offline_activation: {implementation_status: "complete", acceptance_status: "transitively_blocked_by_R1"}
     R5B_1_mbp1_coverage_correction: {implementation_status: "complete", acceptance_status: "transitively_blocked_by_R1", coverage_policy: "mbp1_source_coverage_declared_evidence_v2", sequence_jump_rule: "withdrawn (diagnostic only)"}
     R6_kmeans_regime_lane: {implementation_status: "complete", acceptance_status: "transitively_blocked_by_R1"}
+    R6_1_regime_correction: {implementation_status: "complete", acceptance_status: "transitively_blocked_by_R1", regime_stores: "bundle_feature_views, context_bar_panels, fold_schedules, fold_sets, regime_oos_assignments, regime_fold_features, owner_decisions, regime_stratified_reports, regime_controlled_studies, regime_cohort_model_studies", owner_proposals: "DRAFT_OWNER_DECISION_PROPOSALS (25/28/29/30 per protocol; not authorizations)", adversarial_round: "28 findings (6 major / 4 medium / 18 minor) dispositioned; 0 open"}
     V1_hardening: {implementation_status: "not_started", acceptance_status: "transitively_blocked_by_R1"}
   verification_policy:
     policy_id: "verification_fixed_allowlist_max5_v1"

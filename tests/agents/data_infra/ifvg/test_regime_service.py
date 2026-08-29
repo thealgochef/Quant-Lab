@@ -389,18 +389,25 @@ def test_sample_adequacy_gate_blocks_under_sampled_fits_without_shrinking_k():
 
 
 def test_temporal_facts_are_id_spelling_invariant_and_oos():
-    """Review F3: persistence/transitions come from the OOS timeline ordered
-    by the observation timestamp within each fold — renaming every id
-    changes nothing."""
+    """Review F3 (+ R6.1 D11): the CANDIDATE-EVENT transition facts come from
+    the OOS timeline ordered by the observation timestamp within each fold
+    (day/session resets, maximum gap) — renaming every id changes nothing;
+    a candidate grain carries NO panel temporal facts."""
 
     fixture = known_cluster_fixture(k=3, n=600)
     run = _run(fixture, bootstrap_refits=2)
     stability = run.assessment.payload.stability
     assert stability.temporal_order_policy == (
-        "oos_test_rows_by_observation_ts_within_fold_v1"
+        "oos_test_rows_by_observation_ts_within_fold_day_session_reset_max_gap_v2"
     )
-    assert stability.temporal_transition_count > 0
-    assert stability.temporal_persistence is not None
+    assert stability.session_scheme_id == "ifvg_doc_session_scheme_et_v1"
+    assert stability.candidate_event_pairs_counted > 0
+    assert stability.candidate_event_persistence is not None
+    assert stability.candidate_event_maximum_gap_seconds == 7200
+    # a candidate grain is NOT a regular time series: no panel facts
+    assert stability.transition_matrix == ()
+    assert stability.temporal_persistence is None
+    assert stability.temporal_transition_count == 0
 
     def _rename(value: str) -> str:
         return hashlib.sha256(value.encode()).hexdigest()[:16]
@@ -418,12 +425,12 @@ def test_temporal_facts_are_id_spelling_invariant_and_oos():
         bootstrap_refits=2,
     )
     other = renamed.assessment.payload.stability
-    assert other.temporal_persistence == stability.temporal_persistence
-    assert other.transition_matrix == stability.transition_matrix
-    assert other.temporal_transition_count == stability.temporal_transition_count
+    assert other.candidate_event_persistence == stability.candidate_event_persistence
+    assert other.candidate_event_transition_matrix == stability.candidate_event_transition_matrix
+    assert other.candidate_event_pairs_counted == stability.candidate_event_pairs_counted
     # the OOS test rows are the timeline: the count never exceeds them
     oos = run.assignments[(run.assignments["partition"] == "test") & run.assignments["valid"]]
-    assert stability.temporal_transition_count < len(oos)
+    assert stability.candidate_event_pairs_counted < len(oos)
 
 
 def test_bootstrap_and_internal_scores_see_training_rows_only():
@@ -478,10 +485,15 @@ def test_k2_margins_and_winsorization_execute():
 # ── the CONTEXT_BAR_PANEL grain (Amendment P1-B) ─────────────────────────────
 
 
+_BP0 = resolve_bundle("BP0_CONTEXT_BAR_PANEL").resolved_feature_bundle_id
+#: R6.1 (§6.A): the panel grain references the panel bundle and its features
+_PANEL_INPUTS = ("cbp_realized_range_12", "cbp_realized_volatility_12")
+
+
 def _panel_protocol(interval: int):
     return resolve_kmeans_protocol(
-        input_feature_bundle_ref=_B0,
-        resolved_input_features=REGIME_INPUT_FEATURES,
+        input_feature_bundle_ref=_BP0,
+        resolved_input_features=_PANEL_INPUTS,
         observation_granularity=ObservationGranularity.CONTEXT_BAR_PANEL,
         panel_interval_seconds=interval,
         panel_source_artifact_id="b" * 64,
@@ -490,12 +502,13 @@ def _panel_protocol(interval: int):
 
 
 def test_panel_pit_assignment_is_last_completed_bar_never_future_and_oos_only():
-    """Amendment P1-B (+ review F4): 5m/15m panels assign the frozen
-    OUT-OF-SAMPLE regime of the LAST completed bar at or before each
-    candidate's as-of instant; in-sample rows are never consulted; the
-    choice is independent of input row order; a candidate before the first
-    completed bar (or on a bar without an OOS assignment) is a typed
-    coverage_gap."""
+    """Amendment P1-B (+ review F4; R6.1 owner correction 2): 5m/15m panels
+    assign the frozen OUT-OF-SAMPLE regime of the LAST completed bar at or
+    before each candidate's as-of instant; in-sample rows are never
+    consulted; the choice is independent of input row order; a candidate
+    before the first completed bar is ``no_completed_panel_bar``; a bar
+    without an OOS assignment is ``coverage_gap``; a bar older than one
+    interval is ``panel_stale``."""
 
     for interval in (300, 900):
         protocol = _panel_protocol(interval)
@@ -504,7 +517,10 @@ def test_panel_pit_assignment_is_last_completed_bar_never_future_and_oos_only():
         panel_frame = pd.DataFrame(
             {
                 "row_id": [f"bar_{interval}_{i}" for i in range(4)],
+                "trading_day": "2026-01-13",
                 "bar_close_ts_utc": [ts.isoformat() for ts in bar_close],
+                "cbp_valid": True,
+                "cbp_missing_reason": None,
             }
         )
         rows = [
@@ -546,13 +562,14 @@ def test_panel_pit_assignment_is_last_completed_bar_never_future_and_oos_only():
                 panel_frame, order, candidates, protocol=protocol
             ).set_index("candidate_id")
             gap = out.loc["before_first"]
-            assert not gap["valid"] and gap["missing_reason"] == "coverage_gap"
+            assert not gap["valid"] and gap["missing_reason"] == "no_completed_panel_bar"
             at_close = out.loc["at_bar2_close"]
             assert at_close["valid"] and at_close["panel_row_id"] == f"bar_{interval}_1"
             assert int(at_close["fold_index"]) == 0  # lowest OOS fold wins
             assert int(at_close["fold_local_cluster_id"]) == 1
             assert at_close["partition"] == "test"
             assert at_close["regime_fit_id"] == "0" * 64
+            assert at_close["elapsed_seconds_since_bar_close"] == 0.0
             mid = out.loc["mid_bar3"]  # bar 3 is NOT complete at the as-of instant
             assert mid["valid"] and mid["panel_row_id"] == f"bar_{interval}_1"
             after = out.loc["after_bar4"]  # bar 4 (index 3) has no OOS row
@@ -562,6 +579,13 @@ def test_panel_pit_assignment_is_last_completed_bar_never_future_and_oos_only():
         assign_panel_regimes_to_candidates(
             panel_frame,
             panel_assignments.drop(columns=["partition"]),
+            candidates,
+            protocol=protocol,
+        )
+    with pytest.raises(ValueError, match="required columns"):
+        assign_panel_regimes_to_candidates(
+            panel_frame.drop(columns=["cbp_valid"]),
+            panel_assignments,
             candidates,
             protocol=protocol,
         )
@@ -601,8 +625,10 @@ def _synthetic_panel(interval: int = 300, days: int = 40, bars_per_day: int = 12
                     "row_id": f"bar_{day_index:02d}_{bar:02d}",
                     "trading_day": day,
                     "bar_close_ts_utc": close.isoformat(),
-                    REGIME_INPUT_FEATURES[0]: float(point[0]),
-                    REGIME_INPUT_FEATURES[1]: float(point[1]),
+                    "cbp_valid": True,
+                    "cbp_missing_reason": None,
+                    _PANEL_INPUTS[0]: float(point[0]),
+                    _PANEL_INPUTS[1]: float(point[1]),
                 }
             )
     panel = pd.DataFrame(rows)
@@ -642,6 +668,12 @@ def test_panel_grain_fit_path_runs_end_to_end_and_assigns_candidates_pit():
 
     panel, folds, trading_days = _synthetic_panel()
     protocol = _panel_protocol(300)
+    # R6.1 (D2): the panel protocol's pinned source must be among the
+    # verified observation sources
+    with pytest.raises(ValueError, match="observation source ids do not include"):
+        run_regime_protocol(
+            panel, folds, protocol, source_artifact_ids=("c" * 64,), bootstrap_refits=2
+        )
     run = run_regime_protocol(
         panel, folds, protocol, source_artifact_ids=("b" * 64,), bootstrap_refits=2
     )
@@ -654,13 +686,14 @@ def test_panel_grain_fit_path_runs_end_to_end_and_assigns_candidates_pit():
     oos = run.assignments[(run.assignments["partition"] == "test") & run.assignments["valid"]]
     assert set(oos["fold_index"]) == {0, 1}
     # candidates: one inside fold 0's test window (OOS), one in the
-    # training-only span (no frozen OOS regime → coverage_gap)
+    # training-only span (no frozen OOS regime → coverage_gap); the as-of
+    # instants sit within one interval of the last completed bar
     candidates = pd.DataFrame(
         {
             "candidate_id": ["oos_candidate", "in_sample_span"],
             "as_of_ts_utc": [
-                f"{trading_days[32]}T15:07:00Z",
-                f"{trading_days[10]}T15:07:00Z",
+                f"{trading_days[32]}T15:03:00Z",
+                f"{trading_days[10]}T15:03:00Z",
             ],
         }
     )
@@ -670,7 +703,7 @@ def test_panel_grain_fit_path_runs_end_to_end_and_assigns_candidates_pit():
     assigned = out.loc["oos_candidate"]
     assert assigned["valid"] and assigned["partition"] == "test"
     assert int(assigned["fold_index"]) == 0
-    # bars 0..11 close 14:05 … 15:00; at 15:07 the last COMPLETED bar is 11
+    # bars 0..11 close 14:05 … 15:00; at 15:03 the last COMPLETED bar is 11
     assert assigned["panel_row_id"] == "bar_32_11"
     assert assigned["regime_fit_id"] == run.fold_fits[0].fit_envelope.regime_fit_id
     span = out.loc["in_sample_span"]
@@ -729,8 +762,8 @@ def test_stability_report_carries_transitions_and_recurrence(cluster_run):
     assert stability.bootstrap_aligned_ami_mean > 0.9  # well-separated blobs
     assert stability.bootstrap_aligned_ami_low is not None
     assert set(stability.per_cluster_agreement) == {0, 1, 2}
-    assert stability.temporal_persistence is not None
-    assert len(stability.transition_matrix) == 3
+    assert stability.candidate_event_persistence is not None
+    assert len(stability.candidate_event_transition_matrix) == 3
     assert stability.fold_to_fold_recurrence is not None
     assert stability.separation_min_centroid_distance is not None
     assert stability.alignment_space == "scaled_input_features_v1"
@@ -741,3 +774,260 @@ def test_stability_report_carries_transitions_and_recurrence(cluster_run):
         assert {name for name, _ in descriptors} <= set(REGIME_INPUT_FEATURES)
         magnitudes = [abs(value) for _name, value in descriptors]
         assert magnitudes == sorted(magnitudes, reverse=True)
+
+
+# ── R6.1 H — per-fold bootstrap, renamed gate, grain-aware transitions ───────
+
+#: The R6 release's fold-0 fit identity for fixture 2 (k=3, n=600) under B0
+#: with no winsorization (`../R6/browser-smoke/MANIFEST.json`
+#: `healthy.first_fit_id`). Fit identity ignores every stability semantic.
+R6_GOLDEN_FOLD0_FIT_ID = "1e183cd722612c28c210396e0350ddc50edf3576c16dddbbb005b2a39360f7d0"
+
+
+def test_fit_identity_is_the_r6_golden_constant_and_ignores_stability_semantics(cluster_run):
+    _fixture, _folds_, _protocol_, run = cluster_run
+    assert run.fold_fits[0].fit_envelope.regime_fit_id == R6_GOLDEN_FOLD0_FIT_ID
+    assert run.fold_fits[0].fit_envelope.payload.resolved_regime_protocol_id == (
+        run.protocol.resolved_regime_protocol_id
+    )
+
+
+def test_bootstrap_runs_on_every_valid_fold_with_fold_seeds(cluster_run):
+    """D10: every valid fold is bootstrapped deterministically
+    (`rng(7 + fold)`, refit seeds `1000 + 1000·fold + i`); fold 0 reproduces
+    the R6 reference-fold numbers; the protocol-wide MINIMUM fold mean is
+    the gated quantity under the renamed `minimum_bootstrap_aligned_ami_mean`."""
+
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_diagnostics import (
+        bootstrap_fold_stability,
+        bootstrap_plan,
+    )
+
+    fixture, _folds_, _protocol_, run = cluster_run
+    stability = run.assessment.payload.stability
+    per_fold = stability.per_fold_bootstrap_stability
+    assert [entry.fold_index for entry in per_fold] == sorted(
+        fit.fold_index for fit in run.fold_fits
+    )
+    assert all(entry.refit_count == 10 for entry in per_fold)
+    assert stability.bootstrap_fold_coverage == 1.0
+    reference = stability.reference_fold_bootstrap_stability
+    assert reference is per_fold[0] or reference == per_fold[0]
+    # the R6 scalar aliases ARE the reference fold's numbers
+    assert stability.bootstrap_aligned_ami_mean == reference.aligned_ami_mean
+    assert stability.bootstrap_aligned_ami_low == reference.aligned_ami_p05
+    assert stability.per_cluster_agreement == reference.per_cluster_agreement
+    # the protocol-wide minimum is what the gate reads
+    assert stability.protocol_min_bootstrap_aligned_ami_mean == min(
+        entry.aligned_ami_mean for entry in per_fold
+    )
+    assert stability.bootstrap_gate_scope == "protocol_wide_minimum_fold_mean_v1"
+    assert stability.minimum_bootstrap_aligned_ami_mean_applied == 0.5
+    assert stability.bootstrap_seed_policy.startswith("rng7_plus_fold")
+    # deterministic per fold: recomputing fold 1 alone reproduces the report
+    fit = run.fold_fits[1]
+    indexed = fixture.view.frame.set_index(fixture.view.frame["candidate_id"].astype(str))
+    matrix = fit.preprocessing.transform(indexed.loc[list(fit.preprocessing.training_row_ids)])
+    again = bootstrap_fold_stability(fit, matrix, k=3, refits=10)
+    assert again == per_fold[1]
+    # the budget cap reduces the per-fold count only beyond 8 valid folds
+    assert bootstrap_plan(3, refits_per_fold=50, total_cap=400) == 50
+    assert bootstrap_plan(8, refits_per_fold=50, total_cap=400) == 50
+    assert bootstrap_plan(9, refits_per_fold=50, total_cap=400) == 44
+    assert bootstrap_plan(0, refits_per_fold=50, total_cap=400) == 0
+    assert stability.bootstrap_total_refit_cap == 400
+    assert stability.bootstrap_refits_per_fold_requested == 10
+
+
+def test_bootstrap_uses_the_registry_pinned_parameters(monkeypatch):
+    """The refits read the registry pins (never a literal dict): a patched
+    pin reaches every KMeans refit."""
+
+    import alpha_lab.agents.data_infra.ifvg.ml.regime_diagnostics as diagnostics
+
+    seen: list[dict] = []
+    original = diagnostics.KMeans
+
+    class _Spy(original):
+        def __init__(self, **kwargs):
+            seen.append(dict(kwargs))
+            super().__init__(**kwargs)
+
+    monkeypatch.setattr(diagnostics, "KMeans", _Spy)
+    fixture = known_cluster_fixture(k=3, n=200)
+    _run(fixture, bootstrap_refits=2)
+    pinned = dict(diagnostics.REGIME_ALGORITHM_REGISTRY["kmeans_v1"].pinned_parameters)
+    pinned.pop("random_state")
+    assert seen, "the bootstrap must construct refits"
+    for kwargs in seen:
+        assert {k: kwargs[k] for k in pinned} == pinned
+        assert kwargs["random_state"] >= 1000
+
+
+def test_renamed_ami_gate_blocks_on_the_protocol_wide_minimum(monkeypatch):
+    """The gate fires as `bootstrap_aligned_ami_below_minimum` when ANY
+    fold's mean AMI is below the stamped minimum — the word "advisory" is
+    gone from code."""
+
+    import alpha_lab.agents.data_infra.ifvg.ml.regime_diagnostics as diagnostics
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_contracts import (
+        FoldBootstrapStability,
+    )
+
+    original = diagnostics.bootstrap_fold_stability
+
+    def _degraded_last_fold(fit, matrix, *, k, refits):
+        entry = original(fit, matrix, k=k, refits=refits)
+        if fit.fold_index == 2:
+            return FoldBootstrapStability(
+                fold_index=entry.fold_index,
+                refit_count=entry.refit_count,
+                aligned_ami_mean=0.1,
+                aligned_ami_p05=0.05,
+                per_cluster_agreement=entry.per_cluster_agreement,
+            )
+        return entry
+
+    monkeypatch.setattr(diagnostics, "bootstrap_fold_stability", _degraded_last_fold)
+    fixture = known_cluster_fixture(k=3, n=600)
+    run = _run(fixture, bootstrap_refits=2)
+    stability = run.assessment.payload.stability
+    assert stability.bootstrap_aligned_ami_mean > 0.9  # the REFERENCE fold is fine
+    assert stability.protocol_min_bootstrap_aligned_ami_mean == 0.1
+    assert "bootstrap_aligned_ami_below_minimum" in stability.gate_failures
+    assert not run.assessment.payload.gates_passed
+    import inspect
+
+    assert "advisory" not in inspect.getsource(diagnostics).lower()
+
+
+def test_candidate_event_transitions_reset_on_day_session_and_gap():
+    """D11: adjacent OOS candidates pair only within one trading day AND one
+    named session and within the stamped maximum gap; every dropped pair is
+    counted by cause; elapsed seconds are recorded."""
+
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_diagnostics import (
+        candidate_event_temporal_facts,
+        oos_regime_timeline,
+    )
+
+    # NY session (08:00–14:00 ET = 13:00–19:00 UTC in January)
+    stamps = [
+        ("a", "2026-01-13T14:00:00Z", 0),  # ny
+        ("b", "2026-01-13T14:30:00Z", 0),  # ny, +1800 s → counted (same)
+        ("c", "2026-01-13T17:00:00Z", 1),  # ny, +9000 s → dropped (gap > 7200)
+        ("d", "2026-01-13T17:30:00Z", 1),  # ny, +1800 s → counted (same)
+        ("e", "2026-01-13T21:00:00Z", 2),  # 16:00 ET = asia window → session reset
+        ("f", "2026-01-13T23:30:00Z", 2),  # 18:30 ET → next trading day → day reset
+        ("g", "2026-01-13T23:45:00Z", 0),  # asia, +900 s → counted (2→0)
+    ]
+    assignments = pd.DataFrame(
+        {
+            "row_id": [row_id for row_id, _ts, _c in stamps],
+            "fold_index": 0,
+            "partition": "test",
+            "valid": True,
+            "observation_ts_utc": [ts for _r, ts, _c in stamps],
+            "canonical_reporting_cluster_id": [c for _r, _t, c in stamps],
+        }
+    )
+    timeline = oos_regime_timeline(assignments)
+    assert list(timeline["session"]) == ["ny", "ny", "ny", "ny", "asia", "asia", "asia"]
+    assert list(timeline["trading_day"])[:5] == ["2026-01-13"] * 5
+    assert list(timeline["trading_day"])[5:] == ["2026-01-14"] * 2
+    assert timeline["elapsed_seconds"].iloc[1] == 1800.0
+    facts = candidate_event_temporal_facts(assignments, 3, maximum_gap_seconds=7200)
+    assert facts["pairs_counted"] == 3
+    assert facts["pairs_dropped_gap"] == 1
+    assert facts["pairs_dropped_boundary"] == {"trading_day": 1, "session": 1}
+    assert facts["persistence"] == pytest.approx(2 / 3)
+    assert facts["transition_matrix"][0] == (1.0, 0.0, 0.0)
+    assert facts["transition_matrix"][2] == (1.0, 0.0, 0.0)
+    assert facts["elapsed_seconds_summary"]["max"] == 1800.0
+    # pairs never cross folds
+    two_folds = assignments.copy()
+    two_folds.loc[two_folds["row_id"] == "b", "fold_index"] = 1
+    assert (
+        candidate_event_temporal_facts(two_folds, 3, maximum_gap_seconds=7200)["pairs_counted"]
+        == 2
+    )
+
+
+def test_panel_transitions_are_consecutive_completed_bars_within_a_trading_day():
+    """D11 panel half: a pair counts iff same fold, same trading day, elapsed
+    == interval, and the earlier bar is not partial."""
+
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_diagnostics import (
+        panel_temporal_facts,
+    )
+
+    base = pd.Timestamp("2026-01-13T14:00:00Z")
+    rows = [
+        ("b0", base, "2026-01-13", False, 0),
+        ("b1", base + pd.Timedelta(seconds=300), "2026-01-13", False, 0),  # counted
+        ("b2", base + pd.Timedelta(seconds=600), "2026-01-13", True, 1),  # counted (0→1)
+        ("b3", base + pd.Timedelta(seconds=900), "2026-01-13", False, 1),  # dropped: b2 partial
+        ("b4", base + pd.Timedelta(seconds=1500), "2026-01-13", False, 1),  # dropped: gap
+        ("b5", base + pd.Timedelta(seconds=1800), "2026-01-14", False, 2),  # dropped: day
+        ("b6", base + pd.Timedelta(seconds=2100), "2026-01-14", False, 2),  # counted
+    ]
+    frame = pd.DataFrame(
+        {
+            "row_id": [r[0] for r in rows],
+            "bar_close_ts_utc": [r[1].isoformat() for r in rows],
+            "trading_day": [r[2] for r in rows],
+            "is_final_partial": [r[3] for r in rows],
+        }
+    )
+    assignments = pd.DataFrame(
+        {
+            "row_id": [r[0] for r in rows],
+            "fold_index": 0,
+            "partition": "test",
+            "valid": True,
+            "observation_ts_utc": [r[1].isoformat() for r in rows],
+            "canonical_reporting_cluster_id": [r[4] for r in rows],
+        }
+    )
+    facts = panel_temporal_facts(assignments, frame, 3, interval_seconds=300)
+    assert facts["transition_count"] == 3
+    assert facts["pairs_dropped_gap"] == 2  # the partial-bar chain break + the 600 s gap
+    assert facts["pairs_dropped_boundary"] == 1
+    assert facts["persistence"] == pytest.approx(2 / 3)
+
+
+def test_per_fold_canonical_occupancy_shares_the_rows_gate_key_space(cluster_run):
+    _fixture, _folds_, _protocol_, run = cluster_run
+    coverage = run.assessment.payload.coverage
+    keys = set(coverage.per_fold_canonical_occupancy)
+    expected = {f"{fit.fold_index}:{cluster}" for fit in run.fold_fits for cluster in range(3)}
+    assert keys == expected
+    for fit in run.fold_fits:
+        total = sum(
+            share
+            for key, share in coverage.per_fold_canonical_occupancy.items()
+            if key.startswith(f"{fit.fold_index}:")
+        )
+        assert total == pytest.approx(1.0)
+
+
+# ── R6.1 safety review S9: the thread-control dependency is imported lazily ──
+
+
+def test_regime_kernel_names_the_missing_thread_control_dependency(monkeypatch):
+    """``threadpoolctl`` is a scikit-learn dependency the repo does not declare:
+    the regime lane imports without it and the kernel fails with the exact
+    reason when it is missing (never a bare ImportError at module import)."""
+
+    import importlib
+    import re
+    import sys
+
+    from alpha_lab.agents.data_infra.ifvg.ml import regime_service
+
+    assert "threadpoolctl" not in regime_service.__dict__  # no module-level import
+    monkeypatch.setitem(sys.modules, "threadpoolctl", None)  # `import threadpoolctl` → ImportError
+    with pytest.raises(RuntimeError, match=re.escape(regime_service.THREADPOOLCTL_MISSING_MESSAGE)):
+        regime_service.run_regime_protocol(None, None, None, source_artifact_ids=())
+    monkeypatch.undo()
+    assert importlib.import_module("threadpoolctl").threadpool_limits is not None

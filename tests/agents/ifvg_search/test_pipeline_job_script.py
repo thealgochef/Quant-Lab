@@ -54,7 +54,27 @@ def synthetic_pipeline_entry(charter, semantic, *, store_root) -> PipelineWiring
         raise PermissionError(
             "the synthetic pipeline entry serves synthetic-marker charters only"
         )
-    fixture = build_pipeline_fixture(Path(store_root).parent)
+    # R6.1: the fixture SHAPE derives from the frozen regime study request
+    # (grain → panel seam; supervised classes → the frozen authority ids)
+    request = getattr(semantic.payload, "regime_study", None)
+    if request is None:
+        fixture = build_pipeline_fixture(Path(store_root).parent)
+    else:
+        shape = ("panel" if request.is_panel else "candidate") + (
+            "_supervised" if request.requires_supervision else ""
+        )
+        authority = (
+            (
+                str(request.regime_promotion_decision_id),
+                str(request.owner_decision_artifact_id),
+                str(request.required_capability_assessment_id),
+            )
+            if request.requires_supervision
+            else None
+        )
+        fixture = build_pipeline_fixture(
+            Path(store_root).parent, regime_study=shape, regime_authority=authority
+        )
     return fixture["wiring"]
 
 

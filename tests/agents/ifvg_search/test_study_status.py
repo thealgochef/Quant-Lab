@@ -140,8 +140,22 @@ def test_every_section31_state_is_registered() -> None:
         "pipeline_no_runs",
         "lineage_not_comparable",
         "browser_qa_unavailable",
+        # R6.1: the two stratified-result states (plan §6.G)
+        "insufficient_regime_partition",
+        "regime_status_below_minimum",
     }
     assert set(EMPTY_STATE_PRESENTATIONS) == expected
+    assert (
+        EMPTY_STATE_PRESENTATIONS["insufficient_regime_partition"].key
+        is EmptyStateKey.INSUFFICIENT_REGIME_PARTITION
+    )
+    assert (
+        EMPTY_STATE_PRESENTATIONS["regime_status_below_minimum"].key
+        is EmptyStateKey.REGIME_STATUS_BELOW_MINIMUM
+    )
+    assert "nothing here promotes" in (
+        EMPTY_STATE_PRESENTATIONS["regime_status_below_minimum"].explanation
+    )
     for state_id, presentation in EMPTY_STATE_PRESENTATIONS.items():
         assert presentation.heading.strip(), state_id
         assert len(presentation.explanation) > 30, state_id

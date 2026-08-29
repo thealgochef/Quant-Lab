@@ -42,7 +42,9 @@ from pydantic import Field, model_validator
 
 from ..data_access import allowlist_sha256
 from ..ml.decision_policies import S11_BLOCKED_REASON
+from ..ml.regime_study import RegimeStudyRequest
 from ..preparation import _write_json_atomic
+from . import pipeline_regime as _regime
 from .authorization import SyntheticAuthorizationMarker
 from .charter import SearchCharterEnvelope, SimulationProtocol
 from .failure import FailureReason, sanitize_failure_message
@@ -147,6 +149,10 @@ POST_V1_REGIME_ALGORITHM_KEYS: tuple[str, ...] = (
 _STATE_FILENAME = "pipeline_state.json"
 _CANCEL_SENTINEL = "cancel.requested"
 _PROP_VECTORS_SIDECAR = "prop_vectors.json"
+#: R6.1: core_replay_id -> {account_simulation_id: [firm_label, mode]} of the
+#: simulations THIS stage persisted (attempt-invariant; reused attempts
+#: recover it from the prior stage result — never a store scan)
+_ACCOUNT_SIMULATIONS_SIDECAR = "account_simulations.json"
 
 
 class PipelineRunScope(StrEnum):
@@ -267,6 +273,9 @@ class PipelineSemanticSpecPayload(FrozenContract):
     simulation_protocol: SimulationProtocol
     software_commits: ImmutableMap[str, str]
     stage_plan: tuple[QuantLabPipelineStage, ...]
+    #: R6.1 (D1): the frozen regime study request — None for every plan that
+    #: runs no regime study (its absence is part of the identity too).
+    regime_study: RegimeStudyRequest | None = None
 
     @model_validator(mode="after")
     def _lawful(self):
@@ -308,8 +317,25 @@ class PipelineSemanticSpecPayload(FrozenContract):
             raise ValueError("07_derive_labels requires a label policy id")
         if QuantLabPipelineStage.S08_BUILD_FOLDS in planned and not self.fold_protocol_id:
             raise ValueError("08_build_folds requires a fold protocol id")
-        if QuantLabPipelineStage.S09_TRAIN_MODELS in planned and not self.model_protocol_id:
-            raise ValueError("09_train_models requires a model protocol id")
+        if (
+            QuantLabPipelineStage.S09_TRAIN_MODELS in planned
+            and not self.model_protocol_id
+            and self.regime_study is None
+        ):
+            raise ValueError("09_train_models requires a model protocol id (or a regime study)")
+        if self.regime_study is not None:
+            # R6.1 (D14): computation-path-scoped stage rules — a descriptive
+            # study runs S09a only; model-bearing classes require the labels,
+            # a supervised protocol, and the exact frozen authority (validated
+            # by the request itself)
+            problems = self.regime_study.stage_plan_problems(
+                feature_bundle_ids=tuple(self.feature_bundle_ids),
+                stage_values=tuple(stage.value for stage in plan),
+                label_policy_id=self.label_policy_id,
+                model_protocol_id=self.model_protocol_id,
+            )
+            if problems:
+                raise ValueError("regime study: " + "; ".join(problems))
         return self
 
 
@@ -406,6 +432,9 @@ class StagePlanBlockedError(PermissionError):
 
 def derive_stage_plan_readiness(
     spec: PipelineSemanticSpecPayload,
+    *,
+    store_root: Path | None = None,
+    run_scope: str | None = None,
 ) -> StagePlanReadinessReport:
     """Per-stage availability for the SELECTED plan (capability-scoped).
 
@@ -420,6 +449,7 @@ def derive_stage_plan_readiness(
     from ..features.feature_blocks import BlockUnavailableError  # noqa: PLC0415
     from ..features.feature_bundles import resolve_bundle  # noqa: PLC0415
     from ..ml.model_protocols import (  # noqa: PLC0415
+        CATBOOST_BUNDLE_PROTOCOL_ID,
         CATBOOST_PROTOCOL_ID,
         LOGISTIC_PROTOCOL_ID,
         MODEL_PROTOCOL_REGISTRY,
@@ -434,17 +464,32 @@ def derive_stage_plan_readiness(
             bundle_block_reason = sanitize_failure_message(str(error))
             break
     model_block_reason: str | None = None
+    bundle_parametrized = bool(_mbp1_bearing_bundles(spec.feature_bundle_ids))
     if (
         bundle_block_reason is None
         and spec.model_protocol_id == CATBOOST_PROTOCOL_ID
-        and _mbp1_bearing_bundles(spec.feature_bundle_ids)
+        and bundle_parametrized
     ):
-        # R5B: bundle-parametrized rungs exist for the logistic protocol only —
-        # the CatBoost fold runner is tier-locked in the frozen M0-M3 lane
+        # R5B/R6.1: the frozen-lane CatBoost fold runner is tier-locked in the
+        # M0-M3 lane; bundle-parametrized plans run the logistic protocol or
+        # the bundle-aware CatBoost rung (research-only)
         model_block_reason = (
             f"{CATBOOST_PROTOCOL_ID} has no bundle-parametrized wiring for "
             "MBP-1-bearing bundles (the CatBoost fold runner is tier-locked "
-            f"in the frozen M0-M3 lane); select {LOGISTIC_PROTOCOL_ID}"
+            f"in the frozen M0-M3 lane); select {LOGISTIC_PROTOCOL_ID} or the "
+            f"bundle-aware {CATBOOST_BUNDLE_PROTOCOL_ID}"
+        )
+    elif (
+        bundle_block_reason is None
+        and spec.model_protocol_id == CATBOOST_BUNDLE_PROTOCOL_ID
+        and not bundle_parametrized
+    ):
+        # R6.1: the bundle-aware rung needs a resolved-bundle identity; the
+        # frozen-tier path has no wiring for it
+        model_block_reason = (
+            f"{CATBOOST_BUNDLE_PROTOCOL_ID} is the bundle-aware CatBoost rung of "
+            "bundle-parametrized (MBP-1-bearing) plans only; frozen-tier bundles "
+            f"pin {CATBOOST_PROTOCOL_ID}"
         )
     elif spec.model_protocol_id:
         if spec.model_protocol_id in POST_V1_REGIME_ALGORITHM_KEYS:
@@ -463,6 +508,20 @@ def derive_stage_plan_readiness(
                     f"model protocol {spec.model_protocol_id!r} is "
                     f"{entry.status.value}: {entry.reason}"
                 )
+    # R6.1: a regime study blocks its own stages until every registry /
+    # bundle / leakage / grain / stage-plan / frozen-authority check passes
+    regime_block_reason = _regime.regime_readiness_reason(
+        spec, store_root=store_root, run_scope=run_scope
+    )
+    regime_stages = {
+        stage
+        for stage in QuantLabPipelineStage
+        if stage.value in _regime.REGIME_STAGE_VALUES
+        and (
+            stage is not QuantLabPipelineStage.S14_BUILD_FRONTIER_AND_INSIGHTS
+            or (spec.regime_study is not None and spec.regime_study.stratified_reporting_requested)
+        )
+    }
     bundle_stages = {
         QuantLabPipelineStage.S05_MATERIALIZE_FEATURE_VIEWS,
         QuantLabPipelineStage.S06_VALIDATE_FEATURE_COVERAGE,
@@ -493,6 +552,14 @@ def derive_stage_plan_readiness(
                     stage=stage, state="blocked_capability", reason=model_block_reason
                 )
             )
+        elif regime_block_reason and stage in regime_stages:
+            entries.append(
+                StageReadiness(
+                    stage=stage,
+                    state="blocked_capability",
+                    reason=sanitize_failure_message(regime_block_reason),
+                )
+            )
         else:
             entries.append(StageReadiness(stage=stage, state="available", reason=None))
     launchable = all(entry.state != "blocked_capability" for entry in entries)
@@ -501,8 +568,11 @@ def derive_stage_plan_readiness(
 
 def assert_stage_plan_launchable(
     spec: PipelineSemanticSpecPayload,
+    *,
+    store_root: Path | None = None,
+    run_scope: str | None = None,
 ) -> StagePlanReadinessReport:
-    report = derive_stage_plan_readiness(spec)
+    report = derive_stage_plan_readiness(spec, store_root=store_root, run_scope=run_scope)
     if not report.launchable:
         blocked = [
             f"{entry.stage.value}: {entry.reason}"
@@ -555,6 +625,10 @@ class PipelineWiring:
     #: this seam; its result — never a caller string — is what
     #: ``validate_verification_run`` checks against the authorization.
     loaded_seed_snapshot_id_source: Callable[[], str] | None = None
+    #: R6.1: the VERIFIED replay-chart seam for panel-grain regime studies —
+    #: ``chart_id → VerifiedReplayChartArtifact`` (the panel is materialized
+    #: from the artifact's rehashed ``bars_tf.parquet`` only; never a frame).
+    context_bar_source: Callable[[str], Any] | None = None
 
 
 @dataclass
@@ -600,6 +674,9 @@ class _RunContext:
     forbidden_access_detected: bool = False
     synthetic: bool = False
     result_envelope: PipelineResultEnvelope | None = None
+    #: R6.1: the regime study's run-scoped state (observation ref, protocol,
+    #: fold sets, execution result, decisions) — see ``pipeline_regime``
+    regime: dict[str, Any] = field(default_factory=dict)
 
 
 def _now() -> str:
@@ -790,6 +867,7 @@ def _stage_s00_validate(context: _RunContext) -> tuple[tuple[str, ...], str]:
             "an MBP-1-bearing bundle is planned but no mbp1_evidence_source "
             "is wired (order-flow evidence is never fabricated)"
         )
+    problems.extend(_regime.regime_wiring_problems(spec, wiring))
     prop_planned = QuantLabPipelineStage.S12_RUN_PROP_HISTORICAL_REPLAYS in planned
     if prop_planned and not wiring.firm_specs:
         problems.append("12_run_prop_historical_replays planned but no firm specs wired")
@@ -817,10 +895,13 @@ def _stage_s00_validate(context: _RunContext) -> tuple[tuple[str, ...], str]:
     if problems:
         raise ValueError("input validation failed: " + "; ".join(problems))
 
-    readiness = assert_stage_plan_launchable(spec)
-
     context.synthetic = isinstance(
         charter.payload.owner_authorization, SyntheticAuthorizationMarker
+    )
+    # R6.1: readiness verified-loads a model-bearing study's frozen authority
+    # from THIS store before any path is constructed
+    readiness = assert_stage_plan_launchable(
+        spec, store_root=context.store_root, run_scope=_regime.regime_run_scope(context)
     )
     if spec.run_scope is PipelineRunScope.VERIFICATION_5D:
         if context.synthetic:
@@ -868,6 +949,13 @@ def _stage_s00_validate(context: _RunContext) -> tuple[tuple[str, ...], str]:
         json.dumps(readiness.model_dump(mode="json"), sort_keys=True) + "\n"
     ).encode("utf-8")
     return (), f"inputs validated; {branch}"
+
+
+def _regime_needs_child_tables(context: _RunContext) -> bool:
+    """R6.1: stratified regime reports read each child's executed-trade table."""
+
+    request = _regime.regime_request(context.semantic.payload)
+    return request is not None and bool(request.stratified_reporting_requested)
 
 
 def _stage_s01_prepare(context: _RunContext) -> tuple[tuple[str, ...], str]:
@@ -934,6 +1022,71 @@ def _stage_s02_replays(context: _RunContext) -> tuple[tuple[str, ...], str]:
                 "verified reuse: an immutable replay with this exact identity "
                 "already exists (zero replay invocations)"
             )
+            if _regime_needs_child_tables(context):
+                # R6.1: the regime study's stratified reports need this child's
+                # executed-trade tables, which a reused replay does not carry —
+                # re-derive them and REQUIRE the reproduction to match the
+                # persisted costed evaluation exactly (verified reuse by
+                # reproduction; the immutable replay is never rewritten)
+                try:
+                    result = context.wiring.child_runner(
+                        spec=spec_child, core_replay_id=core_replay_id
+                    )
+                    row["replay_invocations"] = 1
+                    persisted = _load_child_evaluation(
+                        context.store_root,
+                        _child_evaluation_envelope(
+                            core_replay_id, charter_payload.cost_policy
+                        ).costed_evaluation_id,
+                    )
+                    if persisted is None:
+                        # adversarial R6.1 S4: nothing persisted can verify the
+                        # reproduction under THIS cost policy — the re-derived
+                        # tables are NOT adopted as this run's evidence (the
+                        # child stays reused; its gates are not evaluated this
+                        # run and it is left out of the stratified reports)
+                        row["explanation"] = (
+                            "verified reuse: the immutable replay exists; the child was "
+                            "re-derived for the regime study's stratified reports but "
+                            "this cost policy has no persisted costed evaluation to "
+                            "reproduce — reproduction unverifiable; the re-derived "
+                            "tables are not this run's evidence"
+                        )
+                    else:
+                        reproduced = compute_strategy_metrics(
+                            result.tables,
+                            cost_points=cost,
+                            evaluation_config_hash=canonical_contract_sha256(
+                                {
+                                    "core_replay_id": core_replay_id,
+                                    "cost_policy": charter_payload.cost_policy.model_dump(
+                                        mode="json"
+                                    ),
+                                }
+                            ),
+                        )
+                        if reproduced.model_dump(mode="json") != persisted.model_dump(
+                            mode="json"
+                        ):
+                            raise RuntimeError(
+                                "the re-derived child tables do not reproduce the "
+                                "persisted costed evaluation; refusing to treat the "
+                                "reused replay as this run's evidence"
+                            )
+                        context.tables_by_child[core_replay_id] = result
+                        row["explanation"] = (
+                            "verified reuse by reproduction: the immutable replay "
+                            "exists; the child was re-derived for the regime study's "
+                            "stratified reports and reproduced its persisted costed "
+                            "evaluation"
+                        )
+                except Exception as error:  # noqa: BLE001 — per-child containment
+                    row["state"] = "failed"
+                    row["failure_reason"] = FailureReason.REPLAY.value
+                    row["explanation"] = sanitize_failure_message(str(error))
+                    _record_children(context)
+                    _checkpoint(context)
+                    continue
         else:
             row["state"] = "running"
             _record_children(context)
@@ -1030,10 +1183,11 @@ def _stage_s02_replays(context: _RunContext) -> tuple[tuple[str, ...], str]:
                 context.store_root, evaluation.costed_evaluation_id
             )
             if metrics is None:
-                row["explanation"] = (
-                    "reused replay has no published costed evaluation for "
-                    "this cost policy; gates were not evaluated this run"
-                )
+                if "reproduction unverifiable" not in str(row.get("explanation") or ""):
+                    row["explanation"] = (
+                        "reused replay has no published costed evaluation for "
+                        "this cost policy; gates were not evaluated this run"
+                    )
                 _record_children(context)
                 continue
         context.metrics_by_child[core_replay_id] = metrics
@@ -1087,7 +1241,25 @@ def _stage_s03_audit(context: _RunContext) -> tuple[tuple[str, ...], str]:
 
 def _stage_s04_charts(context: _RunContext) -> tuple[tuple[str, ...], str]:
     assert context.wiring.chart_builder is not None
-    return _companion_stage(context, context.wiring.chart_builder, "replay-chart")
+    outputs: list[str] = []
+    charts_by_child: dict[str, tuple[str, ...]] = {}
+    built = 0
+    for row in context.children:
+        if row["state"] not in ("completed", "reused"):
+            continue
+        core_replay_id = str(row["core_replay_id"])
+        result = context.tables_by_child.get(core_replay_id)
+        chart_ids = tuple(str(chart_id) for chart_id in context.wiring.chart_builder(row, result))
+        charts_by_child[core_replay_id] = chart_ids
+        outputs.extend(chart_ids)
+        built += 1
+    unique = tuple(sorted(set(outputs)))
+    # R6.1: the panel-grain regime study materializes its panel from ONE of
+    # these VERIFIED replay-chart artifacts at S05 — selected by the declared
+    # chart-selection policy over the per-child mapping (adversarial F13)
+    context.regime["chart_ids"] = unique
+    context.regime["charts_by_child"] = charts_by_child
+    return unique, f"replay-chart companions built or reused for {built} children"
 
 
 def _ensure_mbp1_evidence(context: _RunContext) -> dict[str, Any]:
@@ -1175,7 +1347,15 @@ def _stage_s05_feature_views(context: _RunContext) -> tuple[tuple[str, ...], str
     outputs: list[str] = []
     dumped: dict[str, Any] = {}
     mbp1_note = ""
+    regime_request = _regime.regime_request(context.semantic.payload)
     for bundle_key in context.semantic.payload.feature_bundle_ids:
+        if (
+            regime_request is not None
+            and regime_request.is_panel
+            and bundle_key == regime_request.input_feature_bundle_key
+        ):
+            # the panel bundle is a PANEL artifact, never a candidate view
+            continue
         if mbp1_block_keys_in_bundle(resolve_bundle(bundle_key)):
             evidence = _ensure_mbp1_evidence(context)
             envelope, frame = resolve_available_bundle_view(
@@ -1206,12 +1386,17 @@ def _stage_s05_feature_views(context: _RunContext) -> tuple[tuple[str, ...], str
             key: context.mbp1_evidence[key]
             for key in ("source_id", "feature_artifact_id", "coverage_report_id")
         }
+    regime_outputs, regime_record, regime_note = _regime.s05_regime_observation(context)
+    for artifact_id in regime_outputs:
+        if artifact_id not in outputs:
+            outputs.append(artifact_id)
+    dumped.update(regime_record)
     context.stage_sidecars["bundle_feature_views.json"] = (
         json.dumps(dumped, sort_keys=True) + "\n"
     ).encode("utf-8")
     return tuple(outputs), (
         f"{len(context.bundle_views)} bundle feature views materialized over "
-        f"the immutable candidate view (available blocks only){mbp1_note}"
+        f"the immutable candidate view (available blocks only){mbp1_note}{regime_note}"
     )
 
 
@@ -1232,9 +1417,20 @@ def _stage_s06_coverage(context: _RunContext) -> tuple[tuple[str, ...], str]:
     context.stage_sidecars["feature_coverage.json"] = (
         json.dumps(report, sort_keys=True) + "\n"
     ).encode("utf-8")
+    regime_note = ""
+    regime_preview = _regime.s06_regime_coverage(context)
+    if regime_preview is not None:
+        context.stage_sidecars["regime_sample_adequacy_preview.json"] = (
+            _regime.canonical_json_bytes(regime_preview)
+        )
+        regime_note = (
+            f"; regime inputs: {regime_preview['rows_with_inputs']}/"
+            f"{regime_preview['rows_total']} rows carry an input (floor "
+            f"{regime_preview['floors']['minimum_training_observations']} training rows)"
+        )
     return (), (
         f"feature coverage evaluated for {len(report)} bundle view(s); "
-        "full report in the stage sidecar"
+        f"full report in the stage sidecar{regime_note}"
     )
 
 
@@ -1274,9 +1470,30 @@ def _stage_s07_labels(context: _RunContext) -> tuple[tuple[str, ...], str]:
 def _stage_s08_folds(context: _RunContext) -> tuple[tuple[str, ...], str]:
     from ..context_folds import build_context_folds  # noqa: PLC0415
 
-    if context.labeled is None:
+    regime_request = _regime.regime_request(context.semantic.payload)
+    if context.labeled is None and regime_request is None:
         raise ValueError("fold construction requires the derived labels (run 07)")
-    days = tuple(sorted(set(context.labeled["trading_day"].astype(str))))
+    if context.labeled is None:
+        # R6.1 (D14): a descriptive regime study without derived labels builds
+        # its candidate folds label-free under the same frozen schedule
+        context.folds = None
+        regime_outputs, regime_record, regime_note = _regime.s08_regime_folds(context)
+        context.stage_sidecars["fold_sample_adequacy.json"] = _regime.canonical_json_bytes(
+            regime_record
+        )
+        return regime_outputs, (
+            f"label-free candidate folds under {FOLD_PROTOCOL_ID_V1}{regime_note}"
+        )
+    # R6.1 (adversarial F7): ONE day source when a regime study is planned —
+    # the candidate view's observed trading days (charter allowlist ∩
+    # observed) drive BOTH the labeled candidate folds and the persisted
+    # fold schedule, so a label/view day divergence is a typed fold fact
+    # (a thinner fold), never a schedule/window mismatch at S08
+    days = (
+        tuple(sorted(set(context.view.frame["trading_day"].astype(str))))
+        if regime_request is not None
+        else tuple(sorted(set(context.labeled["trading_day"].astype(str))))
+    )
     context.folds = build_context_folds(context.labeled, authorized_trading_days=days)
     valid = sum(1 for fold in context.folds.folds if fold.valid)
     if not context.folds.folds:
@@ -1299,10 +1516,41 @@ def _stage_s08_folds(context: _RunContext) -> tuple[tuple[str, ...], str]:
         )
         if invalid_reasons:
             explanation += f"; invalid reasons: {', '.join(invalid_reasons)}"
-    return (), explanation
+    if regime_request is None:
+        return (), explanation
+    regime_outputs, regime_record, regime_note = _regime.s08_regime_folds(context)
+    context.stage_sidecars["fold_sample_adequacy.json"] = _regime.canonical_json_bytes(
+        regime_record
+    )
+    return regime_outputs, explanation + regime_note
 
 
 def _stage_s09_train(context: _RunContext) -> tuple[tuple[str, ...], str]:
+    """S09 = the supervised ladder (when a model protocol is pinned) + the
+    regime study's S09a (and S09b/S09c for model-bearing requests) — every
+    fit of the run happens here (D14; S14 performs zero fitting)."""
+
+    spec = context.semantic.payload
+    regime_request = _regime.regime_request(spec)
+    outputs: list[str] = []
+    if spec.model_protocol_id is not None:
+        ladder_outputs, explanation = _stage_s09_supervised_ladder(context)
+        outputs.extend(ladder_outputs)
+    elif regime_request is None:
+        raise ValueError("training requires a pinned model protocol or a regime study")
+    else:
+        explanation = "no supervised model protocol pinned (regime study only)"
+    if regime_request is not None:
+        regime_outputs, regime_record, regime_note = _regime.s09_regime_fit(context)
+        for artifact_id in regime_outputs:
+            if artifact_id not in outputs:
+                outputs.append(artifact_id)
+        context.stage_sidecars["regime_run.json"] = _regime.canonical_json_bytes(regime_record)
+        explanation += regime_note
+    return tuple(outputs), explanation
+
+
+def _stage_s09_supervised_ladder(context: _RunContext) -> tuple[tuple[str, ...], str]:
     from ..features.bundle_feature_view import frozen_tier_for_bundle  # noqa: PLC0415
     from ..ml.supervised_ladder import run_supervised_ladder  # noqa: PLC0415
 
@@ -1319,8 +1567,16 @@ def _stage_s09_train(context: _RunContext) -> tuple[tuple[str, ...], str]:
             "feature set and carries no MBP-1 evidence; no ladder wiring "
             "exists for it (fail closed)"
         )
+    schedule = context.regime.get("schedule")
     context.ladder = run_supervised_ladder(
-        context.view, context.labeled, context.folds, tier=tier
+        context.view,
+        context.labeled,
+        context.folds,
+        tier=tier,
+        # D13: the exact S08 schedule id and S07 label artifact id key the
+        # comparison rows when a regime study persisted them
+        fold_schedule_id=schedule.fold_schedule_id if schedule is not None else None,
+        label_artifact_id=context.label_artifact_id,
     )
     oos_rows = context.ladder.parity["oos_row_count"]
     # R5-FIX finding 5: zero OOS rows means the parity claim is NOT
@@ -1341,25 +1597,29 @@ def _run_controlled_mbp1_stage(
 ) -> tuple[tuple[str, ...], str]:
     """S09's R5B path: the controlled Baseline vs Baseline+MBP-1 study.
 
-    Both arms run bundle-parametrized (prevalence + logistic; the CatBoost
-    fold runner is tier-locked in the frozen lane) on identical rows,
-    labels, and folds; the persisted study envelope carries the paired
-    Brier delta and the ``research_only_offline`` boundary.
+    Both arms run bundle-parametrized — the prevalence reference, the
+    logistic protocol, and (R6.1) the bundle-aware CatBoost rung; the
+    frozen-lane CatBoost fold runner stays tier-locked — on identical rows,
+    labels, and folds keyed by the D13 ``comparison_row_id``; the pinned
+    protocol is the headline comparison; the persisted study envelope
+    carries the paired Brier deltas and the ``research_only_offline`` boundary.
     """
 
     from ..ml.controlled_feature_study import (  # noqa: PLC0415
+        HEADLINE_PROTOCOL_IDS,
         run_controlled_mbp1_study,
         save_controlled_feature_study,
     )
-    from ..ml.model_protocols import LOGISTIC_PROTOCOL_ID  # noqa: PLC0415
 
     pinned = context.semantic.payload.model_protocol_id
-    if pinned != LOGISTIC_PROTOCOL_ID:
+    if pinned not in HEADLINE_PROTOCOL_IDS:
         raise ValueError(
-            f"the controlled MBP-1 study runs the {LOGISTIC_PROTOCOL_ID!r} "
-            f"protocol on both arms; the pinned protocol {pinned!r} has no "
-            "bundle-parametrized wiring (the CatBoost fold runner is "
-            "tier-locked in the frozen M0-M3 lane)"
+            "the controlled MBP-1 study runs the prevalence reference, "
+            f"{HEADLINE_PROTOCOL_IDS[0]!r}, and the bundle-aware "
+            f"{HEADLINE_PROTOCOL_IDS[1]!r} on both arms; the pinned protocol "
+            f"{pinned!r} has no bundle-parametrized wiring (the "
+            "ifvg_context_catboost_binary_v1 fold runner is tier-locked in the "
+            "frozen M0-M3 lane)"
         )
     evidence = context.mbp1_evidence
     if not evidence:
@@ -1371,6 +1631,14 @@ def _run_controlled_mbp1_stage(
         challenger_bundle_key=primary_bundle,
         mbp1_features=evidence["feature_frame"],
         mbp1_feature_artifact=evidence["feature_envelope"],
+        headline_protocol_id=pinned,
+        # D13: S07's exact label artifact id keys the comparison rows
+        label_artifact_id=context.label_artifact_id,
+        fold_schedule_id=(
+            context.regime["schedule"].fold_schedule_id
+            if context.regime.get("schedule") is not None
+            else None
+        ),
     )
     save_controlled_feature_study(context.store_root, study)
     context.controlled_study = study
@@ -1391,12 +1659,35 @@ def _run_controlled_mbp1_stage(
         (
             f"controlled Baseline vs Baseline+MBP-1 study over "
             f"{study.envelope.payload.baseline_bundle_key} → {primary_bundle} "
-            f"(research-only offline); {parity_clause}"
+            "(research-only offline; prevalence + logistic + bundle-aware CatBoost "
+            f"rungs on identical comparison rows; headline {pinned}); {parity_clause}"
         ),
     )
 
 
 def _stage_s10_diagnostics(context: _RunContext) -> tuple[tuple[str, ...], str]:
+    regime_request = _regime.regime_request(context.semantic.payload)
+    outputs: list[str] = []
+    if context.ladder is not None:
+        ladder_outputs, explanation = _stage_s10_ladder_diagnostics(context)
+        outputs.extend(ladder_outputs)
+    elif regime_request is None:
+        raise ValueError("diagnostics require the trained ladder (run 09)")
+    else:
+        explanation = "no supervised ladder (regime study only)"
+    if regime_request is not None:
+        regime_outputs, diagnostics, regime_note = _regime.s10_regime_diagnostics(context)
+        for artifact_id in regime_outputs:
+            if artifact_id not in outputs:
+                outputs.append(artifact_id)
+        context.stage_sidecars["regime_diagnostics.json"] = _regime.canonical_json_bytes(
+            diagnostics
+        )
+        explanation += regime_note
+    return tuple(outputs), explanation
+
+
+def _stage_s10_ladder_diagnostics(context: _RunContext) -> tuple[tuple[str, ...], str]:
     if context.ladder is None:
         raise ValueError("diagnostics require the trained ladder (run 09)")
     ladder = context.ladder
@@ -1482,6 +1773,29 @@ def _prior_stage_vectors(
     }
 
 
+def _prior_stage_simulations(
+    context: _RunContext, stage: QuantLabPipelineStage
+) -> dict[str, dict[str, list[str]]]:
+    """The account-simulation ids a PRIOR attempt's stage result recorded."""
+
+    entry = context.state["stages"][stage.value]
+    stage_result_id = entry.get("stage_result_id")
+    if not stage_result_id or not has_envelope(
+        context.store_root, "pipeline_stage_results", stage_result_id
+    ):
+        return {}
+    try:
+        raw = load_sidecar_bytes(
+            context.store_root,
+            "pipeline_stage_results",
+            stage_result_id,
+            _ACCOUNT_SIMULATIONS_SIDECAR,
+        )
+    except Exception:  # noqa: BLE001 — a prior attempt without the sidecar
+        return {}
+    return json.loads(raw.decode("utf-8"))
+
+
 def _run_prop_modes(
     context: _RunContext,
     modes: tuple[str, ...],
@@ -1493,8 +1807,11 @@ def _run_prop_modes(
 
     protocol = context.charter.payload.simulation_protocol
     charter_payload = context.charter.payload
+    simulations_sink: dict[str, dict[str, list[str]]] = {}
+    prior_simulations = _prior_stage_simulations(context, stage)
     simulator = make_prop_simulator(
         context.wiring.firm_specs,
+        event_detail_persistence_policy_id=protocol.event_detail_persistence_policy_id,
         tick_size=charter_payload.cost_policy.tick_size,
         costed_evaluation_id_for=lambda core_id: _child_evaluation_envelope(
             core_id, charter_payload.cost_policy
@@ -1514,6 +1831,7 @@ def _run_prop_modes(
         n_paths=n_paths,
         bar_observations_for=context.wiring.bar_observations_for,
         store_root=context.store_root,
+        on_simulation_persisted=_record_account_simulation(simulations_sink),
     )
     prior_vectors = _prior_stage_vectors(context, stage)
     vectors_out: dict[str, dict[str, Any]] = {}
@@ -1527,6 +1845,8 @@ def _run_prop_modes(
             prior = prior_vectors.get(core_replay_id)
             if prior:
                 vectors_out[core_replay_id] = prior
+                if core_replay_id in prior_simulations:
+                    simulations_sink[core_replay_id] = dict(prior_simulations[core_replay_id])
                 reused += 1
             else:
                 row["explanation"] = (
@@ -1561,7 +1881,25 @@ def _run_prop_modes(
         )
         + "\n"
     ).encode("utf-8")
+    context.stage_sidecars[_ACCOUNT_SIMULATIONS_SIDECAR] = (
+        json.dumps(simulations_sink, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    by_child = context.regime.setdefault("account_simulations", {})
+    for core_id, simulations in simulations_sink.items():
+        by_child.setdefault(core_id, {}).update(
+            {simulation_id: tuple(value) for simulation_id, value in simulations.items()}
+        )
     return vectors_out, simulated, reused
+
+
+def _record_account_simulation(sink: dict[str, dict[str, list[str]]]):
+    """R6.1: record ``core_replay_id -> {account_simulation_id: [firm, mode]}``
+    for the stratified-prop reports (exact persisted ids, never a store scan)."""
+
+    def _hook(core_replay_id: str, simulation_id: str, firm_label: str, mode: str) -> None:
+        sink.setdefault(core_replay_id, {})[simulation_id] = [firm_label, mode]
+
+    return _hook
 
 
 def _persist_policy_set_envelopes(context: _RunContext) -> tuple[str, ...]:
@@ -1697,6 +2035,13 @@ def _stage_s14_frontier_insights(context: _RunContext) -> tuple[tuple[str, ...],
         )
     explanation_parts.append(_persist_cross_profile_deltas(context))
     outputs.extend(context.comparison_result_ids)
+    regime_outputs, regime_record, regime_note = _regime.s14_regime_reports(context)
+    if regime_record:
+        context.stage_sidecars["regime_stratified_reports.json"] = (
+            _regime.canonical_json_bytes(regime_record)
+        )
+        outputs.extend(artifact_id for artifact_id in regime_outputs if artifact_id not in outputs)
+        explanation_parts.append(regime_note)
     return tuple(outputs), "; ".join(explanation_parts)
 
 
@@ -1896,6 +2241,8 @@ def _stage_s15_verify_publish(context: _RunContext) -> tuple[tuple[str, ...], st
             )
         except Exception:  # noqa: BLE001
             reload_ok = False
+    # R6.1: every regime artifact of the run must reload through the stores
+    reload_ok = reload_ok and _regime.s15_regime_reload_ok(context)
     chart_entry = stages[QuantLabPipelineStage.S04_BUILD_OR_REUSE_REPLAY_CHARTS.value]
     verifier_link = bool(chart_entry["in_plan"]) and bool(
         chart_entry["output_artifact_ids"]

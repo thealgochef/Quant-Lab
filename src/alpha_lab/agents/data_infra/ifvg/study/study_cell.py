@@ -87,6 +87,7 @@ REGISTERED_MODEL_PROTOCOL_KEYS: tuple[str, ...] = (
     "reference_prevalence_v1",
     "ifvg_context_logistic_l2_v1",
     "ifvg_context_catboost_binary_v1",
+    "ifvg_context_catboost_bundle_v1",
     "ifvg_context_gam_v1",
 )
 REGISTERED_CALIBRATION_POLICY_IDS: tuple[str, ...] = (

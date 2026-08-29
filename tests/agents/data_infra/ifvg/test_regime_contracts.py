@@ -55,13 +55,47 @@ _B1_ONLY = sorted(
 _RATIFICATION = "f" * 64
 
 
+# R6.1 (§6.A grain/bundle-key coherence): the panel grain references the
+# panel bundle (row_id join) and panel features — never a candidate bundle
+_BP0 = resolve_bundle("BP0_CONTEXT_BAR_PANEL").resolved_feature_bundle_id
+_PANEL_INPUTS = ("cbp_realized_range_12", "cbp_realized_volatility_12")
+
+
 def _protocol(**overrides):
     defaults = dict(
         input_feature_bundle_ref=_B0,
         resolved_input_features=("distance_to_htf_ticks", "opposing_size_ticks"),
     )
+    if overrides.get("observation_granularity") is ObservationGranularity.CONTEXT_BAR_PANEL:
+        defaults.update(input_feature_bundle_ref=_BP0, resolved_input_features=_PANEL_INPUTS)
     defaults.update(overrides)
     return resolve_kmeans_protocol(**defaults)
+
+
+def test_grain_and_bundle_join_keys_must_cohere():
+    """R6.1 (§6.A): every block of the input bundle must join on ``row_id``
+    for the panel grain and on ``candidate_id`` otherwise."""
+
+    with pytest.raises(RegimeLeakageError, match="grain/bundle-key coherence"):
+        resolve_kmeans_protocol(
+            input_feature_bundle_ref=_B0,
+            resolved_input_features=("distance_to_htf_ticks",),
+            observation_granularity=ObservationGranularity.CONTEXT_BAR_PANEL,
+            panel_interval_seconds=300,
+            panel_source_artifact_id="b" * 64,
+            panel_as_of_policy_id="completed_bars_last_at_or_before_v1",
+        )
+    with pytest.raises(RegimeLeakageError, match="grain/bundle-key coherence"):
+        resolve_kmeans_protocol(
+            input_feature_bundle_ref=_BP0, resolved_input_features=_PANEL_INPUTS
+        )
+    # the coherent pairs resolve; the panel features are registered at HTF_TAP
+    assert _protocol(
+        observation_granularity=ObservationGranularity.CONTEXT_BAR_PANEL,
+        panel_interval_seconds=900,
+        panel_source_artifact_id="b" * 64,
+        panel_as_of_policy_id="completed_bars_last_at_or_before_v1",
+    ).payload.resolved_input_features == _PANEL_INPUTS
 
 
 def _decision(**overrides) -> RegimePromotionDecision:
@@ -108,6 +142,30 @@ def test_panel_grain_requires_all_three_panel_fields():
             panel_interval_seconds=1,
             panel_source_artifact_id="b" * 64,
             panel_as_of_policy_id="completed_bars_last_at_or_before_v1",
+        )
+    # R6.1 (owner Q3 #3): only owner-registered intervals; a verified 64-hex
+    # panel source id; a registered as-of policy
+    for interval in (60, 180, 600, 1800):
+        with pytest.raises(ValueError, match="not owner-registered"):
+            _protocol(
+                observation_granularity=ObservationGranularity.CONTEXT_BAR_PANEL,
+                panel_interval_seconds=interval,
+                panel_source_artifact_id="b" * 64,
+                panel_as_of_policy_id="completed_bars_last_at_or_before_v1",
+            )
+    with pytest.raises(ValueError, match="verified 64-hex"):
+        _protocol(
+            observation_granularity=ObservationGranularity.CONTEXT_BAR_PANEL,
+            panel_interval_seconds=300,
+            panel_source_artifact_id="panel-fixture",
+            panel_as_of_policy_id="completed_bars_last_at_or_before_v1",
+        )
+    with pytest.raises(ValueError, match="not registered"):
+        _protocol(
+            observation_granularity=ObservationGranularity.CONTEXT_BAR_PANEL,
+            panel_interval_seconds=300,
+            panel_source_artifact_id="b" * 64,
+            panel_as_of_policy_id="latest_bar_any_day_v0",
         )
 
 
@@ -455,18 +513,39 @@ def test_regime_feature_block_still_refuses_in_v1():
 
 
 def test_every_scientific_default_is_stamped_proposed():
+    from alpha_lab.agents.data_infra.ifvg.features.context_bar_panel_contract import (
+        PANEL_PROPOSED_STAMPS,
+    )
+
     expected = {
         "algorithm_baseline",
         "fixed_cluster_count",
         "minimum_cluster_occupancy_fraction",
         "minimum_cluster_rows_per_fold",
-        "bootstrap_aligned_ami_advisory_floor",
+        # R6.1: the AMI gate is a MINIMUM (it blocks promotion), never "advisory"
+        "minimum_bootstrap_aligned_ami_mean",
+        "bootstrap_refits_per_fold",
+        "bootstrap_total_refit_cap",
+        "bootstrap_gate_scope",
+        "candidate_event_maximum_gap_seconds",
+        "minimum_trades_per_regime_stratum",
+        "minimum_training_rows_per_regime_stratum",
+        "prop_event_attribution_policy",
+        "regime_feature_hard_id_encoding_default",
         "minimum_training_observations_candidate_stage",
         "minimum_training_observations_decision_row",
         "minimum_training_observations_panel",
         "observation_grain_baseline",
+        *PANEL_PROPOSED_STAMPS,
     }
     assert set(REGIME_PROPOSED_DEFAULTS) == expected
+    assert "bootstrap_aligned_ami_advisory_floor" not in REGIME_PROPOSED_DEFAULTS
+    assert REGIME_PROPOSED_DEFAULTS["minimum_bootstrap_aligned_ami_mean"]["value"] == 0.5
+    assert REGIME_PROPOSED_DEFAULTS["panel_minimum_source_bars"]["value"] == 13
+    assert REGIME_PROPOSED_DEFAULTS["panel_std_ddof"]["value"] == 0
+    assert REGIME_PROPOSED_DEFAULTS["panel_assignment_max_staleness_intervals"]["value"] == 1
+    assert REGIME_PROPOSED_DEFAULTS["panel_intensity_source_field"]["value"] == "volume"
+    assert REGIME_PROPOSED_DEFAULTS["panel_interval_seconds_registered"]["value"] == (300, 900)
     for entry in REGIME_PROPOSED_DEFAULTS.values():
         assert entry["stamp"] == "proposed_protocol_default"
         assert entry["owner_ratification_required_before_feature_eligible"] is True

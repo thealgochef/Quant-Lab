@@ -47,6 +47,15 @@ from ..context_model import (
     MISSING_CATEGORY,
     categorical_features_for,
 )
+from .comparison_rows import (
+    RegimeFoldFeatureSource,
+    assert_fold_local_source_coherent,
+    candidate_fold_set_id,
+    comparison_row_id,
+    default_fold_schedule_id,
+    join_fold_local_features,
+    label_content_hash,
+)
 from .model_protocols import LOGISTIC_PROTOCOL_ID
 
 __all__ = [
@@ -121,7 +130,12 @@ def resolve_logistic_protocol(
     ordered_features: tuple[str, ...],
     feature_registry_hash: str,
     manual_feature_overrides: dict[str, Any] | None = None,
+    extra_categorical_features: tuple[str, ...] = (),
 ) -> ResolvedLogisticProtocol:
+    """``extra_categorical_features`` (R6.1 D8): block-declared categoricals
+    (e.g. a fold-local hard regime id) one-hot encoded next to the frozen
+    registry's — they enter the resolved identity only when present."""
+
     overrides = dict(manual_feature_overrides or {})
     # Same locked-protocol rule as the CatBoost lane: overrides are
     # identity-bearing annotations only.
@@ -133,7 +147,11 @@ def resolve_logistic_protocol(
     }
     if forbidden:
         raise ValueError(f"manual override cannot alter locked protocol: {sorted(forbidden)}")
-    categorical = categorical_features_for(ordered_features)
+    outside = sorted(set(extra_categorical_features) - set(ordered_features))
+    if outside:
+        raise ValueError(f"categorical features outside the ordered features: {outside}")
+    declared = set(categorical_features_for(ordered_features)) | set(extra_categorical_features)
+    categorical = tuple(name for name in ordered_features if name in declared)
     versions = {
         package: version(package) for package in ("numpy", "pandas", "scikit-learn")
     }
@@ -266,18 +284,43 @@ def run_logistic_fold_models(
     features: tuple[str, ...],
     manual_feature_overrides: dict[str, Any] | None = None,
     fitted_fold_sink: dict[int, Pipeline] | None = None,
+    fold_local_features: RegimeFoldFeatureSource | None = None,
+    fold_schedule_id: str | None = None,
+    label_artifact_id: str | None = None,
 ) -> LogisticModelRun:
     """Identical loop shape to ``run_context_fold_models`` (test-enforced).
 
     ``fitted_fold_sink`` optionally receives each valid fold's fitted
     pipeline (for portable-artifact persistence); it never changes results.
+    R6.1: ``fold_local_features`` (fold-LOCAL regime features) are
+    left-joined per fold on ``candidate_id`` before fitting — a candidate
+    without a fold row keeps NaN values for the fold-fitted imputer +
+    indicator; block-declared categoricals are one-hot encoded. Every
+    prediction row carries the D13 ``comparison_row_id`` next to the legacy
+    ``oos_row_id``; ``fold_schedule_id`` / ``label_artifact_id`` default to
+    the schedule derived from the labeled trading days and the label content
+    hash (the pipeline passes S08's / S07's exact ids).
     """
 
+    features = tuple(str(name) for name in features)
+    if fold_local_features is not None:
+        assert_fold_local_source_coherent(
+            fold_local_features,
+            features=features,
+            static_columns=tuple(str(column) for column in view.frame.columns),
+        )
+        extra_categorical = tuple(fold_local_features.categorical_features)
+    else:
+        extra_categorical = ()
     protocol = resolve_logistic_protocol(
         ordered_features=features,
         feature_registry_hash=view.feature_registry_hash,
         manual_feature_overrides=manual_feature_overrides,
+        extra_categorical_features=extra_categorical,
     )
+    schedule_id = fold_schedule_id or default_fold_schedule_id(folds, labeled_candidates)
+    label_id = label_artifact_id or label_content_hash(labeled_candidates)
+    fold_set = candidate_fold_set_id(folds)
     labels = labeled_candidates.set_index("candidate_id", verify_integrity=True)
     feature_frame = view.frame.set_index("candidate_id", verify_integrity=True)
     if not set(labels.index.astype(str)).issubset(set(feature_frame.index.astype(str))):
@@ -305,6 +348,13 @@ def run_logistic_fold_models(
             continue
         train = merged.loc[list(fold.train_candidate_ids)]
         test = merged.loc[list(fold.test_candidate_ids)]
+        if fold_local_features is not None:
+            train = join_fold_local_features(
+                train, fold_local_features, fold_index=fold.fold_index
+            )
+            test = join_fold_local_features(
+                test, fold_local_features, fold_index=fold.fold_index
+            )
         train_x = _logistic_frame(
             train,
             features=features,
@@ -332,6 +382,13 @@ def run_logistic_fold_models(
                             "fold_index": fold.fold_index,
                             "candidate_id": candidate_id,
                         }
+                    ),
+                    "comparison_row_id": comparison_row_id(
+                        fold_schedule_id=schedule_id,
+                        candidate_fold_set_id=fold_set,
+                        fold_index=fold.fold_index,
+                        candidate_id=candidate_id,
+                        label_artifact_id=label_id,
                     ),
                     "candidate_id": candidate_id,
                     "setup_id": source.get("setup_id_label", source.get("setup_id")),
@@ -367,6 +424,8 @@ def run_logistic_fold_models(
             raise ValueError("walk-forward protocol emitted duplicate OOS candidates")
         if prediction_frame["oos_row_id"].duplicated().any():
             raise ValueError("walk-forward protocol emitted duplicate OOS row IDs")
+        if prediction_frame["comparison_row_id"].duplicated().any():
+            raise ValueError("walk-forward protocol emitted duplicate comparison row IDs")
     return LogisticModelRun(
         protocol=protocol,
         predictions=prediction_frame,

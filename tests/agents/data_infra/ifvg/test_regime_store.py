@@ -97,6 +97,18 @@ def persisted(tmp_path_factory):
     persist_regime_protocol(root, small_protocol)
     persist_regime_assessment(root, small_run.assessment)
     assert not small_run.assessment.payload.gates_passed
+    # the SAME winsorized protocol over a well-sampled fixture: a PASSING
+    # assessment of small_protocol, so the store's gates_passed check can be
+    # exercised by chaining the FAILING assessment onto a lawful ladder
+    _pf, _pfolds, passing_protocol, passing_run = _run_fixture(
+        600, winsorization_policy="clip_p01_p99_train_fitted_v1"
+    )
+    assert (
+        passing_protocol.resolved_regime_protocol_id
+        == small_protocol.resolved_regime_protocol_id
+    )
+    persist_regime_assessment(root, passing_run.assessment)
+    assert passing_run.assessment.payload.gates_passed
     return {
         "root": root,
         "fixture": fixture,
@@ -104,6 +116,7 @@ def persisted(tmp_path_factory):
         "fold_fit": fold_fit,
         "artifact": artifact,
         "small_run": small_run,
+        "passing_run": passing_run,
     }
 
 
@@ -317,18 +330,53 @@ def test_promotion_persists_only_against_verified_evidence(persisted):
                 previous_decision_ref="c" * 64,
             ),
         )
-    # (e) feature-eligible over a FAILING assessment is unpersistable even
-    # with a ratification reference
+    # (e) D6 (review F2): STRATIFICATION_READY over the FAILING assessment is
+    # unpersistable whoever mints it; BLOCKED is the lawful record, and the
+    # ladder cannot climb from it
     small_first = _decision(small_run)
     persist_regime_promotion(root, small_first)
-    small_second = _decision(
+    with pytest.raises(ValueError, match=r"structurally requires .* \(D6\)"):
+        persist_regime_promotion(
+            root,
+            _decision(
+                small_run,
+                role=RegimeRole.STRATIFICATION_ONLY,
+                status=RegimeStatus.STRATIFICATION_READY,
+                previous_status=RegimeStatus.DESCRIPTIVE_ONLY,
+                previous_decision_ref=small_first.regime_promotion_decision_id,
+            ),
+        )
+    blocked = _decision(
         small_run,
-        role=RegimeRole.STRATIFICATION_ONLY,
-        status=RegimeStatus.STRATIFICATION_READY,
+        status=RegimeStatus.BLOCKED_INSUFFICIENT_COVERAGE,
         previous_status=RegimeStatus.DESCRIPTIVE_ONLY,
         previous_decision_ref=small_first.regime_promotion_decision_id,
     )
-    persist_regime_promotion(root, small_second)
+    persist_regime_promotion(root, blocked)
+    with pytest.raises(ValueError, match="skips the sequence"):
+        _decision(
+            small_run,
+            role=RegimeRole.FEATURE_GENERATOR,
+            status=RegimeStatus.FEATURE_ELIGIBLE,
+            previous_status=RegimeStatus.BLOCKED_INSUFFICIENT_COVERAGE,
+            previous_decision_ref=blocked.regime_promotion_decision_id,
+            owner_ratification_ref=_RATIFICATION,
+        )
+    # …and feature-eligible over a FAILING assessment is unpersistable even
+    # with a ratification reference: the lawful ladder of the SAME protocol
+    # (its PASSING assessment) cannot be borrowed by a decision that
+    # references the failing one
+    passing_run = persisted["passing_run"]
+    passing_first = _decision(passing_run)
+    persist_regime_promotion(root, passing_first)
+    passing_ready = _decision(
+        passing_run,
+        role=RegimeRole.STRATIFICATION_ONLY,
+        status=RegimeStatus.STRATIFICATION_READY,
+        previous_status=RegimeStatus.DESCRIPTIVE_ONLY,
+        previous_decision_ref=passing_first.regime_promotion_decision_id,
+    )
+    persist_regime_promotion(root, passing_ready)
     with pytest.raises(ValueError, match="PASSING capability"):
         persist_regime_promotion(
             root,
@@ -337,20 +385,49 @@ def test_promotion_persists_only_against_verified_evidence(persisted):
                 role=RegimeRole.FEATURE_GENERATOR,
                 status=RegimeStatus.FEATURE_ELIGIBLE,
                 previous_status=RegimeStatus.STRATIFICATION_READY,
-                previous_decision_ref=small_second.regime_promotion_decision_id,
+                previous_decision_ref=passing_ready.regime_promotion_decision_id,
                 owner_ratification_ref=_RATIFICATION,
             ),
         )
-    # (f) …and over the PASSING assessment with the owner's reference it persists
+    # (f) R6.1 (§6.F): over the PASSING assessment a BARE 64-hex reference is
+    # not evidence — only a store-VERIFIED owner-decision artifact binding this
+    # exact protocol + assessment persists FEATURE_ELIGIBLE (synthetic
+    # provenance is lawful in the synthetic_fixture scope only)
+    from alpha_lab.agents.data_infra.ifvg.search.owner_decisions import (
+        synthetic_owner_decision_fixture,
+    )
+
+    with pytest.raises(ValueError, match="not a verified owner-decision artifact"):
+        persist_regime_promotion(
+            root,
+            _decision(
+                run,
+                role=RegimeRole.FEATURE_GENERATOR,
+                status=RegimeStatus.FEATURE_ELIGIBLE,
+                previous_status=RegimeStatus.STRATIFICATION_READY,
+                previous_decision_ref=second.regime_promotion_decision_id,
+                owner_ratification_ref=_RATIFICATION,
+            ),
+            run_scope="synthetic_fixture",
+        )
+    owner = synthetic_owner_decision_fixture(
+        root,
+        protocol=run.protocol,
+        assessment=run.assessment,
+        approved_at="2026-08-25T00:00:00+00:00",  # effective before decided_at
+        effective_from="2026-08-25T00:00:00+00:00",
+    )
     eligible = _decision(
         run,
         role=RegimeRole.FEATURE_GENERATOR,
         status=RegimeStatus.FEATURE_ELIGIBLE,
         previous_status=RegimeStatus.STRATIFICATION_READY,
         previous_decision_ref=second.regime_promotion_decision_id,
-        owner_ratification_ref=_RATIFICATION,
+        owner_ratification_ref=owner.owner_decision_artifact_id,
     )
-    persist_regime_promotion(root, eligible)
+    with pytest.raises(ValueError, match="synthetic_fixture run scope"):
+        persist_regime_promotion(root, eligible)  # the default (real) scope refuses
+    persist_regime_promotion(root, eligible, run_scope="synthetic_fixture")
     # §3.10: promotion changed NO fit identity — the persisted fit reloads
     # under its original id, byte-verified
     reloaded = load_regime_fit(root, persisted["fold_fit"].fit_envelope.regime_fit_id)

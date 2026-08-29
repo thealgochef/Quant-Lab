@@ -1,0 +1,294 @@
+"""S14's regime half — the stratified reports from PERSISTED artifacts only
+(R6.1 §6.E / §6.G; D14: S14 performs zero fitting).
+
+``build_reports(context)`` assembles the :class:`StratificationInputs` of
+``regime_stratification_service`` from the run: the exact S10 decision (or
+the frozen FEATURE_ELIGIBLE decision of a model-bearing request), the
+descriptive OOS-assignment artifact, every gated child's executed-trade
+table with its costed-evaluation identity, the exact persisted account
+simulation ids S12/S13 reported, the pooled frontier, and — for the panel
+grain — a point-in-time assigner over the persisted panel + fits for
+historical no-trade prop events. No estimator is fitted here; every
+refusal is recorded per class, never raised.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+
+from ..contracts import RecordTable
+from ..features.context_bar_panel_materializer import (
+    load_context_bar_panel_artifact,
+    load_context_bar_panel_frame,
+)
+from ..search.identities import canonical_contract_sha256
+from .regime_oos_assignment import (
+    assign_panel_regimes_to_candidates,
+    load_regime_oos_assignment,
+)
+from .regime_store import load_regime_fit_assignments, load_regime_protocol
+from .regime_stratification_service import (
+    ChildStratificationInputs,
+    StratificationInputs,
+    build_regime_stratified_reports,
+)
+from .regime_stratified_contracts import RegimeStratificationClass
+from .regime_stratified_prop import load_account_event_detail_from_json
+
+__all__ = ["build_reports", "event_detail_loader_for_policy", "panel_event_assigner"]
+
+
+def event_detail_loader_for_policy(policy_id: str):
+    """The D15 reader for the charter's event-detail policy: the v2 Parquet
+    partitions when persisted, else the R3 JSON sidecar (historical modes);
+    ``None`` from the loader means ``evidence_not_persisted``."""
+
+    if policy_id == "account_event_detail_by_path_parquet_v2":
+        from alpha_lab.propsim.event_detail import (  # noqa: PLC0415
+            EventDetailUnavailableError,
+            load_account_event_detail,
+        )
+
+        def _loader(root: Path, account_simulation_id: str) -> Iterator[pd.DataFrame] | None:
+            try:
+                return load_account_event_detail(Path(root), account_simulation_id)
+            except EventDetailUnavailableError:
+                return None
+
+        return _loader
+    return load_account_event_detail_from_json
+
+
+def panel_event_assigner(context):
+    """Panel grain: a PIT assigner (the normative §6.C rule) for historical
+    no-trade events over PERSISTED artifacts only — the descriptive OOS
+    assignment artifact, the protocol, the panel frame and every fit's
+    assignment sidecar are verified-loaded by the exact ids the run
+    recorded; no in-memory run object is consulted (adversarial R6.1 F14).
+    """
+
+    regime = context.regime
+    request = regime["request"]
+    if not request.is_panel:
+        return None
+    root = Path(context.store_root)
+    oos_id = regime["execution"].oos_assignment.regime_oos_assignment_id
+    oos_payload = load_regime_oos_assignment(root, oos_id).payload
+    if oos_payload.panel_context is None:
+        raise ValueError("the persisted OOS assignment carries no panel context")
+    protocol = load_regime_protocol(root, oos_payload.resolved_regime_protocol_id)
+    panel_envelope = load_context_bar_panel_artifact(
+        root, oos_payload.panel_context.context_bar_panel_artifact_id
+    )
+    panel_frame = load_context_bar_panel_frame(root, panel_envelope)
+    assignments = pd.concat(
+        [
+            load_regime_fit_assignments(root, fit_id)[2]
+            for fit_id in oos_payload.regime_fit_ids
+        ],
+        ignore_index=True,
+    )
+    interval = int(protocol.payload.panel_interval_seconds or 0)
+
+    def _assign(event_ts_utc: pd.Series) -> pd.Series:
+        candidates = pd.DataFrame(
+            {
+                "candidate_id": [f"event_{index:06d}" for index in range(len(event_ts_utc))],
+                "as_of_ts_utc": event_ts_utc.to_numpy(),
+            }
+        )
+        assigned = assign_panel_regimes_to_candidates(
+            panel_frame,
+            assignments,
+            candidates,
+            protocol=protocol,
+            max_staleness_seconds=interval,
+        ).set_index("candidate_id")
+        ordered = assigned.loc[candidates["candidate_id"]]
+        values = ordered["canonical_reporting_cluster_id"].where(ordered["valid"].astype(bool))
+        return pd.Series(values.to_numpy(), index=event_ts_utc.index)
+
+    return _assign
+
+
+_REPORTS_SIDECAR = "regime_stratified_reports.json"
+_STAGE_S14 = "14_build_frontier_and_insights"
+
+
+def _prior_reports_record(context) -> dict[str, Any] | None:
+    """The PRIOR attempt's S14 regime record (exact report ids), verified
+    report by report — the S12/S13 prior-vector reuse pattern."""
+
+    from ..search.store import has_envelope, load_sidecar_bytes  # noqa: PLC0415
+    from .regime_stratification_service import load_regime_stratified_report  # noqa: PLC0415
+
+    entry = context.state["stages"].get(_STAGE_S14, {})
+    stage_result_id = entry.get("stage_result_id")
+    if not stage_result_id or not has_envelope(
+        context.store_root, "pipeline_stage_results", stage_result_id
+    ):
+        return None
+    try:
+        raw = load_sidecar_bytes(
+            context.store_root, "pipeline_stage_results", stage_result_id, _REPORTS_SIDECAR
+        )
+    except Exception:  # noqa: BLE001 — a prior attempt without the record
+        return None
+    import json  # noqa: PLC0415
+
+    record = json.loads(raw.decode("utf-8"))
+    for report_id in record.get("report_ids", ()):
+        load_regime_stratified_report(context.store_root, report_id)  # verified reload
+    return record
+
+
+def build_reports(context) -> tuple[tuple[str, ...], dict[str, Any], str]:
+    spec = context.semantic.payload
+    request = spec.regime_study
+    regime = context.regime
+    charter_payload = context.charter.payload
+    cost_policy = charter_payload.cost_policy
+    cost = (
+        cost_policy.cost_points_round_turn
+        if context.wiring.cost_points is None
+        else context.wiring.cost_points
+    )
+    account_simulations = regime.get("account_simulations", {})
+    # The executed-trade tables are NOT a persisted artifact (a core replay
+    # persists its identity only — R5 design): S14 consumes the tables S02
+    # produced THIS run — fresh, or re-derived and verified against the
+    # persisted costed evaluation (S02 refuses to adopt unverifiable tables)
+    # — recorded as a deviation; every other S14 input is loaded by exact
+    # id from the store (F14).
+    children: dict[str, ChildStratificationInputs] = {}
+    skipped: dict[str, str] = {}
+    for core_replay_id in sorted(context.gates_passed):
+        result = context.tables_by_child.get(core_replay_id)
+        if result is None:
+            skipped[core_replay_id] = "child reused without rebuilt tables"
+            continue
+        trades = result.tables.get(RecordTable.EXECUTED_TRADE, pd.DataFrame())
+        from ..search.orchestrator import _child_evaluation_envelope  # noqa: PLC0415
+
+        evaluation = _child_evaluation_envelope(core_replay_id, cost_policy)
+        children[core_replay_id] = ChildStratificationInputs(
+            core_replay_id=core_replay_id,
+            trades=trades,
+            cost_points=float(cost),
+            evaluation_config_hash=canonical_contract_sha256(
+                {
+                    "core_replay_id": core_replay_id,
+                    "cost_policy": cost_policy.model_dump(mode="json"),
+                }
+            ),
+            costed_evaluation_id=evaluation.costed_evaluation_id,
+            pooled_predictions=None,
+            account_simulations=dict(account_simulations.get(core_replay_id, {})),
+        )
+    decision = regime["decision"]
+    execution = regime["execution"]
+    if skipped:
+        # a REUSED child carries no rebuilt tables: recover the prior
+        # attempt's verified reports for the identical run (never rebuild
+        # from partial evidence)
+        prior = _prior_reports_record(context)
+        if prior is not None and set(skipped) <= set(prior.get("children", ())) and (
+            prior.get("regime_promotion_decision_id") == decision.regime_promotion_decision_id
+        ):
+            regime["stratified_report_ids"] = tuple(prior["report_ids"])
+            return (
+                tuple(prior["report_ids"]),
+                prior,
+                f"; {len(prior['report_ids'])} stratified regime report(s) reused from the "
+                "prior attempt (verified reload; children reused without rebuilt tables)",
+            )
+    classes = tuple(
+        RegimeStratificationClass(name) for name in request.comparison_classes_requested
+    )
+    inputs = StratificationInputs(
+        root=Path(context.store_root),
+        protocol_id=execution.protocol.resolved_regime_protocol_id,
+        decision_id=decision.regime_promotion_decision_id,
+        owner_decision_artifact_id=request.owner_decision_artifact_id,
+        regime_oos_assignment_id=execution.oos_assignment.regime_oos_assignment_id,
+        requested_classes=classes,
+        children=children,
+        frontier_id=context.frontier_id,
+        objective_metrics=tuple(charter_payload.objective_policy.pareto_objectives),
+        tick_size=float(cost_policy.tick_size),
+        event_loader=event_detail_loader_for_policy(
+            charter_payload.simulation_protocol.event_detail_persistence_policy_id
+        ),
+        panel_assigner=panel_event_assigner(context),
+        run_scope=str(context.semantic.payload.run_scope.value),
+        delivered_by=_delivered_by_s09c(context, regime),
+    )
+    outcome = build_regime_stratified_reports(inputs)
+    regime["stratified_report_ids"] = tuple(outcome.report_ids)
+    record = {
+        "regime_promotion_decision_id": decision.regime_promotion_decision_id,
+        "authority_source": regime.get("authority_source"),
+        "regime_oos_assignment_id": execution.oos_assignment.regime_oos_assignment_id,
+        "requested_classes": [cls.value for cls in classes],
+        "report_ids": list(outcome.report_ids),
+        "reports_by_class": {k: list(v) for k, v in outcome.reports_by_class.items()},
+        "refusals": dict(outcome.refusals),
+        "delivered_by": dict(outcome.delivered_by),
+        "children": sorted(children),
+        "children_skipped": skipped,
+        "fitting_performed": False,
+    }
+    note = (
+        f"; {len(outcome.report_ids)} stratified regime report(s) persisted from persisted "
+        f"artifacts only ({len(outcome.refusals)} class refusal(s) recorded; "
+        f"{len(outcome.delivered_by)} modeled class(es) delivered by S09c)"
+    )
+    return tuple(outcome.report_ids), record, note
+
+
+_STAGE_S09 = "09_train_models"
+_S09_RECORD_SIDECAR = "regime_run.json"
+
+
+def _delivered_by_s09c(context, regime) -> dict[str, str]:
+    """The exact S09c study ids that DELIVERED the modeled classes of this
+    run: the in-memory S09c results when this attempt ran them, else the
+    run's OWN verified S09 stage record (never a store listing)."""
+
+    delivered: dict[str, str] = {}
+    study = regime.get("controlled_study")
+    if study is not None:
+        delivered["feature_only"] = str(study.envelope.regime_controlled_study_id)
+    cohort = regime.get("cohort_model_study")
+    if cohort is not None:
+        delivered["cohort_model"] = str(cohort.envelope.regime_cohort_model_study_id)
+    if delivered:
+        return delivered
+    from ..search.store import has_envelope, load_sidecar_bytes  # noqa: PLC0415
+
+    entry = context.state["stages"].get(_STAGE_S09, {})
+    stage_result_id = entry.get("stage_result_id")
+    if not stage_result_id or not has_envelope(
+        context.store_root, "pipeline_stage_results", stage_result_id
+    ):
+        return delivered
+    try:
+        raw = load_sidecar_bytes(
+            context.store_root, "pipeline_stage_results", stage_result_id, _S09_RECORD_SIDECAR
+        )
+    except Exception:  # noqa: BLE001 — a descriptive run carries no S09c record
+        return delivered
+    import json  # noqa: PLC0415
+
+    s09c = (json.loads(raw.decode("utf-8")) or {}).get("S09c") or {}
+    for comparison_class, key in (
+        ("feature_only", "regime_controlled_study_id"),
+        ("cohort_model", "regime_cohort_model_study_id"),
+    ):
+        if s09c.get(key):
+            delivered[comparison_class] = str(s09c[key])
+    return delivered

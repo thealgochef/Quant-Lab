@@ -14,6 +14,7 @@ research-only offline (owner decision R-6).
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import ClassVar
 
 import pandas as pd
@@ -27,17 +28,30 @@ from ..search.identities import (
     FrozenContract,
     register_identity_pair,
 )
+from ..search.store import load_sidecar_bytes, load_verified_envelope, save_or_reuse_envelope
+from .arrow_tables import bytes_sha256, frame_from_arrow_bytes, frame_to_arrow_bytes
 from .feature_bundles import FROZEN_TIER_BUNDLES, resolve_bundle
 from .mbp1_source_contract import assert_no_deep_book_identifiers, mbp1_feature_names
 
 __all__ = [
+    "BUNDLE_FEATURE_VIEW_STORE",
+    "BUNDLE_VIEW_FRAME_SIDECAR",
     "BundleFeatureViewPayload",
     "BundleFeatureViewEnvelope",
     "build_bundle_feature_view",
     "resolve_available_bundle_view",
     "frozen_tier_for_bundle",
     "mbp1_block_keys_in_bundle",
+    "bundle_categorical_features",
+    "bundle_view_frame_bytes",
+    "verify_bundle_feature_view_frame",
+    "save_bundle_feature_view",
+    "load_bundle_feature_view",
+    "load_bundle_feature_view_frame",
 ]
+
+BUNDLE_FEATURE_VIEW_STORE = "bundle_feature_views"
+BUNDLE_VIEW_FRAME_SIDECAR = "bundle_feature_view.arrow"
 
 
 class BundleFeatureViewPayload(FrozenContract):
@@ -53,6 +67,10 @@ class BundleFeatureViewPayload(FrozenContract):
     #: order-flow block): the same view+bundle over different MBP-1 feature
     #: artifacts must never share one identity.
     mbp1_feature_artifact_id: str | None = Field(default=None, pattern=SHA256_PATTERN)
+    #: R6.1 (D9): exact binding of the fold-local regime feature artifact a
+    #: regime-bearing bundle view joined (None otherwise). Pre-acceptance
+    #: identity evolution — every bundle_feature_view_id moves (recorded).
+    regime_fold_feature_artifact_id: str | None = Field(default=None, pattern=SHA256_PATTERN)
 
 
 class BundleFeatureViewEnvelope(EnvelopeBase):
@@ -60,6 +78,9 @@ class BundleFeatureViewEnvelope(EnvelopeBase):
 
     bundle_feature_view_id: str = Field(pattern=SHA256_PATTERN)
     payload: BundleFeatureViewPayload
+    #: R6.1 (D): post-materialization fact binding the persisted frame bytes
+    #: (None on a view envelope that was never persisted with its frame).
+    frame_table_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
 
 
 def mbp1_block_keys_in_bundle(bundle_envelope) -> bool:
@@ -170,6 +191,92 @@ def resolve_available_bundle_view(
     )
 
 
+def bundle_categorical_features(
+    names: tuple[str, ...], bundle_envelope
+) -> tuple[str, ...]:
+    """R6.1 (D8): the categorical features of a bundle-parametrized model =
+    the frozen M0–M3 registry's categoricals ∪ every block-declared
+    categorical of the bundle's resolved blocks (e.g. ``cbp_session_state``,
+    the fold-local regime id) — in feature order."""
+
+    from ..context_model import categorical_features_for  # noqa: PLC0415
+    from .feature_blocks import FEATURE_BLOCK_RESOLUTION_REGISTRY  # noqa: PLC0415
+
+    declared: set[str] = set(categorical_features_for(names))
+    resolved_ids = set(bundle_envelope.payload.resolved_block_ids)
+    for envelope in FEATURE_BLOCK_RESOLUTION_REGISTRY.values():
+        if envelope.resolved_feature_block_id in resolved_ids:
+            declared.update(envelope.payload.categorical_features)
+    return tuple(name for name in names if name in declared)
+
+
+def bundle_view_frame_bytes(frame: pd.DataFrame) -> bytes:
+    """Deterministic Arrow bytes of a bundle-view frame (pandas metadata
+    stripped; object columns carried as strings/nulls)."""
+
+    return frame_to_arrow_bytes(frame.reset_index(drop=True))
+
+
+def verify_bundle_feature_view_frame(
+    envelope: BundleFeatureViewEnvelope, frame: pd.DataFrame
+) -> None:
+    """The frame IS the persisted view's table, or refuse (rehash)."""
+
+    if envelope.frame_table_sha256 is None:
+        raise ValueError("the bundle view envelope was never persisted with its frame")
+    if bytes_sha256(bundle_view_frame_bytes(frame)) != envelope.frame_table_sha256:
+        raise ValueError(
+            "the supplied bundle-view frame does not hash to the persisted "
+            "frame_table_sha256 — the binding is verified, never asserted"
+        )
+
+
+def save_bundle_feature_view(
+    root: Path, envelope: BundleFeatureViewEnvelope, frame: pd.DataFrame
+) -> BundleFeatureViewEnvelope:
+    """Persist the view envelope + its frame (save-or-reuse). The returned
+    envelope carries ``frame_table_sha256``; the identity is unchanged."""
+
+    data = bundle_view_frame_bytes(frame)
+    if len(frame) != envelope.payload.candidate_count:
+        raise ValueError("bundle-view frame row count disagrees with the payload")
+    bound = BundleFeatureViewEnvelope(
+        bundle_feature_view_id=envelope.bundle_feature_view_id,
+        payload=envelope.payload,
+        frame_table_sha256=bytes_sha256(data),
+    )
+    stored, _reused = save_or_reuse_envelope(
+        Path(root),
+        BUNDLE_FEATURE_VIEW_STORE,
+        bound,
+        extra_files={BUNDLE_VIEW_FRAME_SIDECAR: data},
+    )
+    return stored
+
+
+def load_bundle_feature_view(root: Path, view_id: str) -> BundleFeatureViewEnvelope:
+    return load_verified_envelope(
+        Path(root), BUNDLE_FEATURE_VIEW_STORE, view_id, BundleFeatureViewEnvelope
+    )
+
+
+def load_bundle_feature_view_frame(
+    root: Path, envelope: BundleFeatureViewEnvelope
+) -> pd.DataFrame:
+    data = load_sidecar_bytes(
+        Path(root),
+        BUNDLE_FEATURE_VIEW_STORE,
+        envelope.bundle_feature_view_id,
+        BUNDLE_VIEW_FRAME_SIDECAR,
+    )
+    if envelope.frame_table_sha256 is None or bytes_sha256(data) != envelope.frame_table_sha256:
+        raise ValueError("stored bundle-view frame fails the envelope hash check")
+    frame = frame_from_arrow_bytes(data)
+    if len(frame) != envelope.payload.candidate_count:
+        raise ValueError("stored bundle-view frame row count disagrees with the payload")
+    return frame
+
+
 def frozen_tier_for_bundle(
     resolved_feature_names: tuple[str, ...],
 ) -> ContextFeatureTier | None:
@@ -207,4 +314,5 @@ register_identity_pair(
     payload_cls=BundleFeatureViewPayload,
     id_field="bundle_feature_view_id",
     example_factory=_example_bundle_view_payload,
+    extra_envelope_fields=("frame_table_sha256",),
 )

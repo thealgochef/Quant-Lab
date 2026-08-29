@@ -5,10 +5,14 @@ protocol: the challenger bundle must carry the activated MBP-1 order-flow
 block, and its baseline is the challenger's OWN base bundle (composition by
 extension — the bundle graph is the preregistered block ablation, the
 permitted feature-selection form of brief §7B.3). Both arms run the
-bundle-parametrized supervised ladder (prevalence reference + the logistic
-protocol; the CatBoost fold runner stays tier-locked in the frozen lane),
-share one ``view_id`` so ``oos_row_id`` pairs exactly across arms, and are
-gated by the same identical-rows assertion before any delta is computed.
+bundle-parametrized supervised ladder — the prevalence reference, the
+logistic protocol, and (R6.1 §6.J) the bundle-aware CatBoost rung
+``ifvg_context_catboost_bundle_v1`` (the frozen-lane CatBoost runner stays
+tier-locked) — on identical rows/labels/folds/purge/embargo/costs/seed/
+hyperparameters, and are gated by the same identical-rows assertion on the
+bundle-independent ``comparison_row_id`` (D13) before any delta is
+computed. Paired OOS Brier deltas are reported per rung; the pinned
+``headline_protocol_id`` selects the headline comparison.
 
 The persisted study artifact pins every input identity (resolved bundle
 ids, the candidate view, the exact MBP-1 feature artifact, label and fold
@@ -51,8 +55,19 @@ from ..search.store import (
     load_verified_envelope,
     save_or_reuse_envelope,
 )
-from .model_protocols import LOGISTIC_PROTOCOL_ID, PREVALENCE_PROTOCOL_ID
+from .comparison_rows import (
+    COMPARISON_ROW_IDENTITY_KEY,
+    default_fold_schedule_id,
+    label_content_hash,
+)
+from .fold_set_artifact import fold_set_id as _legacy_fold_set_id
+from .model_protocols import (
+    CATBOOST_BUNDLE_PROTOCOL_ID,
+    LOGISTIC_PROTOCOL_ID,
+    PREVALENCE_PROTOCOL_ID,
+)
 from .supervised_ladder import (
+    DEFAULT_BUNDLE_LADDER_PROTOCOLS,
     SupervisedLadderRun,
     paired_cell_delta_report,
     run_supervised_ladder,
@@ -60,6 +75,8 @@ from .supervised_ladder import (
 
 __all__ = [
     "CONTROLLED_STUDY_STORE",
+    "HEADLINE_PROTOCOL_IDS",
+    "assert_cross_arm_identity",
     "ControlledFeatureStudyPayload",
     "ControlledFeatureStudyEnvelope",
     "ControlledFeatureStudyRun",
@@ -71,6 +88,9 @@ __all__ = [
 
 CONTROLLED_STUDY_STORE = "controlled_feature_studies"
 _DETAIL_SIDECAR = "controlled_study_detail.json"
+#: The rungs a controlled study may pin as its headline comparison.
+HEADLINE_PROTOCOL_IDS: tuple[str, ...] = (LOGISTIC_PROTOCOL_ID, CATBOOST_BUNDLE_PROTOCOL_ID)
+_Scalar = str | int | float | bool | None
 
 
 def _jsonable(value: Any) -> Any:
@@ -102,9 +122,19 @@ class ControlledFeatureStudyPayload(FrozenContract):
     challenger_ladder_id: str = Field(pattern=SHA256_PATTERN)
     oos_row_count: int = Field(ge=0)
     parity_status: Literal["held", "not_evaluable"]
+    #: the HEADLINE rung's summaries / delta (``model_protocol_id``)
     baseline_summary: ImmutableMap[str, Any]
     challenger_summary: ImmutableMap[str, Any]
     paired_brier_delta: ImmutableMap[str, Any] | None
+    #: R6.1: every rung of both arms — prevalence + logistic + the
+    #: bundle-aware CatBoost rung — on identical comparison rows (D13)
+    ladder_protocol_ids: tuple[str, ...] = (LOGISTIC_PROTOCOL_ID,)
+    row_identity_key: Literal["comparison_row_id"] = COMPARISON_ROW_IDENTITY_KEY
+    fold_schedule_id: str | None = Field(default=None, pattern=SHA256_PATTERN)
+    label_artifact_id: str | None = Field(default=None, pattern=SHA256_PATTERN)
+    baseline_rung_summaries: ImmutableMap[str, ImmutableMap[str, _Scalar]] = ImmutableMap()
+    challenger_rung_summaries: ImmutableMap[str, ImmutableMap[str, _Scalar]] = ImmutableMap()
+    paired_brier_deltas: ImmutableMap[str, ImmutableMap[str, _Scalar] | None] = ImmutableMap()
     research_boundary: Literal["research_only_offline"] = "research_only_offline"
 
 
@@ -125,9 +155,9 @@ class ControlledFeatureStudyRun:
     detail_bytes: bytes
 
 
-def _summary(run: SupervisedLadderRun) -> dict[str, Any]:
-    logistic = run.rung(LOGISTIC_PROTOCOL_ID)
-    report = dict(logistic.prediction_report or {})
+def _summary(run: SupervisedLadderRun, protocol_id: str = LOGISTIC_PROTOCOL_ID) -> dict[str, Any]:
+    rung = run.rung(protocol_id)
+    report = dict(rung.prediction_report or {})
     return _jsonable(
         {
             "oos_row_count": run.parity.get("oos_row_count", 0),
@@ -157,51 +187,60 @@ def _label_hash(labeled_candidates: pd.DataFrame) -> str:
 
 
 def _fold_hash(folds: ContextFoldSet) -> str:
-    return canonical_contract_sha256(
-        {
-            "folds": [
-                {
-                    "fold_index": fold.fold_index,
-                    "valid": fold.valid,
-                    "train_candidate_ids": list(fold.train_candidate_ids),
-                    "test_candidate_ids": list(fold.test_candidate_ids),
-                }
-                for fold in folds.folds
-            ]
-        }
-    )
+    """The ONE legacy row-population hash (R6.1 delegation)."""
+
+    return _legacy_fold_set_id(folds)
 
 
-def _assert_cross_arm_identity(
-    baseline: SupervisedLadderRun, challenger: SupervisedLadderRun
+def assert_cross_arm_identity(
+    baseline: SupervisedLadderRun,
+    challenger: SupervisedLadderRun,
+    *,
+    protocols: tuple[str, ...] = DEFAULT_BUNDLE_LADDER_PROTOCOLS,
+    key: str = COMPARISON_ROW_IDENTITY_KEY,
 ) -> None:
-    """The two arms must be the SAME rows/folds — proven, never assumed."""
+    """The two arms must be the SAME rows/folds — proven, never assumed.
 
-    for protocol_id in (PREVALENCE_PROTOCOL_ID, LOGISTIC_PROTOCOL_ID):
+    R6.1 (D13): keyed on the bundle-independent ``comparison_row_id`` —
+    the arms are different bundle views (different ``view_id``s), so the
+    legacy ``oos_row_id`` can never pair them.
+    """
+
+    for protocol_id in protocols:
         left = baseline.rung(protocol_id).predictions
         right = challenger.rung(protocol_id).predictions
         left_keys = {
-            (str(r.oos_row_id), str(r.candidate_id), int(r.target), float(r.training_prevalence))
+            (
+                str(getattr(r, key)),
+                str(r.candidate_id),
+                int(r.target),
+                float(r.training_prevalence),
+            )
             for r in left.itertuples()
         }
         right_keys = {
-            (str(r.oos_row_id), str(r.candidate_id), int(r.target), float(r.training_prevalence))
+            (
+                str(getattr(r, key)),
+                str(r.candidate_id),
+                int(r.target),
+                float(r.training_prevalence),
+            )
             for r in right.itertuples()
         }
         if left_keys != right_keys:
             raise ValueError(
                 f"controlled-study arms disagree on the exact OOS rows for "
-                f"{protocol_id}; the paired delta is undefined (identical "
-                "rows/labels/folds are the study's premise)"
+                f"{protocol_id} (keyed on {key}); the paired delta is undefined "
+                "(identical rows/labels/folds are the study's premise)"
             )
     # the prevalence REFERENCE must be numerically identical across arms:
     # features cannot change it, so a difference means the arms diverged
     left = baseline.rung(PREVALENCE_PROTOCOL_ID).predictions
     right = challenger.rung(PREVALENCE_PROTOCOL_ID).predictions
     if not left.empty:
-        merged = left[["oos_row_id", "probability"]].merge(
-            right[["oos_row_id", "probability"]],
-            on="oos_row_id",
+        merged = left[[key, "probability"]].merge(
+            right[[key, "probability"]],
+            on=key,
             validate="one_to_one",
             suffixes=("_baseline", "_challenger"),
         )
@@ -212,6 +251,10 @@ def _assert_cross_arm_identity(
                 "the prevalence reference differs across arms — the arms did "
                 "not share fold-local training rows"
             )
+
+
+#: R5B name kept for callers; the gate keys on ``comparison_row_id`` now.
+_assert_cross_arm_identity = assert_cross_arm_identity
 
 
 def _with_brier(frame: pd.DataFrame) -> pd.DataFrame:
@@ -232,12 +275,24 @@ def run_controlled_mbp1_study(
     mbp1_features: pd.DataFrame,
     mbp1_feature_artifact,
     calibration_policy_id: str = "raw_probability_diagnostics_v1",
+    headline_protocol_id: str = LOGISTIC_PROTOCOL_ID,
+    fold_schedule_id: str | None = None,
+    label_artifact_id: str | None = None,
 ) -> ControlledFeatureStudyRun:
     """``mbp1_feature_artifact`` is the ``Mbp1FeatureArtifactEnvelope`` whose
     table the supplied frame must BE — the binding is verified by rehash at
     the bundle-view seam (review F1), and its id rides the challenger
-    ladder's identity (review F2)."""
+    ladder's identity (review F2). Both arms run prevalence + logistic + the
+    bundle-aware CatBoost rung; ``headline_protocol_id`` (logistic or the
+    bundle rung) selects the headline summaries/delta; ``fold_schedule_id``
+    / ``label_artifact_id`` pin the D13 comparison-row identity (the
+    pipeline passes S08's / S07's ids; defaults derive from the inputs)."""
 
+    if headline_protocol_id not in HEADLINE_PROTOCOL_IDS:
+        raise ValueError(
+            f"headline protocol {headline_protocol_id!r} is not a controlled-study "
+            f"rung; lawful: {HEADLINE_PROTOCOL_IDS}"
+        )
     challenger_env = resolve_bundle(challenger_bundle_key)
     if not mbp1_block_keys_in_bundle(challenger_env):
         raise ValueError(
@@ -272,7 +327,9 @@ def run_controlled_mbp1_study(
     # ladder identity's mbp1_feature_artifact_id (reviews F1/F2)
     baseline_arm_view = replace(view, frame=baseline_frame)
     challenger_arm_view = replace(view, frame=challenger_frame)
-    arm_protocols = (PREVALENCE_PROTOCOL_ID, LOGISTIC_PROTOCOL_ID)
+    arm_protocols = DEFAULT_BUNDLE_LADDER_PROTOCOLS
+    schedule_id = fold_schedule_id or default_fold_schedule_id(folds, labeled_candidates)
+    label_id = label_artifact_id or label_content_hash(labeled_candidates)
     baseline_run = run_supervised_ladder(
         baseline_arm_view,
         labeled_candidates,
@@ -281,6 +338,8 @@ def run_controlled_mbp1_study(
         bundle_ref=baseline_env.resolved_feature_bundle_id,
         protocols=arm_protocols,
         calibration_policy_id=calibration_policy_id,
+        fold_schedule_id=schedule_id,
+        label_artifact_id=label_id,
     )
     challenger_run = run_supervised_ladder(
         challenger_arm_view,
@@ -291,18 +350,28 @@ def run_controlled_mbp1_study(
         bundle_evidence_ref=mbp1_feature_artifact_id,
         protocols=arm_protocols,
         calibration_policy_id=calibration_policy_id,
+        fold_schedule_id=schedule_id,
+        label_artifact_id=label_id,
     )
-    _assert_cross_arm_identity(baseline_run, challenger_run)
+    assert_cross_arm_identity(baseline_run, challenger_run, protocols=arm_protocols)
 
-    left = baseline_run.rung(LOGISTIC_PROTOCOL_ID).predictions
-    right = challenger_run.rung(LOGISTIC_PROTOCOL_ID).predictions
-    paired_delta: dict[str, Any] | None = None
-    if not left.empty and not right.empty:
-        paired_delta = _jsonable(
-            paired_cell_delta_report(
-                _with_brier(left), _with_brier(right), value_column="brier_loss"
+    paired_deltas: dict[str, ImmutableMap | None] = {}
+    for protocol_id in arm_protocols:
+        if protocol_id == PREVALENCE_PROTOCOL_ID:
+            continue
+        left = baseline_run.rung(protocol_id).predictions
+        right = challenger_run.rung(protocol_id).predictions
+        if left.empty or right.empty:
+            paired_deltas[protocol_id] = None
+            continue
+        paired_deltas[protocol_id] = ImmutableMap(
+            _jsonable(
+                paired_cell_delta_report(
+                    _with_brier(left), _with_brier(right), value_column="brier_loss"
+                )
             )
         )
+    paired_delta = paired_deltas[headline_protocol_id]
 
     payload = ControlledFeatureStudyPayload(
         baseline_bundle_key=baseline_env.payload.feature_bundle_key,
@@ -313,15 +382,33 @@ def run_controlled_mbp1_study(
         mbp1_feature_artifact_id=mbp1_feature_artifact_id,
         label_content_hash=_label_hash(labeled_candidates),
         fold_set_hash=_fold_hash(folds),
-        model_protocol_id=LOGISTIC_PROTOCOL_ID,
+        model_protocol_id=headline_protocol_id,
         calibration_policy_id=calibration_policy_id,
         baseline_ladder_id=baseline_run.ladder_id,
         challenger_ladder_id=challenger_run.ladder_id,
         oos_row_count=int(baseline_run.parity.get("oos_row_count", 0)),
         parity_status=baseline_run.parity.get("status", "not_evaluable"),
-        baseline_summary=_summary(baseline_run),
-        challenger_summary=_summary(challenger_run),
-        paired_brier_delta=paired_delta,
+        baseline_summary=_summary(baseline_run, headline_protocol_id),
+        challenger_summary=_summary(challenger_run, headline_protocol_id),
+        paired_brier_delta=dict(paired_delta) if paired_delta is not None else None,
+        ladder_protocol_ids=tuple(arm_protocols),
+        fold_schedule_id=schedule_id,
+        label_artifact_id=label_id,
+        baseline_rung_summaries=ImmutableMap(
+            {
+                protocol_id: ImmutableMap(_summary(baseline_run, protocol_id))
+                for protocol_id in arm_protocols
+                if protocol_id != PREVALENCE_PROTOCOL_ID
+            }
+        ),
+        challenger_rung_summaries=ImmutableMap(
+            {
+                protocol_id: ImmutableMap(_summary(challenger_run, protocol_id))
+                for protocol_id in arm_protocols
+                if protocol_id != PREVALENCE_PROTOCOL_ID
+            }
+        ),
+        paired_brier_deltas=ImmutableMap(paired_deltas),
     )
     detail = {
         "baseline_view_envelope": baseline_view_env.model_dump(mode="json"),

@@ -34,6 +34,7 @@ import io
 import json
 import shutil
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 import joblib
@@ -42,17 +43,21 @@ import pandas as pd
 
 from ..search.identities import canonical_contract_sha256
 from ..search.store import (
+    SearchStoreError,
     envelope_destination,
+    has_envelope,
     load_sidecar_bytes,
     load_verified_envelope,
     save_or_reuse_envelope,
 )
 from .regime_contracts import (
+    MODEL_FEATURE_PROMOTION_REFUSAL,
     RegimeCapabilityAssessmentEnvelope,
     RegimeFitArtifact,
     RegimeFitEnvelope,
     RegimePromotionDecisionEnvelope,
     RegimeProtocolEnvelope,
+    RegimeStatus,
     assert_lawful_promotion,
 )
 from .regime_preprocessing import keyed_observations
@@ -196,13 +201,21 @@ def persist_regime_fit(
     fold_assignments: pd.DataFrame,
     *,
     observation_frame: pd.DataFrame,
-) -> RegimeFitArtifact:
+    return_reuse: bool = False,
+) -> RegimeFitArtifact | tuple[RegimeFitArtifact, bool]:
     """Bind → verify the exact bytes → publish → re-verify through the store.
 
     ``observation_frame`` is the run's observation frame; every VALID
     assignment row is re-transformed and re-predicted from the bytes about
     to be published and must reproduce the persisted ``fold_local_cluster_id``
     exactly — a fit that cannot reproduce itself never reaches the store.
+
+    R6.1 (verified reuse by reproduction): when the exact fit identity already
+    exists, the stored entry is reloaded through the manifest-checked store,
+    re-transformed and re-predicted over THIS fit's valid rows, and must
+    reproduce this fit's transform and labels — equal → the stored artifact is
+    reused and the joblib bytes are never rewritten; different → refused.
+    ``return_reuse=True`` returns ``(artifact, reused)``.
     """
 
     assignments = _bound_assignments(fold_fit, fold_assignments)
@@ -283,6 +296,39 @@ def persist_regime_fit(
     if len(_assignments_from_bytes(assignments_bytes)) != len(assignments):
         raise ValueError("assignment frame does not round-trip through Arrow")
 
+    fit_id = fold_fit.fit_envelope.regime_fit_id
+    if has_envelope(Path(root), REGIME_FIT_STORE, fit_id):
+        # verified REUSE BY REPRODUCTION (R6.1): the bytes are never rewritten
+        try:
+            existing = load_regime_fit(Path(root), fit_id)
+            _verify_bundle(
+                existing._bundle,
+                existing.parameters,
+                existing.artifact,
+                rows,
+                expected_transform,
+                expected_labels,
+            )
+        except (SearchStoreError, ValueError) as error:
+            raise ValueError(
+                f"regime fit {fit_id[:12]}… already exists but does not reproduce this "
+                "fit's transform/labels from its verified bytes; refusing to reuse or "
+                "overwrite it"
+            ) from error
+        if existing.envelope.model_dump(mode="json") != (
+            fold_fit.fit_envelope.model_dump(mode="json")
+        ):
+            raise ValueError(
+                f"regime fit {fit_id[:12]}… exists with a DIFFERENT envelope payload"
+            )
+        if len(existing.assignments) != len(assignments) or set(
+            existing.assignments["row_id"].astype(str)
+        ) != set(assignments["row_id"].astype(str)):
+            raise ValueError(
+                f"regime fit {fit_id[:12]}… exists over a different assignment row set"
+            )
+        return (existing.artifact, True) if return_reuse else existing.artifact
+
     _stored, reused = save_or_reuse_envelope(
         Path(root),
         REGIME_FIT_STORE,
@@ -315,7 +361,7 @@ def persist_regime_fit(
                 ignore_errors=True,
             )
         raise
-    return artifact
+    return (artifact, bool(reused)) if return_reuse else artifact
 
 
 @dataclass(frozen=True, slots=True)
@@ -451,7 +497,12 @@ def load_regime_promotion(root: Path, decision_id: str) -> RegimePromotionDecisi
     )
 
 
-def persist_regime_promotion(root: Path, envelope: RegimePromotionDecisionEnvelope):
+def persist_regime_promotion(
+    root: Path,
+    envelope: RegimePromotionDecisionEnvelope,
+    *,
+    run_scope: str = "full_authorized_development",
+):
     """Persist a promotion decision ONLY against its verified evidence.
 
     The referenced capability assessment must exist in this store, verify,
@@ -460,11 +511,40 @@ def persist_regime_promotion(root: Path, envelope: RegimePromotionDecisionEnvelo
     declared ``previous_status``; and the ladder is re-checked with the
     assessment's OWN ``gates_passed`` — so FEATURE_ELIGIBLE+ over a failing
     or absent assessment is unpersistable (reviews F5/S1).
+
+    R6.1 (§6.F / D5): from FEATURE_ELIGIBLE onward ``owner_ratification_ref``
+    must be a VERIFIED-LOADED owner-decision artifact of this store
+    (``search.owner_decisions``) that binds this exact protocol and
+    assessment, states decisions 25/28/29/30 with the registry / protocol /
+    assessment values, authorizes exactly this transition, is effective at
+    ``decided_at``, and is not superseded (store-owned chain, fail closed).
+    A bare 64-hex reference is not evidence. Verification never mutates the
+    decision payload; ``run_scope`` decides whether synthetic provenance is
+    lawful (``synthetic_fixture`` only, and only in a test namespace — P0-4).
+
+    Adversarial round: STRATIFICATION_READY structurally requires the
+    assessment's coverage gates AND an OOS assignment whoever mints it (D6;
+    F2); MODEL_FEATURE is unpersistable in V1 (S5, the CLI's exact text);
+    ``decided_at`` is monotone along the chain and never precedes the owner
+    decision's ``effective_from`` (hence never its ``approved_at``; S11).
     """
 
+    from ..search.owner_decisions import (  # noqa: PLC0415
+        OwnerDecisionRefusalError,
+        assert_run_scope_lawful_for_root,
+    )
+
     decision = envelope.payload
+    root = Path(root)
+    status = RegimeStatus(decision.status)
+    if status is RegimeStatus.MODEL_FEATURE:
+        raise PermissionError(MODEL_FEATURE_PROMOTION_REFUSAL)
     try:
-        assessment = load_regime_assessment(Path(root), decision.capability_assessment_ref)
+        assert_run_scope_lawful_for_root(root, run_scope)
+    except OwnerDecisionRefusalError as error:
+        raise PermissionError(f"promotion refused: {error}") from error
+    try:
+        assessment = load_regime_assessment(root, decision.capability_assessment_ref)
     except Exception as error:
         raise ValueError(
             "promotion refused: the referenced capability assessment is not a "
@@ -476,7 +556,7 @@ def persist_regime_promotion(root: Path, envelope: RegimePromotionDecisionEnvelo
         )
     if decision.previous_decision_ref is not None:
         try:
-            previous = load_regime_promotion(Path(root), decision.previous_decision_ref)
+            previous = load_regime_promotion(root, decision.previous_decision_ref)
         except Exception as error:
             raise ValueError(
                 "promotion refused: the referenced previous decision is not a "
@@ -489,13 +569,90 @@ def persist_regime_promotion(root: Path, envelope: RegimePromotionDecisionEnvelo
                 "promotion refused: previous_status does not match the referenced "
                 "previous decision's status"
             )
+        if _instant(decision.decided_at) < _instant(previous.payload.decided_at):
+            raise ValueError(
+                "promotion refused: decided_at precedes the previous decision's decided_at "
+                "(the chain is monotone in decision time)"
+            )
     assert_lawful_promotion(
         decision.previous_status,
         decision.status,
         owner_ratification_ref=decision.owner_ratification_ref,
         gates_passed=assessment.payload.gates_passed,
     )
-    return save_or_reuse_envelope(Path(root), REGIME_PROMOTION_STORE, envelope)
+    if status is RegimeStatus.STRATIFICATION_READY and not (
+        assessment.payload.coverage.coverage_gates_passed
+        and assessment.payload.oos_assignment_available
+    ):
+        raise ValueError(
+            "promotion refused: stratification_ready structurally requires the "
+            "assessment's coverage gates to pass AND an OOS assignment (D6); "
+            f"coverage_gates_passed={assessment.payload.coverage.coverage_gates_passed}, "
+            f"oos_assignment_available={assessment.payload.oos_assignment_available}"
+        )
+    if status in _OWNER_EVIDENCE_STATUSES:
+        _assert_owner_evidence_authorizes(root, decision, assessment, run_scope=run_scope)
+    return save_or_reuse_envelope(root, REGIME_PROMOTION_STORE, envelope)
+
+
+def _instant(value: str) -> datetime:
+    return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+
+
+_OWNER_EVIDENCE_STATUSES = frozenset(
+    {RegimeStatus.FEATURE_ELIGIBLE, RegimeStatus.MODEL_FEATURE}
+)
+
+
+def _assert_owner_evidence_authorizes(
+    root: Path,
+    decision,
+    assessment: RegimeCapabilityAssessmentEnvelope,
+    *,
+    run_scope: str,
+) -> None:
+    """The verified-load half of the ratification requirement (R6.1)."""
+
+    from ..search.owner_decisions import (  # noqa: PLC0415
+        OwnerDecisionRefusalError,
+        assert_owner_decision_authorizes,
+        load_owner_decision,
+        load_supersession_chain,
+        transition_key,
+    )
+
+    ref = decision.owner_ratification_ref
+    try:
+        artifact = load_owner_decision(root, ref)
+    except SearchStoreError as error:
+        raise ValueError(
+            "promotion refused: owner_ratification_ref is not a verified owner-decision "
+            "artifact of this store (a bare 64-hex reference is not evidence)"
+        ) from error
+    except OwnerDecisionRefusalError as error:
+        raise PermissionError(f"promotion refused: {error}") from error
+    # S11: ``decided_at >= approved_at`` holds transitively — the artifact
+    # validator enforces ``effective_from >= approved_at`` and the effectivity
+    # check below refuses ``decided_at < effective_from`` ("not yet effective").
+    try:
+        protocol = load_regime_protocol(root, decision.resolved_regime_protocol_id)
+    except SearchStoreError as error:
+        raise ValueError(
+            "promotion refused: the decision's regime protocol is not a verified entry "
+            "of this store"
+        ) from error
+    try:
+        assert_owner_decision_authorizes(
+            artifact,
+            protocol_envelope=protocol,
+            assessment_envelope=assessment,
+            transition=transition_key(decision.previous_status, decision.status),
+            as_of=decision.decided_at,
+            run_scope=run_scope,  # type: ignore[arg-type]
+            supersession_chain=load_supersession_chain(root),
+        )
+    except OwnerDecisionRefusalError as error:
+        raise ValueError(f"promotion refused: {error}") from error
 
 
 def load_regime_protocol(root: Path, protocol_id: str) -> RegimeProtocolEnvelope:

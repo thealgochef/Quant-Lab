@@ -665,3 +665,141 @@ def mbp1_stage_evidence_defaults(
     if evidence and outputs:
         defaults["controlled_study_id"] = str(outputs[0])
     return defaults, None
+
+
+# ── R6.1: the regime study surfaces (Monitor expander + Regime Lane auto-fill) ─
+
+
+def _stage_sidecar(
+    store_root: Path, state: Mapping[str, Any] | None, stage_value: str, name: str
+) -> dict[str, Any] | None:
+    """One manifest-verified stage-result sidecar of a completed/reused stage,
+    or None when the stage has no verified result yet (absence is a rendered
+    state, never a crash)."""
+
+    if not state:
+        return None
+    stages = dict(state.get("stages") or {})
+    entry = dict(stages.get(stage_value) or {})
+    stage_result_id = entry.get("stage_result_id")
+    if not stage_result_id or entry.get("status") not in ("completed", "reused"):
+        return None
+    try:
+        raw = load_sidecar_bytes(
+            Path(store_root), "pipeline_stage_results", str(stage_result_id), name
+        )
+    except Exception:  # noqa: BLE001 — absence renders as a state
+        return None
+    return json.loads(raw.decode("utf-8"))
+
+
+def load_regime_diagnostics(
+    store_root: Path, state: Mapping[str, Any] | None
+) -> dict[str, Any] | None:
+    """The persisted S10 regime diagnostics (``regime_diagnostics.json``):
+    request, frozen authority refs, exact ids, gates, decisions, sub-steps."""
+
+    return _stage_sidecar(
+        store_root, state, "10_generate_predictions_and_diagnostics", "regime_diagnostics.json"
+    )
+
+
+def load_regime_run_facts(
+    store_root: Path, state: Mapping[str, Any] | None
+) -> dict[str, Any] | None:
+    """The persisted S09 regime run record (``regime_run.json``): the S09a
+    facts and, for model-bearing runs, the S09b/S09c records."""
+
+    return _stage_sidecar(store_root, state, "09_train_models", "regime_run.json")
+
+
+def load_regime_report_index(
+    store_root: Path, state: Mapping[str, Any] | None
+) -> dict[str, Any] | None:
+    """The persisted S14 stratified-report index (``regime_stratified_reports.json``):
+    report ids by class, the recorded per-class refusals, and ``delivered_by``
+    — the modeled classes delivered by S09c (class -> exact study id), which
+    are NOT refusals."""
+
+    return _stage_sidecar(
+        store_root, state, "14_build_frontier_and_insights", "regime_stratified_reports.json"
+    )
+
+
+def regime_stage_evidence_defaults(
+    state_root: Path, store_root: Path, pipeline_id: str | None
+) -> tuple[dict[str, str], str | None]:
+    """Exact regime artifact ids from a run's persisted stage evidence (R6.1).
+
+    The Regime Lane copy of ``mbp1_stage_evidence_defaults``: reads the S10
+    stage result's manifest-verified ``regime_diagnostics.json`` for the
+    protocol / assessment / first fit / final decision ids and the S14
+    ``regime_stratified_reports.json`` for the first stratified report id.
+    Returns ``(defaults, note)``: absence yields empty defaults silently, but
+    a VERIFICATION failure on persisted evidence yields a note the UI must
+    surface — an integrity failure never renders as a cosmetic blank.
+    """
+
+    from .search.pipeline import read_pipeline_state  # noqa: PLC0415
+    from .search.store import SearchStoreError  # noqa: PLC0415
+
+    defaults: dict[str, str] = {}
+    if not pipeline_id:
+        return defaults, None
+    state = read_pipeline_state(Path(state_root), str(pipeline_id))
+    if not state:
+        return defaults, None
+    stages = dict(state.get("stages") or {})
+    s10 = dict(stages.get("10_generate_predictions_and_diagnostics") or {})
+    result_id = s10.get("stage_result_id")
+    if not result_id:
+        return defaults, None
+    try:
+        diagnostics = json.loads(
+            load_sidecar_bytes(
+                Path(store_root),
+                "pipeline_stage_results",
+                str(result_id),
+                "regime_diagnostics.json",
+            ).decode("utf-8")
+        )
+    except SearchStoreError:
+        return {}, (
+            "the selected run's persisted regime stage evidence failed store "
+            "verification; enter exact artifact ids manually"
+        )
+    except Exception:  # noqa: BLE001 — absence renders as empty inputs
+        return defaults, None
+    if diagnostics.get("resolved_regime_protocol_id"):
+        defaults["protocol_id"] = str(diagnostics["resolved_regime_protocol_id"])
+    if diagnostics.get("regime_capability_assessment_id"):
+        defaults["assessment_id"] = str(diagnostics["regime_capability_assessment_id"])
+    fit_ids = list(diagnostics.get("regime_fit_ids") or ())
+    if fit_ids:
+        defaults["fit_id"] = str(fit_ids[0])
+    decisions = list(diagnostics.get("decisions") or ())
+    if decisions:
+        defaults["decision_id"] = str(decisions[-1].get("regime_promotion_decision_id") or "")
+    s14 = dict(stages.get("14_build_frontier_and_insights") or {})
+    s14_result = s14.get("stage_result_id")
+    if s14_result:
+        try:
+            index = json.loads(
+                load_sidecar_bytes(
+                    Path(store_root),
+                    "pipeline_stage_results",
+                    str(s14_result),
+                    "regime_stratified_reports.json",
+                ).decode("utf-8")
+            )
+        except SearchStoreError:
+            return {}, (
+                "the selected run's persisted stratified-report evidence failed "
+                "store verification; enter exact artifact ids manually"
+            )
+        except Exception:  # noqa: BLE001 — a run without S14 reports
+            index = {}
+        report_ids = list(index.get("report_ids") or ())
+        if report_ids:
+            defaults["report_id"] = str(report_ids[0])
+    return {key: value for key, value in defaults.items() if value}, None

@@ -17,6 +17,8 @@ import os
 import re
 import shutil
 import uuid
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from pathlib import Path
 
 from ..manifest import canonical_sha256, file_sha256
@@ -27,6 +29,9 @@ __all__ = [
     "SEARCH_TEST_STORE_ROOT",
     "SEARCH_STORE_NAMES",
     "SearchStoreError",
+    "ProducedSidecar",
+    "SidecarProducer",
+    "write_produced_sidecar",
     "envelope_destination",
     "has_envelope",
     "save_envelope_immutable",
@@ -82,6 +87,19 @@ SEARCH_STORE_NAMES: tuple[str, ...] = (
     "regime_fits",
     "regime_assessments",
     "regime_promotions",
+    # R6.1 — verified observation seam, panel materialization, fold schedules
+    # and fold sets, the descriptive OOS assignment, fold-local regime
+    # features, verified owner evidence, and stratified reports
+    "bundle_feature_views",
+    "context_bar_panels",
+    "fold_schedules",
+    "fold_sets",
+    "regime_oos_assignments",
+    "regime_fold_features",
+    "owner_decisions",
+    "regime_stratified_reports",
+    "regime_controlled_studies",
+    "regime_cohort_model_studies",
 )
 
 _ENVELOPE_FILE = "envelope.json"
@@ -102,6 +120,90 @@ _ENVELOPE_ID_PATTERN = re.compile(r"[0-9a-f]{64}")
 #: sidecar names are simple filenames only — no separators, no leading dot,
 #: no drive-relative (`C:evil`) or ADS (`name:stream`) colons (R5 safety F5)
 _SIDECAR_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
+
+@dataclass(frozen=True, slots=True)
+class ProducedSidecar:
+    """One sidecar a producer wrote into the publication directory, with the
+    sha256 / byte count the producer computed while streaming it. The store
+    re-hashes the file and refuses any disagreement (the producer's
+    bookkeeping is never trusted over the bytes on disk)."""
+
+    name: str
+    sha256: str
+    bytes: int
+
+
+#: A sidecar PRODUCER streams large sidecars straight into the store's
+#: temporary publication directory (R6.1 D15 / safety review S12): it is
+#: called with that directory, writes its files there, and returns one
+#: :class:`ProducedSidecar` per file it wrote. It runs BEFORE publication —
+#: any exception it raises discards the directory and nothing is published;
+#: on a verified-reuse publication it runs into a scratch directory whose
+#: bytes must reproduce the stored manifest hashes (then it is discarded).
+SidecarProducer = Callable[[Path], Iterable[ProducedSidecar]]
+
+
+def _assert_sidecar_name(name: str) -> None:
+    if not _SIDECAR_NAME_PATTERN.fullmatch(name or "") or name in (
+        _ENVELOPE_FILE,
+        _MANIFEST_FILE,
+    ):
+        raise SearchStoreError(f"invalid sidecar file name {name!r}")
+
+
+def write_produced_sidecar(directory: Path, name: str, data: bytes) -> ProducedSidecar:
+    """Write one small in-memory sidecar for a producer (name held to the
+    whitelist) and return its record."""
+
+    _assert_sidecar_name(name)
+    path = Path(directory) / name
+    if path.exists():
+        raise SearchStoreError(f"sidecar {name!r} was produced twice")
+    path.write_bytes(data)
+    return ProducedSidecar(name=name, sha256=hashlib.sha256(data).hexdigest(), bytes=len(data))
+
+
+def _run_sidecar_producer(
+    producer: SidecarProducer, directory: Path, *, reserved: set[str]
+) -> list[ProducedSidecar]:
+    """Run ``producer`` into ``directory`` and verify its bookkeeping: every
+    produced name is a whitelisted bare file name, unique, not reserved by
+    the envelope / an ``extra_files`` sidecar, present as a regular file
+    directly under ``directory`` with EXACTLY the claimed byte count and
+    sha256 (the file is re-hashed by streaming); every file the producer
+    left in the directory must be declared (an undeclared stray file
+    refuses)."""
+
+    directory = Path(directory)
+    produced = list(producer(directory))
+    seen: set[str] = set()
+    for record in produced:
+        if not isinstance(record, ProducedSidecar):
+            raise SearchStoreError("a sidecar producer must return ProducedSidecar records")
+        _assert_sidecar_name(record.name)
+        if record.name in reserved or record.name in seen:
+            raise SearchStoreError(
+                f"sidecar producer declared {record.name!r} twice or over a reserved name"
+            )
+        seen.add(record.name)
+        path = directory / record.name
+        if not path.is_file() or path.parent.resolve() != directory.resolve():
+            raise SearchStoreError(
+                f"sidecar producer declared {record.name!r} but wrote no such file"
+            )
+        if path.stat().st_size != int(record.bytes) or file_sha256(path) != record.sha256:
+            raise SearchStoreError(
+                f"sidecar producer bookkeeping for {record.name!r} disagrees with the bytes "
+                "on disk; refusing to publish"
+            )
+    stray = set(os.listdir(directory)) - reserved - seen
+    if stray:
+        raise SearchStoreError(
+            "sidecar producer left undeclared files in the publication directory: "
+            f"{sorted(stray)}"
+        )
+    return produced
 
 
 def envelope_destination(root: Path, store_name: str, envelope_id: str) -> Path:
@@ -125,11 +227,16 @@ def save_envelope_immutable(
     envelope: EnvelopeBase,
     *,
     extra_files: dict[str, bytes] | None = None,
+    sidecar_producer: SidecarProducer | None = None,
 ) -> Path:
     """Write one envelope exactly once, then atomically publish.
 
     ``extra_files`` carries opaque sidecar bytes (e.g. a pickled seed) whose
     SHA-256 and sizes enter the manifest; they never enter the payload hash.
+    ``sidecar_producer`` streams large sidecars straight into the temporary
+    publication directory (see :data:`SidecarProducer`); its files enter the
+    manifest exactly like ``extra_files`` (sorted by name), after the store
+    re-hashed them. Any failure before ``os.replace`` discards the directory.
     """
 
     envelope_id = getattr(envelope, type(envelope)._ID_FIELD)
@@ -160,21 +267,25 @@ def save_envelope_immutable(
                 "bytes": envelope_path.stat().st_size,
             }
         ]
+        sidecar_entries: dict[str, dict] = {}
         for name, payload in sorted((extra_files or {}).items()):
-            if not _SIDECAR_NAME_PATTERN.fullmatch(name) or name in (
-                _ENVELOPE_FILE,
-                _MANIFEST_FILE,
-            ):
-                raise SearchStoreError(f"invalid sidecar file name {name!r}")
+            _assert_sidecar_name(name)
             sidecar = temporary / name
             sidecar.write_bytes(payload)
-            artifacts.append(
-                {
-                    "path": name,
-                    "sha256": file_sha256(sidecar),
-                    "bytes": sidecar.stat().st_size,
+            sidecar_entries[name] = {
+                "path": name,
+                "sha256": file_sha256(sidecar),
+                "bytes": sidecar.stat().st_size,
+            }
+        if sidecar_producer is not None:
+            reserved = {_ENVELOPE_FILE, *sidecar_entries}
+            for record in _run_sidecar_producer(sidecar_producer, temporary, reserved=reserved):
+                sidecar_entries[record.name] = {
+                    "path": record.name,
+                    "sha256": record.sha256,
+                    "bytes": int(record.bytes),
                 }
-            )
+        artifacts.extend(sidecar_entries[name] for name in sorted(sidecar_entries))
         manifest_core = {
             "manifest_schema_version": 1,
             "store_name": store_name,
@@ -281,12 +392,15 @@ def save_or_reuse_envelope[E: EnvelopeBase](
     envelope: E,
     *,
     extra_files: dict[str, bytes] | None = None,
+    sidecar_producer: SidecarProducer | None = None,
 ) -> tuple[E, bool]:
     """Idempotent publish: verified reuse when the exact identity exists.
 
     Returns ``(envelope, reused)``. Reuse verifies the stored entry against
     the manifest and asserts byte-equal envelope content — a same-ID entry
-    with different content fails closed.
+    with different content fails closed. A ``sidecar_producer`` is run into a
+    scratch directory on reuse and every file it produces must reproduce the
+    stored manifest hash (then the scratch directory is discarded).
     """
 
     envelope_id = getattr(envelope, type(envelope)._ID_FIELD)
@@ -318,6 +432,34 @@ def save_or_reuse_envelope[E: EnvelopeBase](
                         f"store entry {store_name}/{envelope_id} exists with "
                         f"DIFFERENT sidecar content for {name!r}"
                     )
+        if sidecar_producer is not None:
+            _verify_reuse_with_producer(root, store_name, envelope_id, sidecar_producer)
         return stored, True
-    save_envelope_immutable(root, store_name, envelope, extra_files=extra_files)
+    save_envelope_immutable(
+        root, store_name, envelope, extra_files=extra_files, sidecar_producer=sidecar_producer
+    )
     return envelope, False
+
+
+def _verify_reuse_with_producer(
+    root: Path, store_name: str, envelope_id: str, producer: SidecarProducer
+) -> None:
+    """Reuse with a producer: the producer runs into a scratch directory next
+    to the entry and every produced file must reproduce the stored manifest
+    hash byte for byte; the scratch directory never survives."""
+
+    destination = envelope_destination(root, store_name, envelope_id)
+    manifest = json.loads((destination / _MANIFEST_FILE).read_text(encoding="utf-8"))
+    stored_hashes = {entry["path"]: entry["sha256"] for entry in manifest.get("artifacts", ())}
+    scratch = destination.parent / f".{envelope_id}.verify-{uuid.uuid4().hex}"
+    scratch.mkdir(parents=True)
+    try:
+        produced = _run_sidecar_producer(producer, scratch, reserved={_ENVELOPE_FILE})
+        for record in produced:
+            if stored_hashes.get(record.name) != record.sha256:
+                raise SearchStoreError(
+                    f"store entry {store_name}/{envelope_id} exists with "
+                    f"DIFFERENT sidecar content for {record.name!r}"
+                )
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)

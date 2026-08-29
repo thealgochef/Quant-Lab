@@ -245,6 +245,13 @@ class SimulationProtocol(FrozenContract):
     stress_scenario_ids: tuple[str, ...]
     trade_path_capability_policy_id: str
     clock_policy_id: str
+    #: R6.1 D15: the prop-event detail representation the S12/S13 account
+    #: simulations persist under (``none_v0`` = the R3–R6 JSON-only
+    #: representation; ``account_event_detail_by_path_parquet_v2`` = the
+    #: bounded ZSTD Parquet path blocks for every mode). Identity-bearing.
+    event_detail_persistence_policy_id: Literal[
+        "none_v0", "account_event_detail_by_path_parquet_v2"
+    ] = "none_v0"
 
 
 class CostPolicy(FrozenContract):

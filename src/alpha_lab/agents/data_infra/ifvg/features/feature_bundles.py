@@ -134,6 +134,23 @@ FEATURE_BUNDLE_REGISTRY: MappingProxyType[str, FeatureBundleDefinition] = Mappin
                 base="B3_CORE_STRUCTURE_ORDER_FLOW",
                 blocks=("IFVG_EXECUTION_LIQUIDITY_V1",),
             ),
+            # R6.1 (D9): core + the fold-local regime features — resolvable only
+            # under a status-gated activation of IFVG_REGIME_CONTEXT_V1 bound to
+            # the exact frozen FEATURE_ELIGIBLE authority (planned at import)
+            _bundle(
+                "B7_CORE_REGIME",
+                "Core + fold-local regime features (status-gated; planned at import)",
+                base="B0_CORE",
+                blocks=("IFVG_REGIME_CONTEXT_V1",),
+            ),
+            # R6.1: the panel-grain bundle — no base (panel rows are never
+            # candidate rows; a candidate view refuses it), joins on row_id
+            _bundle(
+                "BP0_CONTEXT_BAR_PANEL",
+                "Context-bar panel (5m/15m completed bars; panel grain)",
+                base=None,
+                blocks=("IFVG_CONTEXT_BAR_PANEL_V1",),
+            ),
         )
     }
 )

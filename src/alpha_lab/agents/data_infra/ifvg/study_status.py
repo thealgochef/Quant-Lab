@@ -121,6 +121,10 @@ class EmptyStateKey(StrEnum):
     CAPABILITY_PLANNED = "capability_planned"
     LINEAGE_NOT_COMPARABLE = "lineage_not_comparable"
     BROWSER_QA_UNAVAILABLE = "browser_qa_unavailable"
+    #: R6.1 (plan §6.G "new §31 states"): a regime stratum below the stamped
+    #: minimum, and a stratified report class refused by the regime status
+    INSUFFICIENT_REGIME_PARTITION = "insufficient_regime_partition"
+    REGIME_STATUS_BELOW_MINIMUM = "regime_status_below_minimum"
 
 
 class EmptyStatePresentation(FrozenContract):
@@ -581,6 +585,41 @@ EMPTY_STATE_PRESENTATIONS: Mapping[str, EmptyStatePresentation] = MappingProxyTy
             ),
             owning_gate="hardening viewport/keyboard evidence gate",
             next_action="Re-run the QA pass where a browser backend exists.",
+        ),
+        "insufficient_regime_partition": EmptyStatePresentation(
+            key=EmptyStateKey.INSUFFICIENT_REGIME_PARTITION,
+            heading="Insufficient regime partition",
+            explanation=(
+                "This regime stratum holds fewer observations than the "
+                "stamped minimum per regime stratum (a "
+                "proposed_protocol_default); its metrics are withheld and "
+                "the row stays typed rather than rendered as if reliable. "
+                "Regime ids are nominal and no ranking is implied."
+            ),
+            owning_gate=(
+                "minimum_trades_per_regime_stratum / "
+                "minimum_training_rows_per_regime_stratum (proposed_protocol_default)"
+            ),
+            next_action=None,
+        ),
+        "regime_status_below_minimum": EmptyStatePresentation(
+            key=EmptyStateKey.REGIME_STATUS_BELOW_MINIMUM,
+            heading="Regime status below the class minimum",
+            explanation=(
+                "The requested stratified report class requires a regime "
+                "status this run's exact decision does not reach "
+                "(STRATIFICATION_READY for descriptive classes; "
+                "FEATURE_ELIGIBLE with verified owner evidence for modeled "
+                "classes). The report is unconstructible and the refusal is "
+                "recorded; nothing here promotes."
+            ),
+            owning_gate="regime promotion ladder + verified owner-decision evidence (P1-3)",
+            next_action=(
+                "Descriptive classes: a passing capability assessment derives "
+                "STRATIFICATION_READY at S10. Modeled classes: persist the "
+                "owner decision artifact, promote to FEATURE_ELIGIBLE, and "
+                "freeze the exact ids into a new model-bearing study."
+            ),
         ),
     }
 )

@@ -183,10 +183,28 @@ def test_study_persists_immutably_with_the_detail_sidecar(study, tmp_path):
     )
     assert reloaded.model_dump(mode="json") == study.envelope.model_dump(mode="json")
     detail = load_controlled_study_detail(root, reloaded)
+    # R6.1 (§6.J): both arms run prevalence + logistic + the bundle-aware CatBoost rung
     assert set(detail["challenger"]["rungs"]) == {
         PREVALENCE_PROTOCOL_ID,
         LOGISTIC_PROTOCOL_ID,
+        "ifvg_context_catboost_bundle_v1",
     }
+    payload = reloaded.payload
+    assert payload.ladder_protocol_ids == (
+        PREVALENCE_PROTOCOL_ID,
+        LOGISTIC_PROTOCOL_ID,
+        "ifvg_context_catboost_bundle_v1",
+    )
+    assert payload.row_identity_key == "comparison_row_id"
+    assert set(payload.paired_brier_deltas) == {
+        LOGISTIC_PROTOCOL_ID,
+        "ifvg_context_catboost_bundle_v1",
+    }
+    assert dict(payload.paired_brier_deltas[LOGISTIC_PROTOCOL_ID]) == dict(
+        payload.paired_brier_delta
+    )
+    assert set(payload.challenger_rung_summaries) == set(payload.paired_brier_deltas)
+    assert payload.fold_schedule_id is not None and payload.label_artifact_id is not None
     save_controlled_feature_study(root, study)  # verified reuse
 
 

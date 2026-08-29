@@ -202,6 +202,10 @@ PropAccountEventBody = (
 class PropAccountEventEnvelope(FrozenContract):
     event_id: str = Field(pattern=SHA256_PATTERN)
     event_ts_utc: str
+    #: R6.1 D15: the trading day the walk was playing when it emitted the
+    #: event (``None`` only for the account-open fee emitted before any day).
+    #: Descriptive — it never enters ``event_id``.
+    trading_day: str | None = None
     event_ordinal: int = Field(ge=0)
     path_instance_id: str
     account_id: str
@@ -311,6 +315,7 @@ class AccountWalk:
         self._account_namespace = account_namespace
         self._validate_firm_rules()
         self._events: list[PropAccountEventEnvelope] = []
+        self._current_day: date | None = None
         self._ordinal = 0
         self._account_ordinal = 0
         self._per_account_verdicts: list[str] = []
@@ -482,6 +487,9 @@ class AccountWalk:
             PropAccountEventEnvelope(
                 event_id=_event_id(fields),
                 event_ts_utc=ts,
+                trading_day=(
+                    self._current_day.isoformat() if self._current_day is not None else None
+                ),
                 event_ordinal=self._ordinal,
                 path_instance_id=self._path_instance_id,
                 account_id=self._account_id(),
@@ -517,6 +525,7 @@ class AccountWalk:
         ):
             raise RuntimeError(f"account already terminal: {self.state.phase}")
         rules = self._phase_rules
+        self._current_day = day
         eod_ts = f"{day.isoformat()}T23:59:59+00:00"
         if self._pending_evaluation_fee:
             self._pending_evaluation_fee = False

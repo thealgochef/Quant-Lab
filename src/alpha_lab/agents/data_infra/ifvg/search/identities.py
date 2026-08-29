@@ -357,9 +357,10 @@ def registered_identity_pairs() -> tuple[RegisteredIdentityPair, ...]:
         withdrawal,
     )
 
-    from .. import fsm_audit_preparation  # noqa: F401, PLC0415
+    from .. import fold_schedules, fsm_audit_preparation  # noqa: F401, PLC0415
     from ..features import (  # noqa: F401, PLC0415
         bundle_feature_view,
+        context_bar_panel_materializer,
         feature_blocks,
         feature_bundles,
         mbp1_coverage,
@@ -371,7 +372,13 @@ def registered_identity_pairs() -> tuple[RegisteredIdentityPair, ...]:
     from ..ml import (  # noqa: F401, PLC0415
         controlled_feature_study,
         decision_policies,
+        fold_set_artifact,
+        regime_cohort_model,
         regime_contracts,
+        regime_controlled_study,
+        regime_fold_features,
+        regime_oos_assignment,
+        regime_stratified_contracts,
     )
     from ..study import cohort, comparison_contracts, contrasts, study_cell  # noqa: F401, PLC0415
     from . import (  # noqa: F401, PLC0415
@@ -380,6 +387,7 @@ def registered_identity_pairs() -> tuple[RegisteredIdentityPair, ...]:
         child_replay,
         lineage,
         orchestrator,
+        owner_decisions,
         pipeline,
         verification,
     )

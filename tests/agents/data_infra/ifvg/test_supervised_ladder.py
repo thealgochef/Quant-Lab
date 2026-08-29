@@ -186,7 +186,15 @@ def test_fold_local_preprocessing_is_structural(fixture, folds):
     fold_rows = full.predictions[
         full.predictions["fold_index"] == first_valid.fold_index
     ].reset_index(drop=True)
-    pd.testing.assert_frame_equal(solo.predictions, fold_rows)
+    # R6.1 (D13): the comparison_row_id binds the FOLD SET (one-fold set vs
+    # the full set differ by construction); every other column — the legacy
+    # view-scoped oos_row_id, the probabilities, the labels — is identical
+    pd.testing.assert_frame_equal(
+        solo.predictions.drop(columns=["comparison_row_id"]),
+        fold_rows.drop(columns=["comparison_row_id"]),
+    )
+    assert not solo.predictions["comparison_row_id"].isna().any()
+    assert set(solo.predictions["comparison_row_id"]) != set(fold_rows["comparison_row_id"])
 
 
 def test_unknown_protocol_id_is_refused(fixture, folds):

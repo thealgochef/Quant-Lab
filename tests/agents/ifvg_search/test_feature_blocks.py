@@ -283,6 +283,8 @@ def test_coverage_v2_reresolution_is_a_second_versioned_event() -> None:
         MBP1_COVERAGE_V2_ENVELOPE,
         PRE_R5B1_FEATURE_BLOCK_REGISTRY,
         PRE_R5B1_RESOLUTION_REGISTRY,
+        PRE_R6_1_FEATURE_BLOCK_REGISTRY,
+        PRE_R6_1_RESOLUTION_REGISTRY,
         FeatureBlockResolutionEnvelope,
         mbp1_coverage_v2_resolution_payload,
         with_reresolved_block,
@@ -297,10 +299,13 @@ def test_coverage_v2_reresolution_is_a_second_versioned_event() -> None:
     assert envelope.resolved_feature_block_id == (
         MBP1_COVERAGE_V2_ENVELOPE.resolved_feature_block_id
     )
-    assert dict(definitions) == dict(FEATURE_BLOCK_REGISTRY)
+    # the replayed v2 event IS the R5B.1 state (the R6.1 panel registration is
+    # a later, separately provable event over it — see the R6.1 test below)
+    assert dict(definitions) == dict(PRE_R6_1_FEATURE_BLOCK_REGISTRY)
     assert {k: v.model_dump(mode="json") for k, v in resolutions.items()} == {
-        k: v.model_dump(mode="json") for k, v in FEATURE_BLOCK_RESOLUTION_REGISTRY.items()
+        k: v.model_dump(mode="json") for k, v in PRE_R6_1_RESOLUTION_REGISTRY.items()
     }
+    assert set(FEATURE_BLOCK_REGISTRY) == set(definitions) | {"IFVG_CONTEXT_BAR_PANEL_V1"}
     assert definitions["IFVG_ORDER_FLOW_MBP1_V1"].block_version == 3
     assert envelope.payload.block_version == 3
     assert envelope.payload.formula_version == "ifvg_order_flow_mbp1_formula_v2"
@@ -356,4 +361,116 @@ def test_coverage_v2_reresolution_is_a_second_versioned_event() -> None:
                     unchanged
                 ),
             },
+        )
+
+
+# ── R6.1: the context-bar panel block registration (plan §6.A; owner Q3) ─────
+
+
+def test_context_bar_panel_registration_is_a_versioned_event() -> None:
+    """R6.1: the panel block is REGISTERED as its own versioned event over the
+    R5B.1 state — replay equality, hash change, B0/B1/B2/B4 ids stable, the
+    block contract (HTF_TAP, ``row_id`` join, categorical session state, the
+    seven names in order, the two owner-registered intervals), BP0 resolves
+    with the panel block only, and a candidate view refuses BP0."""
+
+    from alpha_lab.agents.data_infra.ifvg.features.bundle_feature_view import (
+        build_bundle_feature_view,
+        frozen_tier_for_bundle,
+    )
+    from alpha_lab.agents.data_infra.ifvg.features.context_bar_panel_contract import (
+        CONTEXT_BAR_PANEL_FEATURES,
+        PANEL_AS_OF_POLICY_ID_V1,
+        PANEL_INTERVALS_SECONDS_V1,
+    )
+    from alpha_lab.agents.data_infra.ifvg.features.feature_blocks import (
+        CONTEXT_BAR_PANEL_COMPUTATION_PATH,
+        CONTEXT_BAR_PANEL_REGISTRATION_ENVELOPE,
+        PRE_R6_1_FEATURE_BLOCK_REGISTRY,
+        PRE_R6_1_RESOLUTION_REGISTRY,
+        AvailabilityStage,
+        context_bar_panel_definition,
+        context_bar_panel_resolution_payload,
+        with_registered_block,
+    )
+    from tests.agents.data_infra.ifvg.ml_fixtures.synthetic_clusters import (
+        known_cluster_fixture,
+    )
+
+    definitions, resolutions, envelope = with_registered_block(
+        definition=context_bar_panel_definition(),
+        resolution_payload=context_bar_panel_resolution_payload(),
+        definitions=PRE_R6_1_FEATURE_BLOCK_REGISTRY,
+        resolutions=PRE_R6_1_RESOLUTION_REGISTRY,
+    )
+    assert envelope.resolved_feature_block_id == (
+        CONTEXT_BAR_PANEL_REGISTRATION_ENVELOPE.resolved_feature_block_id
+    )
+    assert dict(definitions) == dict(FEATURE_BLOCK_REGISTRY)
+    assert {k: v.model_dump(mode="json") for k, v in resolutions.items()} == {
+        k: v.model_dump(mode="json") for k, v in FEATURE_BLOCK_RESOLUTION_REGISTRY.items()
+    }
+    assert feature_block_registry_hash() != feature_block_registry_hash(
+        PRE_R6_1_FEATURE_BLOCK_REGISTRY, PRE_R6_1_RESOLUTION_REGISTRY
+    )
+    for bundle in (
+        "B0_CORE",
+        "B1_CORE_STRUCTURE",
+        "B2_CORE_ORDER_FLOW",
+        "B4_CORE_STRUCTURE_LIQUIDITY",
+    ):
+        pre = resolve_bundle(
+            bundle,
+            definitions=PRE_R6_1_FEATURE_BLOCK_REGISTRY,
+            resolutions=PRE_R6_1_RESOLUTION_REGISTRY,
+        )
+        assert pre.resolved_feature_bundle_id == resolve_bundle(bundle).resolved_feature_bundle_id
+    # the block contract
+    definition = FEATURE_BLOCK_REGISTRY["IFVG_CONTEXT_BAR_PANEL_V1"]
+    assert definition.status is FeatureBlockStatus.AVAILABLE
+    assert definition.block_version == 1
+    assert definition.availability_stage is AvailabilityStage.HTF_TAP
+    assert definition.source_kind == "replay_chart_bars"
+    assert definition.expected_computation_path == CONTEXT_BAR_PANEL_COMPUTATION_PATH
+    assert "research_only_offline" in definition.experimental_flags
+    payload = envelope.payload
+    assert payload.feature_names == tuple(CONTEXT_BAR_PANEL_FEATURES)
+    assert payload.join_keys == ("row_id",)
+    assert payload.categorical_features == ("cbp_session_state",)
+    assert payload.validity_fields == ("cbp_valid",)
+    assert payload.missing_reason_fields == ("cbp_missing_reason",)
+    assert payload.as_of_policy == PANEL_AS_OF_POLICY_ID_V1
+    assert payload.source_timeframes == tuple(PANEL_INTERVALS_SECONDS_V1) == (300, 900)
+    assert_no_deep_book_identifiers(payload.feature_names)
+    assert not set(payload.feature_names) & set(TIER_FEATURE_REGISTRY[ContextFeatureTier.M3])
+    # BP0 resolves with the panel block only; it is no frozen tier and no candidate view
+    bp0 = resolve_bundle("BP0_CONTEXT_BAR_PANEL")
+    assert bp0.payload.resolved_block_ids == (envelope.resolved_feature_block_id,)
+    assert bp0.payload.resolved_feature_names == tuple(CONTEXT_BAR_PANEL_FEATURES)
+    assert frozen_tier_for_bundle(bp0.payload.resolved_feature_names) is None
+    with pytest.raises(ValueError, match="missing from the immutable candidate view"):
+        build_bundle_feature_view(known_cluster_fixture(k=3, n=60).view, bp0)
+    # a registration event is one-time and version-1 only
+    with pytest.raises(ValueError, match="already registered"):
+        with_registered_block(
+            definition=context_bar_panel_definition(),
+            resolution_payload=context_bar_panel_resolution_payload(),
+        )
+    with pytest.raises(ValueError, match="AVAILABLE block"):
+        with_registered_block(
+            definition=context_bar_panel_definition().model_copy(
+                update={"feature_block_key": "X_V1", "status": FeatureBlockStatus.PLANNED}
+            ),
+            resolution_payload=context_bar_panel_resolution_payload().model_copy(
+                update={"feature_block_key": "X_V1"}
+            ),
+        )
+    with pytest.raises(ValueError, match="block_version 1"):
+        with_registered_block(
+            definition=context_bar_panel_definition().model_copy(
+                update={"feature_block_key": "X_V1", "block_version": 2}
+            ),
+            resolution_payload=context_bar_panel_resolution_payload().model_copy(
+                update={"feature_block_key": "X_V1", "block_version": 2}
+            ),
         )

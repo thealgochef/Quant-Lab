@@ -53,6 +53,15 @@ from alpha_lab.propsim.adapters import (
     group_account_trades_by_day,
 )
 from alpha_lab.propsim.contract_evidence import PropContractSupersession
+from alpha_lab.propsim.event_detail import (
+    EVENT_DETAIL_BUDGET_V1,
+    EVENT_DETAIL_PERSISTENCE_POLICIES,
+    EVENT_DETAIL_POLICY_NONE,
+    EVENT_DETAIL_POLICY_PARQUET_V2,
+    EventDetailBudget,
+    build_account_event_detail,
+    event_detail_identity_fields,
+)
 from alpha_lab.propsim.firm_contracts import PropFirmContractPayload
 from alpha_lab.propsim.prop_metrics import (
     PayoutReliabilityVector,
@@ -63,6 +72,7 @@ from alpha_lab.propsim.simulation import (
     SIMULATION_MODES,
     AccountSimulationPayload,
     AccountSimulationRun,
+    clock_policy_for_mode,
     run_account_simulation,
 )
 from alpha_lab.propsim.trade_path import (
@@ -162,12 +172,22 @@ def persist_account_simulation(
     """Publish one simulation's envelope + the sidecars the trader UI reads.
 
     ``walk_summary.json`` always rides; the ordered historical account-event
-    stream rides only for historical modes (bootstrap/stress paths advance a
-    synthetic clock — their event streams are not a historical timeline).
+    stream (``account_events.json``, audit evidence) rides only for
+    historical modes (bootstrap/stress paths advance a synthetic clock —
+    their event streams are not a historical timeline). R6.1 D15: when the
+    simulation identity carries
+    ``account_event_detail_by_path_parquet_v2`` the bounded ZSTD Parquet
+    event-detail partitions + their manifest ride for EVERY mode; they are
+    STREAMED by a store sidecar producer straight into the temporary
+    publication directory (one path block in memory at a time; the budget
+    is enforced BEFORE the atomic publication — a refusal discards the
+    directory), and an id persisted under ``none_v0`` is never widened (the
+    store refuses different sidecars under the same id).
     """
 
     from alpha_lab.agents.data_infra.ifvg.search.store import (  # noqa: PLC0415
         save_or_reuse_envelope,
+        write_produced_sidecar,
     )
 
     payload = run.envelope.payload
@@ -180,12 +200,9 @@ def persist_account_simulation(
         ),
         "verdict": run.walk_results[0].verdict if run.walk_results else None,
         "payout_reliability_vector": vector.model_dump(mode="json"),
+        "event_detail_persistence_policy_id": payload.event_detail_persistence_policy_id,
     }
-    extra_files = {
-        "walk_summary.json": (
-            json.dumps(walk_summary, sort_keys=True) + "\n"
-        ).encode("utf-8")
-    }
+    extra_files: dict[str, bytes] = {}
     if payload.simulation_mode.startswith("historical") and run.walk_results:
         events = [
             envelope.model_dump(mode="json")
@@ -194,11 +211,52 @@ def persist_account_simulation(
         extra_files["account_events.json"] = (
             json.dumps(events, sort_keys=True) + "\n"
         ).encode("utf-8")
+    producer = None
+    if payload.event_detail_persistence_policy_id == EVENT_DETAIL_POLICY_PARQUET_V2:
+        budget = payload.event_detail_budget
+        if budget is None:  # pragma: no cover - the payload validator forbids it
+            raise ValueError("a v2 event-detail identity carries a budget")
+        clock_policy_id = clock_policy_for_mode(payload.simulation_mode).policy_id
+        event_order_policy_id = (
+            run.walk_results[0].events[0].event_order_policy_id
+            if run.walk_results and run.walk_results[0].events
+            else "prop_account_event_order_v1"
+        )
+
+        def producer(directory: Path):
+            # the detail streams first; the walk summary then records the
+            # exact partition / row / byte counts the writer produced
+            bundle = build_account_event_detail(
+                run.walk_results,
+                run.path_records,
+                clock_policy_id=clock_policy_id,
+                budget=budget,
+                event_order_policy_id=event_order_policy_id,
+                directory=directory,
+            )
+            summary = {
+                **walk_summary,
+                "event_detail_partition_count": bundle.partition_count,
+                "event_detail_rows": bundle.total_rows,
+                "event_detail_bytes": bundle.total_bytes,
+            }
+            summary_record = write_produced_sidecar(
+                directory,
+                "walk_summary.json",
+                (json.dumps(summary, sort_keys=True) + "\n").encode("utf-8"),
+            )
+            return (*bundle.produced(), summary_record)
+
+    else:
+        extra_files["walk_summary.json"] = (
+            json.dumps(walk_summary, sort_keys=True) + "\n"
+        ).encode("utf-8")
     save_or_reuse_envelope(
         store_root,
         "account_simulations",
         run.envelope,
         extra_files=extra_files,
+        sidecar_producer=producer,
     )
 
 
@@ -218,6 +276,9 @@ def make_prop_simulator(
     bar_observations_for: Callable[[str], Mapping[str, Sequence[OhlcBarPathObservation]]]
     | None = None,
     store_root: Path | None = None,
+    event_detail_persistence_policy_id: str = EVENT_DETAIL_POLICY_NONE,
+    event_detail_budget: EventDetailBudget = EVENT_DETAIL_BUDGET_V1,
+    on_simulation_persisted: Callable[[str, str, str, str], None] | None = None,
 ) -> Callable[..., dict[str, PayoutReliabilityVector]]:
     """Build the orchestrator-seam callable over the real simulation chain.
 
@@ -239,6 +300,16 @@ def make_prop_simulator(
         bootstrap_protocol_id=bootstrap_protocol_id,
         stress_scenario_ids=tuple(stress_scenario_ids),
         bar_observations_for=bar_observations_for,
+    )
+    if event_detail_persistence_policy_id not in EVENT_DETAIL_PERSISTENCE_POLICIES:
+        raise ValueError(
+            f"unregistered event_detail_persistence_policy_id "
+            f"{event_detail_persistence_policy_id!r}; registered: "
+            f"{EVENT_DETAIL_PERSISTENCE_POLICIES}"
+        )
+    # R6.1 D15: the representation policy + budget enter every simulation identity
+    event_detail_fields = event_detail_identity_fields(
+        event_detail_persistence_policy_id, budget=event_detail_budget
     )
     single_mode = len(simulation_modes) == 1
 
@@ -350,6 +421,7 @@ def make_prop_simulator(
                         stress_scenario_id=stress_scenario_id,
                         seed=seed,
                         n_paths=n_paths if mode in ("day_block_bootstrap", "stress") else 1,
+                        **event_detail_fields,
                     )
                     run = run_account_simulation(
                         payload,
@@ -378,6 +450,15 @@ def make_prop_simulator(
                             vector=vector,
                             risk_policy_label=spec.label,
                         )
+                        if on_simulation_persisted is not None:
+                            # R6.1: the exact persisted simulation ids reach
+                            # the stratified-prop reports (never a store scan)
+                            on_simulation_persisted(
+                                core_replay_id,
+                                run.envelope.account_simulation_id,
+                                spec.label,
+                                mode,
+                            )
         return vectors
 
     return _simulator

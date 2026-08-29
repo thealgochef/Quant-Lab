@@ -38,6 +38,7 @@ from sklearn.cluster import KMeans
 
 from ..context_folds import ContextFoldSet, IfvgContextFoldDefinition
 from ..search.identities import SHA256_PATTERN, ImmutableMap, canonical_contract_sha256
+from .fold_set_artifact import fold_set_id as _legacy_fold_set_id
 from .regime_algorithms import (
     KMEANS_ALGORITHM_KEY,
     assert_protocol_executable,
@@ -65,7 +66,18 @@ from .regime_preprocessing import (
     observation_ts_column,
 )
 
+#: R6.1 safety review S9: ``threadpoolctl`` is a scikit-learn dependency the
+#: repo does not declare itself, so the single-thread kernel imports it
+#: LAZILY (a missing module fails the regime run with this exact reason,
+#: never the import of the whole regime lane).
+THREADPOOLCTL_MISSING_MESSAGE = (
+    "the regime kernel requires 'threadpoolctl' (a scikit-learn dependency) to run under "
+    "threadpool_limits(1) for byte-reproducible assignment tables; it is not importable in "
+    "this environment"
+)
+
 __all__ = [
+    "THREADPOOLCTL_MISSING_MESSAGE",
     "resolved_bundle_feature_names",
     "assert_inputs_permitted",
     "resolve_kmeans_protocol",
@@ -117,11 +129,65 @@ def assert_inputs_permitted(
         raise RegimeLeakageError(
             f"regime inputs outside the referenced feature bundle: {outside}"
         )
+    assert_grain_bundle_coherent(payload)
     assert_no_regime_leakage(
         payload.resolved_input_features,
         observation_stage=payload.observation_stage,
         feature_stage_for=feature_stage_for,
     )
+
+
+def _bundle_block_join_keys(input_feature_bundle_ref: str) -> dict[str, tuple[str, ...]]:
+    """block key → join keys for every resolved block of the referenced bundle."""
+
+    from ..features.feature_blocks import (  # noqa: PLC0415
+        FEATURE_BLOCK_RESOLUTION_REGISTRY,
+        BlockUnavailableError,
+    )
+    from ..features.feature_bundles import (  # noqa: PLC0415
+        FEATURE_BUNDLE_REGISTRY,
+        resolve_bundle,
+    )
+
+    by_id = {
+        envelope.resolved_feature_block_id: envelope
+        for envelope in FEATURE_BLOCK_RESOLUTION_REGISTRY.values()
+    }
+    for key in FEATURE_BUNDLE_REGISTRY:
+        try:
+            bundle = resolve_bundle(key)
+        except BlockUnavailableError:
+            continue
+        if bundle.resolved_feature_bundle_id == input_feature_bundle_ref:
+            return {
+                by_id[block_id].payload.feature_block_key: tuple(by_id[block_id].payload.join_keys)
+                for block_id in bundle.payload.resolved_block_ids
+                if block_id in by_id
+            }
+    raise ValueError("input_feature_bundle_ref does not resolve to a registered bundle")
+
+
+def assert_grain_bundle_coherent(payload: RegimeProtocolPayload) -> None:
+    """R6.1 (§6.A): grain / bundle-key coherence — every block of the input
+    bundle must join on ``row_id`` for the panel grain and on
+    ``candidate_id`` otherwise (a panel protocol over candidate-keyed
+    blocks, or a candidate protocol over the panel block, is a leakage of
+    grain semantics and refuses)."""
+
+    grain = ObservationGranularity(payload.observation_granularity)
+    expected = (
+        ("row_id",) if grain is ObservationGranularity.CONTEXT_BAR_PANEL else ("candidate_id",)
+    )
+    incoherent = sorted(
+        block_key
+        for block_key, keys in _bundle_block_join_keys(payload.input_feature_bundle_ref).items()
+        if tuple(keys) != expected
+    )
+    if incoherent:
+        raise RegimeLeakageError(
+            f"grain {grain.value} requires every input-bundle block to join on "
+            f"{expected}; blocks {incoherent} do not (grain/bundle-key coherence)"
+        )
 
 
 def resolve_kmeans_protocol(
@@ -208,19 +274,11 @@ def _training_row_ids_hash(train_ids: tuple[str, ...]) -> str:
 
 
 def _fold_set_id(folds: ContextFoldSet) -> str:
-    return canonical_contract_sha256(
-        {
-            "folds": [
-                {
-                    "fold_index": fold.fold_index,
-                    "valid": fold.valid,
-                    "train_candidate_ids": list(fold.train_candidate_ids),
-                    "test_candidate_ids": list(fold.test_candidate_ids),
-                }
-                for fold in folds.folds
-            ]
-        }
-    )
+    """The ONE legacy row-population hash (R6.1: delegated to
+    ``fold_set_artifact.fold_set_id`` — a three-way equality test pins that
+    no existing identity moved)."""
+
+    return _legacy_fold_set_id(folds)
 
 
 def _observation_ts(indexed: pd.DataFrame, ts_column: str | None) -> dict[str, str | None]:
@@ -388,6 +446,39 @@ def run_regime_protocol(
     source_artifact_ids: tuple[str, ...],
     bootstrap_refits: int = 50,
 ) -> RegimeProtocolRun:
+    """The complete fold-local run under a SINGLE BLAS/OpenMP thread.
+
+    R6.1: multithreaded BLAS / OpenMP reductions make centroid distances
+    non-reproducible at the ULP level between otherwise identical runs, which
+    would fork the persisted assignment tables (and therefore every artifact
+    that hashes them) without any scientific change. The kernel is therefore
+    executed under ``threadpool_limits(limits=1)`` — an execution-environment
+    control, not a protocol field: fit identities, labels, and the R6 golden
+    fit id are unchanged, and a double run is byte-identical.
+    """
+
+    try:
+        from threadpoolctl import threadpool_limits  # noqa: PLC0415 — see S9 below
+    except ImportError as error:  # pragma: no cover - exercised by monkeypatched import
+        raise RuntimeError(THREADPOOLCTL_MISSING_MESSAGE) from error
+    with threadpool_limits(limits=1):
+        return _run_regime_protocol_single_thread(
+            frame,
+            folds,
+            protocol,
+            source_artifact_ids=source_artifact_ids,
+            bootstrap_refits=bootstrap_refits,
+        )
+
+
+def _run_regime_protocol_single_thread(
+    frame: pd.DataFrame,
+    folds: ContextFoldSet,
+    protocol: RegimeProtocolEnvelope,
+    *,
+    source_artifact_ids: tuple[str, ...],
+    bootstrap_refits: int = 50,
+) -> RegimeProtocolRun:
     """The complete fold-local run: fits, assignments, alignment, gates.
 
     ``frame`` is the observation frame (candidate view rows for the
@@ -403,6 +494,17 @@ def run_regime_protocol(
     assert_protocol_executable(payload)  # planned algorithm/policy → refused first
     assert_inputs_permitted(payload)
     source_ids = _validated_source_ids(tuple(source_artifact_ids))
+    if (
+        payload.observation_granularity is ObservationGranularity.CONTEXT_BAR_PANEL
+        and payload.panel_source_artifact_id not in source_ids
+    ):
+        # R6.1 (D2/§6.D): the panel protocol's pinned source must BE one of
+        # the verified observation sources — a frame from elsewhere refuses
+        raise ValueError(
+            "panel protocol pins panel_source_artifact_id "
+            f"{str(payload.panel_source_artifact_id)[:12]}… but the observation "
+            "source ids do not include it; the panel frame is not this protocol's"
+        )
     missing = sorted(set(payload.resolved_input_features) - set(frame.columns))
     if missing:
         raise ValueError(f"observation frame lacks regime inputs: {missing}")
@@ -525,12 +627,21 @@ def _assess_capability(
         else pd.DataFrame()
     )
     occupancy: dict[int, float] = {}
+    per_fold_canonical: dict[str, float] = {}
     if len(train_valid):
         counts = train_valid["canonical_reporting_cluster_id"].value_counts()
         occupancy = {
             int(cluster): float(count / len(train_valid))
             for cluster, count in sorted(counts.items())
         }
+        # R6.1: occupancy per (fold, canonical id) — the same key space the
+        # rows-per-fold gate uses, so both gates are reviewable together
+        for fold_index, fold_group in train_valid.groupby("fold_index", sort=True):
+            fold_counts = fold_group["canonical_reporting_cluster_id"].value_counts()
+            for cluster, count in sorted(fold_counts.items()):
+                per_fold_canonical[f"{int(fold_index)}:{int(cluster)}"] = float(
+                    count / len(fold_group)
+                )
 
     gate_failures: list[str] = []
     observed_min = min((f.training_row_count for f in fold_fits), default=0)
@@ -564,6 +675,7 @@ def _assess_capability(
         per_fold_coverage=per_fold,
         oos_assignment_coverage=oos_coverage,
         per_cluster_occupancy=occupancy,
+        per_fold_canonical_occupancy=per_fold_canonical,
         minimum_training_observations_gate=minimum_rows,
         minimum_training_observations_observed=observed_min,
         coverage_gates_passed=not any(f in coverage_kinds for f in gate_failures),
@@ -597,119 +709,12 @@ def _assess_capability(
     return RegimeCapabilityAssessmentEnvelope.from_payload(assessment)
 
 
-#: The panel→candidate assignment output (one row per candidate, order
-#: preserved; ``partition`` is always ``"test"`` on a valid row).
-PANEL_ASSIGNMENT_COLUMNS: tuple[str, ...] = (
-    "candidate_id",
-    "panel_row_id",
-    "regime_fit_id",
-    "fold_index",
-    "partition",
-    "fold_local_cluster_id",
-    "canonical_reporting_cluster_id",
-    "valid",
-    "missing_reason",
+#: The panel→candidate assignment output columns (R6.1: the descriptive
+#: OOS-assignment artifact's columns — ``regime_oos_assignment``); the PIT
+#: rule itself lives in ``regime_oos_assignment.assign_panel_regimes_to_candidates``.
+from .regime_oos_assignment import (  # noqa: E402
+    OOS_ASSIGNMENT_COLUMNS as PANEL_ASSIGNMENT_COLUMNS,
 )
-
-_REQUIRED_PANEL_ASSIGNMENT_COLUMNS = (
-    "row_id",
-    "fold_index",
-    "partition",
-    "regime_fit_id",
-    "fold_local_cluster_id",
-    "canonical_reporting_cluster_id",
-    "valid",
+from .regime_oos_assignment import (  # noqa: E402
+    assign_panel_regimes_to_candidates,
 )
-
-
-def _panel_gap(candidate_id: str, bar_id: str | None) -> dict:
-    return {
-        "candidate_id": candidate_id,
-        "panel_row_id": bar_id,
-        "regime_fit_id": None,
-        "fold_index": None,
-        "partition": None,
-        "fold_local_cluster_id": None,
-        "canonical_reporting_cluster_id": None,
-        "valid": False,
-        "missing_reason": "coverage_gap",
-    }
-
-
-def assign_panel_regimes_to_candidates(
-    panel_frame: pd.DataFrame,
-    panel_assignments: pd.DataFrame,
-    candidate_as_of: pd.DataFrame,
-    *,
-    protocol: RegimeProtocolEnvelope,
-) -> pd.DataFrame:
-    """Point-in-time panel→candidate assignment (Amendment P1-B).
-
-    ``panel_frame`` carries one row per COMPLETED bar (``row_id``,
-    ``bar_close_ts_utc``); ``panel_assignments`` is the run's assignment
-    frame over those bars; ``candidate_as_of`` carries (``candidate_id``,
-    ``as_of_ts_utc``). Each candidate receives the frozen OUT-OF-SAMPLE
-    regime (``partition == "test"``, valid) of the LAST completed bar at or
-    before its as-of instant — never a later bar, never an in-sample fit.
-    When several OOS folds cover the same bar, the lowest ``fold_index``
-    wins (deterministic; independent of input row order). A candidate
-    before the first completed bar, or whose bar carries no OOS assignment,
-    is a typed ``coverage_gap`` with the row preserved.
-    """
-
-    if protocol.payload.observation_granularity is not (
-        ObservationGranularity.CONTEXT_BAR_PANEL
-    ):
-        raise ValueError("panel→candidate assignment requires the CONTEXT_BAR_PANEL grain")
-    missing = sorted(
-        set(_REQUIRED_PANEL_ASSIGNMENT_COLUMNS) - set(panel_assignments.columns)
-    )
-    if missing and len(panel_assignments):
-        raise ValueError(f"panel assignments lack required columns: {missing}")
-    bars = panel_frame[["row_id", "bar_close_ts_utc"]].copy()
-    bars["row_id"] = bars["row_id"].astype(str)
-    bars["_close"] = pd.to_datetime(bars["bar_close_ts_utc"], utc=True)
-    bars = bars.sort_values(["_close", "row_id"], kind="stable")
-    if len(panel_assignments):
-        oos = panel_assignments[
-            (panel_assignments["partition"].astype(str) == "test")
-            & panel_assignments["valid"].astype(bool)
-        ].copy()
-        oos["row_id"] = oos["row_id"].astype(str)
-        oos = oos.sort_values(["row_id", "fold_index"], kind="stable")
-        lookup = {
-            row_id: group.iloc[0] for row_id, group in oos.groupby("row_id", sort=True)
-        }
-    else:
-        lookup = {}
-    out_rows: list[dict] = []
-    for _, candidate in candidate_as_of.iterrows():
-        candidate_id = str(candidate["candidate_id"])
-        as_of = pd.Timestamp(candidate["as_of_ts_utc"])
-        as_of = as_of.tz_localize("UTC") if as_of.tzinfo is None else as_of.tz_convert("UTC")
-        eligible = bars[bars["_close"] <= as_of]
-        if eligible.empty:
-            out_rows.append(_panel_gap(candidate_id, None))
-            continue
-        bar_id = str(eligible.iloc[-1]["row_id"])
-        chosen = lookup.get(bar_id)
-        if chosen is None:
-            out_rows.append(_panel_gap(candidate_id, bar_id))
-            continue
-        canonical = chosen["canonical_reporting_cluster_id"]
-        out_rows.append(
-            {
-                "candidate_id": candidate_id,
-                "panel_row_id": bar_id,
-                "regime_fit_id": str(chosen["regime_fit_id"]),
-                "fold_index": int(chosen["fold_index"]),
-                "partition": "test",
-                "fold_local_cluster_id": int(chosen["fold_local_cluster_id"]),
-                "canonical_reporting_cluster_id": (
-                    int(canonical) if pd.notna(canonical) else None
-                ),
-                "valid": True,
-                "missing_reason": None,
-            }
-        )
-    return pd.DataFrame(out_rows, columns=list(PANEL_ASSIGNMENT_COLUMNS))

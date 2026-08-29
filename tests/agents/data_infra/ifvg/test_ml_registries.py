@@ -66,6 +66,11 @@ def test_v1_available_protocols_are_exactly_the_ruled_scope():
         "reference_prevalence_v1",
         "ifvg_context_logistic_l2_v1",
         "ifvg_context_catboost_binary_v1",
+        # R6.1 (§6.J): the bundle-aware CatBoost rung (research-only)
+        "ifvg_context_catboost_bundle_v1",
+    )
+    assert MODEL_PROTOCOL_REGISTRY["ifvg_context_catboost_bundle_v1"].kind == (
+        "nonlinear_challenger_bundle"
     )
     assert MODEL_PROTOCOL_REGISTRY["ifvg_context_gam_v1"].reason == (
         "preregistered_basis_penalty_protocol_not_ratified"

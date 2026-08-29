@@ -75,6 +75,14 @@ __all__ = [
     "PRE_R5B1_RESOLUTION_REGISTRY",
     "MBP1_COVERAGE_V2_ENVELOPE",
     "MBP1_RESEARCH_BOUNDARY_PATH",
+    "PRE_R6_1_FEATURE_BLOCK_REGISTRY",
+    "PRE_R6_1_RESOLUTION_REGISTRY",
+    "CONTEXT_BAR_PANEL_REGISTRATION_ENVELOPE",
+    "CONTEXT_BAR_PANEL_COMPUTATION_PATH",
+    "CONTEXT_BAR_PANEL_RESEARCH_BOUNDARY",
+    "context_bar_panel_definition",
+    "context_bar_panel_resolution_payload",
+    "with_registered_block",
     "resolve_block_definition",
     "resolve_available_block",
     "feature_block_registry_hash",
@@ -126,6 +134,7 @@ class FeatureBlockDefinition(FrozenContract):
         "mbp1_parquet",
         "regime_artifact",
         "bars_1m",
+        "replay_chart_bars",
         "planned_external",
     ]
     availability_stage: AvailabilityStage
@@ -692,11 +701,146 @@ _V2_DEFINITIONS, _V2_RESOLUTIONS, MBP1_COVERAGE_V2_ENVELOPE = with_reresolved_bl
     resolutions=_ACTIVATED_RESOLUTIONS,
 )
 
+#: The R5B.1 state (MBP-1 v2 re-resolution applied; no panel block) — exported
+#: so the R6.1 panel registration stays provable as its own versioned event.
+PRE_R6_1_FEATURE_BLOCK_REGISTRY: MappingProxyType[str, FeatureBlockDefinition] = (
+    MappingProxyType(dict(_V2_DEFINITIONS))
+)
+PRE_R6_1_RESOLUTION_REGISTRY: MappingProxyType[str, FeatureBlockResolutionEnvelope] = (
+    MappingProxyType(dict(_V2_RESOLUTIONS))
+)
+
+# ── R6.1: the context-bar panel block (owner planning decision Q3) ──────────
+
+#: The panel block's computation path — offline panel materialization from a
+#: VERIFIED replay-chart artifact (completed 5m/15m bars); the research
+#: boundary is research-only offline: the block cannot become a live model
+#: feature, an execution gate, or a Trade-Lab serving feature without a
+#: later Strategy-Core formula/parity contract.
+CONTEXT_BAR_PANEL_COMPUTATION_PATH = "offline_panel_materialization_v1"
+CONTEXT_BAR_PANEL_RESEARCH_BOUNDARY = "research_only_offline"
+
+
+def context_bar_panel_definition() -> FeatureBlockDefinition:
+    """The AVAILABLE panel block definition (block_version 1; HTF_TAP stage —
+    completed bars are point-in-time by construction at every later stage)."""
+
+    from .context_bar_panel_contract import CONTEXT_BAR_PANEL_BLOCK_KEY  # noqa: PLC0415
+
+    return _definition(
+        CONTEXT_BAR_PANEL_BLOCK_KEY,
+        "Context-bar panel features (5m/15m completed bars; panel grain)",
+        FeatureBlockStatus.AVAILABLE,
+        family="context_bar_panel",
+        source_kind="replay_chart_bars",
+        stage=AvailabilityStage.HTF_TAP,
+        flags=(CONTEXT_BAR_PANEL_RESEARCH_BOUNDARY,),
+        computation_path=CONTEXT_BAR_PANEL_COMPUTATION_PATH,
+    )
+
+
+def context_bar_panel_resolution_payload() -> FeatureBlockResolutionPayload:
+    """The frozen panel resolution: the seven registered features in order,
+    ``row_id`` join, the registered completed-bars as-of policy, the two
+    owner-registered intervals, and the block-declared categorical."""
+
+    from .context_bar_panel_contract import (  # noqa: PLC0415
+        CONTEXT_BAR_PANEL_BLOCK_KEY,
+        CONTEXT_BAR_PANEL_CATEGORICAL_FEATURES,
+        CONTEXT_BAR_PANEL_FEATURES,
+        CONTEXT_BAR_PANEL_FORMULA_VERSION,
+        CONTEXT_BAR_PANEL_MATERIALIZER_VERSION,
+        PANEL_AS_OF_POLICY_ID_V1,
+        PANEL_INTERVALS_SECONDS_V1,
+        PANEL_RESAMPLE_RULE_ID,
+        WARMUP_POLICY_ID,
+    )
+
+    names = tuple(CONTEXT_BAR_PANEL_FEATURES)
+    categorical = tuple(CONTEXT_BAR_PANEL_CATEGORICAL_FEATURES)
+    return FeatureBlockResolutionPayload(
+        feature_block_key=CONTEXT_BAR_PANEL_BLOCK_KEY,
+        block_version=1,
+        formula_version=CONTEXT_BAR_PANEL_FORMULA_VERSION,
+        source_artifact_refs=(),
+        source_schema_hash=canonical_contract_sha256(
+            {
+                "source_kind": "replay_chart_bars",
+                "artifact_kind": "ifvg_replay_chart_v1",
+                "resample_rule_id": PANEL_RESAMPLE_RULE_ID,
+                "timeframes_seconds": list(PANEL_INTERVALS_SECONDS_V1),
+            }
+        ),
+        feature_schema_hash=canonical_contract_sha256({"features": list(names)}),
+        materializer_version=CONTEXT_BAR_PANEL_MATERIALIZER_VERSION,
+        feature_names=names,
+        numeric_features=tuple(name for name in names if name not in categorical),
+        categorical_features=categorical,
+        validity_fields=("cbp_valid",),
+        missing_reason_fields=("cbp_missing_reason",),
+        source_timeframes=tuple(PANEL_INTERVALS_SECONDS_V1),
+        source_interval_policy="completed_bars_only_v1",
+        as_of_policy=PANEL_AS_OF_POLICY_ID_V1,
+        join_keys=("row_id",),
+        join_policy="one_to_one_typed_null_on_missing",
+        direction_normalization="none",
+        session_normalization="none",
+        warmup_requirement=WARMUP_POLICY_ID,
+        coverage_requirements={},
+    )
+
+
+def with_registered_block(
+    *,
+    definition: FeatureBlockDefinition,
+    resolution_payload: FeatureBlockResolutionPayload,
+    definitions=None,
+    resolutions=None,
+) -> tuple[dict, dict, FeatureBlockResolutionEnvelope]:
+    """Pure REGISTRATION event for a NEW available block (R6.1).
+
+    Mirrors ``with_activated_block``: refuses an existing key (registration
+    is a one-time event; later changes are activation / re-resolution
+    events), a non-AVAILABLE definition, and any version other than 1 on
+    either side. Every dependent bundle id and the registry hash change.
+    """
+
+    registry = dict(definitions if definitions is not None else FEATURE_BLOCK_REGISTRY)
+    resolved = dict(resolutions if resolutions is not None else FEATURE_BLOCK_RESOLUTION_REGISTRY)
+    key = definition.feature_block_key
+    if key in registry or key in resolved:
+        raise ValueError(
+            f"block {key} is already registered; registration is a one-time event "
+            "(activation and re-resolution are separate events)"
+        )
+    if definition.status is not FeatureBlockStatus.AVAILABLE:
+        raise ValueError(
+            f"a registration event publishes an AVAILABLE block (got {definition.status.value})"
+        )
+    if definition.block_version != 1 or resolution_payload.block_version != 1:
+        raise ValueError("a registration event mints block_version 1 on both sides")
+    if resolution_payload.feature_block_key != key:
+        raise ValueError("resolution payload key mismatch")
+    envelope = FeatureBlockResolutionEnvelope.from_payload(resolution_payload)
+    registry[key] = definition
+    resolved[key] = envelope
+    return registry, resolved, envelope
+
+
+_R61_DEFINITIONS, _R61_RESOLUTIONS, CONTEXT_BAR_PANEL_REGISTRATION_ENVELOPE = (
+    with_registered_block(
+        definition=context_bar_panel_definition(),
+        resolution_payload=context_bar_panel_resolution_payload(),
+        definitions=_V2_DEFINITIONS,
+        resolutions=_V2_RESOLUTIONS,
+    )
+)
+
 FEATURE_BLOCK_REGISTRY: MappingProxyType[str, FeatureBlockDefinition] = MappingProxyType(
-    dict(_V2_DEFINITIONS)
+    dict(_R61_DEFINITIONS)
 )
 FEATURE_BLOCK_RESOLUTION_REGISTRY: MappingProxyType[str, FeatureBlockResolutionEnvelope] = (
-    MappingProxyType(dict(_V2_RESOLUTIONS))
+    MappingProxyType(dict(_R61_RESOLUTIONS))
 )
 
 
@@ -735,10 +879,32 @@ if feature_block_registry_hash(
     PRE_ACTIVATION_FEATURE_BLOCK_REGISTRY, PRE_ACTIVATION_RESOLUTION_REGISTRY
 ):
     raise AssertionError("activation must change the block-registry hash")
-if feature_block_registry_hash() == feature_block_registry_hash(
-    PRE_R5B1_FEATURE_BLOCK_REGISTRY, PRE_R5B1_RESOLUTION_REGISTRY
-):
+if feature_block_registry_hash(
+    PRE_R6_1_FEATURE_BLOCK_REGISTRY, PRE_R6_1_RESOLUTION_REGISTRY
+) == feature_block_registry_hash(PRE_R5B1_FEATURE_BLOCK_REGISTRY, PRE_R5B1_RESOLUTION_REGISTRY):
     raise AssertionError("the coverage-v2 re-resolution must change the block-registry hash")
+
+# R6.1 panel-registration invariants: the seven panel names are disjoint from
+# the frozen M3 registry and the MBP-1 names; no deep-book identifier; the
+# block is available at version 1; the registration changed the hash
+_panel_payload = CONTEXT_BAR_PANEL_REGISTRATION_ENVELOPE.payload
+_panel_names = set(_panel_payload.feature_names)
+if _panel_names & set(_M3):
+    raise AssertionError("panel feature names collide with the frozen M3 registry")
+if _panel_names & set(mbp1_feature_names()):
+    raise AssertionError("panel feature names collide with the MBP-1 block")
+assert_no_deep_book_identifiers(tuple(_panel_payload.feature_names))
+_panel_definition = FEATURE_BLOCK_REGISTRY[_panel_payload.feature_block_key]
+if (
+    _panel_definition.status is not FeatureBlockStatus.AVAILABLE
+    or _panel_definition.block_version != 1
+    or _panel_definition.expected_computation_path != CONTEXT_BAR_PANEL_COMPUTATION_PATH
+):
+    raise AssertionError("the R6.1 panel registration must publish version 1 as available")
+if feature_block_registry_hash() == feature_block_registry_hash(
+    PRE_R6_1_FEATURE_BLOCK_REGISTRY, PRE_R6_1_RESOLUTION_REGISTRY
+):
+    raise AssertionError("the panel registration must change the block-registry hash")
 
 
 register_identity_pair(

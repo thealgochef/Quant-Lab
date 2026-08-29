@@ -25,6 +25,7 @@ __all__ = [
     "PREVALENCE_PROTOCOL_ID",
     "LOGISTIC_PROTOCOL_ID",
     "CATBOOST_PROTOCOL_ID",
+    "CATBOOST_BUNDLE_PROTOCOL_ID",
     "GAM_PROTOCOL_ID",
     "ModelProtocolUnavailableError",
     "ProhibitedSelectionError",
@@ -36,6 +37,10 @@ __all__ = [
 PREVALENCE_PROTOCOL_ID = "reference_prevalence_v1"
 LOGISTIC_PROTOCOL_ID = "ifvg_context_logistic_l2_v1"
 CATBOOST_PROTOCOL_ID = "ifvg_context_catboost_binary_v1"
+#: R6.1 (§6.J): the bundle-aware CatBoost rung — the frozen lane's parameters
+#: reused by value over the exact resolved features of ONE bundle (+ optional
+#: fold-local regime features); research-only; no selection surface.
+CATBOOST_BUNDLE_PROTOCOL_ID = "ifvg_context_catboost_bundle_v1"
 GAM_PROTOCOL_ID = "ifvg_context_gam_v1"
 
 
@@ -51,6 +56,7 @@ class ModelProtocolEntry(FrozenContract):
         "reference",
         "interpretable",
         "nonlinear_challenger",
+        "nonlinear_challenger_bundle",
         "planned_basis_expansion",
     ]
     reason: str | None = None
@@ -72,6 +78,11 @@ MODEL_PROTOCOL_REGISTRY: MappingProxyType[str, ModelProtocolEntry] = MappingProx
             protocol_id=CATBOOST_PROTOCOL_ID,
             status=ModelProtocolStatus.AVAILABLE,
             kind="nonlinear_challenger",
+        ),
+        CATBOOST_BUNDLE_PROTOCOL_ID: ModelProtocolEntry(
+            protocol_id=CATBOOST_BUNDLE_PROTOCOL_ID,
+            status=ModelProtocolStatus.AVAILABLE,
+            kind="nonlinear_challenger_bundle",
         ),
         GAM_PROTOCOL_ID: ModelProtocolEntry(
             protocol_id=GAM_PROTOCOL_ID,

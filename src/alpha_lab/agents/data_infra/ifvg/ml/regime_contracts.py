@@ -52,6 +52,11 @@ from typing import Any, ClassVar, Literal
 
 from pydantic import Field, model_validator
 
+from ..features.context_bar_panel_contract import (
+    PANEL_AS_OF_POLICY_REGISTRY,
+    PANEL_INTERVALS_SECONDS_V1,
+    PANEL_PROPOSED_STAMPS,
+)
 from ..features.feature_blocks import AvailabilityStage
 from ..search.identities import (
     SHA256_PATTERN,
@@ -75,12 +80,16 @@ __all__ = [
     "RegimeAssignmentColumns",
     "REGIME_ASSIGNMENT_MISSING_REASONS",
     "RegimeCoverageReport",
+    "FoldBootstrapStability",
+    "TEMPORAL_ORDER_POLICY_CANDIDATE_EVENT_V2",
+    "TEMPORAL_ORDER_POLICY_PANEL_V2",
     "RegimeStabilityReport",
     "RegimeCapabilityAssessment",
     "RegimeCapabilityAssessmentEnvelope",
     "RegimePromotionDecision",
     "RegimePromotionDecisionEnvelope",
     "PROMOTION_SEQUENCE",
+    "MODEL_FEATURE_PROMOTION_REFUSAL",
     "ROLE_MINIMUM_STATUS",
     "V1_UNREPRESENTABLE_ROLES",
     "assert_lawful_promotion",
@@ -137,6 +146,9 @@ INITIALIZATION_POLICIES: tuple[str, ...] = (
     "nystroem_rbf_then_k-means++_n_init_10_v1",
     "surrogate_logistic_v1",
 )
+
+
+_SHA256_RE = re.compile(SHA256_PATTERN)
 
 
 class RegimeProtocolPayload(FrozenContract):
@@ -204,6 +216,24 @@ class RegimeProtocolPayload(FrozenContract):
                     "panel_interval_seconds must be at least 60 — regime "
                     "models are never fitted at tick or MBP-event scale"
                 )
+            # R6.1 (owner Q3 #3): only the owner-registered intervals; the
+            # source is a verified 64-hex artifact id; the as-of policy is
+            # registered — never a free string
+            if self.panel_interval_seconds not in PANEL_INTERVALS_SECONDS_V1:
+                raise ValueError(
+                    f"panel_interval_seconds={self.panel_interval_seconds} is not "
+                    f"owner-registered; registered: {PANEL_INTERVALS_SECONDS_V1}"
+                )
+            if not _SHA256_RE.fullmatch(self.panel_source_artifact_id or ""):
+                raise ValueError(
+                    "panel_source_artifact_id must be the verified 64-hex "
+                    "context_bar_panel_artifact_id"
+                )
+            if self.panel_as_of_policy_id not in PANEL_AS_OF_POLICY_REGISTRY:
+                raise ValueError(
+                    f"panel_as_of_policy_id {self.panel_as_of_policy_id!r} is not "
+                    f"registered; registered: {tuple(PANEL_AS_OF_POLICY_REGISTRY)}"
+                )
         elif any(value is not None for value in panel_fields):
             raise ValueError(
                 f"{self.observation_granularity.value} carries no panel fields; "
@@ -217,9 +247,6 @@ class RegimeProtocolEnvelope(EnvelopeBase):
 
     resolved_regime_protocol_id: str = Field(pattern=SHA256_PATTERN)
     payload: RegimeProtocolPayload
-
-
-_SHA256_RE = re.compile(SHA256_PATTERN)
 
 
 class RegimeFitPayload(FrozenContract):
@@ -338,29 +365,86 @@ class RegimeCoverageReport(FrozenContract):
     per_fold_coverage: ImmutableMap[int, float]
     oos_assignment_coverage: float = Field(ge=0.0, le=1.0)
     per_cluster_occupancy: ImmutableMap[int, float]
+    #: R6.1: occupancy per (fold, canonical reporting id) — key "fold:cluster"
+    #: — so the occupancy and rows-per-fold gates share one key space
+    per_fold_canonical_occupancy: ImmutableMap[str, float] = ImmutableMap()
     minimum_training_observations_gate: int = Field(ge=0)
     minimum_training_observations_observed: int = Field(ge=0)
     coverage_gates_passed: bool
     gate_failures: tuple[str, ...]
 
 
+#: R6.1 temporal-order policies (D11): candidate/decision grains carry a
+#: CANDIDATE-EVENT transition matrix (elapsed seconds, trading-day + named-
+#: session resets, a stamped maximum gap); only a regular panel carries
+#: ordinary temporal persistence/transition semantics.
+TEMPORAL_ORDER_POLICY_CANDIDATE_EVENT_V2 = (
+    "oos_test_rows_by_observation_ts_within_fold_day_session_reset_max_gap_v2"
+)
+TEMPORAL_ORDER_POLICY_PANEL_V2 = "oos_test_bars_consecutive_within_trading_day_v2"
+
+
+class FoldBootstrapStability(FrozenContract):
+    """Bootstrap stability of ONE valid fold (D10 — every fold, not only the
+    reference fold): resamples of that fold's TRAINING matrix refitted with
+    the registry-pinned parameters, Hungarian-aligned onto the fold's fit."""
+
+    fold_index: int = Field(ge=0)
+    refit_count: int = Field(ge=0)
+    aligned_ami_mean: float | None
+    aligned_ami_p05: float | None
+    per_cluster_agreement: ImmutableMap[int, float]
+    undefined_reason: str | None = None
+
+
 class RegimeStabilityReport(FrozenContract):
+    #: applied refits per fold (the reference fold's count; every fold uses
+    #: the same applied count under the total-refit cap)
     bootstrap_refit_count: int = Field(ge=0)
-    bootstrap_seed_policy: Literal["rng7_resample_refit_seed_1000_plus_i_v1"] = (
-        "rng7_resample_refit_seed_1000_plus_i_v1"
-    )
+    bootstrap_seed_policy: Literal[
+        "rng7_plus_fold_resample_refit_seed_1000_plus_1000fold_plus_i_v2"
+    ] = "rng7_plus_fold_resample_refit_seed_1000_plus_1000fold_plus_i_v2"
+    bootstrap_refits_per_fold_requested: int = Field(default=0, ge=0)
+    bootstrap_total_refit_cap: int = Field(default=0, ge=0)
+    bootstrap_refits_per_fold_applied: int = Field(default=0, ge=0)
+    #: REFERENCE-FOLD aliases (the R6 scalars keep their meaning: the first
+    #: valid fold's bootstrap facts) — never the protocol-wide gate input
     bootstrap_aligned_ami_mean: float | None
     bootstrap_aligned_ami_low: float | None
     per_cluster_agreement: ImmutableMap[int, float]
+    reference_fold_bootstrap_stability: FoldBootstrapStability | None = None
+    per_fold_bootstrap_stability: tuple[FoldBootstrapStability, ...] = ()
+    #: fraction of valid folds whose bootstrap AMI is defined
+    bootstrap_fold_coverage: float | None = None
+    protocol_min_bootstrap_aligned_ami_mean: float | None = None
+    protocol_min_bootstrap_aligned_ami_p05: float | None = None
+    bootstrap_gate_scope: Literal["protocol_wide_minimum_fold_mean_v1"] = (
+        "protocol_wide_minimum_fold_mean_v1"
+    )
+    minimum_bootstrap_aligned_ami_mean_applied: float = 0.5
     #: Temporal facts are computed over OUT-OF-SAMPLE test rows ordered by
     #: the observation's as-of timestamp, WITHIN each fold (no cross-fold
     #: concatenation; no row-id ordering) — a true point-in-time timeline.
-    temporal_order_policy: Literal["oos_test_rows_by_observation_ts_within_fold_v1"] = (
-        "oos_test_rows_by_observation_ts_within_fold_v1"
-    )
+    #: Exactly one grain's fields are populated (validator below).
+    temporal_order_policy: Literal[
+        "oos_test_rows_by_observation_ts_within_fold_day_session_reset_max_gap_v2",
+        "oos_test_bars_consecutive_within_trading_day_v2",
+    ] = TEMPORAL_ORDER_POLICY_CANDIDATE_EVENT_V2
+    session_scheme_id: str = "ifvg_doc_session_scheme_et_v1"
+    #: ── panel grain: ordinary temporal semantics on a regular panel ──
     temporal_transition_count: int = Field(default=0, ge=0)
     temporal_persistence: float | None
     transition_matrix: tuple[tuple[float, ...], ...]
+    panel_pairs_dropped_gap: int = Field(default=0, ge=0)
+    panel_pairs_dropped_boundary: int = Field(default=0, ge=0)
+    #: ── candidate/decision grains: the CANDIDATE-EVENT transition matrix ──
+    candidate_event_transition_matrix: tuple[tuple[float, ...], ...] = ()
+    candidate_event_persistence: float | None = None
+    candidate_event_pairs_counted: int = Field(default=0, ge=0)
+    candidate_event_pairs_dropped_gap: int = Field(default=0, ge=0)
+    candidate_event_pairs_dropped_boundary: ImmutableMap[str, int] = ImmutableMap()
+    candidate_event_elapsed_seconds_summary: ImmutableMap[str, float] = ImmutableMap()
+    candidate_event_maximum_gap_seconds: int = Field(default=0, ge=0)
     #: Cross-fold centroid comparisons happen in the scaled INPUT-feature
     #: coordinates only (missing-indicator columns are fold-dependent and
     #: never enter an alignment).
@@ -371,6 +455,24 @@ class RegimeStabilityReport(FrozenContract):
     semantic_descriptors: ImmutableMap[int, tuple[tuple[str, float], ...]]
     stability_gates_passed: bool
     gate_failures: tuple[str, ...]
+
+    @model_validator(mode="after")
+    def _one_grain_populated(self):
+        candidate_populated = bool(self.candidate_event_transition_matrix) or (
+            self.candidate_event_pairs_counted > 0
+        )
+        panel_populated = bool(self.transition_matrix) or self.temporal_transition_count > 0
+        if self.temporal_order_policy == TEMPORAL_ORDER_POLICY_PANEL_V2 and candidate_populated:
+            raise ValueError("a panel-grain report carries no candidate-event transition facts")
+        if (
+            self.temporal_order_policy == TEMPORAL_ORDER_POLICY_CANDIDATE_EVENT_V2
+            and panel_populated
+        ):
+            raise ValueError(
+                "a candidate/decision-grain report carries no panel temporal facts — "
+                "candidate events are not a regular time series"
+            )
+        return self
 
 
 class RegimeCapabilityAssessment(FrozenContract):
@@ -408,6 +510,15 @@ PROMOTION_SEQUENCE: tuple[RegimeStatus, ...] = (
     RegimeStatus.STRATIFICATION_READY,
     RegimeStatus.FEATURE_ELIGIBLE,
     RegimeStatus.MODEL_FEATURE,
+)
+
+#: V1 (R6.1 S5): the top of the ladder is UNPERSISTABLE through every path —
+#: the store and the promotion CLI share this exact refusal. MODEL_FEATURE
+#: stays representable at the contract (the ladder/role tests exercise it)
+#: but no V1 artifact can carry it.
+MODEL_FEATURE_PROMOTION_REFUSAL = (
+    "model_feature is refused: it requires the activated IFVG_REGIME_CONTEXT_V1 "
+    "block and a completed controlled feature study"
 )
 
 _ALWAYS_REACHABLE = {
@@ -700,8 +811,59 @@ REGIME_PROPOSED_DEFAULTS: MappingProxyType[str, MappingProxyType[str, Any]] = _f
         "owner_ratification_required_before_feature_eligible": True,
         "owner_decision": "30",
     },
-    "bootstrap_aligned_ami_advisory_floor": {
+    # R6.1: renamed from the R6 "advisory floor" — a gate that blocks
+    # promotion is a minimum, not advice (owner amendment); it applies to
+    # the PROTOCOL-WIDE minimum fold mean aligned AMI (D10)
+    "minimum_bootstrap_aligned_ami_mean": {
         "value": 0.5,
+        "stamp": "proposed_protocol_default",
+        "owner_ratification_required_before_feature_eligible": True,
+        "owner_decision": "30",
+    },
+    "bootstrap_refits_per_fold": {
+        "value": 50,
+        "stamp": "proposed_protocol_default",
+        "owner_ratification_required_before_feature_eligible": True,
+        "owner_decision": "30",
+    },
+    "bootstrap_total_refit_cap": {
+        "value": 400,
+        "stamp": "proposed_protocol_default",
+        "owner_ratification_required_before_feature_eligible": True,
+        "owner_decision": "30",
+    },
+    "bootstrap_gate_scope": {
+        "value": "protocol_wide_minimum_fold_mean_v1",
+        "stamp": "proposed_protocol_default",
+        "owner_ratification_required_before_feature_eligible": True,
+        "owner_decision": "30",
+    },
+    "candidate_event_maximum_gap_seconds": {
+        "value": 7200,
+        "stamp": "proposed_protocol_default",
+        "owner_ratification_required_before_feature_eligible": True,
+        "owner_decision": "30",
+    },
+    "minimum_trades_per_regime_stratum": {
+        "value": 20,
+        "stamp": "proposed_protocol_default",
+        "owner_ratification_required_before_feature_eligible": True,
+        "owner_decision": "30",
+    },
+    "minimum_training_rows_per_regime_stratum": {
+        "value": 60,
+        "stamp": "proposed_protocol_default",
+        "owner_ratification_required_before_feature_eligible": True,
+        "owner_decision": "30",
+    },
+    "prop_event_attribution_policy": {
+        "value": "source_trade_then_pit_v1",
+        "stamp": "proposed_protocol_default",
+        "owner_ratification_required_before_feature_eligible": True,
+        "owner_decision": "30",
+    },
+    "regime_feature_hard_id_encoding_default": {
+        "value": "none",
         "stamp": "proposed_protocol_default",
         "owner_ratification_required_before_feature_eligible": True,
         "owner_decision": "30",
@@ -729,6 +891,17 @@ REGIME_PROPOSED_DEFAULTS: MappingProxyType[str, MappingProxyType[str, Any]] = _f
         "stamp": "proposed_protocol_default",
         "owner_ratification_required_before_feature_eligible": True,
         "owner_decision": "28",
+    },
+    # R6.1: the context-bar panel stamps (owner Q3; decision 28) — values
+    # imported from the single leaf source, never restated
+    **{
+        name: {
+            "value": value,
+            "stamp": "proposed_protocol_default",
+            "owner_ratification_required_before_feature_eligible": True,
+            "owner_decision": "28",
+        }
+        for name, value in PANEL_PROPOSED_STAMPS.items()
     },
 })
 

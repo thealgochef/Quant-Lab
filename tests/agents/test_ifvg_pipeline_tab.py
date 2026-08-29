@@ -159,6 +159,8 @@ def test_full_plan_exposes_available_bundle_and_model_selectors(
     model = next(box for box in at.selectbox if box.key == f"{_PIPE}model")
     assert "ifvg_context_catboost_binary_v1" in model.options
     assert "ifvg_context_gam_v1" not in model.options
+    # R6.1: the bundle-aware rung has no frozen-tier wiring — not offered here
+    assert "ifvg_context_catboost_bundle_v1" not in model.options
 
 
 def test_mbp1_bundle_selection_pins_logistic_and_shows_the_boundary(
@@ -176,9 +178,14 @@ def test_mbp1_bundle_selection_pins_logistic_and_shows_the_boundary(
     bundle.set_value("B2_CORE_ORDER_FLOW").run()
     assert not at.exception
     model = next(box for box in at.selectbox if box.key == f"{_PIPE}model")
-    assert list(model.options) == ["ifvg_context_logistic_l2_v1"]
+    # R6.1 (§6.J): the logistic protocol AND the bundle-aware CatBoost rung
+    assert list(model.options) == [
+        "ifvg_context_logistic_l2_v1",
+        "ifvg_context_catboost_bundle_v1",
+    ]
     warnings = "\n".join(str(block.value) for block in at.warning)
     assert "research_only_offline" in warnings
+    assert "bundle-aware CatBoost rung (research-only)" in _caption_text(at)
     assert "tier-locked" in _caption_text(at)
 
 
@@ -648,7 +655,6 @@ def regime_persisted(completed_pipeline):
         persist_regime_protocol,
     )
     from tests.agents.data_infra.ifvg.ml_fixtures.synthetic_clusters import (
-        REGIME_INPUT_FEATURES,
         known_cluster_fixture,
     )
 
@@ -703,9 +709,11 @@ def regime_persisted(completed_pipeline):
             "fit_id": run.fold_fits[0].fit_envelope.regime_fit_id,
             "decision_id": decision.regime_promotion_decision_id,
         }
+    # R6.1 (§6.A grain/bundle-key coherence): the panel grain references the
+    # panel bundle (row_id join) and the panel features
     panel_protocol = resolve_kmeans_protocol(
-        input_feature_bundle_ref=bundle,
-        resolved_input_features=REGIME_INPUT_FEATURES,
+        input_feature_bundle_ref=resolve_bundle("BP0_CONTEXT_BAR_PANEL").resolved_feature_bundle_id,
+        resolved_input_features=("cbp_realized_range_12", "cbp_realized_volatility_12"),
         observation_granularity=ObservationGranularity.CONTEXT_BAR_PANEL,
         panel_interval_seconds=300,
         panel_source_artifact_id="b" * 64,
@@ -899,3 +907,371 @@ def test_regime_panel_exposes_no_control_that_promotes_launches_or_retrains() ->
         assert control not in source, control
     for verb in ("promote(", "launch(", "retrain(", "rank(", "subprocess", "session_state["):
         assert verb not in source, verb
+    # R6.1 (§6.H): the stability gate is `minimum_bootstrap_aligned_ami_mean` —
+    # the word "advisory" is gone from UI code
+    tab_path = Path(__file__).resolve().parents[2] / "scripts" / "ifvg_pipeline_tab.py"
+    tab_source = tab_path.read_text(encoding="utf-8")
+    assert "advisory" not in source.lower()
+    assert "advisory" not in tab_source.lower()
+
+
+# ── R6.1 — the regime study surfaces (plan §6.E / §6.G; FUX §35 R6.1 rows) ──
+
+
+@pytest.fixture(scope="module")
+def regime_pipeline(tmp_path_factory):
+    """One completed synthetic candidate-grain regime study (descriptive
+    classes) on module tmp roots — S05–S10 regime artifacts, the
+    deterministic S10 decisions, and the S14 stratified reports."""
+
+    tmp_root = tmp_path_factory.mktemp("pipeline_tab_regime")
+    fixture = build_pipeline_fixture(tmp_root, regime_study="candidate")
+    from alpha_lab.agents.data_infra.ifvg.search.charter import save_charter
+    from alpha_lab.agents.data_infra.ifvg.search.store import save_or_reuse_envelope
+
+    save_charter(fixture["store_root"], fixture["charter"])
+    save_or_reuse_envelope(fixture["store_root"], "pipeline_specs", fixture["semantic"])
+    result = run_pipeline(
+        fixture["semantic"],
+        fixture["charter"],
+        store_root=fixture["store_root"],
+        state_root=fixture["state_root"],
+        wiring=fixture["wiring"],
+        worker_policy=fixture["worker_policy"],
+    )
+    assert result.stage_statuses["14_build_frontier_and_insights"] == "completed"
+    return {**fixture, "result": result, "tmp_root": tmp_root}
+
+
+def _regime_state(completed) -> dict:
+    from alpha_lab.agents.data_infra.ifvg.search.pipeline import read_pipeline_state
+
+    return read_pipeline_state(completed["state_root"], completed["result"].pipeline_semantic_id)
+
+
+def _regime_diagnostics(completed) -> dict:
+    from alpha_lab.agents.data_infra.ifvg.study_providers import load_regime_diagnostics
+
+    diagnostics = load_regime_diagnostics(completed["store_root"], _regime_state(completed))
+    assert diagnostics is not None
+    return diagnostics
+
+
+def _preset_run(monkeypatch, tmp_path, *, phase: str, preset: dict):
+    """`_run` with session-state presets applied before the first script run."""
+
+    roots = _patched_roots(monkeypatch, tmp_path)
+    monkeypatch.setattr(pipeline_tab, "PIPELINE_STATE_ROOT", tmp_path / "pipeline_jobs")
+    _seed_mode5_draft(roots)
+    at = apptest.AppTest.from_function(_app, default_timeout=120)
+    at.session_state[study_tab.NAMESPACE_KEY] = "Verification / synthetic (search_test/v1)"
+    at.session_state[f"{_PIPE}phase_radio"] = phase
+    for key, value in preset.items():
+        at.session_state[key] = value
+    at.run()
+    assert not at.exception
+    return at
+
+
+def _markdown(at) -> str:
+    return "\n".join(str(block.value) for block in at.markdown)
+
+
+def test_configure_regime_section_grains_algorithm_stamps_and_supervised_fields(
+    monkeypatch, tmp_path
+) -> None:
+    """Configure (R6.1 §6.E): the regime checkbox, the grain radio with the
+    sparsity caption, the single executable algorithm + planned entries +
+    the mandatory spectral warning, the fixed-k / stage / input captions,
+    bootstrap refits, the class multiselect, and — for supervised classes —
+    the supervised fields plus the frozen exact authority ids."""
+
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_study import DESCRIPTIVE_CLASSES
+
+    at = _preset_run(
+        monkeypatch,
+        tmp_path,
+        phase="Configure",
+        preset={f"{_PIPE}plan": pipeline_tab._FULL_PLAN_LABEL},
+    )
+    # the panel bundle is never offered as a candidate view
+    bundle = next(box for box in at.selectbox if box.key == f"{_PIPE}bundle")
+    assert "BP0_CONTEXT_BAR_PANEL" not in bundle.options
+    checkbox = next(box for box in at.checkbox if box.key == f"{_PIPE}regime_on")
+    assert checkbox.label == "Include a regime study (V1 KMeans, development)"
+    checkbox.check().run()
+    assert not at.exception
+    grain = next(radio for radio in at.radio if radio.key == f"{_PIPE}regime_grain")
+    assert list(grain.options) == list(pipeline_tab._REGIME_GRAINS)
+    captions = _caption_text(at)
+    assert "sample-adequacy floor is 150" in captions
+    assert "Fixed k = 3" in captions and "decision 29" in captions
+    assert "entry_decision" in captions
+    assert "distance_to_htf_ticks" in captions
+    algorithm = next(box for box in at.selectbox if box.key == f"{_PIPE}regime_algorithm")
+    assert list(algorithm.options) == ["kmeans_v1"]
+    dump = _dataframe_dump(at)
+    assert "spectral_clustering_train_only_v1" in dump and "planned" in dump
+    warnings = "\n".join(str(block.value) for block in at.warning)
+    assert "Training-only exploratory clustering" in warnings
+    refits = next(box for box in at.number_input if box.key == f"{_PIPE}regime_refits")
+    assert int(refits.value) == 50
+    classes = next(box for box in at.multiselect if box.key == f"{_PIPE}regime_classes")
+    assert tuple(classes.value) == tuple(DESCRIPTIVE_CLASSES)
+    assert not any(box.key == f"{_PIPE}regime_decision_id" for box in at.text_input)
+    # supervised classes require the supervised fields + the frozen exact ids
+    classes.set_value([*classes.value, "feature_only"]).run()
+    assert not at.exception
+    keys = {box.key for box in at.text_input}
+    assert {
+        f"{_PIPE}regime_decision_id",
+        f"{_PIPE}regime_owner_id",
+        f"{_PIPE}regime_assessment_id",
+    } <= keys
+    assert "FEATURE_ELIGIBLE" in _caption_text(at)
+    assert "promote --to feature_eligible" in _caption_text(at)
+    assert "Clone as model-bearing study" in _markdown(at)
+    # the panel grain uses the stamped panel feature set
+    grain.set_value(pipeline_tab._REGIME_GRAIN_PANEL_5M).run()
+    assert not at.exception
+    captions = _caption_text(at)
+    assert "panel_feature_set_v1" in captions and "cbp_realized_range_12" in captions
+    assert "cbp_session_state is the block-declared categorical" in captions
+    assert "floor 300" in captions
+
+
+def test_configure_strategy_plan_disables_the_regime_study(monkeypatch, tmp_path) -> None:
+    at, _roots, _draft = _run(monkeypatch, tmp_path, phase="Configure")
+    checkbox = next(box for box in at.checkbox if box.key == f"{_PIPE}regime_on")
+    assert checkbox.disabled
+    assert "requires the full 16-stage plan" in _caption_text(at)
+
+
+def test_preview_shows_regime_rows_readiness_and_the_floor(monkeypatch, tmp_path) -> None:
+    at = _preset_run(
+        monkeypatch,
+        tmp_path,
+        phase="Preview",
+        preset={f"{_PIPE}plan": pipeline_tab._FULL_PLAN_LABEL, f"{_PIPE}regime_on": True},
+    )
+    dump = _dataframe_dump(at)
+    assert "Regime study" in dump and "kmeans_v1" in dump and "candidate_stage_row" in dump
+    assert "Regime sample-adequacy floor" in dump
+    assert "150 training observations per fold" in dump
+    assert "Regime comparison classes" in dump and "cohort_descriptive" in dump
+    assert "descriptive — S10 derives the status" in dump
+    assert "Regime protocol id (resolved)" in _caption_text(at)
+    codes = "\n".join(str(getattr(block, "value", "")) for block in at.code)
+    assert len([c for c in codes.splitlines() if len(c.strip()) == 64]) >= 1
+    assert "Stage-plan readiness" in _markdown(at)
+    assert "blocked_capability" not in dump
+    assert "This plan references unavailable capabilities" not in "\n".join(
+        str(block.value) for block in at.error
+    )
+
+
+def test_monitor_regime_panel_shows_substeps_decisions_and_reports(
+    monkeypatch, regime_pipeline
+) -> None:
+    at = _run_over_completed(monkeypatch, regime_pipeline, phase="Monitor")
+    body = _markdown(at)
+    assert "Sub-steps (D14" in body
+    assert "Decisions (deterministic; nothing here promotes)" in body
+    assert "Stratified reports (S14" in body
+    assert "Clone as model-bearing study (two-pass workflow)" in body
+    dump = _dataframe_dump(at)
+    assert "S09a" in dump and "S09b" in dump and "S09c" in dump
+    assert "not requested (descriptive study)" in dump
+    assert "stratification_ready" in dump and "s10_structural" in dump
+    assert "cohort_descriptive" in dump
+    diagnostics = _regime_diagnostics(regime_pipeline)
+    codes = "\n".join(str(getattr(block, "value", "")) for block in at.code)
+    assert diagnostics["resolved_regime_protocol_id"] in codes
+    assert diagnostics["regime_capability_assessment_id"] in codes
+    assert "propose" in _caption_text(at) and "promote --to feature_eligible" in _caption_text(at)
+
+
+def test_regime_lane_autofills_exact_ids_and_renders_stratified_results(
+    monkeypatch, regime_pipeline
+) -> None:
+    from alpha_lab.agents.data_infra.ifvg.study_providers import load_regime_report_index
+
+    at = _run_over_completed(monkeypatch, regime_pipeline, phase="Configure")
+    diagnostics = _regime_diagnostics(regime_pipeline)
+    assert _regime_input(at, "protocol_id").value == diagnostics["resolved_regime_protocol_id"]
+    assert _regime_input(at, "assessment_id").value == (
+        diagnostics["regime_capability_assessment_id"]
+    )
+    assert _regime_input(at, "fit_id").value == diagnostics["regime_fit_ids"][0]
+    assert _regime_input(at, "decision_id").value == (
+        diagnostics["decisions"][-1]["regime_promotion_decision_id"]
+    )
+    report_id = _regime_input(at, "report_id").value
+    assert len(report_id) == 64
+    captions = _caption_text(at)
+    assert "auto-filled" in captions
+    body = _markdown(at)
+    # per-fold stability + the renamed gate; the model card + assignment +
+    # promotion + stratified views all render from the auto-filled ids
+    assert "Per-fold bootstrap stability" in body
+    assert "Assignment view" in body and "Promotion decision" in body
+    assert "Stratified result view" in body
+    dump = _dataframe_dump(at)
+    assert "minimum_bootstrap_aligned_ami_mean" in dump
+    assert "protocol_wide_minimum_fold_mean_v1" in dump
+    assert "Candidate-event transition matrix" in body
+    assert "stratification_ready" in dump
+    assert "no counterfactual claim" in captions and "never a selection input" in captions
+    assert "advisory" not in _everything(at)
+    # every persisted class renders by its exact report id
+    index = load_regime_report_index(regime_pipeline["store_root"], _regime_state(regime_pipeline))
+    markers = {
+        "cohort_descriptive": "Cohort descriptive strata",
+        "stratified_frontier": "Stratified frontier",
+        "stratified_prop": "Stratified prop events",
+    }
+    for comparison_class, ids in index["reports_by_class"].items():
+        _regime_input(at, "report_id").set_value(ids[0]).run()
+        assert not at.exception
+        assert markers[comparison_class] in _markdown(at)
+        assert comparison_class in _dataframe_dump(at)
+        if comparison_class == "stratified_prop":
+            # the D15 report-local summary renders from its verified sidecar
+            assert "Event-regime summary" in _markdown(at)
+            assert "registered_storage_budget" in _caption_text(at)
+    # a descriptive run delivers no modeled class; the index distinguishes
+    # S09c deliveries from typed refusals (never both for one class)
+    assert dict(index.get("delivered_by", {})) == {}
+    assert set(index["refusals"]) <= {"feature_only", "cohort_model"}
+    # a report of ANOTHER protocol is refused with the exact reason
+    _regime_input(at, "protocol_id").set_value("f" * 64).run()
+    assert not at.exception
+    assert "missing search-store entry" in _caption_text(at)
+
+
+def test_regime_lane_surfaces_a_store_integrity_failure(
+    monkeypatch, regime_pipeline, tmp_path
+) -> None:
+    """Safety review S6 pattern: a tampered persisted sidecar renders the
+    integrity note — never a cosmetic blank."""
+
+    import shutil
+
+    from alpha_lab.agents.data_infra.ifvg.search.store import envelope_destination
+
+    store_copy = tmp_path / "store"
+    state_copy = tmp_path / "state"
+    shutil.copytree(regime_pipeline["store_root"], store_copy)
+    shutil.copytree(regime_pipeline["state_root"], state_copy)
+    state = _regime_state(regime_pipeline)
+    result_id = state["stages"]["10_generate_predictions_and_diagnostics"]["stage_result_id"]
+    sidecar = (
+        envelope_destination(store_copy, "pipeline_stage_results", result_id)
+        / "regime_diagnostics.json"
+    )
+    sidecar.write_bytes(b'{"tampered": true}\n')
+    tampered = {
+        **regime_pipeline,
+        "store_root": store_copy,
+        "state_root": state_copy,
+        "tmp_root": tmp_path,
+    }
+    at = _run_over_completed(monkeypatch, tampered, phase="Configure")
+    errors = "\n".join(str(block.value) for block in at.error)
+    assert "failed store verification" in errors
+    assert _regime_input(at, "protocol_id").value == ""
+
+
+def test_regime_owner_decision_view_renders_provenance_values_and_window(
+    monkeypatch, regime_pipeline
+) -> None:
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_contracts import (
+        RegimePromotionDecision,
+        RegimePromotionDecisionEnvelope,
+        RegimeRole,
+        RegimeStatus,
+    )
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_store import (
+        load_regime_assessment,
+        load_regime_protocol,
+        persist_regime_promotion,
+    )
+    from alpha_lab.agents.data_infra.ifvg.search.owner_decisions import (
+        synthetic_owner_decision_fixture,
+    )
+
+    root = regime_pipeline["store_root"]
+    diagnostics = _regime_diagnostics(regime_pipeline)
+    protocol = load_regime_protocol(root, diagnostics["resolved_regime_protocol_id"])
+    assessment = load_regime_assessment(root, diagnostics["regime_capability_assessment_id"])
+    owner = synthetic_owner_decision_fixture(root, protocol=protocol, assessment=assessment)
+    eligible = RegimePromotionDecisionEnvelope.from_payload(
+        RegimePromotionDecision(
+            resolved_regime_protocol_id=protocol.resolved_regime_protocol_id,
+            role=RegimeRole.FEATURE_GENERATOR,
+            status=RegimeStatus.FEATURE_ELIGIBLE,
+            previous_status=RegimeStatus.STRATIFICATION_READY,
+            previous_decision_ref=diagnostics["decisions"][-1]["regime_promotion_decision_id"],
+            capability_assessment_ref=assessment.regime_capability_assessment_id,
+            owner_ratification_ref=owner.owner_decision_artifact_id,
+            decided_at="2026-08-28T14:00:00+00:00",
+        )
+    )
+    persist_regime_promotion(root, eligible, run_scope="synthetic_fixture")
+    at = _run_over_completed(monkeypatch, regime_pipeline, phase="Configure")
+    _regime_input(at, "decision_id").set_value(eligible.regime_promotion_decision_id).run()
+    assert not at.exception
+    dump = _dataframe_dump(at)
+    assert "feature_eligible" in dump
+    assert "present (verified owner-decision artifact" in dump
+    assert "synthetic_test_authorization_v1" in dump
+    assert "Effective window" in dump and "open-ended" in dump
+    assert "25:regime_algorithm_baseline" in dump
+    assert "algorithm_parameters_hash" in dump and "kmeans_v1" in dump
+    assert "Owner decision artifact" in _markdown(at)
+    assert "lawful in the synthetic_fixture run scope only" in _caption_text(at)
+    codes = "\n".join(str(getattr(block, "value", "")) for block in at.code)
+    assert owner.owner_decision_artifact_id in codes
+    # a bare 64-hex reference renders the unavailable state, never a blank
+    bare = RegimePromotionDecisionEnvelope.from_payload(
+        eligible.payload.model_copy(update={"owner_ratification_ref": "e" * 64})
+    )
+    assert bare.payload.owner_ratification_ref == "e" * 64  # unpersistable by design
+
+
+def test_launch_and_preview_verify_the_frozen_regime_authority_before_persisting(
+    monkeypatch, tmp_path
+) -> None:
+    """Adversarial R6.1 S7: a model-bearing plan whose frozen authority is
+    absent from THIS store is refused by the Preview's readiness (exact
+    reason, not "available") and by the Launch handler BEFORE the charter /
+    spec envelopes are persisted and before any job is spawned."""
+
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_study import DESCRIPTIVE_CLASSES
+
+    preset = {
+        f"{_PIPE}plan": pipeline_tab._FULL_PLAN_LABEL,
+        f"{_PIPE}regime_on": True,
+        f"{_PIPE}regime_classes": [*DESCRIPTIVE_CLASSES, "feature_only"],
+        f"{_PIPE}regime_decision_id": "1" * 64,
+        f"{_PIPE}regime_owner_id": "2" * 64,
+        f"{_PIPE}regime_assessment_id": "3" * 64,
+    }
+    at = _preset_run(monkeypatch, tmp_path, phase="Preview", preset=preset)
+    dump = _dataframe_dump(at)
+    assert "blocked_capability" in dump
+    assert "frozen regime authority refused" in dump
+    spawned: list[list[str]] = []
+    monkeypatch.setattr(
+        pipeline_tab, "_spawn_pipeline_job", lambda command: spawned.append(command) or 4242
+    )
+    at = _preset_run(monkeypatch, tmp_path, phase="Launch", preset=preset)
+    launch = next(b for b in at.button if b.label == "Freeze Pipeline Specification and Launch")
+    launch.click().run()
+    assert not at.exception
+    errors = " ".join(str(e.value) for e in at.error)
+    assert "frozen regime authority refused" in errors
+    assert spawned == []
+    assert not list(tmp_path.rglob("pipeline_specs"))
+    assert not list(tmp_path.rglob("charters"))
+    assert "launched detached" not in " ".join(str(s.value) for s in at.success)

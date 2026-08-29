@@ -1,10 +1,14 @@
 """Supervised model ladder (`ML_REGIME_CONTRACT_PLAN.md` §2; brief §7B.2).
 
 One immutable view + one fold set feed every rung. Before any delta is
-computed the runner asserts identical ``oos_row_id`` sets and identical
+computed the runner asserts identical row-identity sets and identical
 ``(candidate_id, target, training_prevalence)`` tuples across rungs
 (acceptance 7B.22-1) — the rows are the SAME out-of-sample rows, so rung
-differences are model differences and nothing else.
+differences are model differences and nothing else. R6.1 (D13): the row
+identity is the bundle-independent ``comparison_row_id`` (schedule, fold
+set, fold, candidate, label artifact) so baseline and challenger ARMS with
+different ``view_id``s pair exactly; the legacy view-scoped ``oos_row_id``
+stays as a column for M0–M3 compatibility and never pairs arms.
 
 Rungs are requested by registered protocol **id only**; planned protocols
 refuse fail-closed with their registered reason, and the ladder never
@@ -28,8 +32,25 @@ from ..context_folds import ContextFoldSet
 from ..context_model import run_context_fold_models
 from ..context_statistics import binary_prediction_report, block_bootstrap_interval
 from .calibration_policies import assert_calibration_policy_executable
+from .catboost_bundle_model import (
+    CatBoostBundleModelRun,
+    bundle_rung_categorical_features,
+    run_catboost_bundle_fold_models,
+)
+from .comparison_rows import (
+    COMPARISON_ROW_IDENTITY_KEY,
+    LEGACY_ROW_IDENTITY_KEY,
+    RegimeFoldFeatureSource,
+    candidate_fold_set_id,
+    comparison_row_id,
+    default_fold_schedule_id,
+    label_content_hash,
+    with_comparison_row_ids,
+)
+from .fold_set_artifact import fold_set_id as _fold_set_hash
 from .logistic_model import LogisticModelRun, run_logistic_fold_models
 from .model_protocols import (
+    CATBOOST_BUNDLE_PROTOCOL_ID,
     CATBOOST_PROTOCOL_ID,
     LOGISTIC_PROTOCOL_ID,
     PREVALENCE_PROTOCOL_ID,
@@ -39,7 +60,9 @@ from .model_protocols import (
 
 __all__ = [
     "DEFAULT_LADDER_PROTOCOLS",
+    "DEFAULT_BUNDLE_LADDER_PROTOCOLS",
     "CATBOOST_BUNDLE_REFUSAL",
+    "CATBOOST_BUNDLE_RUNG_TIER_REFUSAL",
     "LadderRung",
     "SupervisedLadderRun",
     "run_supervised_ladder",
@@ -50,6 +73,14 @@ DEFAULT_LADDER_PROTOCOLS: tuple[str, ...] = (
     PREVALENCE_PROTOCOL_ID,
     LOGISTIC_PROTOCOL_ID,
     CATBOOST_PROTOCOL_ID,
+)
+
+#: R6.1: the bundle-parametrized ladder — prevalence + logistic + the
+#: bundle-aware CatBoost rung on identical comparison rows.
+DEFAULT_BUNDLE_LADDER_PROTOCOLS: tuple[str, ...] = (
+    PREVALENCE_PROTOCOL_ID,
+    LOGISTIC_PROTOCOL_ID,
+    CATBOOST_BUNDLE_PROTOCOL_ID,
 )
 
 #: The exact prediction-row columns every rung emits (order-exact; the
@@ -102,11 +133,15 @@ def _run_prevalence_reference(
     view: CandidateFeatureView,
     labeled_candidates: pd.DataFrame,
     folds: ContextFoldSet,
+    *,
+    fold_schedule_id: str,
+    fold_set: str,
+    label_artifact_id: str,
 ) -> tuple[pd.DataFrame, tuple[dict[str, Any], ...]]:
     """Reference 0 — the fold-local training prevalence as the probability.
 
     No fit code: the rows are exactly the fitted rungs' rows (same merge,
-    same valid-fold loop, same ``oos_row_id``), with
+    same valid-fold loop, same ``oos_row_id`` / ``comparison_row_id``), with
     ``probability = fold.training_prevalence``.
     """
 
@@ -146,6 +181,13 @@ def _run_prevalence_reference(
                             "candidate_id": candidate_id,
                         }
                     ),
+                    "comparison_row_id": comparison_row_id(
+                        fold_schedule_id=fold_schedule_id,
+                        candidate_fold_set_id=fold_set,
+                        fold_index=fold.fold_index,
+                        candidate_id=candidate_id,
+                        label_artifact_id=label_artifact_id,
+                    ),
                     "candidate_id": candidate_id,
                     "setup_id": source.get("setup_id_label", source.get("setup_id")),
                     "trading_day": source.get(
@@ -169,23 +211,27 @@ def _run_prevalence_reference(
     return frame, tuple(fold_reports)
 
 
-def _parity_key_frame(predictions: pd.DataFrame) -> pd.DataFrame:
+def _parity_key_frame(
+    predictions: pd.DataFrame, key: str = COMPARISON_ROW_IDENTITY_KEY
+) -> pd.DataFrame:
+    columns = [key, "candidate_id", "target", "training_prevalence"]
     if predictions.empty:
-        return pd.DataFrame(columns=["oos_row_id", "candidate_id", "target", "training_prevalence"])
-    return predictions[
-        ["oos_row_id", "candidate_id", "target", "training_prevalence"]
-    ].copy()
+        return pd.DataFrame(columns=columns)
+    return predictions[columns].copy()
 
 
-def _assert_identical_rows(rungs: dict[str, pd.DataFrame]) -> dict[str, Any]:
-    """The 7B.22-1 gate: identical rows/folds across every rung."""
+def _assert_identical_rows(
+    rungs: dict[str, pd.DataFrame], *, key: str = COMPARISON_ROW_IDENTITY_KEY
+) -> dict[str, Any]:
+    """The 7B.22-1 gate: identical rows/folds across every rung, keyed on
+    the bundle-independent ``comparison_row_id`` (D13)."""
 
     reference_name = next(iter(rungs))
-    reference = _parity_key_frame(rungs[reference_name])
-    reference_ids = set(reference["oos_row_id"].astype(str))
+    reference = _parity_key_frame(rungs[reference_name], key)
+    reference_ids = set(reference[key].astype(str))
     reference_tuples = {
         (
-            str(row.oos_row_id),
+            str(getattr(row, key)),
             str(row.candidate_id),
             int(row.target),
             float(row.training_prevalence),
@@ -193,16 +239,16 @@ def _assert_identical_rows(rungs: dict[str, pd.DataFrame]) -> dict[str, Any]:
         for row in reference.itertuples()
     }
     for name, frame in rungs.items():
-        keys = _parity_key_frame(frame)
-        ids = set(keys["oos_row_id"].astype(str))
+        keys = _parity_key_frame(frame, key)
+        ids = set(keys[key].astype(str))
         if ids != reference_ids:
             raise ValueError(
                 f"ladder rung {name!r} does not share the reference rung's exact "
-                "OOS row-id set; rung deltas are undefined (brief §7B.2)"
+                f"{key} set; rung deltas are undefined (brief §7B.2)"
             )
         tuples = {
             (
-                str(row.oos_row_id),
+                str(getattr(row, key)),
                 str(row.candidate_id),
                 int(row.target),
                 float(row.training_prevalence),
@@ -222,6 +268,7 @@ def _assert_identical_rows(rungs: dict[str, pd.DataFrame]) -> dict[str, Any]:
         # compare — the claim is "not evaluable", never "parity held"
         "status": "held" if reference_ids else "not_evaluable",
         "rung_ids": sorted(rungs),
+        "row_identity_key": key,
     }
 
 
@@ -230,22 +277,33 @@ def paired_cell_delta_report(
     right: pd.DataFrame,
     *,
     value_column: str = "net_r",
+    key_column: str | None = None,
 ) -> dict[str, Any]:
-    """Generalized paired delta keyed on ``oos_row_id`` (DT §4.2).
+    """Generalized paired delta keyed on the row identity (DT §4.2).
 
-    The same identical-OOS-ids gate as ``paired_tier_delta_report``, keyed on
-    the model-independent row id so ladder rungs (same view, same folds)
-    pair exactly; the interval is the fixed trading-day block bootstrap.
+    R6.1 (D13): the key is the bundle-independent ``comparison_row_id``
+    whenever both frames carry it (rungs AND arms pair exactly); frames
+    without it (the frozen M0–M3 tier lane's own reports) fall back to the
+    legacy view-scoped ``oos_row_id``. ``key_column`` pins the key
+    explicitly. The interval is the fixed trading-day block bootstrap; the
+    report records ``row_identity_key``.
     """
 
-    keys = ("oos_row_id", "trading_day", value_column)
+    if key_column is None:
+        both = set(left.columns) & set(right.columns)
+        key_column = (
+            COMPARISON_ROW_IDENTITY_KEY
+            if COMPARISON_ROW_IDENTITY_KEY in both
+            else LEGACY_ROW_IDENTITY_KEY
+        )
+    keys = (key_column, "trading_day", value_column)
     if not set(keys).issubset(left) or not set(keys).issubset(right):
-        raise ValueError("cell delta inputs lack paired oos-row/day/value columns")
-    if set(left["oos_row_id"].astype(str)) != set(right["oos_row_id"].astype(str)):
-        raise ValueError("cell delta requires identical OOS row IDs")
+        raise ValueError("cell delta inputs lack paired row-identity/day/value columns")
+    if set(left[key_column].astype(str)) != set(right[key_column].astype(str)):
+        raise ValueError(f"cell delta requires identical OOS row IDs ({key_column})")
     paired = left[list(keys)].merge(
         right[list(keys)],
-        on="oos_row_id",
+        on=key_column,
         suffixes=("_left", "_right"),
         validate="one_to_one",
     )
@@ -258,11 +316,12 @@ def paired_cell_delta_report(
     paired["delta"] = pd.to_numeric(
         paired[f"{value_column}_right"], errors="raise"
     ) - pd.to_numeric(paired[f"{value_column}_left"], errors="raise")
-    return block_bootstrap_interval(
+    report = block_bootstrap_interval(
         paired,
         cluster_column="trading_day",
         value_column="delta",
     )
+    return {**report, "row_identity_key": key_column}
 
 
 def _with_brier_loss(predictions: pd.DataFrame) -> pd.DataFrame:
@@ -274,13 +333,24 @@ def _with_brier_loss(predictions: pd.DataFrame) -> pd.DataFrame:
     return frame
 
 
-#: The exact fail-closed reason for a CatBoost rung requested under a
-#: bundle-parametrized ladder: the CatBoost fold runner lives in the frozen
-#: M0–M3 lane and is tier-locked — never modified in v1.
+#: The exact fail-closed reason for the FROZEN-LANE CatBoost rung requested
+#: under a bundle-parametrized ladder: that fold runner lives in the frozen
+#: M0–M3 lane and is tier-locked — never modified in v1. R6.1: the
+#: bundle-aware ``ifvg_context_catboost_bundle_v1`` rung is the lawful
+#: nonlinear challenger on bundle paths.
 CATBOOST_BUNDLE_REFUSAL = (
     "the ifvg_context_catboost_binary_v1 fold runner is tier-locked inside "
     "the frozen M0-M3 lane (never modified in v1); bundle-parametrized "
-    "ladders run the prevalence reference and the logistic protocol"
+    "ladders run the prevalence reference, the logistic protocol, and the "
+    "bundle-aware ifvg_context_catboost_bundle_v1 rung"
+)
+
+#: …and the mirror refusal: the bundle-aware rung needs a resolved bundle
+#: identity and has no wiring on the frozen-tier path.
+CATBOOST_BUNDLE_RUNG_TIER_REFUSAL = (
+    "the bundle-aware ifvg_context_catboost_bundle_v1 rung runs only on the "
+    "bundle-parametrized path (bundle_features + bundle_ref); frozen-tier "
+    "ladders run ifvg_context_catboost_binary_v1"
 )
 
 
@@ -296,6 +366,10 @@ def run_supervised_ladder(
     protocols: tuple[str, ...] = DEFAULT_LADDER_PROTOCOLS,
     manual_feature_overrides: dict[str, Any] | None = None,
     calibration_policy_id: str = "raw_probability_diagnostics_v1",
+    bundle_categorical_features: tuple[str, ...] | None = None,
+    fold_local_features: RegimeFoldFeatureSource | None = None,
+    fold_schedule_id: str | None = None,
+    label_artifact_id: str | None = None,
 ) -> SupervisedLadderRun:
     """Run every requested rung on identical rows/folds and pair the deltas.
 
@@ -313,8 +387,15 @@ def run_supervised_ladder(
       (review F2) — the exact evidence artifact (e.g. the MBP-1 feature
       artifact id) whose joined columns the arm's frame carries, so two
       ladders over different evidence can never share one ``ladder_id``.
-      The CatBoost rung refuses fail-closed under this path — its fold
-      runner is tier-locked in the frozen lane.
+      The frozen-lane CatBoost rung refuses fail-closed under this path —
+      its fold runner is tier-locked; the bundle-aware
+      ``ifvg_context_catboost_bundle_v1`` rung is the nonlinear challenger
+      here (R6.1 §6.J). ``bundle_categorical_features`` are the
+      block-declared categoricals of the bundle (D8; default: the frozen
+      registry ∪ the fold-local source's categoricals); ``fold_local_features``
+      is the fold-local regime feature seam (D7); ``fold_schedule_id`` /
+      ``label_artifact_id`` pin the D13 comparison-row identity (defaults:
+      derived from the labeled trading days / the label content hash).
     """
 
     if (tier is None) == (bundle_features is None):
@@ -342,16 +423,45 @@ def run_supervised_ladder(
         )
     if bundle_features is not None and CATBOOST_PROTOCOL_ID in protocols:
         raise ValueError(CATBOOST_BUNDLE_REFUSAL)
+    if tier is not None and CATBOOST_BUNDLE_PROTOCOL_ID in protocols:
+        raise ValueError(CATBOOST_BUNDLE_RUNG_TIER_REFUSAL)
+    if tier is not None and (
+        fold_local_features is not None or bundle_categorical_features is not None
+    ):
+        raise ValueError(
+            "fold-local features and block-declared categoricals are lawful only on "
+            "the bundle-parametrized path"
+        )
     assert_single_frozen_selection("calibrator", (calibration_policy_id,))
     assert_calibration_policy_executable(calibration_policy_id)
 
     features = features_for_tier(tier) if tier is not None else tuple(bundle_features)
+    # D13: the row identity every rung shares — schedule, fold set, labels
+    schedule_id = fold_schedule_id or default_fold_schedule_id(folds, labeled_candidates)
+    label_id = label_artifact_id or label_content_hash(labeled_candidates)
+    fold_set = candidate_fold_set_id(folds)
+    if bundle_features is not None:
+        block_declared = tuple(bundle_categorical_features or ()) + (
+            tuple(fold_local_features.categorical_features)
+            if fold_local_features is not None
+            else ()
+        )
+        rung_categoricals = bundle_rung_categorical_features(
+            features, block_declared=tuple(dict.fromkeys(block_declared))
+        )
+    else:
+        rung_categoricals = ()
     rungs: list[LadderRung] = []
     frames: dict[str, pd.DataFrame] = {}
     for protocol_id in protocols:
         if protocol_id == PREVALENCE_PROTOCOL_ID:
             predictions, fold_reports = _run_prevalence_reference(
-                view, labeled_candidates, folds
+                view,
+                labeled_candidates,
+                folds,
+                fold_schedule_id=schedule_id,
+                fold_set=fold_set,
+                label_artifact_id=label_id,
             )
             resolved_hash = canonical_contract_sha256(
                 {
@@ -368,11 +478,31 @@ def run_supervised_ladder(
                 folds,
                 features=features,
                 manual_feature_overrides=manual_feature_overrides,
+                fold_local_features=fold_local_features,
+                fold_schedule_id=schedule_id,
+                label_artifact_id=label_id,
             )
             predictions = run.predictions
             fold_reports = run.fold_reports
             resolved_hash = run.protocol.resolved_hash
             importance = run.feature_importance
+        elif protocol_id == CATBOOST_BUNDLE_PROTOCOL_ID:
+            bundle_run: CatBoostBundleModelRun = run_catboost_bundle_fold_models(
+                view,
+                labeled_candidates,
+                folds,
+                features=features,
+                resolved_feature_bundle_id=str(bundle_ref),
+                categorical_features=rung_categoricals,
+                fold_local_features=fold_local_features,
+                fold_schedule_id=schedule_id,
+                label_artifact_id=label_id,
+                manual_feature_overrides=manual_feature_overrides,
+            )
+            predictions = bundle_run.predictions
+            fold_reports = bundle_run.fold_reports
+            resolved_hash = bundle_run.protocol.resolved_hash
+            importance = bundle_run.feature_importance
         elif protocol_id == CATBOOST_PROTOCOL_ID:
             context_run = run_context_fold_models(
                 view,
@@ -395,6 +525,16 @@ def run_supervised_ladder(
                 raise ValueError(
                     f"rung {protocol_id!r} predictions lack columns {missing_columns}"
                 )
+        # D13: every rung carries (and agrees on) the comparison-row identity —
+        # the frozen M0–M3 CatBoost lane emits only the legacy id, so the
+        # ladder derives it from the same fold/candidate under the same
+        # schedule/fold set/label artifact
+        predictions = with_comparison_row_ids(
+            predictions,
+            fold_schedule_id=schedule_id,
+            candidate_fold_set_id=fold_set,
+            label_artifact_id=label_id,
+        )
         frames[protocol_id] = predictions
         rungs.append(
             LadderRung(
@@ -427,47 +567,26 @@ def run_supervised_ladder(
                     value_column="brier_loss",
                 )
             )
-        if (
-            LOGISTIC_PROTOCOL_ID in frames
-            and CATBOOST_PROTOCOL_ID in frames
-            and not frames[LOGISTIC_PROTOCOL_ID].empty
-            and not frames[CATBOOST_PROTOCOL_ID].empty
-        ):
-            paired_deltas[f"{LOGISTIC_PROTOCOL_ID}__vs__{CATBOOST_PROTOCOL_ID}"] = (
-                paired_cell_delta_report(
-                    _with_brier_loss(frames[LOGISTIC_PROTOCOL_ID]),
-                    _with_brier_loss(frames[CATBOOST_PROTOCOL_ID]),
-                    value_column="brier_loss",
+        for challenger_id in (CATBOOST_PROTOCOL_ID, CATBOOST_BUNDLE_PROTOCOL_ID):
+            if (
+                LOGISTIC_PROTOCOL_ID in frames
+                and challenger_id in frames
+                and not frames[LOGISTIC_PROTOCOL_ID].empty
+                and not frames[challenger_id].empty
+            ):
+                paired_deltas[f"{LOGISTIC_PROTOCOL_ID}__vs__{challenger_id}"] = (
+                    paired_cell_delta_report(
+                        _with_brier_loss(frames[LOGISTIC_PROTOCOL_ID]),
+                        _with_brier_loss(frames[challenger_id]),
+                        value_column="brier_loss",
+                    )
                 )
-            )
 
     # adversarial m-9: the ladder id binds the LABELS and FOLDS it ran on,
     # not just the view/protocols — two labelings can never share one id
-    label_content_hash = canonical_contract_sha256(
-        {
-            "labeled_pairs": sorted(
-                (str(candidate_id), None if pd.isna(target) else int(target))
-                for candidate_id, target in zip(
-                    labeled_candidates["candidate_id"],
-                    labeled_candidates["binary_target"],
-                    strict=True,
-                )
-            )
-        }
-    )
-    fold_set_hash = canonical_contract_sha256(
-        {
-            "folds": [
-                {
-                    "fold_index": fold.fold_index,
-                    "valid": fold.valid,
-                    "train_candidate_ids": list(fold.train_candidate_ids),
-                    "test_candidate_ids": list(fold.test_candidate_ids),
-                }
-                for fold in folds.folds
-            ]
-        }
-    )
+    labels_hash = label_content_hash(labeled_candidates)
+    # R6.1: the ONE legacy row-population hash (``fold_set_artifact.fold_set_id``)
+    fold_set_hash = _fold_set_hash(folds)
     feature_source: dict[str, Any] = (
         {"kind": "frozen_tier", "tier": tier.value}
         if tier is not None
@@ -479,6 +598,17 @@ def run_supervised_ladder(
             # columns rides the identity — None means the bundle's columns
             # come entirely from the immutable candidate view
             "evidence_ref": bundle_evidence_ref,
+            # R6.1 (D7/D8): the fold-local regime feature artifact joined per
+            # fold and the block-declared categoricals of the bundle
+            "fold_local_feature_artifact_id": (
+                str(fold_local_features.artifact_id)
+                if fold_local_features is not None
+                else None
+            ),
+            "block_declared_categorical_features": list(rung_categoricals),
+            # D13: the comparison-row identity the rungs share
+            "fold_schedule_id": schedule_id,
+            "label_artifact_id": label_id,
         }
     )
     ladder_id = canonical_contract_sha256(
@@ -486,7 +616,7 @@ def run_supervised_ladder(
             "view_id": view.view_id,
             "feature_source": feature_source,
             "calibration_policy_id": calibration_policy_id,
-            "label_content_hash": label_content_hash,
+            "label_content_hash": labels_hash,
             "fold_set_hash": fold_set_hash,
             "rungs": {
                 rung.protocol_id: rung.resolved_protocol_hash for rung in rungs

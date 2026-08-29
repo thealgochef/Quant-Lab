@@ -47,6 +47,13 @@ _SELECTED_KEY = f"{PIPELINE_STATE_PREFIX}selected_pipeline_id"
 _PHASES = ("Configure", "Preview", "Launch", "Monitor", "Resume / Retry", "Publish")
 
 _STRATEGY_PLAN_LABEL = "Strategy pipeline (replays · companions · prop · frontier · publish)"
+_REGIME_GRAIN_CANDIDATE = "candidate_stage_row"
+_REGIME_GRAIN_PANEL_5M = "context_bar_panel · 5m"
+_REGIME_GRAIN_PANEL_15M = "context_bar_panel · 15m"
+_REGIME_GRAINS = (_REGIME_GRAIN_CANDIDATE, _REGIME_GRAIN_PANEL_5M, _REGIME_GRAIN_PANEL_15M)
+#: the candidate-grain regime inputs the R6 lane fixtures pin (numeric,
+#: entry-decision stage); the panel grain uses the stamped panel feature set
+_REGIME_CANDIDATE_INPUT_DEFAULT = ("distance_to_htf_ticks", "opposing_size_ticks")
 _FULL_PLAN_LABEL = (
     "Full 16-stage pipeline (adds feature/label/fold/model stages; S11 stays blocked)"
 )
@@ -85,8 +92,7 @@ def _stage_plan(full: bool):
 
 
 def _logistic_protocol_id() -> str:
-    """The one bundle-parametrized model protocol (R5B; the CatBoost fold
-    runner is tier-locked in the frozen M0–M3 lane) — always the registered
+    """The R5B bundle-parametrized model protocol — always the registered
     constant, never a drifting literal."""
 
     from alpha_lab.agents.data_infra.ifvg.ml.model_protocols import (  # noqa: PLC0415
@@ -94,6 +100,19 @@ def _logistic_protocol_id() -> str:
     )
 
     return LOGISTIC_PROTOCOL_ID
+
+
+def _bundle_model_protocol_ids() -> tuple[str, str]:
+    """The bundle-parametrized model protocols (R6.1 §6.J): the logistic
+    protocol and the bundle-aware CatBoost rung; the frozen-lane CatBoost
+    runner (ifvg_context_catboost_binary_v1) stays tier-locked."""
+
+    from alpha_lab.agents.data_infra.ifvg.ml.model_protocols import (  # noqa: PLC0415
+        CATBOOST_BUNDLE_PROTOCOL_ID,
+        LOGISTIC_PROTOCOL_ID,
+    )
+
+    return (LOGISTIC_PROTOCOL_ID, CATBOOST_BUNDLE_PROTOCOL_ID)
 
 
 def _bundle_is_mbp1_bearing(bundle_key: str) -> bool:
@@ -111,6 +130,107 @@ def _bundle_is_mbp1_bearing(bundle_key: str) -> bool:
         return mbp1_block_keys_in_bundle(resolve_bundle(bundle_key))
     except (BlockUnavailableError, ValueError):
         return False
+
+
+def _regime_default_ids(
+    st_module, roots: Mapping[str, Any]
+) -> tuple[dict[str, str], str | None]:
+    """Exact artifact ids for the Regime Lane via the provider layer
+    (`regime_stage_evidence_defaults` — the R5B auto-fill pattern):
+    manifest-verified exact-ID reads; absence yields empty inputs, but a
+    store-integrity failure yields a sanitized note the panel surfaces."""
+
+    from alpha_lab.agents.data_infra.ifvg.study_providers import (  # noqa: PLC0415
+        list_pipeline_runs,
+        regime_stage_evidence_defaults,
+    )
+
+    try:
+        runs = list_pipeline_runs(PIPELINE_STATE_ROOT)
+        pipeline_id = st_module.session_state.get(_SELECTED_KEY) or (
+            runs[0].pipeline_semantic_id if runs else None
+        )
+        return regime_stage_evidence_defaults(
+            PIPELINE_STATE_ROOT, Path(roots["store_root"]), pipeline_id
+        )
+    except Exception:  # noqa: BLE001 — defaults are a convenience, never a gate
+        return {}, None
+
+
+def _panel_bundle_key() -> str:
+    from alpha_lab.agents.data_infra.ifvg.features.context_bar_panel_contract import (  # noqa: PLC0415
+        CONTEXT_BAR_PANEL_BUNDLE_KEY,
+    )
+
+    return CONTEXT_BAR_PANEL_BUNDLE_KEY
+
+
+def _regime_grain_fields(grain_label: str) -> dict[str, Any]:
+    from alpha_lab.agents.data_infra.ifvg.features.context_bar_panel_contract import (  # noqa: PLC0415
+        PANEL_AS_OF_POLICY_ID_V1,
+    )
+
+    if grain_label == _REGIME_GRAIN_CANDIDATE:
+        return {"observation_granularity": "candidate_stage_row"}
+    interval = 300 if grain_label == _REGIME_GRAIN_PANEL_5M else 900
+    return {
+        "observation_granularity": "context_bar_panel",
+        "panel_interval_seconds": interval,
+        "panel_as_of_policy_id": PANEL_AS_OF_POLICY_ID_V1,
+    }
+
+
+def _panel_numeric_inputs() -> tuple[str, ...]:
+    from alpha_lab.agents.data_infra.ifvg.features.context_bar_panel_contract import (  # noqa: PLC0415
+        CONTEXT_BAR_PANEL_CATEGORICAL_FEATURES,
+        CONTEXT_BAR_PANEL_FEATURES,
+    )
+
+    return tuple(
+        name
+        for name in CONTEXT_BAR_PANEL_FEATURES
+        if name not in CONTEXT_BAR_PANEL_CATEGORICAL_FEATURES
+    )
+
+
+def _regime_request_from_fields(fields: Mapping[str, Any], *, primary_bundle: str):
+    """The frozen `RegimeStudyRequest` of the Configure fields (D1) — None
+    when no regime study is included."""
+
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_study import (  # noqa: PLC0415
+        SUPERVISED_CLASSES,
+        RegimeStudyRequest,
+    )
+
+    if not fields.get("regime_on"):
+        return None
+    grain = _regime_grain_fields(str(fields.get("regime_grain") or _REGIME_GRAIN_CANDIDATE))
+    panel = grain["observation_granularity"] == "context_bar_panel"
+    classes = tuple(fields.get("regime_classes") or ())
+    supervised = any(name in SUPERVISED_CLASSES for name in classes)
+    authority = dict(fields.get("regime_authority") or {})
+    return RegimeStudyRequest(
+        **grain,
+        input_feature_bundle_key=_panel_bundle_key() if panel else primary_bundle,
+        resolved_input_features=(
+            _panel_numeric_inputs()
+            if panel
+            else tuple(fields.get("regime_inputs") or _REGIME_CANDIDATE_INPUT_DEFAULT)
+        ),
+        bootstrap_refits=int(fields.get("regime_bootstrap_refits") or 50),
+        stratified_reporting_requested=bool(classes),
+        comparison_classes_requested=classes,
+        supervised_bundle_key=primary_bundle if supervised else None,
+        regime_promotion_decision_id=(
+            authority.get("regime_promotion_decision_id") or None if supervised else None
+        ),
+        owner_decision_artifact_id=(
+            authority.get("owner_decision_artifact_id") or None if supervised else None
+        ),
+        required_capability_assessment_id=(
+            authority.get("required_capability_assessment_id") or None if supervised else None
+        ),
+    )
 
 
 def _mbp1_default_ids(
@@ -239,6 +359,14 @@ def _assemble_pipeline_spec(charter_payload, charter_id: str, *, fields: Mapping
                 for spec in synthetic_firm_specs()
             )
         )
+    regime_request = (
+        _regime_request_from_fields(fields, primary_bundle=str(fields.get("bundle")))
+        if full
+        else None
+    )
+    bundle_ids: tuple[str, ...] = (str(fields.get("bundle")),) if full else ()
+    if regime_request is not None and regime_request.is_panel:
+        bundle_ids = (*bundle_ids, _panel_bundle_key())
     return PipelineSemanticSpecPayload(
         run_scope="verification_5d" if verification else "full_authorized_development",
         date_allowlist=charter_payload.date_policy.replay_dates,
@@ -250,7 +378,7 @@ def _assemble_pipeline_spec(charter_payload, charter_id: str, *, fields: Mapping
         ),
         search_charter_id=charter_id,
         source_artifact_ids=(),
-        feature_bundle_ids=(str(fields.get("bundle")),) if full else (),
+        feature_bundle_ids=bundle_ids,
         label_policy_id=str(fields.get("label_policy")) if full else None,
         fold_protocol_id=FOLD_PROTOCOL_ID_V1 if full else None,
         model_protocol_id=str(fields.get("model_protocol")) if full else None,
@@ -263,11 +391,219 @@ def _assemble_pipeline_spec(charter_payload, charter_id: str, *, fields: Mapping
             "strategy_core": charter_payload.strategy_core_commit,
         },
         stage_plan=plan,
+        regime_study=regime_request,
     )
+
+
+def _regime_configure_fields(
+    st_module, *, full_plan: bool, bundle: str | None
+) -> dict[str, Any]:
+    """The regime study section of Configure (R6.1 §6.E): grain, the single
+    executable algorithm (planned entries visible-disabled + the mandatory
+    spectral warning), the stamped captions, bootstrap refits, stratified
+    reporting classes, and — for the supervised classes — the frozen exact
+    authority ids of the two-pass workflow."""
+
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_algorithms import (  # noqa: PLC0415
+        REGIME_ALGORITHM_REGISTRY,
+    )
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_contracts import (  # noqa: PLC0415
+        REGIME_PROPOSED_DEFAULTS,
+        ObservationGranularity,
+        sample_adequacy_minimum,
+    )
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_study import (  # noqa: PLC0415
+        COMPARISON_CLASSES,
+        DESCRIPTIVE_CLASSES,
+        SUPERVISED_CLASSES,
+    )
+
+    st_module.markdown("**Regime study** (V1 KMeans lane — development research only)")
+    regime_on = st_module.checkbox(
+        "Include a regime study (V1 KMeans, development)",
+        key=f"{_PIPE}regime_on",
+        disabled=not full_plan,
+        help=(
+            "Adds the regime study to S05–S10 (and S14 when stratified reporting "
+            "is requested); descriptive classes need no owner evidence, the "
+            "supervised classes require the exact frozen FEATURE_ELIGIBLE authority."
+        ),
+    )
+    if not full_plan:
+        st_module.caption("A regime study requires the full 16-stage plan (S05–S10).")
+        return {"regime_on": False}
+    if not regime_on:
+        return {"regime_on": False}
+    sanitize_select(st_module, f"{_PIPE}regime_grain", list(_REGIME_GRAINS))
+    grain_label = st_module.radio(
+        "Regime observation grain",
+        _REGIME_GRAINS,
+        key=f"{_PIPE}regime_grain",
+        help=(
+            "candidate_stage_row = one row per candidate stage (sparse); "
+            "context_bar_panel = completed 5m/15m bars materialized from the "
+            "verified replay-chart artifact (the grain designed to solve sparsity)."
+        ),
+    )
+    grain_fields = _regime_grain_fields(str(grain_label))
+    panel = grain_fields["observation_granularity"] == "context_bar_panel"
+    grain = (
+        ObservationGranularity.CONTEXT_BAR_PANEL
+        if panel
+        else ObservationGranularity.CANDIDATE_STAGE_ROW
+    )
+    floor = sample_adequacy_minimum(grain)
+    if not panel:
+        st_module.caption(
+            f"Candidate-grain sparsity: the sample-adequacy floor is {floor} training "
+            "rows per fold (proposed_protocol_default) — ≤5-day windows and small "
+            "candidate populations block promotion at S09a rather than shrinking k."
+        )
+    else:
+        st_module.caption(
+            f"Panel grain: {grain_fields['panel_interval_seconds']} s completed bars from "
+            "the verified replay-chart artifact; as-of policy "
+            f"{grain_fields['panel_as_of_policy_id']}; floor {floor} training bars per fold."
+        )
+    executable = [
+        entry.algorithm_key
+        for entry in REGIME_ALGORITHM_REGISTRY.values()
+        if entry.implementation_status == "implemented"
+    ]
+    sanitize_select(st_module, f"{_PIPE}regime_algorithm", executable)
+    algorithm = st_module.selectbox(
+        "Regime algorithm (the single executable V1 algorithm)",
+        executable,
+        key=f"{_PIPE}regime_algorithm",
+    )
+    planned = [
+        {
+            "Entry": entry.algorithm_key,
+            "Status / reason": f"planned — {entry.planned_release}: {entry.refusal_reason}",
+        }
+        for entry in REGIME_ALGORITHM_REGISTRY.values()
+        if entry.implementation_status != "implemented"
+    ]
+    if planned:
+        st_module.markdown("**Planned regime algorithms** (visible, disabled)")
+        st_module.dataframe(planned, width="stretch", hide_index=True)
+    spectral = REGIME_ALGORITHM_REGISTRY.get("spectral_clustering_train_only_v1")
+    if spectral is not None and spectral.mandatory_warning_text:
+        st_module.warning(f"**{spectral.mandatory_warning_text}**", icon="⚠️")
+    fixed_k = REGIME_PROPOSED_DEFAULTS["fixed_cluster_count"]["value"]
+    st_module.caption(
+        f"Fixed k = {fixed_k} (owner decision 29; proposed_protocol_default) · "
+        "observation stage entry_decision · fold-local preprocessing "
+        "(median impute + indicator → standard scaler) · seed 7."
+    )
+    if panel:
+        inputs = _panel_numeric_inputs()
+        st_module.caption(
+            "Stamped input features (owner decision 28, panel_feature_set_v1): "
+            + ", ".join(inputs)
+            + " — cbp_session_state is the block-declared categorical and never a KMeans input."
+        )
+        selected_inputs = inputs
+    else:
+        options = list(_REGIME_CANDIDATE_INPUT_DEFAULT)
+        if bundle:
+            from alpha_lab.agents.data_infra.ifvg.context_model import (  # noqa: PLC0415
+                categorical_features_for,
+            )
+            from alpha_lab.agents.data_infra.ifvg.features.feature_bundles import (  # noqa: PLC0415
+                resolve_bundle,
+            )
+
+            try:
+                names = resolve_bundle(str(bundle)).payload.resolved_feature_names
+                options = [n for n in names if n not in categorical_features_for(names)]
+            except Exception:  # noqa: BLE001 — the default pair stays
+                options = list(_REGIME_CANDIDATE_INPUT_DEFAULT)
+        default = [name for name in _REGIME_CANDIDATE_INPUT_DEFAULT if name in options]
+        selected_inputs = tuple(
+            st_module.multiselect(
+                "Regime input features (numeric members of the selected bundle)",
+                options,
+                default=default,
+                key=f"{_PIPE}regime_inputs",
+            )
+        )
+        st_module.caption(
+            "Input features: "
+            + (", ".join(selected_inputs) or "— (select at least one)")
+            + " (every input must belong to the bundle and pass the point-in-time "
+            "availability rule; the R6 lane fixtures pin distance_to_htf_ticks + "
+            "opposing_size_ticks)."
+        )
+    refits = st_module.number_input(
+        "Bootstrap refits per fold (stability; stamped default 50, total cap 400)",
+        min_value=1,
+        max_value=int(REGIME_PROPOSED_DEFAULTS["bootstrap_refits_per_fold"]["value"]),
+        value=int(REGIME_PROPOSED_DEFAULTS["bootstrap_refits_per_fold"]["value"]),
+        key=f"{_PIPE}regime_refits",
+    )
+    stratified = st_module.checkbox(
+        "Request stratified reporting (ML §5.5 comparison classes; S14, zero fitting)",
+        value=True,
+        key=f"{_PIPE}regime_stratified",
+    )
+    classes: tuple[str, ...] = ()
+    authority: dict[str, str] = {}
+    if stratified:
+        classes = tuple(
+            st_module.multiselect(
+                "Comparison classes",
+                list(COMPARISON_CLASSES),
+                default=list(DESCRIPTIVE_CLASSES),
+                key=f"{_PIPE}regime_classes",
+            )
+        )
+        supervised = [name for name in classes if name in SUPERVISED_CLASSES]
+        if supervised:
+            st_module.markdown(
+                "**Clone as model-bearing study — frozen authority (exact ids)**"
+            )
+            st_module.caption(
+                f"{', '.join(supervised)} fit models on regime features and require the "
+                "FEATURE_ELIGIBLE status: the exact promotion decision id, the verified "
+                "owner-decision artifact id, and the capability assessment id are frozen "
+                "into this NEW semantic run (two-pass workflow: assessment run → owner "
+                "evidence + `promote --to feature_eligible` → this run). They also require "
+                "the supervised fields above (model protocol + label policy). No control "
+                "mutates a prior run and no latest decision is ever resolved."
+            )
+            authority = {
+                "regime_promotion_decision_id": st_module.text_input(
+                    "Frozen FEATURE_ELIGIBLE promotion decision id (64-hex)",
+                    value="",
+                    key=f"{_PIPE}regime_decision_id",
+                ).strip(),
+                "owner_decision_artifact_id": st_module.text_input(
+                    "Frozen owner-decision artifact id (64-hex)",
+                    value="",
+                    key=f"{_PIPE}regime_owner_id",
+                ).strip(),
+                "required_capability_assessment_id": st_module.text_input(
+                    "Frozen capability assessment id (64-hex)",
+                    value="",
+                    key=f"{_PIPE}regime_assessment_id",
+                ).strip(),
+            }
+    return {
+        "regime_on": True,
+        "regime_grain": str(grain_label),
+        "regime_algorithm": str(algorithm),
+        "regime_inputs": tuple(selected_inputs),
+        "regime_bootstrap_refits": int(refits),
+        "regime_classes": classes,
+        "regime_authority": authority,
+    }
 
 
 def _configure_fields(st_module) -> dict[str, Any]:
     available_bundles, blocked_bundles = _resolvable_bundles()
+    # the panel bundle is a PANEL artifact (row_id join) — never a candidate view
+    available_bundles = tuple(key for key in available_bundles if key != _panel_bundle_key())
     available_models, planned_models = _model_protocol_rows()
     full_plan = (
         st_module.radio(
@@ -297,15 +633,21 @@ def _configure_fields(st_module) -> dict[str, Any]:
             from ifvg_mbp1_panels import research_only_offline_badge  # noqa: PLC0415
 
             research_only_offline_badge(st_module)
-            model_options = [_logistic_protocol_id()]
+            model_options = list(_bundle_model_protocol_ids())
             st_module.caption(
                 "MBP-1-bearing bundles train the controlled Baseline vs "
-                "Baseline+MBP-1 study under the logistic protocol on both "
-                "arms — the CatBoost fold runner is tier-locked in the "
-                "frozen M0–M3 lane."
+                "Baseline+MBP-1 study on both arms — the prevalence reference, "
+                "the logistic protocol, and the bundle-aware CatBoost rung "
+                "(research-only) on identical comparison rows; the pinned "
+                "protocol is the headline comparison. The "
+                "ifvg_context_catboost_binary_v1 fold runner stays tier-locked "
+                "in the frozen M0–M3 lane."
             )
         else:
-            model_options = list(available_models)
+            # the bundle-aware CatBoost rung has no frozen-tier wiring
+            model_options = [
+                key for key in available_models if key != _bundle_model_protocol_ids()[1]
+            ]
         sanitize_select(st_module, f"{_PIPE}model", model_options)
         model_protocol = st_module.selectbox(
             "Model protocol (the ladder always includes the prevalence reference)",
@@ -345,6 +687,9 @@ def _configure_fields(st_module) -> dict[str, Any]:
             width="stretch",
             hide_index=True,
         )
+    regime_fields = _regime_configure_fields(
+        st_module, full_plan=full_plan, bundle=str(bundle) if bundle else None
+    )
     max_workers = st_module.slider(
         "Worker limit (operational — never part of the scientific identity)",
         min_value=1,
@@ -358,6 +703,7 @@ def _configure_fields(st_module) -> dict[str, Any]:
         "label_policy": label_policy,
         "model_protocol": model_protocol,
         "max_workers": int(max_workers),
+        **regime_fields,
     }
 
 
@@ -467,12 +813,82 @@ def _render_preview(st_module, roots: Mapping[str, Any], draft, fields) -> None:
             "stage results · pipeline result",
         ),
     ]
+    regime_request = spec.regime_study
+    if regime_request is not None:
+        from alpha_lab.agents.data_infra.ifvg.ml.regime_contracts import (  # noqa: PLC0415
+            sample_adequacy_minimum,
+        )
+
+        rows.extend(
+            [
+                (
+                    "Regime study",
+                    (
+                        f"{regime_request.algorithm_key} · grain "
+                        f"{regime_request.observation_granularity.value}"
+                        + (
+                            f" ({regime_request.panel_interval_seconds}s panel, "
+                            f"{regime_request.panel_as_of_policy_id})"
+                            if regime_request.is_panel
+                            else ""
+                        )
+                        + f" · bundle {regime_request.input_feature_bundle_key} · k="
+                        f"{regime_request.resolved_cluster_count} · inputs "
+                        + ", ".join(regime_request.resolved_input_features)
+                    ),
+                ),
+                (
+                    "Regime comparison classes",
+                    ", ".join(regime_request.comparison_classes_requested) or "none",
+                ),
+                (
+                    "Regime sample-adequacy floor",
+                    f"{sample_adequacy_minimum(regime_request.observation_granularity)} "
+                    "training observations per fold (proposed_protocol_default)",
+                ),
+                (
+                    "Regime authority",
+                    (
+                        "frozen exact ids (model-bearing)"
+                        if regime_request.requires_supervision
+                        else "descriptive — S10 derives the status from this run's own "
+                        "assessment"
+                    ),
+                ),
+            ]
+        )
     st_module.dataframe(
         [{"Field": name, "Value": value} for name, value in rows],
         width="stretch",
         hide_index=True,
     )
-    readiness = derive_stage_plan_readiness(spec)
+    if regime_request is not None:
+        from alpha_lab.agents.data_infra.ifvg.ml.regime_study import (  # noqa: PLC0415
+            resolve_study_protocol,
+        )
+
+        if regime_request.is_panel:
+            st_module.caption(
+                "Regime protocol id: resolved at S05 from the persisted context-bar "
+                "panel artifact (the panel id is part of the protocol identity)."
+            )
+        else:
+            try:
+                probe = resolve_study_protocol(regime_request, observation_source_artifact_id=None)
+            except Exception as error:  # noqa: BLE001 — readiness below carries the reason
+                st_module.caption(f"Regime protocol cannot be resolved: {sanitize_error(error)}")
+            else:
+                identity_block(
+                    st_module, "Regime protocol id (resolved)", probe.resolved_regime_protocol_id
+                )
+    # adversarial R6.1 S7: a model-bearing plan's frozen authority is
+    # verified-loaded from THIS store under the effective run scope — the
+    # preview shows the exact refusal instead of "available"
+    readiness = derive_stage_plan_readiness(
+        spec,
+        store_root=Path(roots["store_root"]),
+        run_scope=_effective_run_scope(charter_payload, spec),
+    )
     st_module.markdown("**Stage-plan readiness (capability-scoped)**")
     st_module.dataframe(
         [
@@ -527,6 +943,22 @@ def _render_launch(st_module, roots: Mapping[str, Any], draft, fields) -> None:
         _freeze_and_launch_pipeline(st_module, roots, draft, fields)
 
 
+def _effective_run_scope(charter_payload, spec) -> str:
+    """The owner-evidence run scope the pipeline itself applies at S00: the
+    charter's typed synthetic marker → ``synthetic_fixture``; otherwise the
+    spec's own run scope (adversarial R6.1 S7)."""
+
+    from alpha_lab.agents.data_infra.ifvg.search.authorization import (  # noqa: PLC0415
+        SyntheticAuthorizationMarker,
+    )
+
+    if isinstance(
+        getattr(charter_payload, "owner_authorization", None), SyntheticAuthorizationMarker
+    ):
+        return "synthetic_fixture"
+    return str(spec.run_scope.value)
+
+
 def _freeze_and_launch_pipeline(st_module, roots: Mapping[str, Any], draft, fields) -> None:
     """Freeze the pipeline spec and spawn the detached job — strictly
     inside the Launch button handler (FUX-PIPE-003; the Resume phase's
@@ -568,9 +1000,17 @@ def _freeze_and_launch_pipeline(st_module, roots: Mapping[str, Any], draft, fiel
             charter_payload, as_of_utc=datetime.now(UTC).isoformat(timespec="seconds")
         )
         charter = SearchCharterEnvelope.from_payload(charter_payload)
-        save_charter(store_root, charter)
         spec = _assemble_pipeline_spec(charter_payload, charter.search_id, fields=fields)
-        assert_stage_plan_launchable(spec)
+        # adversarial R6.1 S7: the plan (incl. a model-bearing regime study's
+        # frozen authority, verified-loaded from THIS store under the effective
+        # run scope) is refused BEFORE the charter / spec envelopes are
+        # persisted and before any job is spawned
+        assert_stage_plan_launchable(
+            spec,
+            store_root=store_root,
+            run_scope=_effective_run_scope(charter_payload, spec),
+        )
+        save_charter(store_root, charter)
         semantic = PipelineSemanticIdentity.from_payload(spec)
         save_or_reuse_envelope(store_root, "pipeline_specs", semantic)
     except CharterValidationError as error:
@@ -771,6 +1211,7 @@ def _render_monitor_body(st_module, *, roots: Mapping[str, Any], pipeline_id: st
             hide_index=True,
         )
     _render_ladder_panel(st_module, roots, state)
+    _render_regime_study_panel(st_module, roots, state)
     _render_persisted_comparisons(st_module, roots, state)
     publication = dict(state.get("publication") or {})
     st_module.caption(f"Publication state: {publication.get('state', 'not_prepared')}")
@@ -890,6 +1331,192 @@ def _render_ladder_panel(st_module, roots: Mapping[str, Any], state: Mapping[str
         st_module.dataframe(_ladder_frame(diagnostics), width="stretch", hide_index=True)
         st_module.caption(_parity_caption(dict(diagnostics.get("parity") or {})))
         st_module.caption(f"S11 (model-gated replays): BLOCKED — {S11_BLOCKED_REASON}.")
+
+
+def _render_regime_study_panel(
+    st_module, roots: Mapping[str, Any], state: Mapping[str, Any]
+) -> None:
+    """R6.1 (§6.E): the regime study of THIS run from the persisted S09/S10/
+    S14 sidecars — sub-step rows S09a/b/c, the exact ids, gates, the
+    deterministic decisions, the stratified report index, and the explicit
+    two-pass clone guidance. Read-only; nothing here mutates a run."""
+
+    from alpha_lab.agents.data_infra.ifvg.study_providers import (  # noqa: PLC0415
+        load_regime_diagnostics,
+        load_regime_report_index,
+        load_regime_run_facts,
+    )
+
+    stages = dict(state.get("stages") or {})
+    s10 = dict(stages.get("10_generate_predictions_and_diagnostics") or {})
+    with st_module.expander("Regime study (S05–S10)"):
+        if not s10.get("in_plan"):
+            st_module.caption("Not required by this stage plan.")
+            return
+        store_root = Path(roots["store_root"])
+        diagnostics = load_regime_diagnostics(store_root, state)
+        if diagnostics is None:
+            st_module.caption(
+                "No regime study in this run (or its diagnostics stage has not "
+                "completed)."
+            )
+            return
+        request = dict(diagnostics.get("request") or {})
+        gates = dict(diagnostics.get("gates") or {})
+        st_module.dataframe(
+            [
+                {"Field": "Algorithm", "Value": str(request.get("algorithm_key"))},
+                {
+                    "Field": "Grain",
+                    "Value": str(request.get("observation_granularity"))
+                    + (
+                        f" · {request.get('panel_interval_seconds')}s"
+                        if request.get("panel_interval_seconds")
+                        else ""
+                    ),
+                },
+                {"Field": "Input bundle", "Value": str(request.get("input_feature_bundle_key"))},
+                {
+                    "Field": "Comparison classes",
+                    "Value": ", ".join(request.get("comparison_classes_requested") or ())
+                    or "none",
+                },
+                {"Field": "Authority source", "Value": str(diagnostics.get("authority_source"))},
+                {"Field": "Final status", "Value": str(diagnostics.get("final_status"))},
+                {
+                    "Field": "Decided at (evidence as-of)",
+                    "Value": str(diagnostics.get("decided_at")),
+                },
+                {
+                    "Field": "Gates",
+                    "Value": (
+                        "passed"
+                        if gates.get("gates_passed")
+                        else "FAILED: " + ", ".join(gates.get("gate_failures") or ())
+                    )
+                    + " · coverage gates "
+                    + ("passed" if gates.get("coverage_gates_passed") else "failed")
+                    + f" · OOS coverage {gates.get('oos_assignment_coverage')}",
+                },
+            ],
+            width="stretch",
+            hide_index=True,
+        )
+        identity_block(
+            st_module,
+            "Resolved regime protocol id",
+            str(diagnostics.get("resolved_regime_protocol_id")),
+        )
+        identity_block(
+            st_module,
+            "Capability assessment id",
+            str(diagnostics.get("regime_capability_assessment_id")),
+        )
+        identity_block(
+            st_module,
+            "Descriptive OOS assignment id",
+            str(diagnostics.get("regime_oos_assignment_id")),
+        )
+        run_facts = load_regime_run_facts(store_root, state) or {}
+        s09a = dict(run_facts.get("S09a") or {})
+        substeps = [
+            {
+                "Sub-step": "S09a",
+                "Body": "KMeans fits + descriptive OOS assignment (executor; verified seam)",
+                "Result": (
+                    f"{len(s09a.get('regime_fit_ids') or ())} fit(s); gates "
+                    + ("passed" if s09a.get("gates_passed") else "failed")
+                    if s09a
+                    else "—"
+                ),
+            }
+        ]
+        for name, body in (
+            ("S09b", "fold-local regime features (model-bearing runs only)"),
+            ("S09c", "controlled regime study / cohort model (model-bearing runs only)"),
+        ):
+            record = run_facts.get(name)
+            substeps.append(
+                {
+                    "Sub-step": name,
+                    "Body": body,
+                    "Result": (
+                        "not requested (descriptive study)"
+                        if name not in (diagnostics.get("sub_steps") or ())
+                        else (
+                            "; ".join(f"{k}: {str(v)[:12]}" for k, v in dict(record).items())
+                            if isinstance(record, dict) and record
+                            else "recorded"
+                        )
+                    ),
+                }
+            )
+        st_module.markdown("**Sub-steps (D14: every fit of the run happens in S09)**")
+        st_module.dataframe(substeps, width="stretch", hide_index=True)
+        st_module.markdown("**Decisions (deterministic; nothing here promotes)**")
+        st_module.dataframe(
+            [
+                {
+                    "Decision id": str(row.get("regime_promotion_decision_id"))[:12] + "…",
+                    "Status": str(row.get("status")),
+                    "Role": str(row.get("role")),
+                    "Previous": str(row.get("previous_status")),
+                    "Decided at": str(row.get("decided_at")),
+                }
+                for row in (diagnostics.get("decisions") or ())
+            ]
+            or [{"Decision id": "—"}],
+            width="stretch",
+            hide_index=True,
+        )
+        index = load_regime_report_index(store_root, state)
+        if index is not None:
+            by_class = dict(index.get("reports_by_class") or {})
+            refusals = dict(index.get("refusals") or {})
+            # Modeled classes delivered by S09c are NOT refusals: the S14 record
+            # names the exact verified study id (review F6).
+            delivered = dict(index.get("delivered_by") or {})
+            st_module.markdown(
+                "**Stratified reports (S14; persisted artifacts only, zero fitting)**"
+            )
+            st_module.dataframe(
+                [
+                    {"Class": cls, "Report ids": ", ".join(i[:12] + "…" for i in ids)}
+                    for cls, ids in sorted(by_class.items())
+                ]
+                + [
+                    {
+                        "Class": cls,
+                        "Report ids": f"delivered by S09c — {str(study_id)[:12]}…",
+                    }
+                    for cls, study_id in sorted(delivered.items())
+                ]
+                + [
+                    {"Class": cls, "Report ids": f"refused — {reason}"}
+                    for cls, reason in sorted(refusals.items())
+                ]
+                or [{"Class": "—", "Report ids": "—"}],
+                width="stretch",
+                hide_index=True,
+            )
+            for cls, reason in sorted(refusals.items()):
+                render_empty_state(
+                    st_module,
+                    "regime_status_below_minimum",
+                    detail=f"{cls}: {sanitize_error(str(reason))}",
+                )
+        st_module.markdown("**Clone as model-bearing study (two-pass workflow)**")
+        st_module.caption(
+            "This run's descriptive decisions never authorize a model. To run "
+            "feature_only / cohort_model: (1) `python scripts/ifvg_regime_promotion.py "
+            "propose` writes the owner-decision proposal for the exact protocol + "
+            "assessment above; (2) the owner ratifies it as a persisted owner-decision "
+            "artifact; (3) `promote --to feature_eligible` persists the exact "
+            "FEATURE_ELIGIBLE decision; (4) Configure → regime study → supervised "
+            "classes freezes those exact ids (decision, owner artifact, assessment) into "
+            "a NEW semantic run. No control here mutates this run and no latest "
+            "decision is resolved."
+        )
 
 
 def _render_persisted_comparisons(
@@ -1191,4 +1818,7 @@ def render_pipeline_run(st_module=st, *, roots: Mapping[str, Any], draft=None) -
     with st_module.expander("Regime Lane (V1 KMeans, development)"):
         from ifvg_regime_panels import render_regime_lane  # noqa: PLC0415
 
-        render_regime_lane(st_module, roots=roots)
+        regime_defaults, regime_note = _regime_default_ids(st_module, roots)
+        if regime_note:
+            st_module.error(regime_note)
+        render_regime_lane(st_module, roots=roots, default_ids=regime_defaults)
