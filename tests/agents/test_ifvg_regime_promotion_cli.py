@@ -43,7 +43,12 @@ _SOURCE = Path(cli.__file__).read_text(encoding="utf-8")
 
 @pytest.fixture(scope="module")
 def lane(tmp_path_factory):
+    from alpha_lab.agents.data_infra.ifvg.search.store_namespace import (
+        initialize_test_namespace,
+    )
+
     root = tmp_path_factory.mktemp("regime_cli")
+    initialize_test_namespace(root)  # HARDENING-BACKEND §4.1: explicit test namespace
     source = persisted_candidate_source(root)
     result = execute_regime_protocol(
         root,

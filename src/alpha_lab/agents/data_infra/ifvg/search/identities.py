@@ -449,12 +449,16 @@ def registered_identity_pairs() -> tuple[RegisteredIdentityPair, ...]:
     from ..study import cohort, comparison_contracts, contrasts, study_cell  # noqa: F401, PLC0415
     from . import (  # noqa: F401, PLC0415
         authorization,
+        bounded_verification,
         charter,
         child_replay,
         lineage,
         orchestrator,
         owner_decisions,
         pipeline,
+        seed_production,
+        store_namespace,
+        supersession_chain,
         verification,
     )
 

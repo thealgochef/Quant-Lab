@@ -109,6 +109,17 @@ SEARCH_STORE_NAMES: tuple[str, ...] = (
     "regime_cohort_model_studies",
     # R6.1-FIX §3.7 — the immutable, content-addressed executed-trade table
     "executed_trade_tables",
+    # HARDENING-BACKEND §4.2 — the immutable owner-decision supersession
+    # record chain (one entry per record; the head pointer lives beside the
+    # owner_decisions store)
+    "owner_decision_supersessions",
+    # HARDENING-BACKEND §5.3 — separately authorized seed production
+    "seed_production_authorizations",
+    "seed_production_runs",
+    # HARDENING-BACKEND §6.2 / §6.3 — the R1 baseline gate report and the
+    # release-specific bounded control-flow report (verification-only)
+    "r1_baseline_gate_reports",
+    "bounded_release_control_flow_reports",
 )
 
 _ENVELOPE_FILE = "envelope.json"

@@ -59,6 +59,18 @@ where = ["src"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-v --tb=short"
+# HARDENING-BACKEND §4.5 (F-18) — hardening_warning_policy_v1: the suite runs
+# with warnings as errors. Project-owned warnings are fixed at the source
+# (explicit schemas / dtypes); the ONLY ignore rule is the narrowly scoped
+# third-party deprecation below (exact message, category and module;
+# scikit-learn 1.7.0 passing the SciPy 1.16 L-BFGS-B `disp`/`iprint` options
+# that SciPy removes in 1.18.0 — owner: WS-C / HARDENING-BACKEND; remove the
+# rule when scikit-learn stops passing them or SciPy < 1.18 is no longer
+# installed). No broad DeprecationWarning suppression exists.
+filterwarnings = [
+    "error",
+    "ignore:scipy\\.optimize\\x3a The `disp` and `iprint` options of the L-BFGS-B solver are deprecated and will be removed in SciPy 1\\.18\\.0\\.:DeprecationWarning:sklearn\\.linear_model\\._logistic",
+]
 
 [tool.ruff]
 target-version = "py313"

@@ -6,13 +6,23 @@ the firm/fidelity/risk/withdrawal/clock set; regime studies add grain/count/
 stability decisions; model-gated replay adds ``RejectedCandidatePolicy``. The
 real verification slice requires a real :class:`VerificationAuthorizationRef`;
 the typed synthetic marker is confined to fully synthetic fixtures.
+
+HARDENING-BACKEND §4.1 / §4.2 (F-11 / F-12): every real authorization bundle
+and every verification authorization binds the SEMANTIC ``store_namespace_id``
+of the store it authorizes and the ``supersession_head_witness``
+(``{store_namespace_id, line_count, head_sha256}``) it was signed against;
+:func:`validate_owner_authorization` verifies both against the store when
+``store_root`` is given (publication and launch seams always pass it) — a
+missing, shorter, or different current head is refused. Local rollback
+detection only, never cryptographic owner authenticity.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from .identities import (
     SHA256_PATTERN,
@@ -20,6 +30,12 @@ from .identities import (
     FrozenContract,
     ImmutableMap,
     register_identity_pair,
+)
+from .store_namespace import (
+    StoreNamespaceError,
+    SupersessionHeadWitness,
+    assert_namespace_deployment_coherent,
+    require_store_namespace,
 )
 
 if TYPE_CHECKING:
@@ -35,6 +51,7 @@ __all__ = [
     "VerificationAuthorizationRef",
     "AuthorizationError",
     "derive_authorization_requirements",
+    "assert_authorization_bound_to_store",
     "validate_owner_authorization",
     "RunScope",
 ]
@@ -78,6 +95,16 @@ class AuthorizationRequirementSetEnvelope(EnvelopeBase):
 class OwnerAuthorizationBundle(FrozenContract):
     requirement_set_id: str = Field(pattern=SHA256_PATTERN)
     decision_refs: ImmutableMap[str, OwnerDecisionEvidenceRef]
+    #: HARDENING-BACKEND §4.1 / §4.2: the semantic namespace the bundle
+    #: authorizes and the supersession head it was signed against.
+    store_namespace_id: str = Field(pattern=SHA256_PATTERN)
+    supersession_head_witness: SupersessionHeadWitness
+
+    @model_validator(mode="after")
+    def _witness_names_the_namespace(self):
+        if self.supersession_head_witness.store_namespace_id != self.store_namespace_id:
+            raise ValueError("the supersession head witness names another store namespace")
+        return self
 
 
 class SyntheticAuthorizationMarker(FrozenContract):
@@ -94,6 +121,17 @@ class VerificationAuthorizationRef(FrozenContract):
     approved_by: str
     approved_at: str
     content_hash: str = Field(pattern=SHA256_PATTERN)
+    #: HARDENING-BACKEND §4.1 / §4.2: the semantic namespace of the
+    #: verification store (``search_test/v1``, a ``test`` namespace) and the
+    #: supersession head the owner signed against.
+    store_namespace_id: str = Field(pattern=SHA256_PATTERN)
+    supersession_head_witness: SupersessionHeadWitness
+
+    @model_validator(mode="after")
+    def _witness_names_the_namespace(self):
+        if self.supersession_head_witness.store_namespace_id != self.store_namespace_id:
+            raise ValueError("the supersession head witness names another store namespace")
+        return self
 
 
 class AuthorizationError(PermissionError):
@@ -282,18 +320,63 @@ def derive_authorization_requirements(
     )
 
 
+def assert_authorization_bound_to_store(
+    store_root: Path,
+    *,
+    store_namespace_id: str,
+    supersession_head_witness: SupersessionHeadWitness,
+    expected_namespace_class: str | None = None,
+) -> None:
+    """HARDENING-BACKEND §4.1 / §4.2: the authorization must name THIS store's
+    verified namespace and its witness must equal the CURRENT supersession
+    head (missing, shorter, or different refuses). Typed
+    :class:`AuthorizationError` carrying the namespace ``reason``."""
+
+    from .supersession_chain import assert_head_witness_current  # noqa: PLC0415
+
+    try:
+        namespace = require_store_namespace(
+            Path(store_root), expected_class=expected_namespace_class
+        )
+        # RA-09: the deployment check (a ``test`` namespace under a
+        # research-looking path) runs at EVERY bound seam — defense in depth
+        assert_namespace_deployment_coherent(Path(store_root), namespace)
+        if namespace.store_namespace_id != store_namespace_id:
+            raise StoreNamespaceError(
+                "store_namespace_identity_mismatch",
+                "the authorization names another store namespace "
+                f"({store_namespace_id[:12]}… ≠ {namespace.store_namespace_id[:12]}…)",
+            )
+        assert_head_witness_current(Path(store_root), supersession_head_witness)
+    except StoreNamespaceError as error:
+        refusal = AuthorizationError(f"owner authorization is not bound to this store: {error}")
+        refusal.reason = error.reason  # type: ignore[attr-defined]
+        raise refusal from error
+
+
 def validate_owner_authorization(
     bundle: OwnerAuthorizationBundle,
     requirement_set: AuthorizationRequirementSetEnvelope,
     *,
     as_of_utc: str,
     superseded_artifact_ids: tuple[str, ...] = (),
+    store_root: Path | None = None,
 ) -> None:
-    """Fail closed on absent, stale, superseded, or inconsistent evidence."""
+    """Fail closed on absent, stale, superseded, or inconsistent evidence.
+    With ``store_root`` (every publication / launch seam passes it) the
+    bundle's namespace and supersession-head witness are verified against
+    the store as well; without it only the store-independent binding runs
+    (a draft-time check — never a launch)."""
 
     if bundle.requirement_set_id != requirement_set.requirement_set_id:
         raise AuthorizationError(
             "authorization bundle references a different requirement set"
+        )
+    if store_root is not None:
+        assert_authorization_bound_to_store(
+            Path(store_root),
+            store_namespace_id=bundle.store_namespace_id,
+            supersession_head_witness=bundle.supersession_head_witness,
         )
     problems: list[str] = []
     for requirement in requirement_set.payload.requirements:

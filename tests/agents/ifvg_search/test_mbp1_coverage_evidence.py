@@ -55,9 +55,6 @@ from alpha_lab.agents.data_infra.ifvg.features.mbp1_source_contract import (
     MBP1_MISSING_REASONS,
     Mbp1SourceContract,
 )
-from alpha_lab.agents.data_infra.ifvg.search.authorization import (
-    VerificationAuthorizationRef,
-)
 from tests.agents.ifvg_search.mbp1_fixture import (
     FIXTURE_DAY,
     MBP1_RESOLVED_BLOCK,
@@ -909,7 +906,6 @@ def _verification_store(tmp_path, days):
 
     from alpha_lab.agents.data_infra.ifvg.search.store import save_or_reuse_envelope
     from alpha_lab.agents.data_infra.ifvg.search.verification import (
-        VERIFICATION_POLICY_ID,
         CoverageMatrixEnvelope,
         CoverageMatrixPayload,
         DayCoverageRow,
@@ -943,8 +939,10 @@ def _verification_store(tmp_path, days):
         )
     )
     save_or_reuse_envelope(root, "coverage_matrices", matrix)
-    authorization = VerificationAuthorizationRef(
-        verification_policy_id=VERIFICATION_POLICY_ID,
+    from tests.agents.ifvg_search.namespace_fixture import verification_authorization_ref
+
+    authorization = verification_authorization_ref(
+        root,
         approved_allowlist_hash=allowlist_sha256(days),
         coverage_matrix_artifact_id=matrix.coverage_matrix_id,
         seed_snapshot_id="b" * 64,
@@ -1032,6 +1030,25 @@ def test_coverage_diagnostic_shape_and_fail_before_path(tmp_path) -> None:
             allowlist=(FIXTURE_DAY,),
         )
     store_root, run, matrix = _verification_store(tmp_path / "gate", (FIXTURE_DAY,))
+    # HARDENING-BACKEND (RA-01): the namespace + head binding now fires FIRST —
+    # an unmarked root refuses `store_namespace_missing` before the matrix is
+    # consulted; mark `root` as the SAME namespace instance so the matrix
+    # refusal below is reached (the binding itself is proven in
+    # test_hardening_fix_round.py)
+    from alpha_lab.agents.data_infra.ifvg.search.store_namespace import (
+        initialize_store_namespace,
+        load_store_namespace,
+    )
+
+    with pytest.raises(PermissionError, match="store_namespace_missing"):
+        assert_diagnostic_authorized(
+            store_root=root, run_envelope=run, access_policy=policy, allowlist=(FIXTURE_DAY,)
+        )
+    initialize_store_namespace(
+        root,
+        namespace_class="test",
+        store_instance_id=load_store_namespace(store_root).payload.store_instance_id,
+    )
     # a self-signed run envelope whose coverage matrix is NOT in this store refuses
     with pytest.raises(PermissionError, match="coverage-matrix artifact is not a verified"):
         assert_diagnostic_authorized(

@@ -10,11 +10,9 @@ from alpha_lab.agents.data_infra.ifvg.data_access import allowlist_sha256
 from alpha_lab.agents.data_infra.ifvg.development_access import VerificationReplayPolicy
 from alpha_lab.agents.data_infra.ifvg.search.authorization import (
     SyntheticAuthorizationMarker,
-    VerificationAuthorizationRef,
 )
 from alpha_lab.agents.data_infra.ifvg.search.verification import (
     PROPOSED_VERIFICATION_ALLOWLIST,
-    VERIFICATION_POLICY_ID,
     VerificationDataPolicy,
     VerificationRunEnvelope,
     VerificationRunValidationError,
@@ -63,7 +61,22 @@ def test_program_allowlist_marker_refuses_rotation(tmp_path) -> None:
         register_program_allowlist(tmp_path, rotated)
 
 
-def test_verification_run_refuses_synthetic_marker() -> None:
+def _bound_run(root):
+    """The example run re-signed against ``root``'s verified test namespace
+    and its CURRENT supersession head (HARDENING-BACKEND §4.1 / §4.2)."""
+
+    from tests.agents.ifvg_search.namespace_fixture import namespace_and_witness
+
+    namespace_id, witness = namespace_and_witness(root)
+    example = _example_verification_run()
+    authorization = example.verification_authorization.model_copy(
+        update={"store_namespace_id": namespace_id, "supersession_head_witness": witness}
+    )
+    payload = example.model_copy(update={"verification_authorization": authorization})
+    return payload, VerificationRunEnvelope.from_payload(payload)
+
+
+def test_verification_run_refuses_synthetic_marker(tmp_path) -> None:
     envelope = VerificationRunEnvelope.from_payload(_example_verification_run())
     with pytest.raises(VerificationRunValidationError, match="synthetic"):
         validate_verification_run(
@@ -73,12 +86,13 @@ def test_verification_run_refuses_synthetic_marker() -> None:
             expected_baseline_section_config_hash=envelope.payload.baseline_section_config_hash,
             expected_seed_snapshot_id=envelope.payload.seed_snapshot_id,
             authorization=SyntheticAuthorizationMarker(),
+            store_root=tmp_path / "store",
         )
 
 
-def test_verification_run_requires_exact_binding() -> None:
-    payload = _example_verification_run()
-    envelope = VerificationRunEnvelope.from_payload(payload)
+def test_verification_run_requires_exact_binding(tmp_path) -> None:
+    root = tmp_path / "search_test" / "v1"
+    payload, envelope = _bound_run(root)
     good = payload.verification_authorization
     validate_verification_run(
         envelope,
@@ -87,16 +101,9 @@ def test_verification_run_requires_exact_binding() -> None:
         expected_baseline_section_config_hash=payload.baseline_section_config_hash,
         expected_seed_snapshot_id=payload.seed_snapshot_id,
         authorization=good,
+        store_root=root,
     )
-    mismatched_allowlist = VerificationAuthorizationRef(
-        verification_policy_id=VERIFICATION_POLICY_ID,
-        approved_allowlist_hash="9" * 64,
-        coverage_matrix_artifact_id=good.coverage_matrix_artifact_id,
-        seed_snapshot_id=good.seed_snapshot_id,
-        approved_by=good.approved_by,
-        approved_at=good.approved_at,
-        content_hash=good.content_hash,
-    )
+    mismatched_allowlist = good.model_copy(update={"approved_allowlist_hash": "9" * 64})
     with pytest.raises(VerificationRunValidationError, match="before source-path"):
         validate_verification_run(
             envelope,
@@ -105,6 +112,7 @@ def test_verification_run_requires_exact_binding() -> None:
             expected_baseline_section_config_hash=payload.baseline_section_config_hash,
             expected_seed_snapshot_id=payload.seed_snapshot_id,
             authorization=mismatched_allowlist,
+            store_root=root,
         )
     with pytest.raises(VerificationRunValidationError, match="pipeline semantic"):
         validate_verification_run(
@@ -114,7 +122,51 @@ def test_verification_run_requires_exact_binding() -> None:
             expected_baseline_section_config_hash=payload.baseline_section_config_hash,
             expected_seed_snapshot_id=payload.seed_snapshot_id,
             authorization=good,
+            store_root=root,
         )
+
+
+def test_verification_run_is_bound_to_the_store_namespace_and_head(tmp_path) -> None:
+    """HARDENING-BACKEND §4.1 / §4.2: an unmarked store, a store of another
+    namespace, a research-class namespace, and a head that moved after
+    signing all refuse before any source path."""
+
+    from alpha_lab.agents.data_infra.ifvg.search.store_namespace import (
+        initialize_store_namespace,
+    )
+    from alpha_lab.agents.data_infra.ifvg.search.supersession_chain import (
+        publish_supersession,
+    )
+
+    root = tmp_path / "search_test" / "v1"
+    payload, envelope = _bound_run(root)
+    kwargs = dict(
+        expected_pipeline_semantic_id=payload.pipeline_semantic_id,
+        expected_baseline_profile_id=payload.baseline_profile_id,
+        expected_baseline_section_config_hash=payload.baseline_section_config_hash,
+        expected_seed_snapshot_id=payload.seed_snapshot_id,
+        authorization=payload.verification_authorization,
+    )
+    with pytest.raises(VerificationRunValidationError, match="store_namespace_missing"):
+        validate_verification_run(envelope, store_root=tmp_path / "unmarked", **kwargs)
+    other = tmp_path / "other"
+    initialize_store_namespace(other, namespace_class="test")
+    with pytest.raises(VerificationRunValidationError, match="identity_mismatch"):
+        validate_verification_run(envelope, store_root=other, **kwargs)
+    research = tmp_path / "research"
+    initialize_store_namespace(research, namespace_class="research")
+    with pytest.raises(VerificationRunValidationError, match="class_mismatch"):
+        validate_verification_run(envelope, store_root=research, **kwargs)
+    publish_supersession(
+        root,
+        superseded_decision_id="a" * 64,
+        replacement_decision_id="b" * 64,
+        reason="moved after signing",
+        effective_at="2026-08-18T01:00:00+00:00",
+        owner_evidence_ref="b" * 64,
+    )
+    with pytest.raises(VerificationRunValidationError, match="witness_mismatch"):
+        validate_verification_run(envelope, store_root=root, **kwargs)
 
 
 def test_report_stamps_are_exact() -> None:

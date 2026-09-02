@@ -223,6 +223,33 @@ def _fold_frame(days: tuple[str, ...]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def append_censored_row(frame: pd.DataFrame, row: pd.Series) -> pd.DataFrame:
+    """Append one censored candidate row through a TYPED one-row frame.
+
+    HARDENING-BACKEND section 4.5 (F-18): ``frame.loc[len(frame)] = row``
+    with a NaT / ``None`` row went through the deprecated all-NA concat path
+    (``FutureWarning``). The explicit form reproduces the old result exactly
+    (``binary_target`` widens to ``object`` because an int column receives
+    ``None``; ``resolution_ts_utc`` keeps its tz-aware datetime dtype with
+    NaT) with every column and dtype stated up front.
+    """
+
+    values = row.to_dict()
+    typed: dict[str, pd.Series] = {}
+    for column in frame.columns:
+        value = values[column]
+        if value is None:
+            typed[column] = pd.Series([None], dtype=object)
+        else:
+            typed[column] = pd.Series([value], dtype=frame[column].dtype)
+    addition = pd.DataFrame(typed, columns=list(frame.columns))
+    widened = frame.copy()
+    for column in frame.columns:
+        if addition[column].dtype == object and widened[column].dtype != object:
+            widened[column] = widened[column].astype(object)
+    return pd.concat([widened, addition], ignore_index=True, sort=False)
+
+
 def test_folds_group_setup_then_purge_then_embargo_without_oos_dedup() -> None:
     days = tuple(
         (datetime(2026, 1, 1, tzinfo=UTC) + timedelta(days=index)).date().isoformat()
@@ -257,7 +284,7 @@ def test_fold_setup_boundary_is_detected_before_censoring_exclusion() -> None:
     censored["resolution_ts_utc"] = pd.NaT
     censored["resolution_available"] = False
     censored["binary_target"] = None
-    frame.loc[len(frame)] = censored
+    frame = append_censored_row(frame, censored)
     result = build_context_folds(
         frame,
         authorized_trading_days=days,

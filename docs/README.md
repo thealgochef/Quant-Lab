@@ -118,7 +118,15 @@ schema, fold-feature source refs, the typed `candidate_as_of_missing`
 reason, raw thin-regime net-R accounting, the exact label artifact id, the
 immutable `executed_trade_tables` store consumed by S02/S14, the typed
 sidecar probe with fail-closed prior-stage recoveries, and the
-`PipelineWiringError` / MBP-1 scope-equality / enum-copy corrections)
+`PipelineWiringError` / MBP-1 scope-equality / enum-copy corrections), and
+HARDENING-BACKEND (the semantic store namespace, the immutable supersession
+record chain with head witnesses, the liveness-aware owner-decision lock,
+the streaming event-detail writer and the external DuckDB event-regime
+summary under measured capacity gates, the warnings-as-errors policy, the
+sequential-execution truth of the V1 executor, the logical trading-day
+calendar with the rebuilt verification-window shortlist, the seed-production
+authorization/run contracts, and the bounded-verification preflight and
+reports)
 implementations are complete;
 **R1 acceptance is blocked pending the owner-approved verification fixture**
 (`VerificationAuthorizationRef`; owner decisions 21/R-5) — no real five-day

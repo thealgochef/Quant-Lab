@@ -7,14 +7,17 @@ protocol + assessment, states decisions 25/28/29/30 with the registry /
 protocol / assessment values, authorizes exactly this transition, is
 effective at the decision instant, and is not superseded (store-owned
 chain, fail closed). Verification never mutates a decision payload.
+
+HARDENING-BACKEND (§4.1–§4.3): authority is the store's VERIFIED semantic
+namespace (never the path), supersession is an immutable record chain with
+a mandatory head, and the writer lock is liveness-aware — the R6.1 JSONL-log
+tests below were rewritten against those contracts.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import shutil
-import time
 
 import pytest
 
@@ -38,11 +41,18 @@ from alpha_lab.agents.data_infra.ifvg.ml.regime_store import (
     persist_regime_protocol,
 )
 from alpha_lab.agents.data_infra.ifvg.search import owner_decisions as owner_decisions_module
+from alpha_lab.agents.data_infra.ifvg.search import supersession_chain as chain_module
+from alpha_lab.agents.data_infra.ifvg.search.owner_decision_lock import (
+    OWNER_DECISION_LOCK_FILE,
+    OwnerDecisionLock,
+    OwnerDecisionLockError,
+    current_process_start_token,
+)
 from alpha_lab.agents.data_infra.ifvg.search.owner_decisions import (
     AUTHORIZED_TRANSITIONS,
     OWNER_DECISION_STORE,
+    OWNER_DECISION_SUPERSESSION_STORE,
     REGIME_DECISION_KEYS,
-    SUPERSESSIONS_FILE,
     SUPERSESSIONS_HEAD_FILE,
     OwnerDecisionArtifactEnvelope,
     OwnerDecisionArtifactPayload,
@@ -57,6 +67,18 @@ from alpha_lab.agents.data_infra.ifvg.search.owner_decisions import (
     synthetic_owner_decision_fixture,
 )
 from alpha_lab.agents.data_infra.ifvg.search.store import SearchStoreError, envelope_destination
+from alpha_lab.agents.data_infra.ifvg.search.store_namespace import (
+    StoreNamespaceError,
+    initialize_store_namespace,
+    initialize_test_namespace,
+    load_store_namespace,
+    write_supersession_head_atomic,
+)
+from alpha_lab.agents.data_infra.ifvg.search.supersession_chain import (
+    current_supersession_head_witness,
+    load_supersession_records,
+    publish_supersession,
+)
 from tests.agents.data_infra.ifvg.ml_fixtures.synthetic_clusters import known_cluster_fixture
 
 _B0 = resolve_bundle("B0_CORE").resolved_feature_bundle_id
@@ -100,6 +122,7 @@ def _decision(run, **overrides) -> RegimePromotionDecisionEnvelope:
 @pytest.fixture(scope="module")
 def lane(tmp_path_factory):
     root = tmp_path_factory.mktemp("owner_decisions")
+    initialize_test_namespace(root)  # HARDENING-BACKEND §4.1: an explicit test namespace
     run = _run(600)
     persist_regime_protocol(root, run.protocol)
     persist_regime_assessment(root, run.assessment)
@@ -249,6 +272,7 @@ def test_assessment_must_be_among_the_reviewed_evidence(lane):
     values = expected_decision_values(run.protocol, run.assessment)
     with pytest.raises(ValueError, match="must contain the capability assessment id"):
         OwnerDecisionArtifactPayload(
+            store_namespace_id="c" * 64,
             decision_keys=REGIME_DECISION_KEYS,
             decision_values=values,
             resolved_regime_protocol_id=run.protocol.resolved_regime_protocol_id,
@@ -345,19 +369,16 @@ def test_supersession_is_store_owned_and_fails_closed(lane, tmp_path):
         _eligible(local, replacement.owner_decision_artifact_id),
         run_scope="synthetic_fixture",
     )
-    # a forged log line (no verified replacement artifact) fails the whole chain closed
-    log = root / OWNER_DECISION_STORE / SUPERSESSIONS_FILE
-    with log.open("a", encoding="utf-8") as sink:
-        sink.write(
-            json.dumps(
-                {
-                    "superseded_artifact_id": replacement.owner_decision_artifact_id,
-                    "replacement_artifact_id": "b" * 64,
-                    "recorded_at": "2026-08-28T02:00:00+00:00",
-                }
-            )
-            + "\n"
-        )
+    # a forged supersession RECORD (no verified replacement artifact) fails
+    # the whole chain closed — the chain is store-owned, never a log line
+    publish_supersession(
+        root,
+        superseded_decision_id=replacement.owner_decision_artifact_id,
+        replacement_decision_id="b" * 64,
+        reason="forged",
+        effective_at="2026-08-28T02:00:00+00:00",
+        owner_evidence_ref="b" * 64,
+    )
     with pytest.raises(OwnerDecisionRefusalError, match="chain fails closed"):
         load_supersession_chain(root)
     later = _decision(
@@ -445,6 +466,7 @@ def test_persist_is_idempotent_and_the_envelope_is_the_evidence_ref(lane, tmp_pa
 
 def _chain_root(tmp_path, lane, name: str):
     root = tmp_path / name
+    initialize_test_namespace(root)
     run = lane["run"]
     persist_regime_protocol(root, run.protocol)
     persist_regime_assessment(root, run.assessment)
@@ -463,6 +485,7 @@ def _chain_root(tmp_path, lane, name: str):
 
 def _owner_signed(root, run, *, approved_at="2026-08-28T00:00:00+00:00", supersedes=None):
     payload = OwnerDecisionArtifactPayload(
+        store_namespace_id=load_store_namespace(root).store_namespace_id,
         decision_keys=REGIME_DECISION_KEYS,
         decision_values=freeze_decision_values(
             expected_decision_values(run.protocol, run.assessment)
@@ -513,9 +536,10 @@ def test_supersession_line_precedes_publication_and_a_crash_fails_closed(
             effective_from="2026-08-28T01:00:00+00:00",
         )
     monkeypatch.undo()
-    log = root / OWNER_DECISION_STORE / SUPERSESSIONS_FILE
-    assert len(log.read_text(encoding="utf-8").splitlines()) == 1
-    # the dangling line fails the chain closed: the prior cannot authorize
+    # the immutable record exists and the head names it, but the replacement
+    # was never published: the chain fails closed (the prior cannot authorize)
+    assert len(load_supersession_records(root)) == 1
+    assert current_supersession_head_witness(root).line_count == 1
     with pytest.raises(OwnerDecisionRefusalError, match="not a verified store entry"):
         load_supersession_chain(root)
     later = _decision(
@@ -539,7 +563,8 @@ def test_supersession_line_precedes_publication_and_a_crash_fails_closed(
         effective_from="2026-08-28T01:00:00+00:00",
     )
     persist_owner_decision(root, replacement, recorded_at="2026-08-28T01:00:00+00:00")
-    assert len(log.read_text(encoding="utf-8").splitlines()) == 1
+    assert len(load_supersession_records(root)) == 1  # no second record
+    assert current_supersession_head_witness(root).line_count == 1
     chain = load_supersession_chain(root)
     assert [(r.superseded_artifact_id, r.replacement_artifact_id) for r in chain] == [
         (prior.owner_decision_artifact_id, replacement.owner_decision_artifact_id)
@@ -548,12 +573,14 @@ def test_supersession_line_precedes_publication_and_a_crash_fails_closed(
         persist_regime_promotion(root, later, run_scope="synthetic_fixture")
 
 
-def test_deleted_edited_or_headless_supersession_log_fails_closed(lane, tmp_path):
-    """S2 (probe P2): the log is hash-chained and bound to its head — removing
-    the line, editing it, or deleting the head can never restore a revoked
-    decision's authority."""
+def test_deleted_edited_rolled_back_or_headless_chain_fails_closed(lane, tmp_path):
+    """S2 (probe P2) under HARDENING-BACKEND §4.2: records are immutable
+    store entries and the head commits to the whole chain — deleting a
+    record, editing it in place, rolling the head back, or deleting the head
+    can never restore a revoked decision's authority; every state is a typed
+    refusal."""
 
-    root, _local = _chain_root(tmp_path, lane, "tamper_log")
+    root, _local = _chain_root(tmp_path, lane, "tamper_chain")
     run = lane["run"]
     prior = synthetic_owner_decision_fixture(root, protocol=run.protocol, assessment=run.assessment)
     replacement = synthetic_owner_decision_fixture(
@@ -572,37 +599,79 @@ def test_deleted_edited_or_headless_supersession_log_fails_closed(lane, tmp_path
         approved_at="2026-08-28T02:00:00+00:00",
         effective_from="2026-08-28T02:00:00+00:00",
     )
+    records = load_supersession_records(root)
     assert [r.replacement_artifact_id for r in load_supersession_chain(root)] == [
         replacement.owner_decision_artifact_id,
         second.owner_decision_artifact_id,
     ]
-    log = root / OWNER_DECISION_STORE / SUPERSESSIONS_FILE
+    witness = current_supersession_head_witness(root)
+    namespace = load_store_namespace(root)
     head = root / OWNER_DECISION_STORE / SUPERSESSIONS_HEAD_FILE
-    original_log = log.read_text(encoding="utf-8")
     original_head = head.read_text(encoding="utf-8")
-    lines = original_log.splitlines()
-    # (i) the first line removed -> the second line's prev hash breaks
-    log.write_text(lines[1] + "\n", encoding="utf-8")
-    with pytest.raises(OwnerDecisionRefusalError, match="breaks the hash chain"):
+    first_dir = envelope_destination(
+        root, OWNER_DECISION_SUPERSESSION_STORE, records[0].supersession_record_id
+    )
+    # (i) the first record deleted -> the chain no longer reaches genesis
+    shutil.move(first_dir, tmp_path / "parked_record")
+    with pytest.raises(OwnerDecisionRefusalError, match="chain fails closed"):
         load_supersession_chain(root)
-    # (ii) the last line removed -> the head disagrees with the log
-    log.write_text(lines[0] + "\n", encoding="utf-8")
-    with pytest.raises(OwnerDecisionRefusalError, match="head does not match the log"):
+    shutil.move(tmp_path / "parked_record", first_dir)
+    # (ii) the head rolled back to the first record: structurally valid but
+    # SHORTER than the witnessed head — refused by every witness holder
+    from alpha_lab.agents.data_infra.ifvg.search.store_namespace import chain_head_digest
+    from alpha_lab.agents.data_infra.ifvg.search.supersession_chain import (
+        assert_head_witness_current,
+    )
+
+    write_supersession_head_atomic(
+        root,
+        store_namespace_id=namespace.store_namespace_id,
+        record_id=records[0].supersession_record_id,
+        line_count=1,
+        head_sha256=chain_head_digest(
+            namespace.payload.authority_genesis_id, records[0].supersession_record_id
+        ),
+    )
+    with pytest.raises(StoreNamespaceError) as shorter:
+        assert_head_witness_current(root, witness)
+    assert shorter.value.reason == "supersession_head_shorter_than_witness"
+    # ...and the rolled-back chain still names `replacement` as superseded, so
+    # the ORIGINAL prior cannot authorize either way
+    with pytest.raises(ValueError, match="superseded by a later decision"):
+        persist_regime_promotion(
+            root, _eligible(_local, prior.owner_decision_artifact_id), run_scope="synthetic_fixture"
+        )
+    # (iii) a record edited in place -> the store manifest refuses it
+    head.write_text(original_head, encoding="utf-8")
+    envelope_file = (
+        envelope_destination(
+            root, OWNER_DECISION_SUPERSESSION_STORE, records[1].supersession_record_id
+        )
+        / "envelope.json"
+    )
+    edited_original = envelope_file.read_text(encoding="utf-8")
+    edited = json.loads(edited_original)
+    edited["payload"]["effective_at"] = "2026-08-28T09:00:00+00:00"
+    envelope_file.write_text(json.dumps(edited, sort_keys=True) + "\n", encoding="utf-8")
+    with pytest.raises(OwnerDecisionRefusalError, match="chain fails closed"):
         load_supersession_chain(root)
-    # (iii) a line edited in place -> its digest no longer matches
-    edited = json.loads(lines[0])
-    edited["recorded_at"] = "2026-08-28T09:00:00+00:00"
-    log.write_text(json.dumps(edited, sort_keys=True) + "\n" + lines[1] + "\n", encoding="utf-8")
-    with pytest.raises(OwnerDecisionRefusalError, match="breaks the hash chain"):
-        load_supersession_chain(root)
-    # (iv) the head deleted -> the log has no anchor
-    log.write_text(original_log, encoding="utf-8")
+    envelope_file.write_text(edited_original, encoding="utf-8")
+    # (iv) the head deleted -> corruption, never "no supersessions"
     head.unlink()
-    with pytest.raises(OwnerDecisionRefusalError, match="without its head file"):
+    with pytest.raises(OwnerDecisionRefusalError, match="supersession_head_missing"):
         load_supersession_chain(root)
     # restored -> verifies again; every refusal above was fail-closed
     head.write_text(original_head, encoding="utf-8")
     assert len(load_supersession_chain(root)) == 2
+    assert_head_witness_current(root, witness)
+    # nothing ever wrote into an existing decision directory: the superseded
+    # artifacts' bytes are untouched
+    for artifact in (prior, replacement):
+        directory = envelope_destination(
+            root, OWNER_DECISION_STORE, artifact.owner_decision_artifact_id
+        )
+        assert sorted(p.name for p in directory.iterdir()) == ["envelope.json", "manifest.json"]
+        assert load_owner_decision(root, artifact.owner_decision_artifact_id) == artifact
 
 
 def test_a_replacement_may_never_carry_weaker_provenance(lane, tmp_path):
@@ -636,19 +705,43 @@ def test_a_replacement_may_never_carry_weaker_provenance(lane, tmp_path):
     ]
 
 
-def test_stale_supersession_lock_is_reclaimed_and_a_live_lock_times_out(
+def test_dead_writer_lock_is_reclaimed_and_a_live_holder_is_never_reclaimed(
     lane, tmp_path, monkeypatch
 ):
-    """S10: a lock left by a killed writer is reclaimed by age; a live lock
-    bounds the wait with a TimeoutError instead of wedging forever."""
+    """S10 under HARDENING-BACKEND §4.3: a lock left by a DEAD writer (stale
+    heartbeat + demonstrably dead pid) is reclaimed; a LIVE holder — even
+    with an ancient heartbeat — is never reclaimed and the waiter times out
+    with a typed reason; a lost lock aborts before the head moves."""
+
+    import functools
+    import os
+    import platform
 
     root, _local = _chain_root(tmp_path, lane, "lock")
     run = lane["run"]
     prior = synthetic_owner_decision_fixture(root, protocol=run.protocol, assessment=run.assessment)
-    lock = root / OWNER_DECISION_STORE / "SUPERSESSIONS.lock"
-    lock.write_text("dead-writer\n", encoding="utf-8")
-    stale = time.time() - 10 * 60
-    os.utime(lock, (stale, stale))
+    lock = root / OWNER_DECISION_STORE / OWNER_DECISION_LOCK_FILE
+    monkeypatch.setattr(
+        chain_module,
+        "OwnerDecisionLock",
+        functools.partial(OwnerDecisionLock, wait_seconds=0.3, heartbeat_timeout_seconds=1.0),
+    )
+
+    def _lock_body(pid, token, start_token=None):
+        return json.dumps(
+            {
+                "lock_schema_version": 1,
+                "pid": pid,
+                "process_start_token": start_token,
+                "lock_token": token,
+                "host": platform.node(),
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "heartbeat_at": "2026-01-01T00:00:00+00:00",
+            }
+        )
+
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text(_lock_body(999_999_999, "d" * 32), encoding="utf-8")  # a dead writer
     replacement = synthetic_owner_decision_fixture(
         root,
         protocol=run.protocol,
@@ -661,9 +754,11 @@ def test_stale_supersession_lock_is_reclaimed_and_a_live_lock_times_out(
     assert [r.replacement_artifact_id for r in load_supersession_chain(root)] == [
         replacement.owner_decision_artifact_id
     ]
-    lock.write_text("live-writer\n", encoding="utf-8")
-    monkeypatch.setattr(owner_decisions_module, "_LOCK_WAIT_SECONDS", 0.2)
-    with pytest.raises(TimeoutError, match="locked by another writer"):
+    # a LIVE holder (this process) with an ancient heartbeat: never reclaimed
+    lock.write_text(
+        _lock_body(os.getpid(), "1" * 32, current_process_start_token()), encoding="utf-8"
+    )
+    with pytest.raises(OwnerDecisionLockError) as held:
         synthetic_owner_decision_fixture(
             root,
             protocol=run.protocol,
@@ -672,6 +767,9 @@ def test_stale_supersession_lock_is_reclaimed_and_a_live_lock_times_out(
             approved_at="2026-08-28T02:00:00+00:00",
             effective_from="2026-08-28T02:00:00+00:00",
         )
+    assert held.value.reason == "lock_held_by_live_holder"
+    assert json.loads(lock.read_text(encoding="utf-8"))["lock_token"] == "1" * 32
+    assert len(load_supersession_records(root)) == 1  # nothing moved
     lock.unlink()
 
 
@@ -764,13 +862,19 @@ def test_model_feature_is_unpersistable_through_the_store(lane):
 
 
 def test_synthetic_scope_and_provenance_are_confined_to_test_namespaces(lane, tmp_path):
-    """S3 (probe P3, P0-4 mirror): in a research-namespace root the
-    synthetic_fixture scope is refused at persistence, a synthetic owner
-    artifact is refused at persist AND at load, and the real scope still
-    persists structural decisions."""
+    """S3 (probe P3, P0-4 mirror) under HARDENING-BACKEND §4.1: authority is
+    the store's VERIFIED namespace class — a marked ``research`` namespace at
+    a PLAIN path refuses the synthetic scope at persistence and refuses a
+    synthetic owner artifact at persist AND at load (an artifact copied in
+    from a test namespace names another namespace); an UNMARKED store carries
+    no owner authority at all; the pathname heuristic survives only as
+    defense in depth; a ``test`` namespace under ``search_test`` admits
+    both."""
 
-    research = tmp_path / "data" / "ifvg_datasets" / "search" / "v1"
     run = lane["run"]
+    # (a) a marked RESEARCH namespace at a plain path (the path grants nothing)
+    research = tmp_path / "plain_research_store"
+    initialize_store_namespace(research, namespace_class="research")
     persist_regime_protocol(research, run.protocol)
     persist_regime_assessment(research, run.assessment)
     first = _decision(run)
@@ -779,7 +883,7 @@ def test_synthetic_scope_and_provenance_are_confined_to_test_namespaces(lane, tm
         persist_regime_promotion(research, first, run_scope="synthetic_fixture")
     with pytest.raises(OwnerDecisionRefusalError, match="confined to test namespaces"):
         synthetic_owner_decision_fixture(research, protocol=run.protocol, assessment=run.assessment)
-    # a synthetic artifact copied in from a test root refuses at load
+    # a synthetic artifact copied in from a test root names ANOTHER namespace
     artifact = synthetic_owner_decision_fixture(
         lane["root"], protocol=run.protocol, assessment=run.assessment
     )
@@ -788,10 +892,28 @@ def test_synthetic_scope_and_provenance_are_confined_to_test_namespaces(lane, tm
         envelope_destination(lane["root"], OWNER_DECISION_STORE, artifact_id),
         envelope_destination(research, OWNER_DECISION_STORE, artifact_id),
     )
-    with pytest.raises(OwnerDecisionRefusalError, match="confined to test namespaces"):
-        load_owner_decision(research, artifact.owner_decision_artifact_id)
-    # ...and the verification namespace (search_test) admits both
+    with pytest.raises(OwnerDecisionRefusalError, match="another store namespace"):
+        load_owner_decision(research, artifact_id)
+    # (b) an UNMARKED store: no owner authority (typed), even under a test path
+    unmarked = tmp_path / "unmarked" / "search_test" / "v1"
+    persist_regime_protocol(unmarked, run.protocol)
+    persist_regime_assessment(unmarked, run.assessment)
+    persist_regime_promotion(unmarked, first, run_scope="synthetic_fixture")  # structural
+    shutil.copytree(
+        envelope_destination(lane["root"], OWNER_DECISION_STORE, artifact_id),
+        envelope_destination(unmarked, OWNER_DECISION_STORE, artifact_id),
+    )
+    with pytest.raises(OwnerDecisionRefusalError, match="store_namespace_missing"):
+        load_owner_decision(unmarked, artifact_id)
+    # (c) defense in depth: a research-LOOKING unmarked path refuses the scope
+    looks_research = tmp_path / "data" / "ifvg_datasets" / "search" / "v1"
+    persist_regime_protocol(looks_research, run.protocol)
+    persist_regime_assessment(looks_research, run.assessment)
+    with pytest.raises(PermissionError, match="defense in depth"):
+        persist_regime_promotion(looks_research, first, run_scope="synthetic_fixture")
+    # (d) the verification namespace (a TEST class under search_test) admits both
     verification = tmp_path / "data" / "ifvg_datasets" / "search_test" / "v1"
+    initialize_test_namespace(verification)
     persist_regime_protocol(verification, run.protocol)
     persist_regime_assessment(verification, run.assessment)
     persist_regime_promotion(verification, first, run_scope="synthetic_fixture")

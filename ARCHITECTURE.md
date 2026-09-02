@@ -1038,3 +1038,76 @@ revision 3, Phase 1; findings F-01…F-10D):
   controlled-study, label-artifact and pipeline-result identities. Verified reuse:
   zero replay for non-stratified runs; one verified reproduction per reused child
   (projection bytes + core-table hash) when stratified reports are requested.
+
+HARDENING-BACKEND additions (Phase 2 backend hardening + Phase 3 / Phase 4 contract
+authoring of `QL-FSM-PROP-SEARCH-DASHBOARD/implementation-progress/`
+`R6.1-FIX-HARDENING-READINESS-PLAN/IMPLEMENTATION_PLAN.md`
+revision 3; findings F-11 F-12 F-13 F-16 F-17 F-18 F-20 F-21 F-22; no owner action taken,
+no real seed replay, no real ≤5-day run):
+
+- **Semantic store namespace (F-11)** (`ifvg/search/store_namespace.py`,
+  `scripts/ifvg_store_namespace.py`): research-versus-test authority is the store's
+  immutable, re-verified `STORE_NAMESPACE.json` envelope (`namespace_class`, a stable
+  `store_instance_id` that is never a path hash, the supersession genesis anchor) — never a
+  pathname; every owner decision, supersession record, authorization bundle, verification
+  and seed-production authorization binds the `store_namespace_id`; an unmarked store has no
+  authority; the one-time explicit `init` migration states the class; the old pathname
+  heuristic survives as a deployment defense-in-depth check only.
+- **Immutable supersession chain + head witnesses (F-12)** (`ifvg/search/supersession_chain.py`;
+  store `owner_decision_supersessions`): one content-addressed record per replacement, a
+  mandatory head (`owner_decisions/SUPERSESSIONS.head`) whose digest commits to the whole chain
+  from the genesis anchor, four-step atomic publication under the lock (an orphan record has no
+  authority; the head only ever names a verified record), idempotent identical replay, refused
+  divergent replay; every real charter / authorization records the current
+  `{store_namespace_id, line_count, head_sha256}` witness and a missing, shorter or different
+  current head is refused (local rollback detection, not cryptographic authenticity).
+- **Liveness-aware owner-decision lock (F-13)** (`ifvg/search/owner_decision_lock.py`): pid,
+  process-start token, random token, host, heartbeat; reclaimed only when the heartbeat timed
+  out AND the holder is demonstrably dead (no such pid / exited / PID reuse); a live holder,
+  another host or a malformed body is never reclaimed; the writer re-verifies its token before
+  publication and a lost lock aborts; release unlinks only its own token.
+- **Capacity (F-17)** (`propsim/event_detail.py`, `propsim/search_bridge.py`,
+  `ifvg/ml/regime_stratified_prop.py`, `scripts/hardening_capacity_benchmark.py`): the
+  event-detail writer streams an iterable of walk pairs (never materialized), keeps no
+  whole-artifact id index (canonical-key argument + an unconditional disk-backed DuckDB
+  distinct check over the written partitions), and the regime-stratified event summary
+  aggregates exactly through DuckDB over intermediate Parquet partitions under an explicit
+  memory limit and attempt-local temp directory with canonical ordering; the
+  `HARDENING_CAPACITY_POLICY_V1` benchmark (native RSS) passed every §4.4 gate at 250k/500k/1M
+  rows (`CAPACITY_BENCHMARKS.md`).
+- **Warning policy (F-18)**: `pyproject.toml` runs the suite under `filterwarnings = error`
+  with ONE exact third-party rule (the scikit-learn 1.7 / SciPy 1.16 L-BFGS-B deprecation);
+  `dataset.concat_schema_aligned` replaces the deprecated concat with explicit dtypes (frozen
+  bytes unchanged; all-null columns never dropped); project-owned warnings = 0.
+- **Sequential execution truth (F-20)** (`ifvg/search/pipeline.py`, `scripts/ifvg_pipeline_job.py`):
+  `SUPPORTED_CHILD_WORKERS = 1`, `execution_mode = sequential_children_v1`; `WorkerPolicy`
+  refuses `max_workers != 1` with the typed reason `unsupported_worker_parallelism_v1` (never
+  coerced), the job shim refuses before job creation, and every attempt receipt persists
+  `effective_workers=1` / `execution_mode`.
+- **Phase 3 contracts (F-16 / F-21 / F-22)** (`ifvg/search/trading_calendar.py`,
+  `verification_window.py`, `seed_production.py`; `scripts/ifvg_verification_window_shortlist.py`,
+  `scripts/ifvg_seed_production.py`; stores `seed_production_authorizations`,
+  `seed_production_runs`): a logical trading day is the Strategy-Core trading-day id whose
+  stream is `[td−1 18:00 ET, td 18:00 ET)` over the physical partitions `(td−1, td)`
+  (`cme_globex_18et_weekday_v1`; physical Sunday partition dates are not trading days); the
+  coverage shortlist was rebuilt from already-authorized evidence on consecutive logical days
+  under the plan's lexicographic ranking (no owner selection, no allowlist registration — the
+  June proposal is INELIGIBLE as stated: no exact verifier target); the separately authorized
+  seed-production lane (`SeedProductionReplayPolicy`, authorization / run contracts that bind
+  the namespace + head witness, profile, store-day chain, source-inventory hash and code
+  identities; permitted outputs = seed snapshot + access audit + run receipt) is proven
+  synthetically; the owner packets are unsigned and their placeholders fail validation.
+- **Phase 4 authoring** (`ifvg/search/bounded_verification.py`,
+  `scripts/ifvg_bounded_verification.py`; stores `r1_baseline_gate_reports`,
+  `bounded_release_control_flow_reports`): the typed §6.1
+  preflight (namespace, witness, real authorization, 1–5 consecutive logical days, physical
+  mapping, program allowlist, seed) before any path; the immutable `R1BaselineGateReport`
+  (both attempts' six gates + the audit-mode digests + the eight "also prove" proofs) and the
+  release-specific `BoundedReleaseControlFlowReport` (eight components typed from the persisted
+  pipeline state — never research evidence); the runner refuses `fail_before_path` without the
+  owner's persisted authorization (proven against the real, run-less verification store).
+- **Unchanged (golden-tested)**: `resolved_regime_protocol_id`, the R6 golden `regime_fit_id`,
+  the frozen M0 CatBoost hash, `core_replay_id`, `account_simulation_id`,
+  `feature_block_registry_hash`, the `B0_CORE` bundle id. Re-minted (synthetic only):
+  owner-decision artifact ids (`store_namespace_id`), verification-run ids and charter ids that
+  carry a real bundle (namespace + witness), execution-attempt receipts.

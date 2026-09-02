@@ -13,7 +13,10 @@ from alpha_lab.agents.data_infra.ifvg.search.identities import (
 )
 from alpha_lab.agents.data_infra.ifvg.search.pipeline import (
     CANONICAL_STAGE_ORDER,
+    EXECUTION_MODE_V1,
     S11_BLOCKED_REASON,
+    SUPPORTED_CHILD_WORKERS,
+    UNSUPPORTED_WORKER_PARALLELISM_REASON,
     ExecutionAttemptIdentity,
     PipelineSemanticSpecPayload,
     QuantLabPipelineStage,
@@ -22,6 +25,7 @@ from alpha_lab.agents.data_infra.ifvg.search.pipeline import (
     WorkerPolicy,
     assert_stage_plan_launchable,
     derive_stage_plan_readiness,
+    worker_parallelism_refusal,
 )
 
 
@@ -84,9 +88,54 @@ def test_attempt_identity_is_operational_and_never_registered():
         assert pair.payload_cls is not ExecutionAttemptIdentity
 
 
-def test_worker_policy_rejects_more_than_four_workers():
+@pytest.mark.parametrize("value", [2, 4, 8])
+def test_worker_policy_refuses_any_parallelism_with_the_typed_reason(value):
+    """HARDENING-BACKEND §4.6 (F-20): the V1 backend executor is sequential.
+    ``max_workers`` must equal 1; a request above it fails with the typed
+    reason ``unsupported_worker_parallelism_v1`` and is never coerced."""
+
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError) as refused:
+        WorkerPolicy(max_workers=value, max_tasks_per_child=1, memory_budget_bytes=0)
+    refusal = worker_parallelism_refusal(refused.value)
+    assert refusal is not None
+    assert refusal.reason == UNSUPPORTED_WORKER_PARALLELISM_REASON
+    assert refusal.requested_workers == value
+    accepted = WorkerPolicy(max_workers=1, max_tasks_per_child=1, memory_budget_bytes=0)
+    assert accepted.max_workers == 1
+
+
+def test_attempt_receipt_states_sequential_execution_truthfully():
+    """§4.6: every attempt persists ``effective_workers=1`` and
+    ``execution_mode="sequential_children_v1"`` as OPERATIONAL metadata; the
+    attempt contract stays unregistered (never a scientific identity)."""
+
+    attempt = ExecutionAttemptIdentity(
+        pipeline_semantic_id="a" * 64,
+        worker_policy=WorkerPolicy(max_workers=1, max_tasks_per_child=1, memory_budget_bytes=0),
+        attempt_number=1,
+        host_environment={"os": "nt"},
+        started_at="2026-09-02T00:00:00+00:00",
+        ended_at=None,
+        operational_retry_reason=None,
+    )
+    receipt = attempt.model_dump(mode="json")
+    assert receipt["effective_workers"] == SUPPORTED_CHILD_WORKERS == 1
+    assert receipt["execution_mode"] == EXECUTION_MODE_V1 == "sequential_children_v1"
     with pytest.raises(ValueError):
-        WorkerPolicy(max_workers=8, max_tasks_per_child=1, memory_budget_bytes=0)
+        ExecutionAttemptIdentity(
+            pipeline_semantic_id="a" * 64,
+            worker_policy=WorkerPolicy(
+                max_workers=1, max_tasks_per_child=1, memory_budget_bytes=0
+            ),
+            attempt_number=1,
+            host_environment={"os": "nt"},
+            started_at="2026-09-02T00:00:00+00:00",
+            ended_at=None,
+            operational_retry_reason=None,
+            effective_workers=2,
+        )
 
 
 def test_spec_refuses_unordered_or_incoherent_plans():

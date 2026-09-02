@@ -27,9 +27,6 @@ from alpha_lab.agents.data_infra.ifvg.fsm_audit_preparation import (
 )
 from alpha_lab.agents.data_infra.ifvg.manifest import RepositoryState
 from alpha_lab.agents.data_infra.ifvg.profiles import resolve_profile_config
-from alpha_lab.agents.data_infra.ifvg.search.authorization import (
-    VerificationAuthorizationRef,
-)
 from alpha_lab.agents.data_infra.ifvg.search.child_replay import (
     build_slice_companions,
     run_child_replay,
@@ -227,16 +224,15 @@ def test_child_audit_publishes_immutably_and_reuses(tmp_path, dual_drive_result)
     assert reloaded.payload == build.identity
 
 
-def _verification_run(allowlist: tuple[str, ...], section_hash: str):
+def _verification_run(allowlist: tuple[str, ...], section_hash: str, store_root=None):
+    from tests.agents.ifvg_search.namespace_fixture import verification_authorization_ref
+
     allowlist_hash = allowlist_sha256(allowlist)
-    authorization = VerificationAuthorizationRef(
-        verification_policy_id=VERIFICATION_POLICY_ID,
+    authorization = verification_authorization_ref(
+        store_root,
         approved_allowlist_hash=allowlist_hash,
         coverage_matrix_artifact_id="b" * 64,
         seed_snapshot_id="c" * 64,
-        approved_by="owner",
-        approved_at="2026-08-18T00:00:00Z",
-        content_hash="d" * 64,
     )
     return VerificationRunEnvelope.from_payload(
         VerificationRunPayload(
@@ -258,7 +254,7 @@ def test_slice_companions_close_the_dev_r1_6_gates_synthetically(
     """The full companion path: audit + neutrality + v2 publication + links."""
 
     resolved = resolve_profile_config({})
-    run = _verification_run(SYNTHETIC_DAYS, resolved.section_config_hash)
+    run = _verification_run(SYNTHETIC_DAYS, resolved.section_config_hash, tmp_path)
     day_refs = tuple(
         ReplayDayArtifactRef(
             trading_day=day,
@@ -373,7 +369,7 @@ def test_slice_companions_close_the_dev_r1_6_gates_synthetically(
 
 def test_slice_companions_require_repository_states(tmp_path, dual_drive_result) -> None:
     resolved = resolve_profile_config({})
-    run = _verification_run(SYNTHETIC_DAYS, resolved.section_config_hash)
+    run = _verification_run(SYNTHETIC_DAYS, resolved.section_config_hash, tmp_path)
     with pytest.raises(PermissionError, match="repository_states"):
         build_slice_companions(
             result=dual_drive_result,

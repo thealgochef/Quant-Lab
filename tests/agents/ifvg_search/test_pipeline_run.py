@@ -291,9 +291,10 @@ def test_publication_gates_pass_but_verification_scope_cannot_activate(completed
 def test_second_attempt_with_different_workers_shares_every_semantic_identity(
     completed,
 ):
-    """TEST_MATRIX §3.1 execution-attempt identity (P0-3): different worker
-    counts, same `pipeline_semantic_id`, identical semantic stage/result
-    identities — attempts distinct."""
+    """TEST_MATRIX §3.1 execution-attempt identity (P0-3): different
+    operational resources (task / memory budgets; the worker count is fixed
+    at one in V1), same `pipeline_semantic_id`, identical semantic
+    stage/result identities — attempts distinct."""
 
     first_state = read_pipeline_state(
         completed["state_root"], completed["result"].pipeline_semantic_id
@@ -309,8 +310,12 @@ def test_second_attempt_with_different_workers_shares_every_semantic_identity(
         store_root=completed["store_root"],
         state_root=completed["state_root"],
         wiring=completed["wiring"],
+        # HARDENING-BACKEND section 4.6: the V1 executor is sequential; a
+        # resource clone changes the per-child task and memory budgets, never
+        # the worker count (a request above one worker is refused before any
+        # job exists)
         worker_policy=WorkerPolicy(
-            max_workers=4, max_tasks_per_child=2, memory_budget_bytes=1 << 31
+            max_workers=1, max_tasks_per_child=2, memory_budget_bytes=1 << 31
         ),
         operational_retry_reason="resource clone (attempt-identity test)",
     )
@@ -318,6 +323,12 @@ def test_second_attempt_with_different_workers_shares_every_semantic_identity(
     second_state = read_pipeline_state(
         completed["state_root"], second.pipeline_semantic_id
     )
+    # every attempt receipt states the sequential V1 execution truthfully
+    assert len(second_state["attempts"]) >= 2
+    for receipt in second_state["attempts"]:
+        assert receipt["effective_workers"] == 1
+        assert receipt["execution_mode"] == "sequential_children_v1"
+        assert receipt["worker_policy"]["max_workers"] == 1
     second_ids = {
         stage: entry["stage_result_id"]
         for stage, entry in second_state["stages"].items()

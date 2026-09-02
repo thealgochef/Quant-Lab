@@ -38,7 +38,7 @@ from pathlib import Path
 from typing import Any, ClassVar, Literal
 
 import pandas as pd
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from ..contracts import RecordTable
 from ..data_access import allowlist_sha256
@@ -104,6 +104,12 @@ from .verification import (
 
 __all__ = [
     "S11_BLOCKED_REASON",
+    "SUPPORTED_CHILD_WORKERS",
+    "EXECUTION_MODE_V1",
+    "UNSUPPORTED_WORKER_PARALLELISM_REASON",
+    "UnsupportedWorkerParallelismError",
+    "assert_supported_worker_parallelism",
+    "worker_parallelism_refusal",
     "PipelineRunScope",
     "QuantLabPipelineStage",
     "StageStatus",
@@ -254,13 +260,88 @@ STAGE_DEPENDENCIES: Mapping[QuantLabPipelineStage, tuple[QuantLabPipelineStage, 
 }
 
 
-class WorkerPolicy(FrozenContract):
-    """Operational resources — attempt-scoped, never semantic (P0-3)."""
+#: HARDENING-BACKEND §4.6 (F-20): the V1 backend executor runs children
+#: SEQUENTIALLY. The execution capability is stated truthfully — exactly one
+#: child worker — and every backend launch entry point refuses a request
+#: for more BEFORE a job exists (never a silent coercion). A real process
+#: pool is a separately versioned future capability.
+SUPPORTED_CHILD_WORKERS = 1
+EXECUTION_MODE_V1 = "sequential_children_v1"
+UNSUPPORTED_WORKER_PARALLELISM_REASON = "unsupported_worker_parallelism_v1"
 
-    max_workers: int = Field(ge=1, le=4)
+
+class UnsupportedWorkerParallelismError(ValueError):
+    """A launch requested child parallelism the V1 executor does not support."""
+
+    reason = UNSUPPORTED_WORKER_PARALLELISM_REASON
+
+    def __init__(self, requested_workers: int) -> None:
+        self.requested_workers = int(requested_workers)
+        super().__init__(
+            f"{UNSUPPORTED_WORKER_PARALLELISM_REASON}: the V1 backend executor runs "
+            f"children sequentially (supported_child_workers={SUPPORTED_CHILD_WORKERS}); "
+            f"max_workers={self.requested_workers} is refused before any job is created — "
+            "correct the request and resubmit (the value is never coerced)"
+        )
+
+
+def assert_supported_worker_parallelism(max_workers: int) -> int:
+    """``max_workers`` must equal :data:`SUPPORTED_CHILD_WORKERS`; anything
+    else raises the typed :class:`UnsupportedWorkerParallelismError`."""
+
+    try:
+        requested = int(max_workers)
+    except (TypeError, ValueError) as error:
+        raise UnsupportedWorkerParallelismError(-1) from error
+    if requested != SUPPORTED_CHILD_WORKERS:
+        raise UnsupportedWorkerParallelismError(requested)
+    return requested
+
+
+def worker_parallelism_refusal(error: Exception) -> UnsupportedWorkerParallelismError | None:
+    """The typed refusal carried by a pydantic ``ValidationError`` raised by
+    :class:`WorkerPolicy` (pydantic wraps validator ``ValueError``s; the
+    original exception rides in ``ctx.error``), or the error itself."""
+
+    if isinstance(error, UnsupportedWorkerParallelismError):
+        return error
+    errors = getattr(error, "errors", None)
+    if not callable(errors):
+        return None
+    for entry in errors():
+        candidate = (entry.get("ctx") or {}).get("error")
+        if isinstance(candidate, UnsupportedWorkerParallelismError):
+            return candidate
+    return None
+
+
+class WorkerPolicy(FrozenContract):
+    """Operational resources — attempt-scoped, never semantic (P0-3).
+
+    HARDENING-BACKEND §4.6: ``max_workers`` must equal
+    :data:`SUPPORTED_CHILD_WORKERS` (1). A larger value is refused with the
+    typed reason ``unsupported_worker_parallelism_v1`` — the field is kept so
+    receipts state the resource explicitly; it is never coerced.
+    """
+
+    max_workers: int = Field(ge=1)
     max_tasks_per_child: int = Field(ge=1)
     memory_budget_bytes: int = Field(ge=0)
     start_method: Literal["spawn"] = "spawn"
+
+    @field_validator("max_workers", mode="before")
+    @classmethod
+    def _sequential_v1_before(cls, value):
+        # adversarial B-06: the typed refusal fires BEFORE ``ge=1`` (so 0 is
+        # typed too) and only a genuine int is accepted (no bool / str coercion)
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise UnsupportedWorkerParallelismError(-1)
+        return assert_supported_worker_parallelism(value)
+
+    @model_validator(mode="after")
+    def _sequential_v1(self):
+        assert_supported_worker_parallelism(self.max_workers)
+        return self
 
 
 class PipelineSemanticSpecPayload(FrozenContract):
@@ -371,6 +452,11 @@ class ExecutionAttemptIdentity(FrozenContract):
     started_at: str
     ended_at: str | None
     operational_retry_reason: str | None
+    #: HARDENING-BACKEND §4.6: the truthful execution capability of the V1
+    #: backend — operational metadata persisted in every attempt receipt and
+    #: the runtime evidence; never part of a scientific identity.
+    effective_workers: Literal[1] = SUPPORTED_CHILD_WORKERS
+    execution_mode: Literal["sequential_children_v1"] = EXECUTION_MODE_V1
 
 
 class PipelineStageResultPayload(FrozenContract):
@@ -988,6 +1074,7 @@ def _stage_s00_validate(context: _RunContext) -> tuple[tuple[str, ...], str]:
                     wiring
                 ),
                 authorization=wiring.verification_authorization,
+                store_root=context.store_root,
             )
             branch = "real verification authorization validated before any source path"
     else:
@@ -996,7 +1083,29 @@ def _stage_s00_validate(context: _RunContext) -> tuple[tuple[str, ...], str]:
                 "full_authorized_development can never run under the synthetic "
                 "authorization marker"
             )
-        branch = "development scope: owner authorization bundle present on the charter"
+        # HARDENING-BACKEND §4.1 / §4.2: a real launch requires the charter's
+        # bundle to name THIS store's verified namespace and a CURRENT
+        # supersession-head witness (fail-before-path).
+        from .authorization import (  # noqa: PLC0415
+            AuthorizationError,
+            assert_authorization_bound_to_store,
+        )
+
+        bundle = charter.payload.owner_authorization
+        try:
+            assert_authorization_bound_to_store(
+                context.store_root,
+                store_namespace_id=bundle.store_namespace_id,
+                supersession_head_witness=bundle.supersession_head_witness,
+            )
+        except AuthorizationError as error:
+            raise PermissionError(
+                f"full_authorized_development launch refused (fail-before-path): {error}"
+            ) from error
+        branch = (
+            "development scope: owner authorization bundle present on the charter and "
+            "bound to this store's namespace and current supersession head"
+        )
     context.stage_sidecars["stage_plan_readiness.json"] = (
         json.dumps(readiness.model_dump(mode="json"), sort_keys=True) + "\n"
     ).encode("utf-8")
@@ -1753,6 +1862,22 @@ def _stage_s08_folds(context: _RunContext) -> tuple[tuple[str, ...], str]:
     )
     context.folds = build_context_folds(context.labeled, authorized_trading_days=days)
     valid = sum(1 for fold in context.folds.folds if fold.valid)
+    # HARDENING-BACKEND (adversarial B-03): the fold outcome is a TYPED stage
+    # fact, never parsed back from the sanitized explanation
+    context.stage_sidecars["fold_summary.json"] = _regime.canonical_json_bytes(
+        {
+            "fold_count": int(len(context.folds.folds)),
+            "valid_fold_count": int(valid),
+            "invalid_reasons": sorted(
+                {
+                    str(fold.invalid_reason)
+                    for fold in context.folds.folds
+                    if fold.invalid_reason is not None
+                }
+            ),
+            "trading_day_count": int(len(days)),
+        }
+    )
     if not context.folds.folds:
         explanation = (
             f"0 folds constructible under the frozen {FOLD_PROTOCOL_ID_V1} "
@@ -2650,6 +2775,9 @@ def run_pipeline(
             started_at=_now(),
             ended_at=None,
             operational_retry_reason=operational_retry_reason,
+            # §4.6: the receipt states the sequential V1 execution truthfully
+            effective_workers=SUPPORTED_CHILD_WORKERS,
+            execution_mode=EXECUTION_MODE_V1,
         )
         state.setdefault("attempts", []).append(attempt.model_dump(mode="json"))
         context = _RunContext(
@@ -2875,6 +3003,43 @@ def activate_pipeline_result(
                 f"attempt ({', '.join(failed)}); the recorded checklist belongs to an "
                 "earlier attempt"
             )
+        # HARDENING-BACKEND §4.2 (adversarial RA-03): publication is a witness
+        # seam — the charter's owner bundle must still be bound to THIS store's
+        # namespace and to the CURRENT supersession head at activation time (a
+        # supersession that landed after the launch stops the activation).
+        from .authorization import (  # noqa: PLC0415
+            AuthorizationError,
+            SyntheticAuthorizationMarker,
+            assert_authorization_bound_to_store,
+        )
+        from .charter import SearchCharterEnvelope  # noqa: PLC0415
+        from .store import SearchStoreError  # noqa: PLC0415
+
+        try:
+            charter = load_verified_envelope(
+                Path(store_root), "charters", str(state["search_charter_id"]), SearchCharterEnvelope
+            )
+        except SearchStoreError as error:
+            raise PublicationError(
+                "activation refused: the charter is not a verified entry of this store"
+            ) from error
+        authorization = charter.payload.owner_authorization
+        if isinstance(authorization, SyntheticAuthorizationMarker):
+            raise PublicationError(
+                "activation refused: a synthetic-authorization charter can never activate a "
+                "research catalog entry"
+            )
+        try:
+            assert_authorization_bound_to_store(
+                Path(store_root),
+                store_namespace_id=authorization.store_namespace_id,
+                supersession_head_witness=authorization.supersession_head_witness,
+            )
+        except AuthorizationError as error:
+            raise PublicationError(
+                f"activation refused: the charter's owner authorization is no longer bound to "
+                f"this store's namespace and current supersession head ({error})"
+            ) from error
         from .catalog import append_catalog_event  # noqa: PLC0415
 
         result_id = publication["pipeline_result_id"]

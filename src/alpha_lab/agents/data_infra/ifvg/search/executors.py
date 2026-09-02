@@ -45,12 +45,16 @@ __all__ = [
 REPO_ROOT = Path(__file__).resolve().parents[6]
 
 
-def _verification_run_envelope(store_root: Path) -> VerificationRunEnvelope:
+def _verification_run_envelope(
+    store_root: Path, *, pipeline_semantic_id: str | None = None
+) -> VerificationRunEnvelope:
     """The persisted verification run for this store — fail-before-path.
 
     Discovery goes through the provider (catalog/persisted envelopes only,
     stores never listed); absence refuses BEFORE any config, policy, or
-    source path is constructed.
+    source path is constructed. Adversarial RA-08: the run is selected by
+    the pipeline semantic id being launched (when known), never positionally;
+    more than one candidate is an ambiguity refusal.
     """
 
     from ..study_providers import verification_authorization_state  # noqa: PLC0415
@@ -63,15 +67,33 @@ def _verification_run_envelope(store_root: Path) -> VerificationRunEnvelope:
             "VerificationAuthorizationRef (decisions 21/R-5) has not been "
             "granted (fail-before-path)"
         )
-    return load_verified_envelope(
-        Path(store_root),
-        "verification_runs",
-        state.verification_run_ids[0],
-        VerificationRunEnvelope,
-    )
+    candidates = [
+        load_verified_envelope(
+            Path(store_root), "verification_runs", run_id, VerificationRunEnvelope
+        )
+        for run_id in state.verification_run_ids
+    ]
+    if pipeline_semantic_id is not None:
+        candidates = [
+            run for run in candidates if run.payload.pipeline_semantic_id == pipeline_semantic_id
+        ]
+        if not candidates:
+            raise PermissionError(
+                "real verification execution is blocked: no persisted verification run "
+                "binds the pipeline semantic id being launched (fail-before-path)"
+            )
+    if len(candidates) > 1:
+        raise PermissionError(
+            "real verification execution is blocked: more than one persisted verification "
+            f"run is catalogued for this store ({len(candidates)}); the selection is never "
+            "positional — retire the stale run(s) first (fail-before-path)"
+        )
+    return candidates[0]
 
 
-def real_verification_context(charter_envelope, *, store_root: Path) -> dict:
+def real_verification_context(
+    charter_envelope, *, store_root: Path, pipeline_semantic_id: str | None = None
+) -> dict:
     """Shared fail-closed preflight for both real executors."""
 
     from .authorization import SyntheticAuthorizationMarker  # noqa: PLC0415
@@ -88,7 +110,36 @@ def real_verification_context(charter_envelope, *, store_root: Path) -> dict:
             "fixture only; full development execution is a separate, "
             "owner-authorized operator action"
         )
-    run = _verification_run_envelope(Path(store_root))
+    run = _verification_run_envelope(
+        Path(store_root), pipeline_semantic_id=pipeline_semantic_id
+    )
+    # HARDENING-BACKEND §4.1 / §4.2: the verification store must be a marked
+    # ``test`` namespace the authorization names, coherently deployed, and
+    # the signed supersession-head witness must be CURRENT — before any path.
+    from .authorization import (  # noqa: PLC0415
+        AuthorizationError,
+        assert_authorization_bound_to_store,
+    )
+    from .store_namespace import (  # noqa: PLC0415
+        StoreNamespaceError,
+        assert_namespace_deployment_coherent,
+        require_store_namespace,
+    )
+
+    try:
+        namespace = require_store_namespace(Path(store_root), expected_class="test")
+        assert_namespace_deployment_coherent(Path(store_root), namespace)
+        authorization = run.payload.verification_authorization
+        assert_authorization_bound_to_store(
+            Path(store_root),
+            store_namespace_id=authorization.store_namespace_id,
+            supersession_head_witness=authorization.supersession_head_witness,
+            expected_namespace_class="test",
+        )
+    except (StoreNamespaceError, AuthorizationError) as error:
+        raise PermissionError(
+            f"real verification execution is blocked (fail-before-path): {error}"
+        ) from error
     if tuple(run.payload.allowlist) != tuple(payload.date_policy.replay_dates):
         raise PermissionError(
             "the persisted verification run's allowlist does not match the "
@@ -207,7 +258,13 @@ def pipeline_baseline_verification_entry(
     from .pipeline import PipelineWiring  # noqa: PLC0415
 
     root = Path(store_root) if store_root else REPO_ROOT / "data/ifvg_datasets/search_test/v1"
-    context = real_verification_context(charter_envelope, store_root=root)
+    context = real_verification_context(
+        charter_envelope,
+        store_root=root,
+        pipeline_semantic_id=(
+            getattr(semantic, "pipeline_semantic_id", None) if semantic is not None else None
+        ),
+    )
     return PipelineWiring(
         identity_resolver=_slice_identity_resolver(context, root),
         child_runner=_baseline_child_runner(context),

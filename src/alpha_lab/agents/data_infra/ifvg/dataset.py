@@ -27,6 +27,7 @@ from datetime import date
 from time import perf_counter_ns
 from typing import TYPE_CHECKING
 
+import numpy as np
 import pandas as pd
 from strategy_core.candles.exchange_calendar import (
     DEFAULT_CONTEXT_SOURCE_COVERAGE,
@@ -81,6 +82,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "assemble_fsm_audit_tables",
+    "concat_schema_aligned",
     "build_ifvg_capture",
     "build_ifvg_fsm_audit_v1",
     "build_ifvg_v2_capture",
@@ -759,6 +761,95 @@ def _derive_parentless_intervals(
     return pd.DataFrame(rows)
 
 
+def _na_capable(dtype) -> object:
+    """The dtype an ABSENT column is aligned to so it can hold NA: the numpy
+    integer / unsigned / boolean kinds widen exactly as pandas'
+    ``ensure_dtype_can_hold_na`` widens them (float64 / object); every other
+    dtype (float, object, datetime, tz-aware, nullable extension types)
+    holds NA natively."""
+
+    if not isinstance(dtype, np.dtype):
+        return dtype
+    if dtype.kind in ("i", "u"):
+        return np.dtype("float64")
+    if dtype.kind == "b":
+        return np.dtype("object")
+    return dtype
+
+
+def _common_with_all_na_entry(target, na_dtype) -> object:
+    """The dtype pandas produced when an all-NA PRESENT entry joined a numpy
+    int / unsigned / bool column: the deprecated path excluded the entry from
+    dtype determination but then concatenated its RAW values, so the common
+    type of the two dtypes won — int + all-NaN float → float64; anything
+    else (an all-None object entry, a bool target, a datetime entry) →
+    object. Targets that hold NA natively never reach this helper."""
+
+    if target.kind in ("i", "u") and getattr(na_dtype, "kind", None) == "f":
+        return np.dtype("float64")
+    return np.dtype("object")
+
+
+def concat_schema_aligned(frames: list[pd.DataFrame]) -> pd.DataFrame:
+    """Row-concatenate ``frames`` with EXPLICIT per-column dtypes (§4.5 / F-18).
+
+    pandas deprecated excluding empty / all-NA entries when determining a
+    concatenated column's dtype (``FutureWarning`` at every all-NA audit
+    column). This helper states the schema instead of relying on inference:
+    genuinely empty frames are excluded (the previous behavior); the column
+    order is the first-seen union (``sort=False``); a column's dtype is the
+    common dtype of its NON-all-NA entries; an ABSENT column widens that
+    dtype exactly as pandas' ``ensure_dtype_can_hold_na`` does (int →
+    float64, bool → object) and is aligned as typed NA; an all-NA PRESENT
+    entry joining a numpy int / bool column takes the common type pandas'
+    raw value concatenation produced (int + all-NaN float → float64, else
+    object); every other all-NA entry is cast to the column dtype — so the
+    result equals the pre-deprecation concat exactly (columns, dtypes,
+    values), no warning is emitted, and no all-null column is ever dropped.
+    """
+
+    present = [frame for frame in frames if not frame.empty]
+    if not present:
+        return pd.DataFrame()
+    columns: list[str] = []
+    for frame in present:
+        for column in frame.columns:
+            if column not in columns:
+                columns.append(column)
+    aligned = [frame.copy() for frame in present]
+    for column in columns:
+        units = [frame[column] for frame in aligned if column in frame.columns]
+        informative = [unit for unit in units if not unit.isna().all()]
+        needs_na = len(informative) != len(aligned)
+        if informative:
+            target = (
+                informative[0].dtype
+                if all(unit.dtype == informative[0].dtype for unit in informative)
+                else pd.concat(informative, ignore_index=True).dtype
+            )
+        elif units:
+            target = (
+                units[0].dtype
+                if all(unit.dtype == units[0].dtype for unit in units)
+                else pd.concat(units, ignore_index=True).dtype
+            )
+        else:  # pragma: no cover - a column of the union is present somewhere
+            target = np.dtype("object")
+        if any(column not in frame.columns for frame in aligned):
+            target = _na_capable(target)
+        if needs_na and isinstance(target, np.dtype) and target.kind in ("i", "u", "b"):
+            for unit in units:
+                if unit.isna().all():
+                    target = _common_with_all_na_entry(target, unit.dtype)
+        for frame in aligned:
+            if column not in frame.columns:
+                frame[column] = pd.Series(np.nan, index=frame.index).astype(target)
+            elif frame[column].dtype != target:
+                frame[column] = frame[column].astype(target)
+    aligned = [frame.loc[:, columns] for frame in aligned]
+    return pd.concat(aligned, ignore_index=True, sort=False)
+
+
 def assemble_fsm_audit_tables(
     *,
     trace: pd.DataFrame,
@@ -809,15 +900,11 @@ def assemble_fsm_audit_tables(
             frame = _trim_audit_frame(frame, audit_table)
         audit_tables[audit_table] = frame.reset_index(drop=True)
 
-    audit_all = (
-        pd.concat(
-            [frame for frame in audit_frames if not frame.empty],
-            ignore_index=True,
-            sort=False,
-        )
-        if any(not frame.empty for frame in audit_frames)
-        else pd.DataFrame()
-    )
+    # HARDENING-BACKEND §4.5 (F-18): the per-day audit-channel frames are
+    # concatenated through explicit, schema-aligned typed frames — the exact
+    # pre-deprecation result (all-NA entries excluded from dtype
+    # determination), no FutureWarning, and no all-null column ever dropped.
+    audit_all = concat_schema_aligned(list(audit_frames))
     if not audit_all.empty:
         audit_all["audit_trace_ordinal"] = range(len(audit_all))
     for audit_table, kind in CHANNEL_AUDIT_KIND_BY_TABLE.items():

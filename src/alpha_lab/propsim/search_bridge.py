@@ -59,6 +59,7 @@ from alpha_lab.propsim.event_detail import (
     EVENT_DETAIL_POLICY_NONE,
     EVENT_DETAIL_POLICY_PARQUET_V2,
     EventDetailBudget,
+    EventDetailIntegrityError,
     build_account_event_detail,
     event_detail_identity_fields,
 )
@@ -223,16 +224,35 @@ def persist_account_simulation(
             else "prop_account_event_order_v1"
         )
 
+        if len(run.walk_results) != len(run.path_records):
+            raise EventDetailIntegrityError(
+                "walk results and path records disagree in length"
+            )
+
+        def _walk_pairs():
+            # HARDENING-BACKEND §4.4: the writer consumes the run's walks as
+            # a GENERATOR of (path_record, walk_result) pairs in draw-ordinal
+            # order — the bridge builds no second all-path event list (the
+            # simulation run itself still holds its walk results; that
+            # design is outside the writer path)
+            order = sorted(
+                range(len(run.path_records)),
+                key=lambda index: int(run.path_records[index].draw_ordinal),
+            )
+            for index in order:
+                yield run.path_records[index], run.walk_results[index]
+
         def producer(directory: Path):
             # the detail streams first; the walk summary then records the
             # exact partition / row / byte counts the writer produced
             bundle = build_account_event_detail(
-                run.walk_results,
-                run.path_records,
+                _walk_pairs(),
                 clock_policy_id=clock_policy_id,
                 budget=budget,
                 event_order_policy_id=event_order_policy_id,
                 directory=directory,
+                total_rows=sum(len(result.events) for result in run.walk_results),
+                path_count=len(run.path_records),
             )
             summary = {
                 **walk_summary,

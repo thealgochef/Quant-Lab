@@ -277,6 +277,28 @@ def assert_diagnostic_authorized(
             "diagnostic authorization refused before any source path: "
             + "; ".join(problems)
         )
+    # HARDENING-BACKEND §4.1 / §4.2 (adversarial RA-01): the pathname rule
+    # above is defense in depth only — authority is the store's VERIFIED
+    # ``test`` namespace the authorization names, coherently deployed, with
+    # the CURRENT supersession head equal to the signed witness; refused
+    # before the coverage matrix loads, before the program allowlist is
+    # registered, before any source path exists.
+    from ..search.authorization import (  # noqa: PLC0415
+        AuthorizationError,
+        assert_authorization_bound_to_store,
+    )
+
+    try:
+        assert_authorization_bound_to_store(
+            root,
+            store_namespace_id=authorization.store_namespace_id,
+            supersession_head_witness=authorization.supersession_head_witness,
+            expected_namespace_class="test",
+        )
+    except AuthorizationError as error:
+        raise PermissionError(
+            f"diagnostic authorization refused before any source path: {error}"
+        ) from error
     try:
         matrix = load_verified_envelope(
             root,

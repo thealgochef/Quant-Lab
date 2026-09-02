@@ -19,9 +19,24 @@ the historical ``account_events.json`` sidecar of the ``account_simulations``
 store (present for historical modes only) and projects it onto the same
 columns (the event's own ``trading_day`` and the D15 ``EVENT_TYPE_PRECEDENCE``
 — never a UTC date prefix or a local rank table); the D15 v2 Parquet reader
-plugs into the same seam. Every partition is attributed and AGGREGATED as it
-streams past: no event is retained across partitions and no row-oriented
-event JSON is ever written (memory is bounded by one partition).
+plugs into the same seam.
+
+HARDENING-BACKEND §4.4 (F-17) — external aggregation. Every partition is
+attributed as it streams past and its group rows are written as a TYPED
+intermediate Parquet partition into an attempt-local temp directory
+(:data:`INTERMEDIATE_SUMMARY_SCHEMA`); no event and no group row is retained
+in Python across partitions. The exact aggregation across partitions, the
+exact unique-path counts, the cross-partition path-repetition refusal, the
+exact row-budget count and the canonical ordering (:func:`summary_order_sql`
+— the ORDER BY form of :func:`_summary_sort_key`) run in DuckDB under an
+explicit ``memory_limit`` (:data:`SUMMARY_AGGREGATION_MEMORY_LIMIT_BYTES`),
+one thread (deterministic floating-point accumulation) and a spill
+``temp_directory`` under the attempt directory. The final rows stream in
+canonical order into a row-group-aligned ZSTD Parquet writer whose bytes
+equal ``pq.write_table(table, row_group_size=65_536)`` of the same table
+(:func:`summary_parquet_bytes`), so the published bytes and their hash are
+independent of the streaming path. The attempt directory is removed on
+success and on every refusal; immutable outputs are never touched.
 
 D15 report-local summary (plan §6.G): a ``stratified_prop`` report carries a
 bounded ZSTD-Parquet ``account_event_regime_summary.parquet`` sidecar — one
@@ -37,11 +52,14 @@ from __future__ import annotations
 
 import io
 import json
+import shutil
+import tempfile
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import duckdb
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -67,7 +85,10 @@ __all__ = [
     "ACCOUNT_EVENT_REGIME_SUMMARY_SCHEMA_VERSION",
     "ACCOUNT_EVENT_REGIME_SUMMARY_SCHEMA",
     "ACCOUNT_EVENT_REGIME_SUMMARY_SCHEMA_HASH",
+    "SUMMARY_ROW_GROUP_SIZE",
     "SUMMARY_ROW_KEYS",
+    "INTERMEDIATE_SUMMARY_SCHEMA",
+    "SUMMARY_AGGREGATION_MEMORY_LIMIT_BYTES",
     "EventRegimeSummaryBudgetError",
     "AccountEventDetailLoader",
     "PanelEventAssigner",
@@ -75,6 +96,7 @@ __all__ = [
     "load_account_event_detail_from_json",
     "event_detail_frame",
     "summary_parquet_bytes",
+    "summary_order_sql",
     "read_account_event_regime_summary",
     "build_stratified_prop_body",
 ]
@@ -102,6 +124,12 @@ SYNTHETIC_CLOCK_POLICY_ID = "synthetic_path_clock_v1"
 _ACCOUNT_SIMULATION_STORE = "account_simulations"
 _EVENTS_SIDECAR = "account_events.json"
 _NO_REASON = ""
+#: The summary writer's row-group size (unchanged since R6.1 D15).
+SUMMARY_ROW_GROUP_SIZE = 65_536
+#: The explicit DuckDB memory limit of the external aggregation; beyond it
+#: the engine spills into the attempt-local temp directory.
+SUMMARY_AGGREGATION_MEMORY_LIMIT_BYTES = 512 * 1024 * 1024
+_AGGREGATION_THREADS = 1
 
 #: ``loader(root, account_simulation_id) -> Iterator[DataFrame] | None``
 AccountEventDetailLoader = Callable[[Path, str], "Iterator[pd.DataFrame] | None"]
@@ -152,23 +180,46 @@ SUMMARY_ROW_KEYS: tuple[str, ...] = (
     "unattributable_reason",
     "event_type",
 )
+#: The typed intermediate partition the external aggregation consumes: one
+#: row per (partition, summary key) with that partition's partial aggregates.
+INTERMEDIATE_SUMMARY_SCHEMA: pa.Schema = pa.schema(
+    [
+        pa.field("partition_ordinal", pa.int64(), nullable=False),
+        pa.field("path_instance_id", pa.string(), nullable=False),
+        pa.field("clock_policy_id", pa.string(), nullable=False),
+        pa.field("regime_stratum", pa.string(), nullable=False),
+        pa.field("canonical_reporting_cluster_id", pa.int64(), nullable=True),
+        pa.field("unattributable_reason", pa.string(), nullable=False),
+        pa.field("event_type", pa.string(), nullable=False),
+        pa.field("event_precedence", pa.int32(), nullable=False),
+        pa.field("event_count", pa.int64(), nullable=False),
+        pa.field("amount_count", pa.int64(), nullable=False),
+        pa.field("amount_total", pa.float64(), nullable=False),
+        pa.field("first_event_ordinal", pa.int64(), nullable=False),
+        pa.field("last_event_ordinal", pa.int64(), nullable=False),
+        pa.field("first_event_ts_utc", pa.string(), nullable=False),
+        pa.field("last_event_ts_utc", pa.string(), nullable=False),
+    ]
+)
+_AMOUNT_TYPES: tuple[str, ...] = ("payout", "fee", "equity_update")
 
 
 @dataclass(frozen=True)
 class StratifiedPropResult:
-    """The report body, the aggregate JSON detail, and the D15 summary table
-    with its serialized bytes (already checked against the budget)."""
+    """The report body, the aggregate JSON detail, and the D15 summary BYTES
+    (already checked against the budget). The Arrow table is parsed lazily
+    from the bytes (``summary``) — the builder never holds a second copy."""
 
     body: StratifiedPropBody
     detail: dict[str, Any]
-    summary: pa.Table
     summary_bytes: bytes
     summary_sha256: str
     summary_schema_hash: str
+    summary_rows: int
 
     @property
-    def summary_rows(self) -> int:
-        return int(self.summary.num_rows)
+    def summary(self) -> pa.Table:
+        return read_account_event_regime_summary(self.summary_bytes)
 
 
 def _amount(event_type: str, payload: Mapping[str, Any]) -> float:
@@ -351,38 +402,58 @@ def _partition_groups(events: pd.DataFrame, regime: pd.Series, reason: pd.Series
     )
 
 
-def _merge_group(target: dict[str, Any], row: Mapping[str, Any]) -> None:
-    target["event_count"] += int(row["event_count"])
-    if int(row["amount_count"]) > 0:
-        target["amount_sum"] = float(target["amount_sum"] or 0.0) + float(row["amount_total"])
-    target["first_event_ordinal"] = min(
-        target["first_event_ordinal"], int(row["first_event_ordinal"])
-    )
-    target["last_event_ordinal"] = max(target["last_event_ordinal"], int(row["last_event_ordinal"]))
-    target["first_event_ts_utc"] = min(target["first_event_ts_utc"], str(row["first_event_ts_utc"]))
-    target["last_event_ts_utc"] = max(target["last_event_ts_utc"], str(row["last_event_ts_utc"]))
-
-
 def _cluster_of(stratum: str) -> int | None:
     return None if stratum == "unassigned" else int(stratum.split(":", 1)[1])
 
 
+def _write_intermediate_partition(
+    groups: pd.DataFrame, *, partition_ordinal: int, path: Path
+) -> int:
+    """Write one partition's group rows under the TYPED intermediate schema
+    (a vectorized frame → Arrow conversion; no per-row Python loop)."""
+
+    strata = groups["regime_stratum"].astype(str)
+    cluster = pd.to_numeric(
+        strata.where(strata != "unassigned").str.split(":", n=1).str[1], errors="raise"
+    ).astype("Int64")
+    frame = pd.DataFrame(
+        {
+            "partition_ordinal": pd.Series(
+                [int(partition_ordinal)] * len(groups), dtype="int64", index=groups.index
+            ),
+            "path_instance_id": groups["path_instance_id"].astype(str),
+            "clock_policy_id": groups["clock_policy_id"].astype(str),
+            "regime_stratum": strata,
+            "canonical_reporting_cluster_id": cluster,
+            "unattributable_reason": groups["unattributable_reason"].astype(str),
+            "event_type": groups["event_type"].astype(str),
+            "event_precedence": groups["event_precedence"].astype("int32"),
+            "event_count": groups["event_count"].astype("int64"),
+            "amount_count": groups["amount_count"].astype("int64"),
+            "amount_total": groups["amount_total"].astype("float64"),
+            "first_event_ordinal": groups["first_event_ordinal"].astype("int64"),
+            "last_event_ordinal": groups["last_event_ordinal"].astype("int64"),
+            "first_event_ts_utc": groups["first_event_ts_utc"].astype(str),
+            "last_event_ts_utc": groups["last_event_ts_utc"].astype(str),
+        }
+    )
+    table = pa.Table.from_pandas(
+        frame, schema=INTERMEDIATE_SUMMARY_SCHEMA, preserve_index=False
+    ).replace_schema_metadata(None)
+    pq.write_table(table, path, compression="zstd", row_group_size=SUMMARY_ROW_GROUP_SIZE)
+    return int(table.num_rows)
+
+
 def _stratum_row(
     key: RegimeStratumKey,
-    groups: Iterable[Mapping[str, Any]],
+    counts: Mapping[str, int],
+    amounts: Mapping[str, float],
     *,
     firm_label: str,
     mode: str,
     simulation_id: str,
     simulation_total: int,
 ) -> PropStratumRow:
-    counts: dict[str, int] = {}
-    amounts = {"payout": 0.0, "fee": 0.0, "equity_update": 0.0}
-    for group in groups:
-        event_type = str(group["event_type"])
-        counts[event_type] = counts.get(event_type, 0) + int(group["event_count"])
-        if event_type in amounts and group["amount_sum"] is not None:
-            amounts[event_type] += float(group["amount_sum"])
     return PropStratumRow(
         firm_label=firm_label,
         simulation_mode=mode,
@@ -393,14 +464,17 @@ def _stratum_row(
             k: (int(v) / simulation_total if simulation_total else 0.0)
             for k, v in sorted(counts.items())
         },
-        payout_trader_amount_sum=float(amounts["payout"]),
-        fee_amount_sum=float(amounts["fee"]),
-        realized_pnl_sum=float(amounts["equity_update"]),
+        payout_trader_amount_sum=float(amounts.get("payout", 0.0)),
+        fee_amount_sum=float(amounts.get("fee", 0.0)),
+        realized_pnl_sum=float(amounts.get("equity_update", 0.0)),
         events_total=int(sum(counts.values())),
     )
 
 
 def _summary_sort_key(row: Mapping[str, Any]) -> tuple:
+    """The canonical order of the summary rows (the reference form; the
+    external aggregation sorts with :func:`summary_order_sql`)."""
+
     cluster = row["canonical_reporting_cluster_id"]
     return (
         str(row["account_simulation_id"]),
@@ -412,40 +486,19 @@ def _summary_sort_key(row: Mapping[str, Any]) -> tuple:
     )
 
 
-def _summary_table(
-    rows: list[dict[str, Any]], *, core_replay_id: str, evidence: RegimeAssignmentEvidenceRef
-) -> pa.Table:
-    ordered = sorted(rows, key=_summary_sort_key)
-    fit_ids_sha256 = bytes_sha256("\n".join(evidence.regime_fit_ids).encode("utf-8"))
-    columns: dict[str, list[Any]] = {
-        field.name: [] for field in ACCOUNT_EVENT_REGIME_SUMMARY_SCHEMA
-    }
-    for row in ordered:
-        columns["core_replay_id"].append(core_replay_id)
-        columns["regime_oos_assignment_id"].append(evidence.regime_oos_assignment_id)
-        columns["regime_fold_set_id"].append(evidence.regime_fold_set_id)
-        columns["fold_schedule_id"].append(evidence.fold_schedule_id)
-        columns["observation_granularity"].append(str(evidence.observation_granularity.value))
-        columns["regime_fit_ids_sha256"].append(fit_ids_sha256)
-        columns["account_simulation_id"].append(str(row["account_simulation_id"]))
-        columns["firm_label"].append(str(row["firm_label"]))
-        columns["simulation_mode"].append(str(row["simulation_mode"]))
-        columns["clock_policy_id"].append(str(row["clock_policy_id"]))
-        columns["path_instance_id"].append(str(row["path_instance_id"]))
-        columns["regime_stratum"].append(str(row["regime_stratum"]))
-        columns["canonical_reporting_cluster_id"].append(row["canonical_reporting_cluster_id"])
-        columns["unattributable_reason"].append(row["unattributable_reason"])
-        columns["event_type"].append(str(row["event_type"]))
-        columns["event_precedence"].append(int(row["event_precedence"]))
-        columns["event_count"].append(int(row["event_count"]))
-        columns["amount_sum"].append(
-            None if row["amount_sum"] is None else float(row["amount_sum"])
-        )
-        columns["first_event_ordinal"].append(int(row["first_event_ordinal"]))
-        columns["last_event_ordinal"].append(int(row["last_event_ordinal"]))
-        columns["first_event_ts_utc"].append(str(row["first_event_ts_utc"]))
-        columns["last_event_ts_utc"].append(str(row["last_event_ts_utc"]))
-    return pa.Table.from_pydict(columns, schema=ACCOUNT_EVENT_REGIME_SUMMARY_SCHEMA)
+def summary_order_sql() -> str:
+    """The ORDER BY clause equal to :func:`_summary_sort_key` WITHIN one
+    simulation (simulations are processed in sorted id order): path, then
+    assigned clusters before the unassigned bucket, cluster id, reason
+    (the empty string for none), event type, clock policy — binary
+    (code-point) collation, as Python compares these ASCII strings."""
+
+    return (
+        "ORDER BY path_instance_id, "
+        "CASE WHEN canonical_reporting_cluster_id IS NULL THEN 1 ELSE 0 END, "
+        "COALESCE(canonical_reporting_cluster_id, 0), "
+        "unattributable_reason, event_type, clock_policy_id"
+    )
 
 
 def summary_parquet_bytes(table: pa.Table) -> bytes:
@@ -456,7 +509,10 @@ def summary_parquet_bytes(table: pa.Table) -> bytes:
         raise ValueError("the table is not an account_event_regime_summary table")
     sink = io.BytesIO()
     pq.write_table(
-        table.replace_schema_metadata(None), sink, compression="zstd", row_group_size=65_536
+        table.replace_schema_metadata(None),
+        sink,
+        compression="zstd",
+        row_group_size=SUMMARY_ROW_GROUP_SIZE,
     )
     return sink.getvalue()
 
@@ -470,26 +526,41 @@ def read_account_event_regime_summary(data: bytes) -> pa.Table:
     return table
 
 
-def _new_group(row: Mapping[str, Any]) -> dict[str, Any]:
-    return {
-        "path_instance_id": str(row["path_instance_id"]),
-        "clock_policy_id": str(row["clock_policy_id"]),
-        "regime_stratum": str(row["regime_stratum"]),
-        "canonical_reporting_cluster_id": _cluster_of(str(row["regime_stratum"])),
-        "unattributable_reason": (
-            None
-            if row["unattributable_reason"] == _NO_REASON
-            else str(row["unattributable_reason"])
-        ),
-        "event_type": str(row["event_type"]),
-        "event_precedence": int(row["event_precedence"]),
-        "event_count": int(row["event_count"]),
-        "amount_sum": (float(row["amount_total"]) if int(row["amount_count"]) > 0 else None),
-        "first_event_ordinal": int(row["first_event_ordinal"]),
-        "last_event_ordinal": int(row["last_event_ordinal"]),
-        "first_event_ts_utc": str(row["first_event_ts_utc"]),
-        "last_event_ts_utc": str(row["last_event_ts_utc"]),
-    }
+class _RowGroupAlignedWriter:
+    """A streaming Parquet writer whose row groups are EXACTLY the groups
+    ``pq.write_table(table, row_group_size=N)`` would cut from the whole
+    table — so the streamed bytes equal the single-write bytes."""
+
+    def __init__(self, path: Path, schema: pa.Schema, row_group_size: int) -> None:
+        self._writer = pq.ParquetWriter(path, schema, compression="zstd")
+        self._schema = schema
+        self._size = int(row_group_size)
+        self._buffer: list[pa.Table] = []
+        self._buffered = 0
+        self.rows_written = 0
+
+    def write(self, table: pa.Table) -> None:
+        if table.num_rows == 0:
+            return
+        self._buffer.append(table)
+        self._buffered += table.num_rows
+        while self._buffered >= self._size:
+            combined = pa.concat_tables(self._buffer).combine_chunks()
+            head = combined.slice(0, self._size)
+            self._writer.write_table(head, row_group_size=self._size)
+            self.rows_written += head.num_rows
+            rest = combined.slice(self._size)
+            self._buffer = [rest] if rest.num_rows else []
+            self._buffered = rest.num_rows
+
+    def close(self) -> None:
+        if self._buffered:
+            combined = pa.concat_tables(self._buffer).combine_chunks()
+            self._writer.write_table(combined, row_group_size=self._size)
+            self.rows_written += combined.num_rows
+            self._buffer = []
+            self._buffered = 0
+        self._writer.close()
 
 
 def _row_budget_refusal(
@@ -500,6 +571,158 @@ def _row_budget_refusal(
         f"registered row budget ({budget.max_summary_rows} rows, {budget.budget_id}); refused "
         "before publication"
     )
+
+
+def _sql_path(path: Path) -> str:
+    return str(Path(path).as_posix()).replace("'", "''")
+
+
+def _open_aggregation_connection(temp_root: Path):
+    """A DuckDB connection under the explicit memory limit, ONE thread (a
+    deterministic accumulation order) and the attempt-local spill directory."""
+
+    connection = duckdb.connect(database=":memory:")
+    spill = Path(temp_root) / "duckdb_tmp"
+    spill.mkdir(parents=True, exist_ok=True)
+    connection.execute(
+        f"SET memory_limit='{SUMMARY_AGGREGATION_MEMORY_LIMIT_BYTES // (1024 * 1024)}MiB'"
+    )
+    connection.execute(f"SET temp_directory='{_sql_path(spill)}'")
+    connection.execute(f"SET threads={_AGGREGATION_THREADS}")
+    connection.execute("SET preserve_insertion_order=true")
+    return connection
+
+
+_AGGREGATE_SQL = (
+    "SELECT path_instance_id, clock_policy_id, regime_stratum, canonical_reporting_cluster_id, "
+    "unattributable_reason, event_type, "
+    "MIN(event_precedence) AS event_precedence, "
+    "SUM(event_count)::BIGINT AS event_count, "
+    "SUM(amount_count)::BIGINT AS amount_count, "
+    "SUM(amount_total)::DOUBLE AS amount_total, "
+    "MIN(first_event_ordinal) AS first_event_ordinal, "
+    "MAX(last_event_ordinal) AS last_event_ordinal, "
+    "MIN(first_event_ts_utc) AS first_event_ts_utc, "
+    "MAX(last_event_ts_utc) AS last_event_ts_utc "
+    "FROM read_parquet([{files}]) "
+    "GROUP BY path_instance_id, clock_policy_id, regime_stratum, canonical_reporting_cluster_id, "
+    "unattributable_reason, event_type"
+)
+
+
+def _summary_batch(
+    batch: pa.RecordBatch,
+    *,
+    core_replay_id: str,
+    evidence: RegimeAssignmentEvidenceRef,
+    fit_ids_sha256: str,
+    simulation_id: str,
+    firm_label: str,
+    mode: str,
+) -> pa.Table:
+    """One aggregated batch (already in canonical order) as a summary table
+    under the registered schema."""
+
+    rows = batch.num_rows
+    amount_count = batch.column("amount_count").to_pylist()
+    amount_total = batch.column("amount_total").to_pylist()
+    reasons = batch.column("unattributable_reason").to_pylist()
+    columns: dict[str, Any] = {
+        "core_replay_id": pa.array([core_replay_id] * rows, pa.string()),
+        "regime_oos_assignment_id": pa.array(
+            [evidence.regime_oos_assignment_id] * rows, pa.string()
+        ),
+        "regime_fold_set_id": pa.array([evidence.regime_fold_set_id] * rows, pa.string()),
+        "fold_schedule_id": pa.array([evidence.fold_schedule_id] * rows, pa.string()),
+        "observation_granularity": pa.array(
+            [str(evidence.observation_granularity.value)] * rows, pa.string()
+        ),
+        "regime_fit_ids_sha256": pa.array([fit_ids_sha256] * rows, pa.string()),
+        "account_simulation_id": pa.array([simulation_id] * rows, pa.string()),
+        "firm_label": pa.array([firm_label] * rows, pa.string()),
+        "simulation_mode": pa.array([mode] * rows, pa.string()),
+        "clock_policy_id": batch.column("clock_policy_id").cast(pa.string()),
+        "path_instance_id": batch.column("path_instance_id").cast(pa.string()),
+        "regime_stratum": batch.column("regime_stratum").cast(pa.string()),
+        "canonical_reporting_cluster_id": batch.column("canonical_reporting_cluster_id").cast(
+            pa.int64()
+        ),
+        "unattributable_reason": pa.array(
+            [None if value == _NO_REASON else str(value) for value in reasons], pa.string()
+        ),
+        "event_type": batch.column("event_type").cast(pa.string()),
+        "event_precedence": batch.column("event_precedence").cast(pa.int32()),
+        "event_count": batch.column("event_count").cast(pa.int64()),
+        "amount_sum": pa.array(
+            [
+                float(total) if int(count) > 0 else None
+                for total, count in zip(amount_total, amount_count, strict=True)
+            ],
+            pa.float64(),
+        ),
+        "first_event_ordinal": batch.column("first_event_ordinal").cast(pa.int64()),
+        "last_event_ordinal": batch.column("last_event_ordinal").cast(pa.int64()),
+        "first_event_ts_utc": batch.column("first_event_ts_utc").cast(pa.string()),
+        "last_event_ts_utc": batch.column("last_event_ts_utc").cast(pa.string()),
+    }
+    return pa.Table.from_pydict(
+        {name: columns[name] for name in ACCOUNT_EVENT_REGIME_SUMMARY_SCHEMA.names},
+        schema=ACCOUNT_EVENT_REGIME_SUMMARY_SCHEMA,
+    )
+
+
+def _empty_summary_table() -> pa.Table:
+    return pa.Table.from_pydict(
+        {field.name: [] for field in ACCOUNT_EVENT_REGIME_SUMMARY_SCHEMA},
+        schema=ACCOUNT_EVENT_REGIME_SUMMARY_SCHEMA,
+    )
+
+
+def _strata_for(
+    per_cluster_type: list[tuple[int | None, str, int, float]],
+    *,
+    firm_label: str,
+    mode: str,
+    simulation_id: str,
+    simulation_total: int,
+) -> list[PropStratumRow]:
+    """The pooled / covered / per-regime / unassigned strata from the SMALL
+    (cluster, event type) aggregate the engine returned."""
+
+    common = dict(
+        firm_label=firm_label, mode=mode, simulation_id=simulation_id,
+        simulation_total=simulation_total,
+    )
+
+    def _rows(selected) -> tuple[dict[str, int], dict[str, float]]:
+        counts: dict[str, int] = {}
+        amounts: dict[str, float] = {}
+        for _cluster, event_type, count, amount in selected:
+            counts[event_type] = counts.get(event_type, 0) + int(count)
+            if event_type in _AMOUNT_TYPES:
+                amounts[event_type] = amounts.get(event_type, 0.0) + float(amount)
+        return counts, amounts
+
+    covered = [entry for entry in per_cluster_type if entry[0] is not None]
+    unassigned = [entry for entry in per_cluster_type if entry[0] is None]
+    strata = [
+        _stratum_row(RegimeStratumKey(stratum="pooled_all"), *_rows(per_cluster_type), **common),
+        _stratum_row(
+            RegimeStratumKey(stratum="pooled_regime_covered"), *_rows(covered), **common
+        ),
+    ]
+    for cluster in sorted({int(entry[0]) for entry in covered}):
+        strata.append(
+            _stratum_row(
+                RegimeStratumKey(stratum="regime", canonical_reporting_cluster_id=cluster),
+                *_rows([entry for entry in covered if int(entry[0]) == cluster]),
+                **common,
+            )
+        )
+    strata.append(
+        _stratum_row(RegimeStratumKey(stratum="unassigned"), *_rows(unassigned), **common)
+    )
+    return strata
 
 
 def build_stratified_prop_body(
@@ -515,8 +738,11 @@ def build_stratified_prop_body(
 ) -> StratifiedPropResult:
     """``simulations`` maps ``account_simulation_id -> (firm_label, mode)``;
     ``trade_regimes`` is the exact trade join (``regime_for_trades``);
-    ``evidence`` keys every summary row. Streams the partitions; refuses
-    (typed) before publication when the summary exceeds ``budget``."""
+    ``evidence`` keys every summary row. Streams the partitions into typed
+    intermediate partitions, aggregates them EXTERNALLY (DuckDB; explicit
+    memory limit, spill directory, one thread) and refuses (typed) before
+    publication when the summary exceeds ``budget``; the attempt-local temp
+    directory never survives."""
 
     from alpha_lab.propsim.simulation import AccountSimulationEnvelope  # noqa: PLC0415
 
@@ -534,6 +760,7 @@ def build_stratified_prop_body(
         )
         for row in regimes.itertuples(index=False)
     }
+    fit_ids_sha256 = bytes_sha256("\n".join(evidence.regime_fit_ids).encode("utf-8"))
     strata: list[PropStratumRow] = []
     detail: dict[str, Any] = {
         "summary": {
@@ -542,132 +769,183 @@ def build_stratified_prop_body(
             "schema_hash": ACCOUNT_EVENT_REGIME_SUMMARY_SCHEMA_HASH,
             "row_keys": list(SUMMARY_ROW_KEYS),
             "budget": budget.model_dump(mode="json"),
+            "aggregation": {
+                "engine": "duckdb_external_v1",
+                "memory_limit_bytes": int(SUMMARY_AGGREGATION_MEMORY_LIMIT_BYTES),
+                "threads": _AGGREGATION_THREADS,
+                "row_group_size": SUMMARY_ROW_GROUP_SIZE,
+            },
         },
         "simulations": {},
     }
-    summary_rows: list[dict[str, Any]] = []
     events_total = 0
     events_attributed = 0
+    summary_rows_total = 0
     unattributable: dict[str, int] = {}
     not_persisted: list[str] = []
-    for simulation_id in sorted(simulations):
-        firm_label, mode = simulations[simulation_id]
-        envelope = load_verified_envelope(
-            Path(root), _ACCOUNT_SIMULATION_STORE, simulation_id, AccountSimulationEnvelope
-        )
-        if envelope.payload.simulation_mode != mode:
-            raise ValueError(
-                f"account simulation {simulation_id[:12]}… is a "
-                f"{envelope.payload.simulation_mode} run, not {mode}"
+    temp_root = Path(tempfile.mkdtemp(prefix="ifvg_event_regime_summary_"))
+    connection = None
+    writer: _RowGroupAlignedWriter | None = None
+    summary_path = temp_root / ACCOUNT_EVENT_REGIME_SUMMARY_SIDECAR
+    try:
+        for index, simulation_id in enumerate(sorted(simulations)):
+            firm_label, mode = simulations[simulation_id]
+            envelope = load_verified_envelope(
+                Path(root), _ACCOUNT_SIMULATION_STORE, simulation_id, AccountSimulationEnvelope
             )
-        frames = loader(Path(root), simulation_id)
-        if frames is None:
-            not_persisted.append(simulation_id)
-            detail["simulations"][simulation_id] = {"evidence_not_persisted": True}
-            continue
-        historical = mode.startswith("historical")
-        groups: dict[tuple, dict[str, Any]] = {}
-        seen_paths: set[str] = set()
-        clocks: set[str] = set()
-        partitions = 0
-        for frame in frames:
-            partitions += 1
-            events = _validate_detail(frame)
-            paths = set(events["path_instance_id"].astype(str))
-            if paths & seen_paths:
-                raise ValueError("event detail repeats a path_instance_id across partitions")
-            seen_paths |= paths
-            clocks |= set(events["clock_policy_id"].astype(str))
-            regime, reason = _attribute_partition(
-                events,
-                regime_of_trade=regime_of_trade,
-                historical=historical,
-                panel_assigner=panel_assigner,
-            )
-            for row in _partition_groups(events, regime, reason).to_dict(orient="records"):
-                key = tuple(row[name] for name in SUMMARY_ROW_KEYS)
-                target = groups.get(key)
-                if target is None:
-                    groups[key] = _new_group(row)
-                else:
-                    _merge_group(target, row)
-            if len(summary_rows) + len(groups) > budget.max_summary_rows:
-                raise _row_budget_refusal(core_replay_id, budget)
-        rows = list(groups.values())
-        count = int(sum(row["event_count"] for row in rows))
-        attributed = int(
-            sum(
-                row["event_count"]
-                for row in rows
-                if row["canonical_reporting_cluster_id"] is not None
-            )
-        )
-        reasons: dict[str, int] = {}
-        for row in rows:
-            if row["canonical_reporting_cluster_id"] is None:
-                label = str(row["unattributable_reason"])
-                reasons[label] = reasons.get(label, 0) + int(row["event_count"])
-        events_total += count
-        events_attributed += attributed
-        for label, reason_count in reasons.items():
-            unattributable[label] = unattributable.get(label, 0) + reason_count
-        common: dict[str, Any] = {
-            "firm_label": firm_label,
-            "mode": mode,
-            "simulation_id": simulation_id,
-            "simulation_total": count,
-        }
-        covered = [row for row in rows if row["canonical_reporting_cluster_id"] is not None]
-        strata.append(_stratum_row(RegimeStratumKey(stratum="pooled_all"), rows, **common))
-        strata.append(
-            _stratum_row(RegimeStratumKey(stratum="pooled_regime_covered"), covered, **common)
-        )
-        for cluster in sorted({int(row["canonical_reporting_cluster_id"]) for row in covered}):
-            strata.append(
-                _stratum_row(
-                    RegimeStratumKey(stratum="regime", canonical_reporting_cluster_id=cluster),
-                    [row for row in covered if row["canonical_reporting_cluster_id"] == cluster],
-                    **common,
+            if envelope.payload.simulation_mode != mode:
+                raise ValueError(
+                    f"account simulation {simulation_id[:12]}… is a "
+                    f"{envelope.payload.simulation_mode} run, not {mode}"
+                )
+            frames = loader(Path(root), simulation_id)
+            if frames is None:
+                not_persisted.append(simulation_id)
+                detail["simulations"][simulation_id] = {"evidence_not_persisted": True}
+                continue
+            historical = mode.startswith("historical")
+            simulation_dir = temp_root / f"sim_{index:05d}"
+            simulation_dir.mkdir(parents=True)
+            clocks: set[str] = set()
+            partitions = 0
+            intermediate: list[Path] = []
+            for frame in frames:
+                events = _validate_detail(frame)
+                clocks |= set(events["clock_policy_id"].astype(str))
+                regime, reason = _attribute_partition(
+                    events,
+                    regime_of_trade=regime_of_trade,
+                    historical=historical,
+                    panel_assigner=panel_assigner,
+                )
+                groups = _partition_groups(events, regime, reason)
+                path = simulation_dir / f"part_{partitions:06d}.parquet"
+                if _write_intermediate_partition(groups, partition_ordinal=partitions, path=path):
+                    intermediate.append(path)
+                partitions += 1
+            if intermediate:
+                if connection is None:
+                    connection = _open_aggregation_connection(temp_root)
+                files = ", ".join(f"'{_sql_path(path)}'" for path in intermediate)
+                source = f"read_parquet([{files}])"
+                repeated = connection.execute(
+                    f"SELECT path_instance_id FROM {source} GROUP BY path_instance_id "
+                    "HAVING COUNT(DISTINCT partition_ordinal) > 1 LIMIT 1"
+                ).fetchone()
+                if repeated is not None:
+                    raise ValueError("event detail repeats a path_instance_id across partitions")
+                connection.execute(
+                    "CREATE OR REPLACE TEMPORARY TABLE simulation_summary AS "
+                    + _AGGREGATE_SQL.format(files=files)
+                )
+                count_rows, count_events, attributed, paths = connection.execute(
+                    "SELECT COUNT(*), COALESCE(SUM(event_count), 0), "
+                    "COALESCE(SUM(CASE WHEN canonical_reporting_cluster_id IS NULL THEN 0 "
+                    "ELSE event_count END), 0), COUNT(DISTINCT path_instance_id) "
+                    "FROM simulation_summary"
+                ).fetchone()
+                count_rows, count_events, attributed, paths = (
+                    int(count_rows), int(count_events), int(attributed), int(paths)
+                )
+                if summary_rows_total + count_rows > budget.max_summary_rows:
+                    raise _row_budget_refusal(core_replay_id, budget)
+                reasons = {
+                    str(label): int(total)
+                    for label, total in connection.execute(
+                        "SELECT unattributable_reason, SUM(event_count) FROM simulation_summary "
+                        "WHERE canonical_reporting_cluster_id IS NULL "
+                        "GROUP BY unattributable_reason ORDER BY unattributable_reason"
+                    ).fetchall()
+                }
+                per_cluster_type = [
+                    (None if cluster is None else int(cluster), str(event_type), int(count),
+                     float(amount))
+                    for cluster, event_type, count, amount in connection.execute(
+                        "SELECT canonical_reporting_cluster_id, event_type, SUM(event_count), "
+                        "SUM(CASE WHEN amount_count > 0 THEN amount_total ELSE 0.0 END) "
+                        "FROM simulation_summary GROUP BY canonical_reporting_cluster_id, "
+                        "event_type ORDER BY canonical_reporting_cluster_id NULLS LAST, event_type"
+                    ).fetchall()
+                ]
+                if writer is None:
+                    writer = _RowGroupAlignedWriter(
+                        summary_path, ACCOUNT_EVENT_REGIME_SUMMARY_SCHEMA, SUMMARY_ROW_GROUP_SIZE
+                    )
+                reader = connection.execute(
+                    f"SELECT * FROM simulation_summary {summary_order_sql()}"
+                ).fetch_record_batch(SUMMARY_ROW_GROUP_SIZE)
+                for batch in reader:
+                    writer.write(
+                        _summary_batch(
+                            batch,
+                            core_replay_id=core_replay_id,
+                            evidence=evidence,
+                            fit_ids_sha256=fit_ids_sha256,
+                            simulation_id=simulation_id,
+                            firm_label=firm_label,
+                            mode=mode,
+                        )
+                    )
+                connection.execute("DROP TABLE simulation_summary")
+            else:
+                count_rows = count_events = attributed = paths = 0
+                reasons = {}
+                per_cluster_type = []
+            shutil.rmtree(simulation_dir, ignore_errors=True)
+            events_total += count_events
+            events_attributed += attributed
+            summary_rows_total += count_rows
+            for label, reason_count in reasons.items():
+                unattributable[label] = unattributable.get(label, 0) + reason_count
+            strata.extend(
+                _strata_for(
+                    per_cluster_type,
+                    firm_label=firm_label,
+                    mode=mode,
+                    simulation_id=simulation_id,
+                    simulation_total=count_events,
                 )
             )
-        strata.append(
-            _stratum_row(
-                RegimeStratumKey(stratum="unassigned"),
-                [row for row in rows if row["canonical_reporting_cluster_id"] is None],
-                **common,
-            )
-        )
-        for row in rows:
-            summary_rows.append(
-                {
-                    **row,
-                    "account_simulation_id": simulation_id,
-                    "firm_label": firm_label,
-                    "simulation_mode": mode,
-                }
-            )
-        detail["simulations"][simulation_id] = {
-            "firm_label": firm_label,
-            "simulation_mode": mode,
-            "clock_policy_ids": sorted(clocks),
-            "partitions": partitions,
-            "paths": len(seen_paths),
-            "events_total": count,
-            "events_attributed": attributed,
-            "unattributable_by_reason": {k: int(v) for k, v in sorted(reasons.items())},
-            "summary_rows": len(rows),
-        }
-    if len(summary_rows) > budget.max_summary_rows:
-        raise _row_budget_refusal(core_replay_id, budget)
-    table = _summary_table(summary_rows, core_replay_id=core_replay_id, evidence=evidence)
-    data = summary_parquet_bytes(table)
-    if len(data) > budget.max_published_bytes:
-        raise EventRegimeSummaryBudgetError(
-            f"the account_event_regime_summary of child {core_replay_id[:12]}… serializes to "
-            f"{len(data)} bytes, over the registered byte budget ({budget.max_published_bytes}, "
-            f"{budget.budget_id}); refused before publication"
-        )
-    detail["summary"]["rows"] = int(table.num_rows)
+            detail["simulations"][simulation_id] = {
+                "firm_label": firm_label,
+                "simulation_mode": mode,
+                "clock_policy_ids": sorted(clocks),
+                "partitions": partitions,
+                "paths": paths,
+                "events_total": count_events,
+                "events_attributed": attributed,
+                "unattributable_by_reason": {k: int(v) for k, v in sorted(reasons.items())},
+                "summary_rows": count_rows,
+            }
+        if summary_rows_total > budget.max_summary_rows:
+            raise _row_budget_refusal(core_replay_id, budget)
+        if writer is not None:
+            writer.close()
+            writer = None
+            if summary_path.stat().st_size > budget.max_published_bytes:
+                raise EventRegimeSummaryBudgetError(
+                    f"the account_event_regime_summary of child {core_replay_id[:12]}… "
+                    f"serializes to {summary_path.stat().st_size} bytes, over the registered "
+                    f"byte budget ({budget.max_published_bytes}, {budget.budget_id}); refused "
+                    "before publication"
+                )
+            data = summary_path.read_bytes()
+        else:
+            data = summary_parquet_bytes(_empty_summary_table())
+            if len(data) > budget.max_published_bytes:
+                raise EventRegimeSummaryBudgetError(
+                    f"the account_event_regime_summary of child {core_replay_id[:12]}… "
+                    f"serializes to {len(data)} bytes, over the registered byte budget "
+                    f"({budget.max_published_bytes}, {budget.budget_id}); refused before "
+                    "publication"
+                )
+    finally:
+        if writer is not None:
+            writer.close()
+        if connection is not None:
+            connection.close()
+        shutil.rmtree(temp_root, ignore_errors=True)
+    detail["summary"]["rows"] = int(summary_rows_total)
     detail["summary"]["bytes"] = len(data)
     body = StratifiedPropBody(
         core_replay_id=core_replay_id,
@@ -680,13 +958,13 @@ def build_stratified_prop_body(
         unattributable_by_reason={k: int(v) for k, v in sorted(unattributable.items())},
         evidence_not_persisted=tuple(sorted(not_persisted)),
         summary_budget=budget,
-        summary_rows=int(table.num_rows),
+        summary_rows=int(summary_rows_total),
     )
     return StratifiedPropResult(
         body=body,
         detail=detail,
-        summary=table,
         summary_bytes=data,
         summary_sha256=bytes_sha256(data),
         summary_schema_hash=ACCOUNT_EVENT_REGIME_SUMMARY_SCHEMA_HASH,
+        summary_rows=int(summary_rows_total),
     )

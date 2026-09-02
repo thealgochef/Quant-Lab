@@ -127,7 +127,20 @@ def _propose(
     assessment = load_regime_assessment(root, assessment_id)
     if assessment.payload.resolved_regime_protocol_id != protocol.resolved_regime_protocol_id:
         raise ValueError("the assessment does not belong to the protocol")
-    proposal = build_owner_decision_proposal(protocol, assessment, transition=transition)
+    # HARDENING-BACKEND §4.1: the proposal names the target store's VERIFIED
+    # semantic namespace when the store is marked (else the owner placeholder).
+    from alpha_lab.agents.data_infra.ifvg.search.store_namespace import (  # noqa: PLC0415
+        StoreNamespaceError,
+        load_store_namespace,
+    )
+
+    try:
+        store_namespace_id: str | None = load_store_namespace(root).store_namespace_id
+    except StoreNamespaceError:
+        store_namespace_id = None
+    proposal = build_owner_decision_proposal(
+        protocol, assessment, transition=transition, store_namespace_id=store_namespace_id
+    )
     title = (
         "PROPOSAL — owner decisions 25/28/29/30 for regime protocol "
         f"{protocol_id[:12]}… (nothing here is an authorization)"

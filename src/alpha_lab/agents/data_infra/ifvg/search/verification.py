@@ -21,7 +21,12 @@ import pandas as pd
 from pydantic import Field, model_validator
 
 from ..data_access import allowlist_sha256
-from .authorization import SyntheticAuthorizationMarker, VerificationAuthorizationRef
+from .authorization import (
+    AuthorizationError,
+    SyntheticAuthorizationMarker,
+    VerificationAuthorizationRef,
+    assert_authorization_bound_to_store,
+)
 from .identities import (
     SHA256_PATTERN,
     EnvelopeBase,
@@ -30,6 +35,7 @@ from .identities import (
     register_identity_pair,
 )
 from .store import SEARCH_TEST_STORE_ROOT
+from .store_namespace import SupersessionHeadWitness
 
 __all__ = [
     "VERIFICATION_POLICY_ID",
@@ -149,9 +155,13 @@ def validate_verification_run(
     expected_baseline_section_config_hash: str,
     expected_seed_snapshot_id: str,
     authorization: object,
+    store_root: Path,
 ) -> None:
     """Assert authorization, allowlist, seed, coverage, profile, and pipeline
-    identity agree EXACTLY — before any source path is constructed (§6)."""
+    identity agree EXACTLY — before any source path is constructed (§6).
+    HARDENING-BACKEND §4.1 / §4.2: the authorization must also be bound to
+    ``store_root`` — a verified ``test`` namespace whose id the ref names and
+    whose CURRENT supersession head equals the signed witness."""
 
     payload = envelope.payload
     if isinstance(authorization, SyntheticAuthorizationMarker):
@@ -191,6 +201,18 @@ def validate_verification_run(
             "verification run refused before source-path construction: "
             + "; ".join(problems)
         )
+    try:
+        assert_authorization_bound_to_store(
+            Path(store_root),
+            store_namespace_id=authorization.store_namespace_id,
+            supersession_head_witness=authorization.supersession_head_witness,
+            expected_namespace_class="test",
+        )
+    except AuthorizationError as error:
+        raise VerificationRunValidationError(
+            "verification run refused before source-path construction: "
+            f"{error} (reason {getattr(error, 'reason', 'unbound')})"
+        ) from error
 
 
 class ControlFlowGateReport(FrozenContract):
@@ -428,6 +450,10 @@ def _example_verification_run() -> VerificationRunPayload:
             approved_by="owner@example",
             approved_at="2026-08-18T00:00:00Z",
             content_hash="d" * 64,
+            store_namespace_id="e" * 64,
+            supersession_head_witness=SupersessionHeadWitness(
+                store_namespace_id="e" * 64, line_count=0, head_sha256="f" * 64
+            ),
         ),
         allowlist=policy.allowlist,
         allowlist_hash=policy.allowlist_hash,

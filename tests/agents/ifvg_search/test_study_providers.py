@@ -245,6 +245,12 @@ def test_verification_authorization_state_is_derived(
                 approved_by="owner",
                 approved_at="2026-08-21T00:00:00+00:00",
                 content_hash="e" * 64,
+                store_namespace_id="e" * 64,
+                supersession_head_witness={
+                    "store_namespace_id": "e" * 64,
+                    "line_count": 0,
+                    "head_sha256": "f" * 64,
+                },
             ),
             allowlist=("2026-06-04",),
             allowlist_hash="b" * 64,

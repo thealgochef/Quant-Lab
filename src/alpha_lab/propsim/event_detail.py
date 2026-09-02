@@ -20,14 +20,30 @@ compressed, partitioned, and budgeted representation for every mode:
   the trading day the walk played, the clock policy, the total-order fields
   (``path_ordinal``, ``event_ordinal`` — the walk's ONE strictly ordered
   stream), path / account / event ids, source trade / candidate, and
-  type / phase / amount. A preflight row count or a streaming byte overrun
-  fails BEFORE atomic publication, so no partial artifact ever exists.
-  The writer is a store *sidecar producer* (R6.1 safety review S12): each
-  partition is built column-wise for ONE path block, written straight into
-  the store's temporary publication directory, hashed by streaming and
-  released — the process never holds more than one block of rows plus a
-  32-byte-per-row event-id uniqueness index; the temporary directory is
-  discarded on any refusal.
+  type / phase / amount. A preflight row count, a streaming row overrun, or
+  a streaming byte overrun fails BEFORE atomic publication, so no partial
+  artifact ever exists. The writer is a store *sidecar producer* (R6.1
+  safety review S12): each partition is built column-wise for ONE path
+  block, written straight into the store's temporary publication directory,
+  hashed by streaming and released.
+* HARDENING-BACKEND §4.4 (F-17): the writer consumes an ITERABLE of
+  ``(path_record, walk_result)`` pairs in draw-ordinal order exactly once —
+  a generator is never materialized into an all-path event list — and the
+  caller declares the preflight ``total_rows`` / ``path_count`` it will
+  stream (verified exactly at the end). No whole-artifact event-id index
+  exists any more: event ids are the deterministic SHA-256 projection of a
+  key that includes ``path_instance_id`` and the per-path ``event_ordinal``
+  (``AccountWalk._emit``; see :data:`EVENT_ID_CANONICAL_KEY`), so unique
+  path ids × strictly increasing per-path ordinals — both enforced while
+  streaming — imply unique ids for every production emitter. Because the
+  writer cannot re-derive a foreign envelope's projection (the emitter's
+  ``account_namespace`` is not on the envelope), the ARTIFACT-level proof is
+  a disk-backed DuckDB distinct check over the written partitions under an
+  explicit memory limit and an attempt-local spill directory
+  (:func:`_external_uniqueness_check`, :data:`EVENT_ID_UNIQUENESS_CHECK_V1`)
+  — it also proves the path ids are one-to-one with the path ordinals. A
+  forged duplicate across path blocks is refused before publication; the
+  process never holds more than one block of rows.
 * Every partition and the ``event_detail_manifest.json`` index are
   manifest-listed with sha256 / bytes / rows / schema hash; the reader
   verifies the store manifest, the detail manifest, and every partition's
@@ -45,13 +61,14 @@ from __future__ import annotations
 import hashlib
 import io
 import json
-from collections.abc import Callable, Iterator, Sequence
+import shutil
+import tempfile
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal
 
-import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -73,6 +90,10 @@ __all__ = [
     "EVENT_DETAIL_PARTITION_PREFIX",
     "EVENT_DETAIL_SCHEMA",
     "EVENT_DETAIL_SCHEMA_HASH",
+    "EVENT_DETAIL_ROW_GROUP_SIZE",
+    "EVENT_ID_CANONICAL_KEY",
+    "EVENT_ID_UNIQUENESS_CHECK_V1",
+    "EXTERNAL_CHECK_MEMORY_LIMIT_BYTES",
     "EVENT_TYPE_PRECEDENCE",
     "EVENT_AMOUNT_FIELD",
     "EventDetailBudget",
@@ -105,6 +126,19 @@ EVENT_DETAIL_SCHEMA_VERSION_NONE = 0
 EVENT_DETAIL_SCHEMA_VERSION_V2 = 2
 EVENT_DETAIL_MANIFEST_SIDECAR = "event_detail_manifest.json"
 EVENT_DETAIL_PARTITION_PREFIX = "event_detail_block_"
+#: Bounded Parquet row groups (the writer's setting since R6.1 — unchanged,
+#: so partition bytes are byte-identical to the R6.1 writer).
+EVENT_DETAIL_ROW_GROUP_SIZE = 65_536
+#: The key ``AccountWalk._emit`` hashes into ``event_id`` (with the account
+#: namespace / ordinal, the type, the instant and the body): unique path ids
+#: × strictly increasing per-path ordinals imply unique ids.
+EVENT_ID_CANONICAL_KEY: tuple[str, ...] = ("path_instance_id", "event_ordinal")
+#: The artifact-level uniqueness proof over the WRITTEN partitions.
+EVENT_ID_UNIQUENESS_CHECK_V1 = "external_duckdb_distinct_v1"
+#: The explicit DuckDB memory limit of the external check (spills to the
+#: attempt-local temp directory beyond it).
+EXTERNAL_CHECK_MEMORY_LIMIT_BYTES = 256 * 1024 * 1024
+_EXTERNAL_CHECK_THREADS = 2
 _PARTITION_SUFFIX = ".parquet"
 _STORE = "account_simulations"
 
@@ -313,14 +347,16 @@ def _empty_columns() -> dict[str, list[Any]]:
 
 def _append_path(
     columns: dict[str, list[Any]], record, result, *, clock_policy_id: str, block_size: int
-) -> None:
+) -> int:
     """Append one walk's events to the current block's COLUMNS (no per-row
-    dict is ever built); ordinals must be strictly increasing on the path."""
+    dict is ever built); ordinals must be strictly increasing on the path.
+    Returns the number of rows appended."""
 
     path_id = str(record.path_instance_id)
     path_ordinal = int(record.draw_ordinal)
     block_id = path_ordinal // int(block_size)
     previous_ordinal = -1
+    appended = 0
     for event in result.events:
         if event.path_instance_id != record.path_instance_id:
             raise EventDetailIntegrityError(
@@ -354,28 +390,13 @@ def _append_path(
         columns["source_trade_id"].append(event.source_trade_id)
         columns["source_candidate_id"].append(event.source_candidate_id)
         columns["amount"].append(_amount(event))
-
-
-def _event_id_index(event_ids: Sequence[str]) -> np.ndarray:
-    """The exact 32-byte uniqueness index of a block's event ids (the raw
-    value of a 64-hex id; the sha256 digest of any other form)."""
-
-    values = []
-    for event_id in event_ids:
-        try:
-            raw = bytes.fromhex(event_id) if len(event_id) == 64 else b""
-        except ValueError:
-            raw = b""
-        values.append(raw if len(raw) == 32 else hashlib.sha256(event_id.encode()).digest())
-    return np.array(values, dtype="S32")
-
-
-def _assert_unique(index: np.ndarray, *, scope: str) -> None:
-    if index.size and np.unique(index).size != index.size:
-        raise EventDetailIntegrityError(f"duplicate event id {scope}")
+        appended += 1
+    return appended
 
 
 def _first_duplicate(event_ids: Sequence[str]) -> str | None:
+    """The bounded WITHIN-BLOCK duplicate check (one path block of ids)."""
+
     seen: set[str] = set()
     for event_id in event_ids:
         if event_id in seen:
@@ -385,7 +406,7 @@ def _first_duplicate(event_ids: Sequence[str]) -> str | None:
 
 
 def _write_parquet(table: pa.Table, path: Path) -> None:
-    pq.write_table(table, path, compression="zstd", row_group_size=65_536)
+    pq.write_table(table, path, compression="zstd", row_group_size=EVENT_DETAIL_ROW_GROUP_SIZE)
 
 
 def _schema_hash_of(table_schema: pa.Schema) -> str:
@@ -399,57 +420,180 @@ def _schema_hash_of(table_schema: pa.Schema) -> str:
     )
 
 
+def _sql_path(path: Path) -> str:
+    return str(Path(path).as_posix()).replace("'", "''")
+
+
+def _external_uniqueness_check(
+    directory: Path,
+    partition_names: Sequence[str],
+    *,
+    expected_rows: int,
+    expected_paths: int,
+) -> dict[str, Any]:
+    """The disk-backed artifact-level proof (§4.4): DuckDB reads the WRITTEN
+    partitions under an explicit memory limit with an attempt-local spill
+    directory and proves ``event_id`` distinct and ``path_instance_id``
+    one-to-one with ``path_ordinal``. Never an in-memory whole-artifact set."""
+
+    facts: dict[str, Any] = {
+        "canonical_key": list(EVENT_ID_CANONICAL_KEY),
+        "artifact_check": EVENT_ID_UNIQUENESS_CHECK_V1,
+        "memory_limit_bytes": int(EXTERNAL_CHECK_MEMORY_LIMIT_BYTES),
+        "partitions_checked": int(len(partition_names)),
+        "rows_checked": int(expected_rows),
+        "distinct_event_ids": int(expected_rows),
+        "distinct_paths": int(expected_paths),
+    }
+    if not partition_names:
+        return facts
+    import duckdb  # noqa: PLC0415 — the engine is loaded only for the check
+
+    temp_root = tempfile.mkdtemp(prefix="ifvg_event_detail_uniqueness_")
+    try:
+        connection = duckdb.connect(database=":memory:")
+        try:
+            connection.execute(
+                f"SET memory_limit='{EXTERNAL_CHECK_MEMORY_LIMIT_BYTES // (1024 * 1024)}MiB'"
+            )
+            connection.execute(f"SET temp_directory='{_sql_path(Path(temp_root))}'")
+            connection.execute(f"SET threads={_EXTERNAL_CHECK_THREADS}")
+            files = ", ".join(f"'{_sql_path(Path(directory) / name)}'" for name in partition_names)
+            source = f"read_parquet([{files}])"
+            rows, ids, paths, ordinals = connection.execute(
+                "SELECT COUNT(*), COUNT(DISTINCT event_id), COUNT(DISTINCT path_instance_id), "
+                f"COUNT(DISTINCT path_ordinal) FROM {source}"
+            ).fetchone()
+            if int(rows) != int(expected_rows):
+                raise EventDetailIntegrityError(
+                    "the written partitions do not carry the streamed row count "
+                    f"({rows} != {expected_rows})"
+                )
+            if int(ids) != int(rows):
+                example = connection.execute(
+                    f"SELECT event_id FROM {source} GROUP BY event_id HAVING COUNT(*) > 1 "
+                    "ORDER BY event_id LIMIT 1"
+                ).fetchone()
+                sample = str(example[0])[:12] if example else "?"
+                raise EventDetailIntegrityError(
+                    f"duplicate event id across path blocks ({sample}…)"
+                )
+            if int(paths) != int(expected_paths) or int(ordinals) != int(expected_paths):
+                raise EventDetailIntegrityError(
+                    "path instance ids are not one-to-one with path ordinals across path "
+                    f"blocks (paths={paths}, ordinals={ordinals}, declared={expected_paths})"
+                )
+            facts["distinct_event_ids"] = int(ids)
+            facts["distinct_paths"] = int(paths)
+        finally:
+            connection.close()
+    finally:
+        shutil.rmtree(temp_root, ignore_errors=True)
+    return facts
+
+
+def _pair_stream(
+    walks: Any,
+    path_records: Sequence[Any] | None,
+    *,
+    total_rows: int | None,
+    path_count: int | None,
+) -> tuple[Iterator[tuple[Any, Any]], int, int]:
+    """Normalize the two call shapes to ``(pairs in draw-ordinal order,
+    declared_rows, declared_paths)``. The legacy sequence form derives the
+    preflight from the sequences it holds; the iterable form REQUIRES the
+    caller's declared counts (verified exactly after streaming)."""
+
+    if path_records is not None:
+        walk_results = walks if isinstance(walks, list | tuple) else tuple(walks)
+        if len(walk_results) != len(path_records):
+            raise EventDetailIntegrityError("walk results and path records disagree in length")
+        derived_rows = sum(len(result.events) for result in walk_results)
+        ordinals = [int(record.draw_ordinal) for record in path_records]
+        if len(set(ordinals)) != len(ordinals):
+            raise EventDetailIntegrityError("path records repeat a draw ordinal")
+        path_ids = [str(record.path_instance_id) for record in path_records]
+        if len(set(path_ids)) != len(path_ids):
+            raise EventDetailIntegrityError("path records repeat a path instance id")
+        if total_rows is not None and int(total_rows) != derived_rows:
+            raise EventDetailIntegrityError(
+                f"declared total_rows {total_rows} disagrees with the walk results ({derived_rows})"
+            )
+        if path_count is not None and int(path_count) != len(path_records):
+            raise EventDetailIntegrityError(
+                f"declared path_count {path_count} disagrees with the path records "
+                f"({len(path_records)})"
+            )
+        ordered = sorted(
+            zip(path_records, walk_results, strict=True),
+            key=lambda pair: int(pair[0].draw_ordinal),
+        )
+        return iter(ordered), int(derived_rows), int(len(path_records))
+    if total_rows is None or path_count is None:
+        raise ValueError(
+            "an iterable of (path_record, walk_result) pairs requires the declared "
+            "total_rows and path_count preflight counts"
+        )
+    if isinstance(walks, str | bytes):
+        raise ValueError("walks must be an iterable of (path_record, walk_result) pairs")
+    if int(total_rows) < 0 or int(path_count) < 0:
+        raise ValueError("total_rows and path_count cannot be negative")
+    return iter(walks), int(total_rows), int(path_count)
+
+
 def build_account_event_detail(
-    walk_results: Sequence[Any],
-    path_records: Sequence[Any],
+    walks: Iterable[tuple[Any, Any]] | Sequence[Any],
+    path_records: Sequence[Any] | None = None,
     *,
     clock_policy_id: str,
     budget: EventDetailBudget,
     event_order_policy_id: str,
     directory: Path,
+    total_rows: int | None = None,
+    path_count: int | None = None,
 ) -> EventDetailBundle:
     """Stream the run's events into ZSTD Parquet path blocks under ``directory``
     within the budget (``directory`` is the store's temporary publication
     directory — a caller that provides its own must discard it on failure).
 
-    Preflight: the exact row count must fit ``max_event_detail_rows``.
+    Two call shapes: the legacy ``(walk_results, path_records)`` sequences,
+    or ``walks`` = an ITERABLE of ``(path_record, walk_result)`` pairs in
+    strictly increasing draw-ordinal order with the declared ``total_rows``
+    and ``path_count`` (consumed exactly once; never materialized).
+
+    Preflight: the declared row count must fit ``max_event_detail_rows``.
     Streaming: partitions are produced one path block at a time in
     ``path_block_id`` order — built column-wise, written to disk, hashed by
-    streaming, released — and the cumulative written bytes must fit
-    ``max_published_bytes``; the first overrun raises and nothing is
-    published (the store discards the directory). Uniqueness of ``event_id``
-    (an exact 32-byte-per-row index, the only whole-artifact state) and of
-    ``(path_instance_id, event_ordinal)`` (unique path ids × strictly
-    increasing ordinals per path) is enforced; the total order is
+    streaming, released — the cumulative rows must fit the row budget and the
+    cumulative written bytes must fit ``max_published_bytes``; the first
+    overrun raises and nothing is published (the store discards the
+    directory). The streamed counts must equal the declared preflight.
+    Uniqueness of ``event_id`` and of ``(path_instance_id, event_ordinal)``:
+    unique path ids × strictly increasing ordinals per path (streamed) plus
+    the disk-backed external distinct check over the written partitions
+    (never a whole-artifact in-memory index); the total order is
     (path_ordinal, event_ordinal).
     """
 
     directory = Path(directory)
     if not directory.is_dir():
         raise ValueError("build_account_event_detail needs an existing publication directory")
-    if len(walk_results) != len(path_records):
-        raise EventDetailIntegrityError("walk results and path records disagree in length")
-    total_rows = sum(len(result.events) for result in walk_results)
-    if total_rows > budget.max_event_detail_rows:
+    stream, declared_rows, declared_paths = _pair_stream(
+        walks, path_records, total_rows=total_rows, path_count=path_count
+    )
+    if declared_rows > budget.max_event_detail_rows:
         raise EventDetailBudgetError(
-            f"event detail preflight: {total_rows} rows exceed the registered budget of "
+            f"event detail preflight: {declared_rows} rows exceed the registered budget of "
             f"{budget.max_event_detail_rows} ({budget.budget_id}); refusing before publication"
         )
-    ordinals = [int(record.draw_ordinal) for record in path_records]
-    if len(set(ordinals)) != len(ordinals):
-        raise EventDetailIntegrityError("path records repeat a draw ordinal")
-    path_ids = [str(record.path_instance_id) for record in path_records]
-    if len(set(path_ids)) != len(path_ids):
-        raise EventDetailIntegrityError("path records repeat a path instance id")
-    ordered = sorted(
-        zip(path_records, walk_results, strict=True), key=lambda pair: int(pair[0].draw_ordinal)
-    )
     block_size = int(budget.path_block_size)
     partitions: list[dict[str, Any]] = []
     records: list[ProducedSidecar] = []
-    id_indexes: list[np.ndarray] = []
     columns = _empty_columns()
     cumulative = 0
+    rows_seen = 0
+    paths_seen = 0
+    last_ordinal: int | None = None
     current_block: int | None = None
 
     def _flush(block_id: int) -> None:
@@ -457,7 +601,6 @@ def build_account_event_detail(
         duplicate = _first_duplicate(columns["event_id"])
         if duplicate is not None:
             raise EventDetailIntegrityError(f"duplicate event id {duplicate[:12]}…")
-        id_indexes.append(_event_id_index(columns["event_id"]))
         table = pa.Table.from_pydict(columns, schema=EVENT_DETAIL_SCHEMA)
         name = partition_sidecar_name(block_id)
         path = directory / name
@@ -490,32 +633,65 @@ def build_account_event_detail(
         for values in columns.values():
             values.clear()
 
-    for record, result in ordered:
-        block_id = int(record.draw_ordinal) // block_size
+    for record, result in stream:
+        ordinal = int(record.draw_ordinal)
+        if last_ordinal is not None and ordinal <= last_ordinal:
+            raise EventDetailIntegrityError(
+                "walk pairs are not in strictly increasing draw-ordinal order "
+                f"({ordinal} after {last_ordinal})"
+            )
+        last_ordinal = ordinal
+        paths_seen += 1
+        if paths_seen > declared_paths:
+            raise EventDetailIntegrityError(
+                f"declared path_count {declared_paths} exceeded while streaming"
+            )
+        block_id = ordinal // block_size
         if current_block is not None and block_id != current_block and columns["event_id"]:
             _flush(current_block)
         current_block = block_id
-        _append_path(
+        rows_seen += _append_path(
             columns, record, result, clock_policy_id=clock_policy_id, block_size=block_size
         )
+        if rows_seen > budget.max_event_detail_rows:
+            raise EventDetailBudgetError(
+                f"event detail streaming row overrun: {rows_seen} rows exceed the registered "
+                f"budget of {budget.max_event_detail_rows} ({budget.budget_id}) at path block "
+                f"{block_id}; refusing before publication"
+            )
     if current_block is not None and columns["event_id"]:
         _flush(current_block)
-    if len(id_indexes) > 1:
-        _assert_unique(np.concatenate(id_indexes), scope="across path blocks")
+    if rows_seen != declared_rows:
+        raise EventDetailIntegrityError(
+            f"declared total_rows {declared_rows} disagrees with the streamed rows ({rows_seen})"
+        )
+    if paths_seen != declared_paths:
+        raise EventDetailIntegrityError(
+            f"declared path_count {declared_paths} disagrees with the streamed paths "
+            f"({paths_seen})"
+        )
+    uniqueness = _external_uniqueness_check(
+        directory,
+        [entry["name"] for entry in partitions],
+        expected_rows=rows_seen,
+        expected_paths=paths_seen,
+    )
     manifest = {
         "event_detail_persistence_policy_id": EVENT_DETAIL_POLICY_PARQUET_V2,
         "event_detail_storage_policy_id": EVENT_DETAIL_STORAGE_ZSTD_PARQUET_V2,
         "event_detail_schema_version": EVENT_DETAIL_SCHEMA_VERSION_V2,
         "schema_hash": EVENT_DETAIL_SCHEMA_HASH,
         "compression": "zstd",
+        "row_group_size": EVENT_DETAIL_ROW_GROUP_SIZE,
         "budget": budget.model_dump(mode="json"),
         "clock_policy_id": clock_policy_id,
         "event_order_policy_id": event_order_policy_id,
         "total_order": ["path_ordinal", "event_ordinal"],
         "event_type_precedence": dict(EVENT_TYPE_PRECEDENCE),
         "amount_field_by_event_type": dict(EVENT_AMOUNT_FIELD),
-        "path_count": int(len(ordered)),
-        "total_rows": int(total_rows),
+        "event_id_uniqueness": uniqueness,
+        "path_count": int(paths_seen),
+        "total_rows": int(rows_seen),
         "total_bytes": int(cumulative),
         "partitions": partitions,
     }
@@ -534,7 +710,7 @@ def build_account_event_detail(
         partitions=tuple(records),
         manifest_sidecar=manifest_sidecar,
         manifest=manifest,
-        total_rows=int(total_rows),
+        total_rows=int(rows_seen),
         total_bytes=int(cumulative),
         partition_count=len(partitions),
     )

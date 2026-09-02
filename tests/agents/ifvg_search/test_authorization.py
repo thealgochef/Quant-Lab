@@ -13,7 +13,15 @@ from alpha_lab.agents.data_infra.ifvg.search.authorization import (
     derive_authorization_requirements,
     validate_owner_authorization,
 )
+from alpha_lab.agents.data_infra.ifvg.search.store_namespace import (
+    initialize_test_namespace,
+)
+from alpha_lab.agents.data_infra.ifvg.search.supersession_chain import publish_supersession
 from alpha_lab.agents.data_infra.ifvg.study.computation_path import ComputationPath
+from tests.agents.ifvg_search.namespace_fixture import (
+    dummy_witness,
+    owner_authorization_bundle,
+)
 
 
 def _path(**overrides) -> ComputationPath:
@@ -178,7 +186,7 @@ def _ref(
     )
 
 
-def test_owner_authorization_fails_closed() -> None:
+def test_owner_authorization_fails_closed(tmp_path) -> None:
     envelope = derive_authorization_requirements(
         "full_authorized_development",
         _STRATEGY,
@@ -186,14 +194,20 @@ def test_owner_authorization_fails_closed() -> None:
         (),
         (),
     )
-    complete = OwnerAuthorizationBundle(
+    root = tmp_path / "store"
+    complete = owner_authorization_bundle(
+        root,
         requirement_set_id=envelope.requirement_set_id,
         decision_refs={key: _ref(key) for key in _keys(envelope)},
     )
     validate_owner_authorization(complete, envelope, as_of_utc="2026-08-18T00:00:00Z")
+    validate_owner_authorization(
+        complete, envelope, as_of_utc="2026-08-18T00:00:00Z", store_root=root
+    )
 
     # absent evidence
-    partial = OwnerAuthorizationBundle(
+    partial = owner_authorization_bundle(
+        root,
         requirement_set_id=envelope.requirement_set_id,
         decision_refs={"1:first_search_axes": _ref("1:first_search_axes")},
     )
@@ -210,7 +224,8 @@ def test_owner_authorization_fails_closed() -> None:
         )
 
     # stale (not yet effective)
-    future = OwnerAuthorizationBundle(
+    future = owner_authorization_bundle(
+        root,
         requirement_set_id=envelope.requirement_set_id,
         decision_refs={
             key: _ref(key, effective="2027-01-01T00:00:00Z") for key in _keys(envelope)
@@ -231,3 +246,81 @@ def test_owner_authorization_fails_closed() -> None:
 def test_synthetic_marker_is_typed() -> None:
     marker = SyntheticAuthorizationMarker()
     assert marker.kind == "synthetic_test_authorization_v1"
+
+
+def test_bundle_binds_the_namespace_and_the_current_supersession_head(tmp_path) -> None:
+    """HARDENING-BACKEND §4.1 / §4.2: the bundle names the store's verified
+    namespace and the head it was signed against; an unmarked store, another
+    namespace, a rolled-back (shorter) head and a moved (different) head all
+    refuse; the witness must name the bundle's own namespace."""
+
+    envelope = derive_authorization_requirements(
+        "full_authorized_development", _STRATEGY, _path(full_strategy_replay=True), (), ()
+    )
+    refs = {key: _ref(key) for key in _keys(envelope)}
+    root = tmp_path / "store"
+    bundle = owner_authorization_bundle(
+        root, requirement_set_id=envelope.requirement_set_id, decision_refs=refs
+    )
+    validate_owner_authorization(bundle, envelope, as_of_utc="2026-08-18T00:00:00Z",
+                                 store_root=root)
+    # a witness of another namespace cannot be paired with the bundle
+    with pytest.raises(ValueError, match="another store namespace"):
+        OwnerAuthorizationBundle(
+            requirement_set_id=envelope.requirement_set_id,
+            decision_refs=refs,
+            store_namespace_id="1" * 64,
+            supersession_head_witness=dummy_witness("2" * 64),
+        )
+    # an unmarked store
+    with pytest.raises(AuthorizationError) as unmarked:
+        validate_owner_authorization(
+            bundle, envelope, as_of_utc="2026-08-18T00:00:00Z", store_root=tmp_path / "none"
+        )
+    assert unmarked.value.reason == "store_namespace_missing"
+    # another (marked) store
+    other = tmp_path / "other"
+    initialize_test_namespace(other)
+    with pytest.raises(AuthorizationError) as foreign:
+        validate_owner_authorization(
+            bundle, envelope, as_of_utc="2026-08-18T00:00:00Z", store_root=other
+        )
+    assert foreign.value.reason == "store_namespace_identity_mismatch"
+    # the head moved after signing: a different current head refuses
+    publish_supersession(
+        root,
+        superseded_decision_id="a" * 64,
+        replacement_decision_id="b" * 64,
+        reason="moved after signing",
+        effective_at="2026-08-18T01:00:00+00:00",
+        owner_evidence_ref="b" * 64,
+    )
+    with pytest.raises(AuthorizationError) as moved:
+        validate_owner_authorization(
+            bundle, envelope, as_of_utc="2026-08-18T00:00:00Z", store_root=root
+        )
+    assert moved.value.reason == "supersession_head_witness_mismatch"
+    # re-signed against the current head: accepted; a rollback then refuses
+    resigned = owner_authorization_bundle(
+        root, requirement_set_id=envelope.requirement_set_id, decision_refs=refs
+    )
+    validate_owner_authorization(resigned, envelope, as_of_utc="2026-08-18T00:00:00Z",
+                                 store_root=root)
+    from alpha_lab.agents.data_infra.ifvg.search.store_namespace import (
+        load_store_namespace,
+        write_supersession_head_atomic,
+    )
+
+    namespace = load_store_namespace(root)
+    write_supersession_head_atomic(
+        root,
+        store_namespace_id=namespace.store_namespace_id,
+        record_id=None,
+        line_count=0,
+        head_sha256=namespace.payload.authority_genesis_id,
+    )
+    with pytest.raises(AuthorizationError) as rolled_back:
+        validate_owner_authorization(
+            resigned, envelope, as_of_utc="2026-08-18T00:00:00Z", store_root=root
+        )
+    assert rolled_back.value.reason == "supersession_head_shorter_than_witness"

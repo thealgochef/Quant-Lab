@@ -318,8 +318,11 @@ def validate_charter(
     axis_registry=AXIS_VALUE_REGISTRY_V1,
     axis_specs=SEARCH_AXIS_REGISTRY_V1,
     generated_profile_capability=None,
+    store_root=None,
 ) -> None:
-    """Fail-closed charter validation (§3.1)."""
+    """Fail-closed charter validation (§3.1). With ``store_root`` (the
+    publication seam) a real bundle's namespace and supersession-head witness
+    are verified against the store too (HARDENING-BACKEND §4.1 / §4.2)."""
 
     from ..study.computation_path import ComputationPath  # noqa: PLC0415
     from .identities import GeneratedProfileCapability, is_generated_profile_id  # noqa: PLC0415
@@ -431,6 +434,7 @@ def validate_charter(
             requirement_set,
             as_of_utc=as_of_utc,
             superseded_artifact_ids=superseded_artifact_ids,
+            store_root=store_root,
         )
     except AuthorizationError as error:
         raise CharterValidationError(str(error)) from error
@@ -496,27 +500,47 @@ def _example_charter_payload() -> SearchCharterPayload:
 
 
 def save_charter(root, envelope: SearchCharterEnvelope):
-    """Namespace-confined charter publication (P0-4).
+    """Namespace-confined charter publication (P0-4; HARDENING-BACKEND §4.1).
 
-    A synthetic-authorization charter may never enter the research namespace:
-    any root whose path contains a ``search`` store segment that is not
-    ``search_test`` is refused for synthetic charters. Test/tmp namespaces
-    (no ``search`` segment at all) and ``search_test`` roots are lawful.
+    Authority is the store's VERIFIED semantic namespace: a synthetic-marker
+    charter is refused in a ``research`` namespace (and, as defense in depth,
+    under a research-looking path); an unmarked tmp/test root admits it (a
+    charter is a frozen request, never a launch). A REAL charter (an owner
+    authorization bundle) requires a marked store whose namespace id the
+    bundle names and whose CURRENT supersession head equals the bundle's
+    witness (`assert_authorization_bound_to_store`).
     """
 
     from pathlib import Path  # noqa: PLC0415
 
+    from .authorization import assert_authorization_bound_to_store  # noqa: PLC0415
     from .store import save_or_reuse_envelope  # noqa: PLC0415
+    from .store_namespace import (  # noqa: PLC0415
+        StoreNamespaceError,
+        namespace_class_of,
+        path_looks_like_research_store,
+    )
 
-    parts = Path(root).resolve().parts
-    research_namespace = "search" in parts and "search_test" not in parts
-    if research_namespace and isinstance(
-        envelope.payload.owner_authorization, SyntheticAuthorizationMarker
-    ):
-        raise PermissionError(
-            "synthetic-authorization charters are confined to test namespaces; "
-            "the research store refuses them (P0-4)"
-        )
+    authorization = envelope.payload.owner_authorization
+    if isinstance(authorization, SyntheticAuthorizationMarker):
+        try:
+            namespace_class = namespace_class_of(Path(root))
+        except StoreNamespaceError as error:
+            raise PermissionError(f"charter publication refused: {error}") from error
+        if namespace_class == "research" or path_looks_like_research_store(Path(root)):
+            raise PermissionError(
+                "synthetic-authorization charters are confined to test namespaces; "
+                "the research store refuses them (P0-4)"
+            )
+    else:
+        try:
+            assert_authorization_bound_to_store(
+                Path(root),
+                store_namespace_id=authorization.store_namespace_id,
+                supersession_head_witness=authorization.supersession_head_witness,
+            )
+        except AuthorizationError as error:
+            raise PermissionError(f"charter publication refused: {error}") from error
     return save_or_reuse_envelope(root, "charters", envelope)
 
 

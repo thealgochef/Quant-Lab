@@ -77,7 +77,12 @@ def _fold_assignments(run, fold_fit):
 
 @pytest.fixture(scope="module")
 def persisted(tmp_path_factory):
+    from alpha_lab.agents.data_infra.ifvg.search.store_namespace import (
+        initialize_test_namespace,
+    )
+
     root = tmp_path_factory.mktemp("regime_store")
+    initialize_test_namespace(root)  # HARDENING-BACKEND §4.1: explicit test namespace
     fixture, _folds, protocol, run = _run_fixture(600)
     persist_regime_protocol(root, protocol)
     fold_fit = run.fold_fits[0]

@@ -87,11 +87,19 @@ def test_real_charter_requires_owner_evidence_for_its_path() -> None:
         OwnerAuthorizationBundle,
     )
     from alpha_lab.agents.data_infra.ifvg.search.charter import DatePolicy
+    from alpha_lab.agents.data_infra.ifvg.search.store_namespace import (
+        SupersessionHeadWitness,
+    )
 
     real = _example_charter_payload().model_copy(
         update={
             "owner_authorization": OwnerAuthorizationBundle(
-                requirement_set_id="1" * 64, decision_refs={}
+                requirement_set_id="1" * 64,
+                decision_refs={},
+                store_namespace_id="e" * 64,
+                supersession_head_witness=SupersessionHeadWitness(
+                    store_namespace_id="e" * 64, line_count=0, head_sha256="f" * 64
+                ),
             ),
             "date_policy": DatePolicy(
                 replay_dates=(*FROZEN_WARMUP_DATES, "2026-01-13"),

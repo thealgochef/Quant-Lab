@@ -21,9 +21,6 @@ from alpha_lab.agents.data_infra.ifvg.config import IfvgCaptureConfig
 from alpha_lab.agents.data_infra.ifvg.data_access import allowlist_sha256
 from alpha_lab.agents.data_infra.ifvg.development_access import VerificationReplayPolicy
 from alpha_lab.agents.data_infra.ifvg.profiles import resolve_profile_config
-from alpha_lab.agents.data_infra.ifvg.search.authorization import (
-    VerificationAuthorizationRef,
-)
 from alpha_lab.agents.data_infra.ifvg.search.child_replay import (
     ArtifactProvenanceReadAdapter,
     ChildAuditNeutralityReport,
@@ -40,7 +37,6 @@ from alpha_lab.agents.data_infra.ifvg.search.store import (
     has_envelope,
 )
 from alpha_lab.agents.data_infra.ifvg.search.verification import (
-    VERIFICATION_POLICY_ID,
     VerificationRunEnvelope,
     VerificationRunPayload,
     VerificationRunValidationError,
@@ -85,14 +81,15 @@ def slice_env(tmp_path, synthetic_chain):
         seed,
     )
     allowlist_hash = allowlist_sha256(_ALLOWLIST)
-    authorization = VerificationAuthorizationRef(
-        verification_policy_id=VERIFICATION_POLICY_ID,
+    from tests.agents.ifvg_search.namespace_fixture import verification_authorization_ref
+
+    # HARDENING-BACKEND §4.1: the verification store is an explicit test
+    # namespace and the authorization binds it + the current head
+    authorization = verification_authorization_ref(
+        store_root,
         approved_allowlist_hash=allowlist_hash,
         coverage_matrix_artifact_id="b" * 64,
         seed_snapshot_id=snapshot.seed_snapshot_id,
-        approved_by="owner",
-        approved_at="2026-08-18T00:00:00Z",
-        content_hash="d" * 64,
     )
     run = VerificationRunEnvelope.from_payload(
         VerificationRunPayload(

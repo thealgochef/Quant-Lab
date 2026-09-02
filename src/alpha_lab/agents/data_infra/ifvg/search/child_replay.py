@@ -594,7 +594,17 @@ def run_baseline_verification_slice(
         raise SeedSnapshotError(
             "baseline profile section hash does not match the verification run"
         )
-    # 1. Fail-before-path: authorization, allowlist, seed, coverage, pipeline.
+    # 1. The output namespace is the Literal search_test/v1 — bind the store
+    #    root to it under repo_root so no run can retarget the research store
+    #    (structural, before the authorization is even consulted).
+    canonical_store = (Path(repo_root) / SEARCH_TEST_STORE_ROOT).resolve()
+    if Path(store_root).resolve() != canonical_store:
+        raise VerificationRunValidationError(
+            "verification output namespace is fixed to search_test/v1; "
+            f"got store_root {Path(store_root).resolve()}"
+        )
+    # 2. Fail-before-path: authorization, allowlist, seed, coverage, pipeline,
+    #    and (HARDENING-BACKEND §4.1 / §4.2) the store namespace + head witness.
     validate_verification_run(
         run,
         expected_pipeline_semantic_id=pipeline_semantic_id,
@@ -602,18 +612,11 @@ def run_baseline_verification_slice(
         expected_baseline_section_config_hash=resolved.section_config_hash,
         expected_seed_snapshot_id=run.payload.seed_snapshot_id,
         authorization=authorization,
+        store_root=Path(store_root),
     )
     if not isinstance(authorization, VerificationAuthorizationRef):
         raise VerificationRunValidationError(
             "the real verification slice requires a VerificationAuthorizationRef"
-        )
-    # 2. The output namespace is the Literal search_test/v1 — bind the store
-    #    root to it under repo_root so no run can retarget the research store.
-    canonical_store = (Path(repo_root) / SEARCH_TEST_STORE_ROOT).resolve()
-    if Path(store_root).resolve() != canonical_store:
-        raise VerificationRunValidationError(
-            "verification output namespace is fixed to search_test/v1; "
-            f"got store_root {Path(store_root).resolve()}"
         )
     # 3. One canonical allowlist for the whole program (marker-enforced).
     from .verification import VerificationDataPolicy  # noqa: PLC0415

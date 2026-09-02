@@ -74,6 +74,32 @@ def _entry_from_args(args) -> str | None:
     return args.runner_entry
 
 
+def _refuse_unsupported_parallelism(max_workers: int) -> dict | None:
+    """HARDENING-BACKEND §4.6 (F-20): the V1 executor is sequential; a
+    ``--max-workers`` other than one is refused BEFORE any job directory,
+    subprocess, or store access exists (typed reason; never coerced)."""
+
+    from alpha_lab.agents.data_infra.ifvg.search.pipeline import (  # noqa: PLC0415
+        EXECUTION_MODE_V1,
+        SUPPORTED_CHILD_WORKERS,
+        UnsupportedWorkerParallelismError,
+        assert_supported_worker_parallelism,
+    )
+
+    try:
+        assert_supported_worker_parallelism(max_workers)
+    except UnsupportedWorkerParallelismError as error:
+        return {
+            "status": "refused",
+            "reason": error.reason,
+            "requested_workers": error.requested_workers,
+            "supported_child_workers": SUPPORTED_CHILD_WORKERS,
+            "execution_mode": EXECUTION_MODE_V1,
+            "detail": str(error),
+        }
+    return None
+
+
 def _worker(args) -> int:
     from alpha_lab.agents.data_infra.ifvg.search.charter import (  # noqa: PLC0415
         SearchCharterEnvelope,
@@ -89,6 +115,10 @@ def _worker(args) -> int:
     )
 
     pipeline_id = _validated_pipeline_id(args.pipeline_id)
+    refusal = _refuse_unsupported_parallelism(args.max_workers)
+    if refusal is not None:
+        print(json.dumps(refusal, sort_keys=True))
+        return 2
     store_root = Path(args.store_root)
     state_root = Path(args.state_root)
     entry = _entry_from_args(args)
@@ -167,7 +197,13 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="registered runner-entry key (the only form the UI passes)",
     )
-    parser.add_argument("--max-workers", type=int, default=1)
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=1,
+        help="operational worker limit; the V1 executor is sequential, so only 1 is "
+        "accepted (anything else is refused before job creation)",
+    )
     parser.add_argument("--retry-reason", default=None)
     args = parser.parse_args(argv)
 
@@ -223,7 +259,12 @@ def main(argv: list[str] | None = None) -> int:
         return _worker(args)
 
     # start / resume share one detached-launch path; idempotency lives in the
-    # runner (verified stage reuse), never in the shim.
+    # runner (verified stage reuse), never in the shim. §4.6: unsupported
+    # parallelism is refused here, BEFORE the job directory or the worker exist.
+    refusal = _refuse_unsupported_parallelism(args.max_workers)
+    if refusal is not None:
+        print(json.dumps(refusal, sort_keys=True))
+        return 2
     job_dir = state_root / pipeline_id
     job_dir.mkdir(parents=True, exist_ok=True)
     command = [

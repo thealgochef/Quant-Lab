@@ -164,6 +164,12 @@ def test_worker_runs_the_registered_synthetic_pipeline(tmp_path, capsys) -> None
     statuses = payload["stage_statuses"]
     assert statuses["11_run_frozen_model_gated_replays"] == StageStatus.BLOCKED.value
     assert statuses["15_verify_and_publish"] == StageStatus.COMPLETED.value
+    # HARDENING-BACKEND section 4.6: the attempt receipt states the sequential truth
+    from alpha_lab.agents.data_infra.ifvg.search.pipeline import read_pipeline_state
+
+    state = read_pipeline_state(fixture["state_root"], fixture["semantic"].pipeline_semantic_id)
+    assert state["attempts"][-1]["effective_workers"] == 1
+    assert state["attempts"][-1]["execution_mode"] == "sequential_children_v1"
     # publication gates via the CLI fallback, then verification-scope
     # activation refusal — the verify-then-activate boundary end to end
     gates_code = job.main(
@@ -227,3 +233,66 @@ def test_start_spawns_exactly_one_detached_worker(tmp_path, capsys) -> None:
     assert command[0] == sys.executable
     assert command[2] == "worker"
     assert "--runner-entry-key" in command
+
+
+# ── HARDENING-BACKEND section 4.6 (F-20): sequential-execution truth at the shim ──
+
+
+@pytest.mark.parametrize("command", ["start", "resume"])
+def test_start_and_resume_refuse_parallelism_before_spawning(tmp_path, capsys, command) -> None:
+    """A ``--max-workers`` above one is refused BEFORE any subprocess spawn or
+    job directory creation, with the typed reason and exit code 2."""
+
+    spawned: list[list[str]] = []
+    original = subprocess.Popen
+    try:
+        subprocess.Popen = lambda cmd, **kwargs: spawned.append(list(cmd))  # type: ignore[assignment]
+        code = job.main(
+            [
+                command,
+                "--pipeline-id",
+                "f" * 64,
+                "--state-root",
+                str(tmp_path / "state"),
+                "--runner-entry-key",
+                "pipeline_synthetic_fixture_v1",
+                "--max-workers",
+                "2",
+            ]
+        )
+    finally:
+        subprocess.Popen = original  # type: ignore[assignment]
+    assert code == 2
+    refusal = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert refusal["status"] == "refused"
+    assert refusal["reason"] == "unsupported_worker_parallelism_v1"
+    assert refusal["requested_workers"] == 2
+    assert refusal["supported_child_workers"] == 1
+    assert spawned == []
+    assert not (tmp_path / "state").exists()
+
+
+def test_worker_refuses_parallelism_before_any_store_access(tmp_path, capsys) -> None:
+    """The worker refuses ``--max-workers 2`` before loading the spec or the
+    charter: a nonexistent store root is never touched."""
+
+    code = job.main(
+        [
+            "worker",
+            "--pipeline-id",
+            "f" * 64,
+            "--store-root",
+            str(tmp_path / "no-such-store"),
+            "--state-root",
+            str(tmp_path / "state"),
+            "--runner-entry-key",
+            "pipeline_synthetic_fixture_v1",
+            "--max-workers",
+            "2",
+        ]
+    )
+    assert code == 2
+    refusal = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert refusal["reason"] == "unsupported_worker_parallelism_v1"
+    assert not (tmp_path / "no-such-store").exists()
+    assert not (tmp_path / "state").exists()
