@@ -58,7 +58,7 @@ from ..search.store import (
 from .comparison_rows import (
     COMPARISON_ROW_IDENTITY_KEY,
     default_fold_schedule_id,
-    label_content_hash,
+    label_artifact_content_id,
 )
 from .fold_set_artifact import fold_set_id as _legacy_fold_set_id
 from .model_protocols import (
@@ -131,7 +131,14 @@ class ControlledFeatureStudyPayload(FrozenContract):
     ladder_protocol_ids: tuple[str, ...] = (LOGISTIC_PROTOCOL_ID,)
     row_identity_key: Literal["comparison_row_id"] = COMPARISON_ROW_IDENTITY_KEY
     fold_schedule_id: str | None = Field(default=None, pattern=SHA256_PATTERN)
-    label_artifact_id: str | None = Field(default=None, pattern=SHA256_PATTERN)
+    #: R6.1-FIX §3.6 (F-08): the EXACT label artifact identity — mandatory,
+    #: 64-hex; ``label_identity_source`` says whether it is the persisted
+    #: label artifact (S07's policy-bearing id over every consumed column) or
+    #: the unpersisted helper's full consumed-column content hash. Only the
+    #: former may be saved, compared as an immutable study, or promoted.
+    label_artifact_id: str = Field(pattern=SHA256_PATTERN)
+    #: REQUIRED (review RA-05): never a self-declared default
+    label_identity_source: Literal["label_artifact", "content_hash_unpersisted"]
     baseline_rung_summaries: ImmutableMap[str, ImmutableMap[str, _Scalar]] = ImmutableMap()
     challenger_rung_summaries: ImmutableMap[str, ImmutableMap[str, _Scalar]] = ImmutableMap()
     paired_brier_deltas: ImmutableMap[str, ImmutableMap[str, _Scalar] | None] = ImmutableMap()
@@ -329,7 +336,15 @@ def run_controlled_mbp1_study(
     challenger_arm_view = replace(view, frame=challenger_frame)
     arm_protocols = DEFAULT_BUNDLE_LADDER_PROTOCOLS
     schedule_id = fold_schedule_id or default_fold_schedule_id(folds, labeled_candidates)
-    label_id = label_artifact_id or label_content_hash(labeled_candidates)
+    # R6.1-FIX §3.6: a persisting caller passes S07's exact label artifact id;
+    # a helper run without one carries the FULL consumed-column content hash
+    # and is stamped unpersistable
+    if label_artifact_id is not None:
+        label_id = str(label_artifact_id)
+        label_identity_source = "label_artifact"
+    else:
+        label_id = label_artifact_content_id(None, labeled_candidates)
+        label_identity_source = "content_hash_unpersisted"
     baseline_run = run_supervised_ladder(
         baseline_arm_view,
         labeled_candidates,
@@ -340,6 +355,7 @@ def run_controlled_mbp1_study(
         calibration_policy_id=calibration_policy_id,
         fold_schedule_id=schedule_id,
         label_artifact_id=label_id,
+        label_identity_source=label_identity_source,
     )
     challenger_run = run_supervised_ladder(
         challenger_arm_view,
@@ -352,6 +368,7 @@ def run_controlled_mbp1_study(
         calibration_policy_id=calibration_policy_id,
         fold_schedule_id=schedule_id,
         label_artifact_id=label_id,
+        label_identity_source=label_identity_source,
     )
     assert_cross_arm_identity(baseline_run, challenger_run, protocols=arm_protocols)
 
@@ -394,6 +411,7 @@ def run_controlled_mbp1_study(
         ladder_protocol_ids=tuple(arm_protocols),
         fold_schedule_id=schedule_id,
         label_artifact_id=label_id,
+        label_identity_source=label_identity_source,
         baseline_rung_summaries=ImmutableMap(
             {
                 protocol_id: ImmutableMap(_summary(baseline_run, protocol_id))
@@ -443,6 +461,15 @@ def run_controlled_mbp1_study(
 
 
 def save_controlled_feature_study(root: Path, run: ControlledFeatureStudyRun) -> tuple:
+    """Persist ONLY a study bound to the exact label artifact (R6.1-FIX §3.6):
+    an unpersisted helper run (``content_hash_unpersisted``) is refused."""
+
+    if run.envelope.payload.label_identity_source != "label_artifact":
+        raise PermissionError(
+            "a controlled feature study whose label identity is content_hash_unpersisted "
+            "cannot be saved, compared as an immutable study, or promoted; pass the exact "
+            "persisted label artifact id (S07) to run_controlled_mbp1_study"
+        )
     return save_or_reuse_envelope(
         Path(root),
         CONTROLLED_STUDY_STORE,
@@ -492,6 +519,8 @@ def _example_controlled_study_payload() -> ControlledFeatureStudyPayload:
         baseline_summary={},
         challenger_summary={},
         paired_brier_delta=None,
+        label_artifact_id="3" * 64,
+        label_identity_source="label_artifact",
     )
 
 

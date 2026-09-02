@@ -81,6 +81,9 @@ def run_supervised_substeps(context) -> tuple[list[str], dict[str, Any], str]:
     fold_feature_envelope, fold_feature_frame = build_regime_fold_features(
         protocol=execution.protocol,
         regime_run=execution.run,
+        # R6.1-FIX (§3.2, F-03): the VERIFIED per-fit assignment evidence the
+        # executor exact-loaded from the store — never the in-memory run frame
+        fit_assignments=execution.verified_fit_assignments,
         candidate_fold_set=regime["candidate_fold_set"],
         candidate_folds=context.folds,
         regime_fold_set=regime["regime_fold_set"],

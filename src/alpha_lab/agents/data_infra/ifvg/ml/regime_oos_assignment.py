@@ -31,8 +31,16 @@ no nearest-time fallback):
    ``fold_index`` wins); fold features consult the candidate's OWN partition
    in fold k from fit k only. None → ``coverage_gap``.
 
-Every candidate is preserved with its typed reason; missing columns,
-duplicate candidate ids, and unparseable as-of instants are refused.
+Every candidate is preserved with its typed reason (R6.1-FIX §3.3: a
+candidate whose stage anchor is null is ``candidate_as_of_missing``);
+missing columns, duplicate candidate ids, and unparseable NON-null as-of
+instants are refused.
+
+R6.1-FIX (§3.1, F-01/F-02): the artifact is built ONLY from
+:class:`~.regime_store.VerifiedFitAssignments` — the per-fit assignment
+sidecars as verified-loaded from the store — and its identity binds every
+fit's sidecar SHA-256 + schema hash (``regime_fit_assignment_refs``) and a
+consulted-source hash over EVERY value that can change the output.
 """
 
 from __future__ import annotations
@@ -45,6 +53,7 @@ from typing import Any, ClassVar, Literal
 import numpy as np
 import pandas as pd
 import pyarrow as pa
+import pyarrow.ipc
 from pydantic import Field, model_validator
 from strategy_core.constants import IFVG_DOC_SESSION_SCHEME
 from strategy_core.decisions.sessions import classify_session
@@ -68,7 +77,12 @@ from ..search.identities import (
     register_identity_pair,
 )
 from ..search.store import load_sidecar_bytes, load_verified_envelope, save_or_reuse_envelope
-from .regime_contracts import ObservationGranularity, RegimeProtocolEnvelope
+from .regime_contracts import (
+    FitAssignmentRef,
+    ObservationGranularity,
+    RegimeProtocolEnvelope,
+    validate_assignment_rows,
+)
 
 __all__ = [
     "REGIME_OOS_ASSIGNMENT_STORE",
@@ -76,14 +90,17 @@ __all__ = [
     "OOS_ASSIGNMENT_FORMULA_VERSION",
     "OOS_ASSIGNMENT_COLUMNS",
     "OOS_ASSIGNMENT_SCHEMA",
+    "OOS_ASSIGNMENT_SCHEMA_HASH",
     "STAGE_AS_OF_COLUMNS",
     "CANDIDATE_AS_OF_SOURCE_REF_PATTERN",
+    "CANDIDATE_AS_OF_MISSING_REASON",
     "PanelAssignmentContext",
     "RegimeOosAssignmentPayload",
     "RegimeOosAssignmentEnvelope",
     "candidate_as_of_frame",
     "assign_panel_regimes_to_candidates",
     "candidate_fold_oos_assignment",
+    "consulted_assignment_frame",
     "consulted_assignments_hash",
     "candidate_as_of_source_hash",
     "build_regime_oos_assignment_artifact",
@@ -95,7 +112,9 @@ __all__ = [
 
 REGIME_OOS_ASSIGNMENT_STORE = "regime_oos_assignments"
 OOS_ASSIGNMENT_SIDECAR = "regime_oos_assignments.arrow"
-OOS_ASSIGNMENT_FORMULA_VERSION = "regime_oos_assignment_v1"
+OOS_ASSIGNMENT_FORMULA_VERSION = "regime_oos_assignment_v2"
+#: R6.1-FIX §3.3: the typed reason of a candidate whose stage anchor is null.
+CANDIDATE_AS_OF_MISSING_REASON = "candidate_as_of_missing"
 
 #: Availability stage → the candidate row's as-of anchor column (the same
 #: anchor semantics the MBP-1 stage windows use: ``STAGE_ANCHOR_COLUMNS``).
@@ -166,29 +185,56 @@ class PanelAssignmentContext(FrozenContract):
 class RegimeOosAssignmentPayload(FrozenContract):
     resolved_regime_protocol_id: str = Field(pattern=SHA256_PATTERN)
     observation_granularity: ObservationGranularity
+    #: the DERIVED projection of ``regime_fit_assignment_refs`` (kept for
+    #: consumers; validated to equal the refs' ordered ids)
     regime_fit_ids: tuple[str, ...]
+    #: R6.1-FIX §3.1: the exact per-fit assignment evidence consumed —
+    #: canonically sorted by fit id; each ref binds the fit's manifest-verified
+    #: sidecar SHA-256 and the enforced schema hash
+    regime_fit_assignment_refs: tuple[FitAssignmentRef, ...]
     regime_fold_set_id: str = Field(pattern=SHA256_PATTERN)
     fold_schedule_id: str = Field(pattern=SHA256_PATTERN)
     assignment_source: Literal["candidate_fold_oos", "panel_pit"]
     panel_context: PanelAssignmentContext | None
+    #: RA-07: the availability stage whose anchor column supplied the hashed
+    #: candidate as-of instants (the panel grain's context names the same
+    #: stage; the candidate grain records it here, so the same output bytes
+    #: under another stage never share an identity)
+    candidate_as_of_stage: AvailabilityStage
     candidate_as_of_source_hash: str = Field(pattern=SHA256_PATTERN)
     candidate_as_of_source_ref: str = Field(pattern=CANDIDATE_AS_OF_SOURCE_REF_PATTERN)
     consulted_assignments_hash: str = Field(pattern=SHA256_PATTERN)
     candidate_count: int = Field(ge=0)
+    #: the protocol's fixed ``k`` — the row invariants check every valid row's
+    #: distance vector against it on build and on every verified load
+    resolved_cluster_count: int = Field(ge=2)
     assignment_schema_hash: str = Field(pattern=SHA256_PATTERN)
-    formula_version: Literal["regime_oos_assignment_v1"] = OOS_ASSIGNMENT_FORMULA_VERSION
+    formula_version: Literal["regime_oos_assignment_v2"] = OOS_ASSIGNMENT_FORMULA_VERSION
 
     @model_validator(mode="after")
     def _coherent(self):
-        if tuple(sorted(self.regime_fit_ids)) != tuple(self.regime_fit_ids):
-            raise ValueError("regime_fit_ids must be sorted (order-free identity)")
-        if len(set(self.regime_fit_ids)) != len(self.regime_fit_ids):
-            raise ValueError("regime_fit_ids must not repeat")
+        refs = self.regime_fit_assignment_refs
+        ordered = tuple(sorted(refs, key=lambda ref: ref.regime_fit_id))
+        if tuple(refs) != ordered:
+            raise ValueError("regime_fit_assignment_refs must be sorted by fit id")
+        if len({ref.regime_fit_id for ref in refs}) != len(refs):
+            raise ValueError("regime_fit_assignment_refs must not repeat a fit")
+        if tuple(self.regime_fit_ids) != tuple(ref.regime_fit_id for ref in refs):
+            raise ValueError(
+                "regime_fit_ids must be exactly the ordered projection of "
+                "regime_fit_assignment_refs"
+            )
         panel = self.observation_granularity is ObservationGranularity.CONTEXT_BAR_PANEL
         if panel != (self.assignment_source == "panel_pit"):
             raise ValueError("panel grain ⇔ panel_pit assignment source")
         if panel != (self.panel_context is not None):
             raise ValueError("panel context is required exactly for the panel grain")
+        if self.panel_context is not None and (
+            self.panel_context.candidate_as_of_stage is not self.candidate_as_of_stage
+        ):
+            raise ValueError(
+                "candidate_as_of_stage must equal the panel context's candidate_as_of_stage"
+            )
         return self
 
 
@@ -222,11 +268,21 @@ def candidate_as_of_frame(frame: pd.DataFrame, *, stage: AvailabilityStage) -> p
     )
 
 
-def _as_of_ns(values: pd.Series) -> np.ndarray:
-    stamps = pd.to_datetime(values, utc=True, errors="coerce")
-    if stamps.isna().any():
+def _as_of_ns(values: pd.Series) -> tuple[np.ndarray, np.ndarray]:
+    """``(instants_ns, missing_mask)``: a NULL anchor is a typed fact (R6.1-FIX
+    §3.3 — the candidate is preserved as ``candidate_as_of_missing``); a
+    NON-null value that does not parse as a UTC timestamp is a hard error."""
+
+    raw = pd.Series(values).reset_index(drop=True)
+    missing = raw.isna().to_numpy() | (raw.astype(object).map(lambda v: v == "")).to_numpy()
+    stamps = pd.to_datetime(raw, utc=True, errors="coerce")
+    unparseable = stamps.isna().to_numpy() & ~missing
+    if unparseable.any():
         raise ValueError("candidate as-of instants must all parse as UTC timestamps")
-    return stamps.astype("int64").to_numpy()
+    filled = stamps.fillna(pd.Timestamp(0, tz="UTC"))
+    instants = filled.astype("int64").to_numpy(copy=True)
+    instants[missing] = 0
+    return instants, missing
 
 
 def _trading_day_of(ns: int) -> str | None:
@@ -264,6 +320,8 @@ _REQUIRED_PANEL_COLUMNS = (
     "cbp_valid",
     "cbp_missing_reason",
 )
+#: R6.1-FIX §3.4: every VALUE column is required — there is no optional-column
+#: fallback for the distance vector, the assigned distance or the margin.
 _REQUIRED_ASSIGNMENT_COLUMNS = (
     "row_id",
     "fold_index",
@@ -271,7 +329,11 @@ _REQUIRED_ASSIGNMENT_COLUMNS = (
     "regime_fit_id",
     "fold_local_cluster_id",
     "canonical_reporting_cluster_id",
+    "distances",
+    "assigned_distance",
+    "assignment_margin",
     "valid",
+    "missing_reason",
 )
 
 
@@ -296,7 +358,7 @@ def assign_panel_regimes_to_candidates(
     if missing:
         raise ValueError(f"panel frame lacks required columns: {missing}")
     missing = sorted(set(_REQUIRED_ASSIGNMENT_COLUMNS) - set(panel_assignments.columns))
-    if missing and len(panel_assignments):
+    if missing:
         raise ValueError(f"panel assignments lack required columns: {missing}")
     if not {"candidate_id", "as_of_ts_utc"} <= set(candidate_as_of.columns):
         raise ValueError("candidate as-of frame requires candidate_id and as_of_ts_utc")
@@ -344,9 +406,16 @@ def assign_panel_regimes_to_candidates(
                     raise ValueError("panel assignments repeat a (row, fold, partition) row")
                 lookup[(str(key[0]), int(key[1]), str(key[2]))] = group.iloc[0]
 
-    as_of_ns = _as_of_ns(candidate_as_of["as_of_ts_utc"])
+    as_of_ns, as_of_missing = _as_of_ns(candidate_as_of["as_of_ts_utc"])
     out: list[dict] = []
-    for candidate_id, instant in zip(candidate_ids, as_of_ns, strict=True):
+    for candidate_id, instant, anchor_missing in zip(
+        candidate_ids, as_of_ns, as_of_missing, strict=True
+    ):
+        if anchor_missing:
+            # R6.1-FIX §3.3: the candidate never reached (or lacks) the stage
+            # anchor — preserved with the typed reason, never refused
+            out.append(_typed(candidate_id, CANDIDATE_AS_OF_MISSING_REASON))
+            continue
         day = _trading_day_of(int(instant))
         eligible = by_day.get(day) if day is not None else None
         if eligible is None:
@@ -375,7 +444,11 @@ def assign_panel_regimes_to_candidates(
             out.append(_typed(candidate_id, "coverage_gap", bar_id=bar_id, elapsed=elapsed))
             continue
         canonical = chosen["canonical_reporting_cluster_id"]
-        distances = chosen["distances"] if "distances" in chosen.index else None
+        distances = chosen["distances"]
+        if distances is None or (isinstance(distances, float) and np.isnan(distances)):
+            raise ValueError(
+                f"panel assignment row {bar_id} is valid but carries no distance vector"
+            )
         out.append(
             {
                 "candidate_id": candidate_id,
@@ -387,19 +460,9 @@ def assign_panel_regimes_to_candidates(
                 "canonical_reporting_cluster_id": (
                     int(canonical) if canonical is not None and pd.notna(canonical) else None
                 ),
-                "distances": (
-                    [float(v) for v in distances] if distances is not None else None
-                ),
-                "assigned_distance": (
-                    float(chosen["assigned_distance"])
-                    if "assigned_distance" in chosen.index
-                    else np.nan
-                ),
-                "assignment_margin": (
-                    float(chosen["assignment_margin"])
-                    if "assignment_margin" in chosen.index
-                    else np.nan
-                ),
+                "distances": [float(v) for v in distances],
+                "assigned_distance": float(chosen["assigned_distance"]),
+                "assignment_margin": float(chosen["assignment_margin"]),
                 "valid": True,
                 "missing_reason": None,
                 "elapsed_seconds_since_bar_close": float(elapsed),
@@ -425,6 +488,9 @@ def candidate_fold_oos_assignment(
     if len(set(ids)) != len(ids):
         raise ValueError("candidate ids must be unique")
     rows: dict[str, dict] = {}
+    missing = sorted(set(_REQUIRED_ASSIGNMENT_COLUMNS) - set(assignments.columns))
+    if missing:
+        raise ValueError(f"fit assignments lack required columns: {missing}")
     if len(assignments):
         oos = assignments[
             (assignments["partition"].astype(str) == "test")
@@ -434,7 +500,11 @@ def candidate_fold_oos_assignment(
         if duplicated.any():
             raise ValueError("a candidate carries more than one OOS assignment row")
         for row in oos.itertuples():
-            distances = getattr(row, "distances", None)
+            distances = row.distances
+            if distances is None or (isinstance(distances, float) and np.isnan(distances)):
+                raise ValueError(
+                    f"fit assignment row {row.row_id} is valid but carries no distance vector"
+                )
             rows[str(row.row_id)] = {
                 "candidate_id": str(row.row_id),
                 "regime_fit_id": str(row.regime_fit_id),
@@ -448,7 +518,7 @@ def candidate_fold_oos_assignment(
                     and pd.notna(row.canonical_reporting_cluster_id)
                     else None
                 ),
-                "distances": [float(v) for v in distances] if distances is not None else None,
+                "distances": [float(v) for v in distances],
                 "assigned_distance": float(row.assigned_distance),
                 "assignment_margin": float(row.assignment_margin),
                 "valid": True,
@@ -465,32 +535,107 @@ def candidate_fold_oos_assignment(
 # ── identity binding ─────────────────────────────────────────────────────────
 
 
+def _null_or(value: Any, cast):
+    if value is None:
+        return None
+    if isinstance(value, float | np.floating) and np.isnan(value):
+        return None
+    try:
+        if pd.isna(value) is True:
+            return None
+    except (TypeError, ValueError):
+        pass
+    return cast(value)
+
+
 def consulted_assignments_hash(assignments: pd.DataFrame) -> str:
-    """Order-invariant hash of the assignment rows that were consulted
-    (recomputable from the persisted fits' assignment frames)."""
+    """Order-invariant hash of the assignment rows that were consulted —
+    recomputable from the persisted fits' assignment frames. R6.1-FIX §3.1:
+    it covers EVERY consulted value that can change the output: fit id, row
+    id, fold, partition, local cluster id, canonical reporting id, the full
+    distance vector, the assigned distance, the margin, validity and the
+    missing reason."""
 
     if assignments.empty:
-        return canonical_contract_sha256({"rows": []})
+        return canonical_contract_sha256({"rows": [], "formula": OOS_ASSIGNMENT_FORMULA_VERSION})
+    required = (
+        "regime_fit_id",
+        "row_id",
+        "fold_index",
+        "partition",
+        "fold_local_cluster_id",
+        "canonical_reporting_cluster_id",
+        "distances",
+        "assigned_distance",
+        "assignment_margin",
+        "valid",
+        "missing_reason",
+    )
+    missing = sorted(set(required) - set(assignments.columns))
+    if missing:
+        raise ValueError(f"consulted assignments lack value columns: {missing}")
     keys = sorted(
         (
             str(row.regime_fit_id),
             str(row.row_id),
             int(row.fold_index),
             str(row.partition),
-            None if row.fold_local_cluster_id is None or pd.isna(row.fold_local_cluster_id)
-            else int(row.fold_local_cluster_id),
+            _null_or(row.fold_local_cluster_id, int),
+            _null_or(row.canonical_reporting_cluster_id, int),
+            (
+                None
+                if row.distances is None
+                or (isinstance(row.distances, float) and np.isnan(row.distances))
+                else [float(v) for v in row.distances]
+            ),
+            _null_or(row.assigned_distance, float),
+            _null_or(row.assignment_margin, float),
             bool(row.valid),
+            _null_or(row.missing_reason, str),
         )
         for row in assignments.itertuples()
     )
-    return canonical_contract_sha256({"rows": keys})
+    return canonical_contract_sha256({"rows": keys, "formula": OOS_ASSIGNMENT_FORMULA_VERSION})
+
+
+def consulted_assignment_frame(verified_fit_assignments: Mapping[int, Any]) -> pd.DataFrame:
+    """The concatenation (fold order) of VERIFIED per-fit assignment frames —
+    the only lawful ``assignments`` input of the descriptive builders."""
+
+    from .regime_store import VerifiedFitAssignments  # noqa: PLC0415
+
+    frames = []
+    for fold_index in sorted(verified_fit_assignments):
+        verified = verified_fit_assignments[fold_index]
+        if not isinstance(verified, VerifiedFitAssignments):
+            raise TypeError(
+                "descriptive assignments are built from VerifiedFitAssignments only "
+                f"(fold {fold_index} supplied {type(verified).__name__}; an in-memory run "
+                "frame is not evidence)"
+            )
+        frames.append(verified.frame)
+    if not frames:
+        return pd.DataFrame(columns=list(_REQUIRED_ASSIGNMENT_COLUMNS))
+    return pd.concat(frames, ignore_index=True)
 
 
 def candidate_as_of_source_hash(candidate_as_of: pd.DataFrame) -> str:
-    stamps = pd.to_datetime(candidate_as_of["as_of_ts_utc"], utc=True, errors="coerce")
+    """Order-invariant hash of the ``(candidate_id, as_of)`` pairs. RA-07: the
+    instants are parsed by the SAME rule as the assignment (`_as_of_ns`) — an
+    unparseable NON-null anchor is a hard error, never silently a null; a
+    true null is represented deterministically as ``None``."""
+
+    if not {"candidate_id", "as_of_ts_utc"} <= set(candidate_as_of.columns):
+        raise ValueError("candidate as-of frame requires candidate_id and as_of_ts_utc")
+    instants, missing = _as_of_ns(candidate_as_of["as_of_ts_utc"])
     pairs = sorted(
-        (str(candidate_id), None if pd.isna(stamp) else stamp.isoformat())
-        for candidate_id, stamp in zip(candidate_as_of["candidate_id"], stamps, strict=True)
+        (
+            str(candidate_id),
+            None if anchor_missing else pd.Timestamp(int(instant), tz="UTC").isoformat(),
+        )
+        for candidate_id, instant, anchor_missing in zip(
+            candidate_as_of["candidate_id"], instants, missing, strict=True
+        )
     )
     return canonical_contract_sha256({"candidate_as_of": pairs})
 
@@ -514,18 +659,34 @@ def build_regime_oos_assignment_artifact(
     frame: pd.DataFrame,
     *,
     protocol: RegimeProtocolEnvelope,
-    regime_fit_ids: tuple[str, ...],
+    verified_fit_assignments: Mapping[int, Any],
     regime_fold_set_id: str,
     fold_schedule_id: str,
-    consulted_assignments: pd.DataFrame,
     candidate_as_of: pd.DataFrame,
     candidate_as_of_source_ref: str,
+    candidate_as_of_stage: AvailabilityStage,
     panel_context: PanelAssignmentContext | None = None,
 ) -> tuple[RegimeOosAssignmentEnvelope, bytes]:
+    """The descriptive artifact over ``frame`` (built by the candidate-grain
+    or panel-grain rule from the SAME verified frames). ``verified_fit_assignments``
+    (fold index → ``VerifiedFitAssignments``) is the ONLY lawful assignment
+    source (R6.1-FIX §3.1): the refs, the fit-id projection and the consulted
+    hash all derive from it; every row is validated against the descriptive
+    invariants (§3.4) before the identity is minted. ``candidate_as_of_stage``
+    (RA-07) names the anchor column the hashed as-of instants came from and
+    must equal the panel context's stage on the panel grain."""
+
+    from .regime_store import VerifiedFitAssignments  # noqa: PLC0415
+
     payload = protocol.payload
     panel = payload.observation_granularity is ObservationGranularity.CONTEXT_BAR_PANEL
+    stage = AvailabilityStage(candidate_as_of_stage)
     if panel and panel_context is None:
         raise ValueError("the panel grain requires the panel assignment context")
+    if panel and panel_context is not None and panel_context.candidate_as_of_stage is not stage:
+        raise ValueError(
+            "candidate_as_of_stage must equal the panel context's candidate_as_of_stage"
+        )
     if panel and panel_context is not None:
         if panel_context.context_bar_panel_artifact_id != payload.panel_source_artifact_id:
             raise ValueError("panel context names a different context_bar_panel_artifact_id")
@@ -535,19 +696,46 @@ def build_regime_oos_assignment_artifact(
             raise ValueError("panel context names a different panel interval")
     if frame["candidate_id"].astype(str).duplicated().any():
         raise ValueError("assignment frame repeats a candidate")
+    for fold_index, verified in verified_fit_assignments.items():
+        if not isinstance(verified, VerifiedFitAssignments):
+            raise TypeError(
+                "build_regime_oos_assignment_artifact consumes VerifiedFitAssignments only "
+                f"(fold {fold_index} supplied {type(verified).__name__})"
+            )
+        if verified.envelope.payload.resolved_regime_protocol_id != (
+            protocol.resolved_regime_protocol_id
+        ):
+            raise ValueError(
+                f"fit {verified.regime_fit_id[:12]}… belongs to another regime protocol"
+            )
+    refs = tuple(
+        sorted(
+            (verified.ref for verified in verified_fit_assignments.values()),
+            key=lambda ref: ref.regime_fit_id,
+        )
+    )
+    consulted = consulted_assignment_frame(verified_fit_assignments)
+    validate_assignment_rows(
+        _frame_for_schema(frame),
+        cluster_count=int(payload.resolved_cluster_count),
+        kind="descriptive",
+    )
     table_bytes = assignment_table_bytes(frame)
     envelope_payload = RegimeOosAssignmentPayload(
         resolved_regime_protocol_id=protocol.resolved_regime_protocol_id,
         observation_granularity=payload.observation_granularity,
-        regime_fit_ids=tuple(sorted(set(str(v) for v in regime_fit_ids))),
+        regime_fit_ids=tuple(ref.regime_fit_id for ref in refs),
+        regime_fit_assignment_refs=refs,
         regime_fold_set_id=regime_fold_set_id,
         fold_schedule_id=fold_schedule_id,
         assignment_source="panel_pit" if panel else "candidate_fold_oos",
         panel_context=panel_context if panel else None,
+        candidate_as_of_stage=stage,
         candidate_as_of_source_hash=candidate_as_of_source_hash(candidate_as_of),
         candidate_as_of_source_ref=candidate_as_of_source_ref,
-        consulted_assignments_hash=consulted_assignments_hash(consulted_assignments),
+        consulted_assignments_hash=consulted_assignments_hash(consulted),
         candidate_count=int(len(frame)),
+        resolved_cluster_count=int(payload.resolved_cluster_count),
         assignment_schema_hash=OOS_ASSIGNMENT_SCHEMA_HASH,
     )
     envelope = RegimeOosAssignmentEnvelope.from_payload(
@@ -589,6 +777,17 @@ def load_regime_oos_assignment_frame(
     frame = frame_from_arrow_bytes(data)
     if len(frame) != envelope.payload.candidate_count:
         raise ValueError("stored assignment table row count disagrees with the payload")
+    if arrow_schema_hash(pa.ipc.open_file(pa.BufferReader(data)).schema) != (
+        envelope.payload.assignment_schema_hash
+    ):
+        raise ValueError("stored assignment table schema disagrees with the payload")
+    frame["distances"] = frame["distances"].map(
+        lambda v: None if v is None else [float(x) for x in v]
+    )
+    # R6.1-FIX §3.4: the descriptive invariants hold on every verified load
+    validate_assignment_rows(
+        frame, cluster_count=int(envelope.payload.resolved_cluster_count), kind="descriptive"
+    )
     return frame
 
 
@@ -606,14 +805,23 @@ def _example_payload() -> RegimeOosAssignmentPayload:
         resolved_regime_protocol_id="a" * 64,
         observation_granularity=ObservationGranularity.CANDIDATE_STAGE_ROW,
         regime_fit_ids=("b" * 64,),
+        regime_fit_assignment_refs=(
+            FitAssignmentRef(
+                regime_fit_id="b" * 64,
+                assignments_sidecar_sha256="2" * 64,
+                assignment_schema_hash="3" * 64,
+            ),
+        ),
         regime_fold_set_id="c" * 64,
         fold_schedule_id="d" * 64,
         assignment_source="candidate_fold_oos",
         panel_context=None,
+        candidate_as_of_stage=AvailabilityStage.ENTRY_DECISION,
         candidate_as_of_source_hash="e" * 64,
         candidate_as_of_source_ref="bundle_feature_view:" + "f" * 64,
         consulted_assignments_hash="1" * 64,
         candidate_count=0,
+        resolved_cluster_count=3,
         assignment_schema_hash=OOS_ASSIGNMENT_SCHEMA_HASH,
     )
 

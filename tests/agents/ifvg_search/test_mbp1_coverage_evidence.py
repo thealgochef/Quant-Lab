@@ -78,6 +78,19 @@ from tests.agents.ifvg_search.mbp1_fixture import (
 )
 
 
+def _coverage(evidence, **kwargs):
+    """``compute_partition_coverage`` with the certified partition-content
+    refs of the evidence's compilation report (R6.1-FIX §3.9, F-10C: a
+    positive claim requires EQUALITY with the complete partition content
+    refs — the artifact builder always passes them; these unit tests exercise
+    the interval arithmetic under the same rule)."""
+
+    report = getattr(evidence, "completeness_report", None)
+    refs = tuple(report.payload.verified_partition_refs) if report is not None else None
+    kwargs.setdefault("partition_content_refs", refs)
+    return compute_partition_coverage(evidence, **kwargs)
+
+
 def _partition(envelope, index: int = 0) -> Mbp1PartitionCoverage:
     return envelope.payload.ordered_partitions[index]
 
@@ -189,7 +202,7 @@ def test_maybe_bad_book_without_documented_recovery_fails_closed() -> None:
     assert interval.end_ts == scope.partition_expected_end_ts
     assert interval.recovery_boundary_kind is Mbp1RecoveryBoundaryKind.PARTITION_END_FAIL_CLOSED
     assert interval.evidence_kind is Mbp1CoverageEvidenceKind.VENDOR_FLAG_MAYBE_BAD_BOOK
-    computation = compute_partition_coverage(
+    computation = _coverage(
         evidence, trading_day=FIXTURE_DAY, flag_intervals=intervals
     )
     assert computation.open_uncertainty_to_partition_end is True
@@ -235,7 +248,7 @@ def test_maybe_bad_book_without_documented_recovery_fails_closed() -> None:
     assert open_interval.recovery_boundary_kind is (
         Mbp1RecoveryBoundaryKind.PARTITION_END_FAIL_CLOSED
     )
-    beyond_computation = compute_partition_coverage(
+    beyond_computation = _coverage(
         beyond, trading_day=FIXTURE_DAY, flag_intervals=(open_interval,)
     )
     assert beyond_computation.open_uncertainty_to_partition_end is True
@@ -316,7 +329,7 @@ def test_overlapping_declared_gap_intervals_are_merged_once() -> None:
     (flag_interval,) = flag_intervals
     assert (flag_interval.start_ts, flag_interval.end_ts) == (ns_at(100), ns_at(180))
     assert flag_interval.start_kind is Mbp1UncertaintyStartKind.MANIFEST_DECLARED_START
-    computation = compute_partition_coverage(
+    computation = _coverage(
         evidence, trading_day=FIXTURE_DAY, flag_intervals=flag_intervals
     )
     # three overlapping intervals from two evidence kinds → ONE merged
@@ -351,7 +364,7 @@ def test_dataset_condition_available_without_partition_evidence_is_unknown() -> 
     available_only = synthetic_partition_evidence(
         scope, with_manifest=False, dataset_condition="available"
     )
-    computation = compute_partition_coverage(available_only, trading_day=FIXTURE_DAY)
+    computation = _coverage(available_only, trading_day=FIXTURE_DAY)
     assert computation.completeness_status is Mbp1CompletenessStatus.COMPLETENESS_UNKNOWN
     assert computation.dataset_condition_status.value == "vendor_no_known_dataset_issue"
     # the day's windows are typed coverage_evidence_unavailable
@@ -367,7 +380,7 @@ def test_dataset_condition_available_without_partition_evidence_is_unknown() -> 
     assert set(evidence["missing_reason"]) == {"coverage_evidence_unavailable"}
     # `degraded` downgrades the WHOLE day even with a compiled positive claim
     degraded = synthetic_partition_evidence(scope, dataset_condition="degraded")
-    downgraded = compute_partition_coverage(degraded, trading_day=FIXTURE_DAY)
+    downgraded = _coverage(degraded, trading_day=FIXTURE_DAY)
     assert downgraded.completeness_status is Mbp1CompletenessStatus.COMPLETENESS_UNKNOWN
     assert downgraded.dataset_condition_status.value == "vendor_dataset_degraded"
     # the five vocabulary states stay distinct
@@ -410,7 +423,7 @@ def test_positive_completeness_only_from_the_verified_compiler() -> None:
         scope=scope, gap_manifest=manifest, provenance="synthetic_fixture"
     )
     assert (
-        compute_partition_coverage(evidence, trading_day=FIXTURE_DAY).completeness_status
+        _coverage(evidence, trading_day=FIXTURE_DAY).completeness_status
         is Mbp1CompletenessStatus.COMPLETENESS_UNKNOWN
     )
     # a bare positive assertion without the compiler's report id is unrepresentable
@@ -437,7 +450,7 @@ def test_positive_completeness_only_from_the_verified_compiler() -> None:
     unknown_evidence = Mbp1PartitionEvidence(
         scope=scope, gap_manifest=manifest, provenance="synthetic_fixture"
     )
-    unknown_computation = compute_partition_coverage(unknown_evidence, trading_day=FIXTURE_DAY)
+    unknown_computation = _coverage(unknown_evidence, trading_day=FIXTURE_DAY)
     assert unknown_computation.coverage_fraction == 0.0
     # review S3: a provenance label without a manifest is unrepresentable,
     # and a positive manifest without its compilation report is refused
@@ -532,7 +545,7 @@ def test_evidence_stores_round_trip_and_verified_load(tmp_path) -> None:
     assert evidence.gap_manifest.mbp1_partition_gap_manifest_id == (
         manifest.mbp1_partition_gap_manifest_id
     )
-    computation = compute_partition_coverage(evidence, trading_day=FIXTURE_DAY)
+    computation = _coverage(evidence, trading_day=FIXTURE_DAY)
     assert computation.completeness_status is Mbp1CompletenessStatus.DECLARED_GAPS
     assert load_mbp1_completeness_report(
         root, report.mbp1_completeness_compilation_report_id
@@ -590,8 +603,8 @@ def test_multi_utc_partition_denominators_and_channel_wide_bad_book_scope(tmp_pa
     content = canonical_content_sha256(default_day_events())
     evidence_a = synthetic_partition_evidence(scope_a, content_refs=(content,))
     evidence_b = synthetic_partition_evidence(scope_b, intervals=(gap_b,), content_refs=(content,))
-    comp_a = compute_partition_coverage(evidence_a, trading_day=FIXTURE_DAY)
-    comp_b = compute_partition_coverage(evidence_b, trading_day=FIXTURE_DAY)
+    comp_a = _coverage(evidence_a, trading_day=FIXTURE_DAY)
+    comp_b = _coverage(evidence_b, trading_day=FIXTURE_DAY)
     assert comp_a.physical_expected_span_ns == split - session_start  # clipped head
     assert comp_b.physical_expected_span_ns == session_end - split
     assert comp_a.coverage_fraction == 1.0
@@ -833,17 +846,17 @@ def test_scope_mismatch_empty_span_and_head_tail_handling() -> None:
     empty = synthetic_partition_evidence(
         synthetic_scope(FIXTURE_DAY, start_ns=ns_at(10), end_ns=ns_at(10))
     )
-    computation = compute_partition_coverage(empty, trading_day=FIXTURE_DAY)
+    computation = _coverage(empty, trading_day=FIXTURE_DAY)
     assert computation.physical_expected_span_ns == 0
     assert computation.completeness_status is Mbp1CompletenessStatus.COMPLETENESS_UNKNOWN
     # head/tail gaps count only when DECLARED; undeclared silence is not a gap
     tail = synthetic_partition_evidence(
         scope, intervals=(declared_interval(ns_at(500), ns_at(700)),)
     )
-    tail_computation = compute_partition_coverage(tail, trading_day=FIXTURE_DAY)
+    tail_computation = _coverage(tail, trading_day=FIXTURE_DAY)
     assert tail_computation.union_gap_ns == ns_at(600) - ns_at(500)  # clipped tail
     silent = synthetic_partition_evidence(scope)
-    assert compute_partition_coverage(silent, trading_day=FIXTURE_DAY).coverage_fraction == 1.0
+    assert _coverage(silent, trading_day=FIXTURE_DAY).coverage_fraction == 1.0
     # a partition outside the authorized session span contributes nothing
     session_start, _session_end = authorized_session_span_ns(FIXTURE_DAY)
     outside = synthetic_partition_evidence(
@@ -853,7 +866,7 @@ def test_scope_mismatch_empty_span_and_head_tail_handling() -> None:
             end_ns=session_start - 3_600_000_000_000,
         )
     )
-    outside_computation = compute_partition_coverage(outside, trading_day=FIXTURE_DAY)
+    outside_computation = _coverage(outside, trading_day=FIXTURE_DAY)
     assert outside_computation.physical_expected_span_ns == 0
 
 

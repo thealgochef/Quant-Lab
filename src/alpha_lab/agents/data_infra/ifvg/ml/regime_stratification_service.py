@@ -3,10 +3,14 @@
 ``build_regime_stratified_reports`` reads PERSISTED artifacts only — the
 descriptive ``RegimeOosAssignmentArtifact``, the exact promotion decision /
 assessment / owner artifact (``resolve_report_gate``), the pooled frontier,
-and the account simulations — plus the executed-trade tables the pipeline
-already holds (bound into every report by their content hash and the
-child's ``core_replay_id``), and persists one immutable report per
-(class × subject). Every class is independent: a ``RegimeStatusRefusalError``
+and the account simulations — plus each child's executed-trade table,
+which the service VERIFIES against the persisted ``executed_trade_tables``
+artifact the caller names (exact load; the caller's frame must reproduce
+the artifact byte-for-byte after projection — adversarial RA-01) and binds
+into every report by the artifact id + its bytes hash beside the
+normalized-frame content hash and the child's ``core_replay_id``; it
+persists one immutable report per (class × subject). Every class is
+independent: a ``RegimeStatusRefusalError``
 is RECORDED per class and never raised; no fit, no model, no selection, no
 promotion happens here (test-enforced in the pipeline suite).
 
@@ -36,6 +40,12 @@ import pandas as pd
 import pyarrow as pa
 
 from ..features.arrow_tables import arrow_schema_hash
+from ..search.executed_trade_table import (
+    VerifiedExecutedTradeTable,
+    executed_trade_table_bytes,
+    load_executed_trade_table,
+    project_executed_trades,
+)
 from ..search.orchestrator import SearchFrontierEnvelope
 from ..search.store import load_sidecar_bytes, load_verified_envelope, save_or_reuse_envelope
 from .regime_assignment_sources import load_regime_oos_assignment_table
@@ -104,6 +114,12 @@ class ChildStratificationInputs:
     pooled_predictions: pd.DataFrame | None = None
     #: account_simulation_id -> (firm_label, simulation_mode)
     account_simulations: Mapping[str, tuple[str, str]] = field(default_factory=dict)
+    #: R6.1-FIX §3.7: the persisted executed-trade table artifact ``trades``
+    #: reproduces — the SERVICE verifies it (exact load; byte-for-byte after
+    #: projection; adversarial RA-01) and binds the artifact's id + bytes hash
+    #: into every report of this child; the loaded frame is then the only
+    #: frame the child's reports consume
+    executed_trade_table_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -257,6 +273,42 @@ def _verify_delivered(root: Path, comparison_class: RegimeStratificationClass, s
     return str(study_id)
 
 
+def _verified_child_tables(
+    root: Path, children: Mapping[str, ChildStratificationInputs]
+) -> dict[str, VerifiedExecutedTradeTable]:
+    """Adversarial RA-01: every child that names a persisted executed-trade
+    table is verified HERE — the seam that mints immutable reports — never
+    on the caller's say-so. The artifact is exact-loaded, it must belong to
+    the child's core replay, and the caller's frame must reproduce the
+    artifact byte-for-byte after projection (the frozen 42-column projection
+    drops scratch columns and sorts by ``trade_id``, so a reordered frame
+    reproduces; a different row set does not). The LOADED frame is then the
+    only frame the child's reports consume."""
+
+    verified: dict[str, VerifiedExecutedTradeTable] = {}
+    for core_replay_id, child in children.items():
+        table_id = child.executed_trade_table_id
+        if table_id is None:
+            continue
+        loaded = load_executed_trade_table(root, str(table_id))
+        if loaded.envelope.payload.core_replay_id != str(core_replay_id):
+            raise ValueError(
+                f"executed-trade table {str(table_id)[:12]}… belongs to another core replay "
+                f"({loaded.envelope.payload.core_replay_id[:12]}…), not to child "
+                f"{str(core_replay_id)[:12]}…; refusing"
+            )
+        if executed_trade_table_bytes(project_executed_trades(child.trades)) != (
+            loaded.table_bytes
+        ):
+            raise ValueError(
+                f"the executed-trade frame supplied for child {str(core_replay_id)[:12]}… does "
+                f"not reproduce the persisted executed-trade table {str(table_id)[:12]}… "
+                "byte-for-byte; refusing to stratify an unverified frame"
+            )
+        verified[str(core_replay_id)] = loaded
+    return verified
+
+
 def build_regime_stratified_reports(inputs: StratificationInputs) -> StratificationOutcome:
     """One report per (class × subject); refusals recorded per class."""
 
@@ -268,13 +320,29 @@ def build_regime_stratified_reports(inputs: StratificationInputs) -> Stratificat
     if payload.resolved_regime_protocol_id != inputs.protocol_id:
         raise ValueError("the OOS assignment artifact belongs to another regime protocol")
     fit_ids = tuple(payload.regime_fit_ids)
+    # R6.1-FIX (§3.1): the evidence ref pins the exact verified table bytes
+    # (post-materialization hash) and the enforced schema of the artifact —
+    # the loader above rehashed the frame against exactly these
     evidence = RegimeAssignmentEvidenceRef(
         observation_granularity=payload.observation_granularity,
         regime_fit_ids=fit_ids,
         regime_fold_set_id=payload.regime_fold_set_id,
         fold_schedule_id=payload.fold_schedule_id,
         regime_oos_assignment_id=assignment_envelope.regime_oos_assignment_id,
+        assignment_table_sha256=assignment_envelope.assignment_table_sha256,
+        assignment_schema_hash=payload.assignment_schema_hash,
     )
+    # RA-01: verified BEFORE any gate is resolved or any report is published
+    verified_tables = _verified_child_tables(root, inputs.children)
+
+    def _trades_of(core_replay_id: str, child: ChildStratificationInputs) -> pd.DataFrame:
+        loaded = verified_tables.get(str(core_replay_id))
+        return child.trades if loaded is None else loaded.frame
+
+    def _artifact_sha256(core_replay_id: str) -> str | None:
+        loaded = verified_tables.get(str(core_replay_id))
+        return None if loaded is None else loaded.envelope.executed_trade_table_sha256
+
     report_ids: list[str] = []
     refusals: dict[str, str] = {}
     delivered: dict[str, str] = {}
@@ -331,7 +399,7 @@ def build_regime_stratified_reports(inputs: StratificationInputs) -> Stratificat
             for core_replay_id in sorted(inputs.children):
                 child = inputs.children[core_replay_id]
                 result = build_cohort_descriptive_body(
-                    trades=child.trades,
+                    trades=_trades_of(core_replay_id, child),
                     assignment=assignment,
                     core_replay_id=core_replay_id,
                     protocol_id=inputs.protocol_id,
@@ -341,14 +409,19 @@ def build_regime_stratified_reports(inputs: StratificationInputs) -> Stratificat
                     tick_size=inputs.tick_size,
                     tp_r_multiple=inputs.tp_r_multiple,
                     pooled_predictions=child.pooled_predictions,
+                    executed_trade_table_id=child.executed_trade_table_id,
+                    executed_trade_table_artifact_sha256=_artifact_sha256(core_replay_id),
                 )
                 strategy_bodies[core_replay_id] = result.body
                 strategy_results[core_replay_id] = result
                 if wants_strategy:
+                    refs = [child.costed_evaluation_id, inputs.regime_oos_assignment_id]
+                    if child.executed_trade_table_id is not None:
+                        refs.append(child.executed_trade_table_id)
                     _publish(
                         RegimeStratificationClass.COHORT_DESCRIPTIVE,
                         resolved.gate,
-                        (child.costed_evaluation_id, inputs.regime_oos_assignment_id),
+                        tuple(refs),
                         result.body,
                         result.detail,
                     )
@@ -389,7 +462,7 @@ def build_regime_stratified_reports(inputs: StratificationInputs) -> Stratificat
                 trade_regimes = (
                     strategy_results[core_replay_id].trade_regimes
                     if core_replay_id in strategy_results
-                    else regime_for_trades(child.trades, assignment)
+                    else regime_for_trades(_trades_of(core_replay_id, child), assignment)
                 )
                 # the D15 summary is built (and budget-checked) BEFORE the
                 # report is published; a budget refusal propagates typed
@@ -403,10 +476,13 @@ def build_regime_stratified_reports(inputs: StratificationInputs) -> Stratificat
                     panel_assigner=inputs.panel_assigner,
                     budget=inputs.summary_budget,
                 )
+                prop_refs = [*child.account_simulations, inputs.regime_oos_assignment_id]
+                if child.executed_trade_table_id is not None:
+                    prop_refs.append(child.executed_trade_table_id)
                 _publish(
                     RegimeStratificationClass.STRATIFIED_PROP,
                     resolved.gate,
-                    (*child.account_simulations, inputs.regime_oos_assignment_id),
+                    tuple(prop_refs),
                     result.body,
                     result.detail,
                     summary=result,

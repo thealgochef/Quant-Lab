@@ -44,16 +44,23 @@ unregistered feature names are refused because their stage is unprovable.
 
 from __future__ import annotations
 
+import math
 import re
+from collections.abc import Iterable
 from datetime import datetime
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Any, ClassVar, Literal
 
+import numpy as np
+import pandas as pd
+import pyarrow as pa
 from pydantic import Field, model_validator
 
+from ..features.arrow_tables import arrow_schema_hash, frame_from_arrow_bytes, frame_to_arrow_bytes
 from ..features.context_bar_panel_contract import (
     PANEL_AS_OF_POLICY_REGISTRY,
+    PANEL_ASSIGNMENT_MISSING_REASONS,
     PANEL_INTERVALS_SECONDS_V1,
     PANEL_PROPOSED_STAMPS,
 )
@@ -79,6 +86,14 @@ __all__ = [
     "SIDECAR_REFERENCE_PATTERN",
     "RegimeAssignmentColumns",
     "REGIME_ASSIGNMENT_MISSING_REASONS",
+    "FIT_ASSIGNMENT_SCHEMA",
+    "FIT_ASSIGNMENT_SCHEMA_HASH",
+    "ASSIGNMENT_ROW_KINDS",
+    "AssignmentRowKind",
+    "FitAssignmentRef",
+    "fit_assignment_table_bytes",
+    "fit_assignment_frame_from_bytes",
+    "validate_assignment_rows",
     "RegimeCoverageReport",
     "FoldBootstrapStability",
     "TEMPORAL_ORDER_POLICY_CANDIDATE_EVENT_V2",
@@ -356,6 +371,352 @@ REGIME_ASSIGNMENT_MISSING_REASONS: tuple[str, ...] = (
     "below_confidence_floor",
     "coverage_gap",
 )
+
+#: R6.1-FIX (plan §3.4, F-05): the ENFORCED Arrow schema of the per-fit
+#: assignment sidecar (``regime_fits/<id>/assignments.arrow``) — exactly
+#: ``RegimeAssignmentColumns`` in order, pandas metadata stripped, so the
+#: persisted bytes depend on the values and this declared schema only (never
+#: on an inferred frame schema). Its hash is a semantic input of every
+#: artifact that binds a fit's assignment sidecar.
+FIT_ASSIGNMENT_SCHEMA: pa.Schema = pa.schema(
+    [
+        pa.field("resolved_regime_protocol_id", pa.large_string()),
+        pa.field("regime_fit_id", pa.large_string()),
+        pa.field("row_id", pa.large_string()),
+        pa.field("fold_index", pa.int64()),
+        pa.field("partition", pa.large_string()),
+        pa.field("observation_ts_utc", pa.large_string()),
+        pa.field("fold_local_cluster_id", pa.int64()),
+        pa.field("canonical_reporting_cluster_id", pa.int64()),
+        pa.field("distances", pa.list_(pa.float64())),
+        pa.field("assigned_distance", pa.float64()),
+        pa.field("assignment_margin", pa.float64()),
+        pa.field("assignment_entropy", pa.float64()),
+        pa.field("log_density", pa.float64()),
+        pa.field("outlier_score", pa.float64()),
+        pa.field("valid", pa.bool_()),
+        pa.field("missing_reason", pa.large_string()),
+    ]
+)
+if tuple(FIT_ASSIGNMENT_SCHEMA.names) != tuple(RegimeAssignmentColumns):
+    raise AssertionError("FIT_ASSIGNMENT_SCHEMA must cover RegimeAssignmentColumns in order")
+FIT_ASSIGNMENT_SCHEMA_HASH = arrow_schema_hash(FIT_ASSIGNMENT_SCHEMA)
+
+#: The three row kinds an assignment table may carry (plan §3.4):
+#: ``fit`` — the per-fit sidecar (train + test rows of ONE fit);
+#: ``descriptive`` — the OOS-assignment artifact (test rows only, canonical
+#: reporting id required); ``model_facing`` — the fold-local feature rows
+#: (train + test rows; the canonical id is reporting-only and may be null).
+ASSIGNMENT_ROW_KINDS: tuple[str, ...] = ("fit", "descriptive", "model_facing")
+AssignmentRowKind = Literal["fit", "descriptive", "model_facing"]
+
+_SHA256_RE_STRICT = re.compile(SHA256_PATTERN)
+#: RA-06: tolerance of the valid-row arithmetic (assigned distance / margin)
+_ASSIGNMENT_TOLERANCE = 1e-9
+_ASSIGNMENT_OUTPUT_COLUMNS: tuple[str, ...] = (
+    "fold_local_cluster_id",
+    "canonical_reporting_cluster_id",
+    "distances",
+    "assigned_distance",
+    "assignment_margin",
+)
+_ASSIGNMENT_ROW_INVARIANT_COLUMNS: tuple[str, ...] = (
+    "regime_fit_id",
+    "fold_index",
+    "partition",
+    "fold_local_cluster_id",
+    "canonical_reporting_cluster_id",
+    "distances",
+    "assigned_distance",
+    "assignment_margin",
+    "valid",
+    "missing_reason",
+)
+
+
+class FitAssignmentRef(FrozenContract):
+    """The exact persisted assignment evidence of ONE fit (plan §3.1): the
+    fit identity, the manifest-verified sidecar SHA-256, and the enforced
+    schema hash. Every artifact derived from a fit's assignments binds one
+    of these per fit, so the artifact id determines the bytes it consumed."""
+
+    regime_fit_id: str = Field(pattern=SHA256_PATTERN)
+    assignments_sidecar_sha256: str = Field(pattern=SHA256_PATTERN)
+    assignment_schema_hash: str = Field(pattern=SHA256_PATTERN)
+
+
+def _fit_assignment_frame_for_schema(frame: pd.DataFrame) -> pd.DataFrame:
+    missing = sorted(set(RegimeAssignmentColumns) - set(frame.columns))
+    if missing:
+        raise ValueError(f"assignment frame lacks the enforced schema columns: {missing}")
+    out = frame.loc[:, list(RegimeAssignmentColumns)].copy().reset_index(drop=True)
+    for column in ("fold_index",):
+        out[column] = pd.to_numeric(out[column], errors="raise").astype("int64")
+    for column in ("fold_local_cluster_id", "canonical_reporting_cluster_id"):
+        out[column] = pd.to_numeric(out[column], errors="raise").astype("Int64")
+    for column in (
+        "resolved_regime_protocol_id",
+        "regime_fit_id",
+        "row_id",
+        "partition",
+        "observation_ts_utc",
+        "missing_reason",
+    ):
+        out[column] = out[column].astype(object).where(out[column].notna(), None)
+        out[column] = out[column].map(lambda v: None if v is None else str(v))
+    for column in (
+        "assigned_distance",
+        "assignment_margin",
+        "assignment_entropy",
+        "log_density",
+        "outlier_score",
+    ):
+        out[column] = pd.to_numeric(out[column], errors="raise").astype(float)
+    out["distances"] = out["distances"].map(
+        lambda v: None if v is None or (isinstance(v, float) and math.isnan(v))
+        else [float(x) for x in v]
+    )
+    out["valid"] = out["valid"].astype(bool)
+    return out
+
+
+def fit_assignment_table_bytes(frame: pd.DataFrame) -> bytes:
+    """Arrow IPC bytes of a fit's assignment frame under the ENFORCED schema."""
+
+    return frame_to_arrow_bytes(_fit_assignment_frame_for_schema(frame), FIT_ASSIGNMENT_SCHEMA)
+
+
+def fit_assignment_frame_from_bytes(data: bytes) -> pd.DataFrame:
+    """The verified sidecar bytes → frame; the bytes must carry exactly the
+    enforced schema (a differently typed sidecar is refused)."""
+
+    from io import BytesIO  # noqa: PLC0415
+
+    import pyarrow.ipc  # noqa: PLC0415
+
+    with pyarrow.ipc.open_file(BytesIO(data)) as reader:
+        table = reader.read_all()
+    stored = arrow_schema_hash(table.schema)
+    if stored != FIT_ASSIGNMENT_SCHEMA_HASH:
+        raise ValueError(
+            "fit assignment sidecar does not carry the enforced FIT_ASSIGNMENT_SCHEMA "
+            f"(schema hash {stored[:12]}… != {FIT_ASSIGNMENT_SCHEMA_HASH[:12]}…)"
+        )
+    frame = frame_from_arrow_bytes(data)
+    frame["distances"] = frame["distances"].map(
+        lambda v: None if v is None else [float(x) for x in v]
+    )
+    return frame
+
+
+def _is_null(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, float | np.floating):
+        return bool(np.isnan(value))
+    try:
+        return bool(pd.isna(value)) if not isinstance(value, list | tuple | np.ndarray) else False
+    except (TypeError, ValueError):
+        return False
+
+
+def _finite(value: Any) -> bool:
+    try:
+        return bool(np.isfinite(float(value)))
+    except (TypeError, ValueError):
+        return False
+
+
+def validate_assignment_rows(
+    frame: pd.DataFrame,
+    *,
+    cluster_count: int,
+    kind: AssignmentRowKind = "descriptive",
+    registered_reasons: Iterable[str] | None = None,
+) -> None:
+    """Plan §3.4 cross-field invariants over an assignment table.
+
+    A ``valid=true`` row carries the COMPLETE assignment: a 64-hex fit id,
+    ``fold_index >= 0``, a lawful partition (``test`` only for the
+    descriptive kind; ``train``/``test`` otherwise), a local cluster id in
+    ``[0, k)``, a finite distance vector of length ``k``, finite assigned
+    distance and margin, ``missing_reason`` null, and — except for the
+    model-facing kind, whose canonical id is reporting-only — the canonical
+    reporting id; it is arithmetically self-consistent (adversarial RA-06):
+    ``assigned_distance == distances[fold_local_cluster_id] == min(distances)``
+    and ``assignment_margin == second_smallest − smallest >= 0`` (1e-9 —
+    exactly what the kernel produces and the PIT / candidate rules copy).
+    A ``valid=false`` row carries NO assignment output (every output column
+    null) and exactly one registered missing reason, but KEEPS its
+    reconciliation linkage: the key column (``row_id`` for the fit /
+    model-facing kinds, ``candidate_id`` for the descriptive kind) is never
+    null, and a non-null partition / fit id / fold index must be lawful. Any
+    other cross-field state is refused; there is no optional-column fallback.
+    """
+
+    if kind not in ASSIGNMENT_ROW_KINDS:
+        raise ValueError(f"unknown assignment row kind {kind!r}; lawful: {ASSIGNMENT_ROW_KINDS}")
+    k = int(cluster_count)
+    if k < 2:
+        raise ValueError("cluster_count must be at least 2")
+    # the linkage key: the descriptive table keys on ``candidate_id`` (the OOS
+    # schema; a fit-schema frame validated under the descriptive rule keys on
+    # its ``row_id``), the fit / model-facing kinds on ``row_id``
+    if kind == "descriptive":
+        key_column = "candidate_id" if "candidate_id" in frame.columns else "row_id"
+    else:
+        key_column = "row_id"
+    missing_columns = sorted(
+        (set(_ASSIGNMENT_ROW_INVARIANT_COLUMNS) | {key_column}) - set(frame.columns)
+    )
+    if missing_columns:
+        raise ValueError(f"assignment table lacks required columns: {missing_columns}")
+    if kind == "descriptive":
+        lawful_partitions = {"test"}
+        canonical_required = True
+        reasons = set(
+            registered_reasons
+            if registered_reasons is not None
+            else (
+                *REGIME_ASSIGNMENT_MISSING_REASONS,
+                *PANEL_ASSIGNMENT_MISSING_REASONS,
+                "no_oos_assignment",
+            )
+        )
+    elif kind == "fit":
+        lawful_partitions = {"train", "test"}
+        canonical_required = True
+        reasons = set(
+            registered_reasons
+            if registered_reasons is not None
+            else REGIME_ASSIGNMENT_MISSING_REASONS
+        )
+    else:
+        lawful_partitions = {"train", "test"}
+        canonical_required = False
+        reasons = set(
+            registered_reasons
+            if registered_reasons is not None
+            else (*REGIME_ASSIGNMENT_MISSING_REASONS, *PANEL_ASSIGNMENT_MISSING_REASONS)
+        )
+    for position, row in enumerate(frame.to_dict("records")):
+        valid = row.get("valid")
+        if _is_null(valid) or not isinstance(valid, bool | np.bool_):
+            raise ValueError(f"assignment row {position}: valid must be a boolean")
+        key = row.get(key_column)
+        if _is_null(key) or str(key) == "":
+            raise ValueError(
+                f"assignment row {position}: every row requires a non-null {key_column} "
+                "(reconciliation linkage)"
+            )
+        if bool(valid):
+            fit_id = row.get("regime_fit_id")
+            if _is_null(fit_id) or not _SHA256_RE_STRICT.fullmatch(str(fit_id)):
+                raise ValueError(f"assignment row {position}: a valid row requires a 64-hex fit id")
+            fold_index = row.get("fold_index")
+            if _is_null(fold_index) or int(fold_index) < 0:
+                raise ValueError(f"assignment row {position}: a valid row requires fold_index >= 0")
+            partition = row.get("partition")
+            if _is_null(partition) or str(partition) not in lawful_partitions:
+                raise ValueError(
+                    f"assignment row {position}: partition {partition!r} is not lawful for the "
+                    f"{kind} kind ({sorted(lawful_partitions)})"
+                )
+            local = row.get("fold_local_cluster_id")
+            if _is_null(local) or not 0 <= int(local) < k:
+                raise ValueError(
+                    f"assignment row {position}: a valid row requires a local cluster id in "
+                    f"[0, {k})"
+                )
+            canonical = row.get("canonical_reporting_cluster_id")
+            if canonical_required and _is_null(canonical):
+                raise ValueError(
+                    f"assignment row {position}: a valid {kind} row requires the canonical "
+                    "reporting cluster id"
+                )
+            if not _is_null(canonical) and int(canonical) < 0:
+                raise ValueError(f"assignment row {position}: canonical id must be non-negative")
+            distances = row.get("distances")
+            if distances is None or _is_null(distances):
+                raise ValueError(
+                    f"assignment row {position}: a valid row requires the complete distance vector"
+                )
+            values = list(distances)
+            if len(values) != k or not all(_finite(v) for v in values):
+                raise ValueError(
+                    f"assignment row {position}: a valid row requires {k} finite distances; "
+                    f"got {len(values)}"
+                )
+            if not _finite(row.get("assigned_distance")) or not _finite(
+                row.get("assignment_margin")
+            ):
+                raise ValueError(
+                    f"assignment row {position}: a valid row requires a finite assigned distance "
+                    "and margin"
+                )
+            # RA-06 (b): the assignment outputs are one arithmetic fact — the
+            # local id is the argmin, the assigned distance is that minimum,
+            # the margin is the runner-up minus the minimum
+            assigned = float(row.get("assigned_distance"))
+            margin = float(row.get("assignment_margin"))
+            ordered = sorted(float(v) for v in values)
+            if (
+                abs(float(values[int(local)]) - assigned) > _ASSIGNMENT_TOLERANCE
+                or abs(ordered[0] - assigned) > _ASSIGNMENT_TOLERANCE
+            ):
+                raise ValueError(
+                    f"assignment row {position}: assigned distance {assigned!r} is not the "
+                    f"distance of local cluster {int(local)} (== the minimum of the vector)"
+                )
+            expected_margin = ordered[1] - ordered[0]
+            if margin < -_ASSIGNMENT_TOLERANCE or abs(margin - expected_margin) > (
+                _ASSIGNMENT_TOLERANCE
+            ):
+                raise ValueError(
+                    f"assignment row {position}: assignment margin {margin!r} is not the "
+                    f"runner-up distance minus the minimum ({expected_margin!r} >= 0)"
+                )
+            if not _is_null(row.get("missing_reason")):
+                raise ValueError(
+                    f"assignment row {position}: a valid row carries no missing_reason"
+                )
+            continue
+        # RA-06 (a): an invalid row keeps its linkage — nulls are lawful (the
+        # candidate never reached a fit), non-null values must be lawful
+        partition = row.get("partition")
+        if not _is_null(partition) and str(partition) not in lawful_partitions:
+            raise ValueError(
+                f"assignment row {position}: an invalid row's partition {partition!r} is not "
+                f"lawful for the {kind} kind ({sorted(lawful_partitions)})"
+            )
+        fit_id = row.get("regime_fit_id")
+        if not _is_null(fit_id) and not _SHA256_RE_STRICT.fullmatch(str(fit_id)):
+            raise ValueError(
+                f"assignment row {position}: an invalid row's fit id must be 64-hex when present"
+            )
+        fold_index = row.get("fold_index")
+        if not _is_null(fold_index) and int(fold_index) < 0:
+            raise ValueError(
+                f"assignment row {position}: an invalid row's fold_index must be >= 0 when present"
+            )
+        for column in _ASSIGNMENT_OUTPUT_COLUMNS:
+            value = row.get(column)
+            if column == "distances":
+                if value is not None and not _is_null(value):
+                    raise ValueError(
+                        f"assignment row {position}: an invalid row may not carry {column}"
+                    )
+                continue
+            if not _is_null(value):
+                raise ValueError(
+                    f"assignment row {position}: an invalid row may not carry {column}"
+                )
+        reason = row.get("missing_reason")
+        if _is_null(reason) or str(reason) not in reasons:
+            raise ValueError(
+                f"assignment row {position}: an invalid row requires one registered missing "
+                f"reason; got {reason!r}"
+            )
 
 
 class RegimeCoverageReport(FrozenContract):

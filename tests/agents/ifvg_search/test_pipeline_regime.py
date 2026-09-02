@@ -303,6 +303,16 @@ def test_second_attempt_reuses_every_regime_stage(completed_candidate):
             assert status == StageStatus.BLOCKED.value
         else:
             assert status == StageStatus.REUSED.value, (stage, status)
+    # R6.1-FIX (review B-05): a run with stratified reporting re-derives every
+    # reused child exactly ONCE — verified reproduction against the persisted
+    # executed-trade table (projection bytes AND raw core-table hash); S12/S13
+    # consume the raw tables. Zero replay holds for non-stratified reuse
+    # (test_pipeline_run) — the deviation is recorded and the count asserted.
+    assert second_state["children"]
+    assert all(
+        row["state"] == "reused" and row["replay_invocations"] == 1
+        for row in second_state["children"]
+    )
     run = json.loads(
         load_sidecar_bytes(
             completed_candidate["store_root"],
@@ -759,11 +769,13 @@ def test_s08_derives_the_schedule_once_from_the_candidate_view_days(tmp_path):
 def test_s02_reused_children_are_adopted_only_by_verified_reproduction(
     completed_candidate, tmp_path
 ):
-    """Adversarial R6.1 S4: a reused child's re-derived tables become this
-    run's evidence ONLY when they reproduce the persisted costed evaluation
-    of THIS cost policy; a cost policy with no persisted evaluation leaves the
-    reproduction unverifiable — the tables are not adopted, the row says so,
-    and no evaluation is published from them."""
+    """Adversarial R6.1 S4 + R6.1-FIX §3.7: a reused child's re-derived
+    tables become this run's evidence ONLY when they reproduce persisted
+    evidence — the immutable executed-trade table byte-for-byte (every cost
+    policy), or, for a child without a persisted table, the persisted costed
+    evaluation of THIS cost policy; with neither, the reproduction is
+    unverifiable — the tables are not adopted, the row says so, and no
+    evaluation is published from them."""
 
     root = completed_candidate["store_root"]
     second = build_pipeline_fixture(
@@ -783,9 +795,10 @@ def test_s02_reused_children_are_adopted_only_by_verified_reproduction(
         assert row["state"] == "reused"
         assert row["replay_invocations"] == 1
         assert "verified reuse by reproduction" in row["explanation"]
-        assert "reproduced its persisted costed evaluation" in row["explanation"]
-    # a DIFFERENT cost policy over the same immutable replays: nothing persisted
-    # can verify the reproduction → the re-derived tables are NOT adopted
+        assert "reproduced its persisted executed-trade table byte-for-byte" in row["explanation"]
+    # a DIFFERENT cost policy over the same immutable replays: the persisted
+    # executed-trade table verifies the reproduction, so the tables ARE this
+    # run's evidence and the evaluation is published for the new cost policy
     charter = second["charter"]
     other_payload = charter.payload.model_copy(
         update={
@@ -813,10 +826,59 @@ def test_s02_reused_children_are_adopted_only_by_verified_reproduction(
     for row in rows:
         assert row["state"] == "reused"
         assert row["replay_invocations"] == 1
-        assert "reproduction unverifiable" in row["explanation"]
-        assert "not this run's evidence" in row["explanation"]
+        assert "reproduced its persisted executed-trade table byte-for-byte" in row["explanation"]
         evaluation = _child_evaluation_envelope(row["core_replay_id"], other_payload.cost_policy)
+        assert has_envelope(root, "costed_evaluations", evaluation.costed_evaluation_id)
+    # without a persisted table AND without an evaluation for this cost
+    # policy the reproduction is unverifiable: the tables are NOT adopted
+    import shutil
+
+    from alpha_lab.agents.data_infra.ifvg.search.executed_trade_table import (
+        EXECUTED_TRADE_TABLE_STORE,
+        executed_trade_table_id_for,
+    )
+    from alpha_lab.agents.data_infra.ifvg.search.store import envelope_destination
+
+    victim = rows[0]["core_replay_id"]
+    table_dir = envelope_destination(
+        root,
+        EXECUTED_TRADE_TABLE_STORE,
+        executed_trade_table_id_for(victim, record_schema_version=2),
+    )
+    parked = tmp_path / "parked_table"
+    shutil.move(str(table_dir), str(parked))
+    fourth_payload = charter.payload.model_copy(
+        update={
+            "cost_policy": charter.payload.cost_policy.model_copy(
+                update={"cost_points_round_turn": 1.75}
+            )
+        }
+    )
+    fourth_charter = SearchCharterEnvelope.from_payload(fourth_payload)
+    fourth = {
+        **second,
+        "charter": fourth_charter,
+        "semantic": PipelineSemanticIdentity.from_payload(
+            second["semantic"].payload.model_copy(
+                update={
+                    "search_charter_id": fourth_charter.search_id,
+                    "cost_policy_sha256": canonical_contract_sha256(fourth_payload.cost_policy),
+                }
+            )
+        ),
+        "state_root": tmp_path / "fourth_state",
+    }
+    try:
+        result = _run(fourth)
+        rows = read_pipeline_state(fourth["state_root"], result.pipeline_semantic_id)["children"]
+        by_id = {row["core_replay_id"]: row for row in rows}
+        assert by_id[victim]["state"] == "reused"
+        assert "reproduction unverifiable" in by_id[victim]["explanation"]
+        assert "not this run's evidence" in by_id[victim]["explanation"]
+        evaluation = _child_evaluation_envelope(victim, fourth_payload.cost_policy)
         assert not has_envelope(root, "costed_evaluations", evaluation.costed_evaluation_id)
+    finally:
+        shutil.move(str(parked), str(table_dir))
 
 
 def test_model_bearing_panel_run_executes_s09b_s09c_pit_on_the_frozen_authority(

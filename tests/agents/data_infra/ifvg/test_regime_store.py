@@ -194,7 +194,14 @@ def test_foreign_or_mismatched_assignment_frames_are_refused(persisted, tmp_path
     forged.loc[valid_index, "fold_local_cluster_id"] = (
         int(forged.loc[valid_index, "fold_local_cluster_id"]) + 1
     ) % 3
-    with pytest.raises(ValueError, match="do not match the fit's own estimator"):
+    # R6.1-FIX RA-06: a forged local id is already refused by the row
+    # arithmetic (the assigned distance is no longer the distance of that
+    # cluster) before the estimator reproduction check; either refusal is
+    # fail-closed and nothing is persisted
+    with pytest.raises(
+        ValueError,
+        match="do not match the fit's own estimator|is not the distance of local cluster",
+    ):
         persist_regime_fit(tmp_path, fold0, forged, observation_frame=fixture.view.frame)
     assert not (tmp_path / REGIME_FIT_STORE).exists()
 
@@ -252,10 +259,14 @@ def test_ui_loader_never_unpickles(persisted, monkeypatch):
 
     monkeypatch.setattr(joblib, "load", _forbidden)
     fit_id = persisted["fold_fit"].fit_envelope.regime_fit_id
-    envelope, artifact, assignments = load_regime_fit_assignments(persisted["root"], fit_id)
+    verified = load_regime_fit_assignments(persisted["root"], fit_id)
+    envelope, artifact, assignments = verified.envelope, verified.artifact, verified.frame
     assert envelope.regime_fit_id == fit_id
     assert artifact.regime_fit_id == fit_id
     assert (assignments["regime_fit_id"] == fit_id).all()
+    # R6.1-FIX §3.1: the verified evidence carries the exact sidecar + schema hashes
+    assert len(verified.assignments_sidecar_sha256) == 64
+    assert verified.ref.regime_fit_id == fit_id
 
 
 def _decision(run, **overrides) -> RegimePromotionDecisionEnvelope:

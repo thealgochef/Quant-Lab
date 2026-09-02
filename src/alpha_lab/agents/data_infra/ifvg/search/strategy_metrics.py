@@ -17,7 +17,27 @@ from ..trade_stats import _validate_and_normalize_executed_trades, compute_trade
 from .charter import PlannedVsRealizedEdge
 from .identities import FrozenContract, ImmutableMap
 
-__all__ = ["StrategyMetrics", "compute_strategy_metrics"]
+__all__ = ["StrategyMetrics", "compute_strategy_metrics", "per_trade_net_r"]
+
+
+def per_trade_net_r(
+    trades: pd.DataFrame, *, cost_points: float, tick_size: float = 0.25
+) -> pd.Series:
+    """The per-trade NET R vector (``(realized − cost) / risk``) of the
+    validated, normalized executed-trade table, indexed by ``trade_id`` —
+    exactly the vector ``compute_strategy_metrics`` averages into
+    ``net_expectancy_r`` (R6.1-FIX §3.5: the raw accounting basis of the
+    regime concentration facts)."""
+
+    ordered = _validate_and_normalize_executed_trades(trades, tick_size=tick_size)
+    if ordered.empty:
+        return pd.Series(dtype=float, name="net_r")
+    realized = pd.to_numeric(ordered["_realized_pts"], errors="coerce")
+    risk = pd.to_numeric(ordered["_risk_points"], errors="raise")
+    net = ((realized - float(cost_points)) / risk).astype(float)
+    net.index = ordered["trade_id"].astype(str).to_numpy()
+    net.name = "net_r"
+    return net
 
 
 class StrategyMetrics(FrozenContract):

@@ -234,6 +234,9 @@ PANEL_MISSING_REASONS: tuple[str, ...] = (
     "source_bar_incomplete",
 )
 #: Panel→candidate assignment typed reasons (owner plan-review correction 2).
+#: R6.1-FIX (plan §3.3, F-04): ``candidate_as_of_missing`` types a candidate
+#: whose stage anchor is null — the candidate is PRESERVED with this reason,
+#: never dropped and never a population refusal.
 PANEL_ASSIGNMENT_MISSING_REASONS: tuple[str, ...] = (
     "panel_warmup",
     "no_completed_panel_bar",
@@ -241,6 +244,7 @@ PANEL_ASSIGNMENT_MISSING_REASONS: tuple[str, ...] = (
     "panel_stale",
     "panel_source_bar_incomplete",
     "coverage_gap",
+    "candidate_as_of_missing",
 )
 PANEL_SESSION_STATES: tuple[str, ...] = ("asia", "london", "ny", "none", "closed")
 

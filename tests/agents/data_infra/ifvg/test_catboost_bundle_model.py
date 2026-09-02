@@ -47,7 +47,7 @@ from alpha_lab.agents.data_infra.ifvg.ml.comparison_rows import (
     candidate_fold_set_id,
     comparison_row_id,
     default_fold_schedule_id,
-    label_content_hash,
+    label_artifact_content_id,
 )
 from alpha_lab.agents.data_infra.ifvg.ml.controlled_feature_study import (
     assert_cross_arm_identity,
@@ -214,7 +214,8 @@ def test_comparison_row_ids_are_equal_across_baseline_and_challenger_bundles(
         candidate_fold_set_id=candidate_fold_set_id(folds),
         fold_index=int(sample["fold_index"]),
         candidate_id=str(sample["candidate_id"]),
-        label_artifact_id=label_content_hash(fixture.labeled_candidates),
+        # R6.1-FIX (review RA-05): the helper default is the FULL consumed-column hash
+        label_artifact_id=label_artifact_content_id(None, fixture.labeled_candidates),
     )
     # the paired delta keys on the comparison rows across the arms
     delta = paired_cell_delta_report(
@@ -314,7 +315,9 @@ def test_bundle_and_fold_local_features_reach_catboost_with_planted_signal(
     assert source["evidence_ref"] == "f" * 64
     assert _LOCAL_ID in source["block_declared_categorical_features"]
     assert source["fold_schedule_id"] == default_fold_schedule_id(folds, fixture.labeled_candidates)
-    assert source["label_artifact_id"] == label_content_hash(fixture.labeled_candidates)
+    assert source["label_artifact_id"] == label_artifact_content_id(
+        None, fixture.labeled_candidates
+    )
     assert baseline_ladder.ladder_id != planted_challenger.ladder_id
     expected_keys = {
         f"{PREVALENCE_PROTOCOL_ID}__vs__{LOGISTIC_PROTOCOL_ID}",

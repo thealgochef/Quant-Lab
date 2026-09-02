@@ -13,12 +13,19 @@ __all__ = [
     "FailureReason",
     "ChildFailureRecord",
     "ChildNeutralityError",
+    "PipelineWiringError",
     "sanitize_failure_message",
 ]
 
 
 class ChildNeutralityError(PermissionError):
     """A child's audit-neutrality proof FAILED — publication is blocked (§3.3)."""
+
+
+class PipelineWiringError(RuntimeError):
+    """A planned stage found its required seam unwired at run time (R6.1-FIX
+    §3.9, F-10A): a typed, sanitized runtime check that survives optimized
+    Python — never an ``assert``."""
 
 
 class FailureReason(StrEnum):

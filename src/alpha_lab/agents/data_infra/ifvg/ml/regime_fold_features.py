@@ -34,6 +34,7 @@ is always materialized so ``cohort_model`` can stratify on it.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar, Literal
@@ -104,7 +105,9 @@ __all__ = [
     "fold_feature_schema",
     "build_regime_fold_features",
     "fold_feature_table_bytes",
+    "validate_fold_feature_rows",
     "verify_regime_fold_feature_frame",
+    "verify_fold_fit_refs_against_store",
     "save_regime_fold_features",
     "load_regime_fold_features",
     "load_regime_fold_feature_frame",
@@ -253,8 +256,27 @@ def fold_feature_schema(columns: RegimeFoldFeatureColumns) -> pa.Schema:
 
 
 class FoldFitRef(FrozenContract):
+    """fold index → the regime fit consulted for it. R6.1-FIX (§3.2, F-03):
+    whenever a fit is present the ref also binds the fit's manifest-verified
+    assignment sidecar SHA-256 and the enforced schema hash — the three
+    fields are null together only for a legitimately absent fit."""
+
     fold_index: int = Field(ge=0)
     regime_fit_id: str | None = Field(default=None, pattern=SHA256_PATTERN)
+    assignments_sidecar_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
+    assignment_schema_hash: str | None = Field(default=None, pattern=SHA256_PATTERN)
+
+    @model_validator(mode="after")
+    def _bound_together(self):
+        bound = (self.regime_fit_id, self.assignments_sidecar_sha256, self.assignment_schema_hash)
+        present = [value is not None for value in bound]
+        if any(present) and not all(present):
+            raise ValueError(
+                "a FoldFitRef binds regime_fit_id, assignments_sidecar_sha256 and "
+                "assignment_schema_hash together (all present for a fit, all null for an "
+                "absent fit)"
+            )
+        return self
 
 
 class RegimeFoldFeatureArtifactPayload(FrozenContract):
@@ -574,10 +596,101 @@ def fold_feature_table_bytes(frame: pd.DataFrame, columns: RegimeFoldFeatureColu
     return frame_to_arrow_bytes(_frame_for_schema(frame, columns), fold_feature_schema(columns))
 
 
+def validate_fold_feature_rows(frame: pd.DataFrame, columns: RegimeFoldFeatureColumns) -> None:
+    """R6.1-FIX §3.4 — the model-facing row invariants of the fold-feature
+    table: a VALID row carries a 64-hex fit id, a lawful partition, every
+    numeric feature finite and the fit-local id present (the canonical
+    reporting id is reporting-only and may be null); an INVALID row carries
+    no feature value (every numeric NaN, local id null) and exactly one
+    registered missing reason. Applied on build, on every verified load and
+    by the ladder seam."""
+
+    required = set(columns.ordered)
+    missing = sorted(required - set(frame.columns))
+    if missing:
+        raise ValueError(f"fold-feature table lacks columns: {missing}")
+    valid = frame[columns.valid].astype(bool).to_numpy()
+    numeric = frame.loc[:, list(columns.numeric)].apply(pd.to_numeric, errors="coerce")
+    finite = np.isfinite(numeric.to_numpy(dtype=float)).all(axis=1)
+    local = frame[columns.local_id]
+    local_present = local.notna().to_numpy() & (local.astype(str) != "")
+    reasons = frame[columns.missing_reason]
+    partitions = frame["partition"].astype(str)
+    fit_ids = frame["regime_fit_id"]
+    if (valid & ~finite).any():
+        raise ValueError("a valid fold-feature row carries a non-finite model feature")
+    if (valid & ~local_present).any():
+        raise ValueError("a valid fold-feature row lacks the fit-local cluster id")
+    if (valid & ~partitions.isin(("train", "test")).to_numpy()).any():
+        raise ValueError("a valid fold-feature row carries an unlawful partition")
+    if (valid & ~fit_ids.astype(str).str.fullmatch(r"[0-9a-f]{64}").fillna(False).to_numpy()).any():
+        raise ValueError("a valid fold-feature row lacks a 64-hex regime fit id")
+    if (valid & reasons.notna().to_numpy()).any():
+        raise ValueError("a valid fold-feature row carries a missing reason")
+    invalid = ~valid
+    if (invalid & numeric.notna().to_numpy().any(axis=1)).any():
+        raise ValueError("an invalid fold-feature row carries a model feature value")
+    if (invalid & local_present).any():
+        raise ValueError("an invalid fold-feature row carries a fit-local cluster id")
+    unregistered = set(reasons[invalid].dropna().astype(str)) - set(
+        REGIME_FOLD_FEATURE_MISSING_REASONS
+    )
+    if (invalid & reasons.isna().to_numpy()).any() or unregistered:
+        raise ValueError(
+            "an invalid fold-feature row requires exactly one registered missing reason; "
+            f"unregistered: {sorted(unregistered)}"
+        )
+
+
+def _verified_fit_frames(regime_run, fit_assignments: Mapping[int, Any]) -> dict[int, Any]:
+    """R6.1-FIX (§3.2, F-03): the ONLY assignment source of the fold-local
+    features is the VERIFIED per-fit evidence (``VerifiedFitAssignments``
+    keyed by fold index). Every fit of the run must be present, each entry
+    must be the run's fit for that fold, and an in-memory frame is refused."""
+
+    from .regime_store import VerifiedFitAssignments  # noqa: PLC0415
+
+    if not isinstance(fit_assignments, Mapping):
+        raise TypeError(
+            "fit_assignments must map fold index → VerifiedFitAssignments (exact store "
+            f"loads); got {type(fit_assignments).__name__}"
+        )
+    verified: dict[int, Any] = {}
+    for fold_index, value in fit_assignments.items():
+        if not isinstance(value, VerifiedFitAssignments):
+            raise TypeError(
+                "build_regime_fold_features consumes VerifiedFitAssignments only — fold "
+                f"{fold_index} supplied {type(value).__name__} (an in-memory assignment "
+                "frame is not evidence)"
+            )
+        verified[int(fold_index)] = value
+    for fit in regime_run.fold_fits:
+        loaded = verified.get(int(fit.fold_index))
+        if loaded is None:
+            raise ValueError(
+                f"fold {fit.fold_index}: the run's fit {fit.fit_envelope.regime_fit_id[:12]}… "
+                "has no verified assignment evidence (every fit must be exact-loaded)"
+            )
+        if loaded.regime_fit_id != fit.fit_envelope.regime_fit_id or (
+            loaded.fold_index != int(fit.fold_index)
+        ):
+            raise ValueError(
+                f"fold {fit.fold_index}: the verified assignment evidence names fit "
+                f"{loaded.regime_fit_id[:12]}… (fold {loaded.fold_index}), not the run's fit "
+                f"{fit.fit_envelope.regime_fit_id[:12]}…"
+            )
+        if loaded.envelope.payload.resolved_regime_protocol_id != (
+            regime_run.protocol.resolved_regime_protocol_id
+        ):
+            raise ValueError(f"fold {fit.fold_index}: the verified fit is of another protocol")
+    return verified
+
+
 def build_regime_fold_features(
     *,
     protocol: RegimeProtocolEnvelope,
     regime_run,
+    fit_assignments: Mapping[int, Any],
     candidate_fold_set: FoldSetArtifactEnvelope,
     candidate_folds: ContextFoldSet,
     regime_fold_set: FoldSetArtifactEnvelope,
@@ -593,13 +706,16 @@ def build_regime_fold_features(
     candidate and regime fold sets; the schedule IS the fold sets' schedule;
     ``regime_run`` ran on the regime fold set and under ``protocol``; the
     candidate ``ContextFoldSet`` is the candidate fold-set artifact's
-    population; the panel grain supplies its verified panel inputs.
+    population; the panel grain supplies its verified panel inputs;
+    ``fit_assignments`` is the VERIFIED per-fit evidence (R6.1-FIX §3.2 —
+    the run's in-memory frame is never consulted).
     """
 
     payload = protocol.payload
     grain = ObservationGranularity(payload.observation_granularity)
     if regime_run.protocol.resolved_regime_protocol_id != protocol.resolved_regime_protocol_id:
         raise ValueError("the regime run belongs to a different regime protocol")
+    verified = _verified_fit_frames(regime_run, fit_assignments)
     assert_same_fold_schedule(candidate_fold_set.payload, regime_fold_set.payload)
     if schedule.fold_schedule_id != candidate_fold_set.payload.fold_schedule_id:
         raise ValueError("the fold schedule is not the fold sets' schedule")
@@ -681,13 +797,25 @@ def build_regime_fold_features(
             )
             continue
         fit_id = fit.fit_envelope.regime_fit_id
-        fit_refs.append(FoldFitRef(fold_index=int(fold.fold_index), regime_fit_id=fit_id))
-        fold_assignments = regime_run.assignments[
-            regime_run.assignments["fold_index"].astype(int) == int(fold.fold_index)
+        source = verified[int(fold.fold_index)]
+        fit_refs.append(
+            FoldFitRef(
+                fold_index=int(fold.fold_index),
+                regime_fit_id=fit_id,
+                assignments_sidecar_sha256=source.assignments_sidecar_sha256,
+                assignment_schema_hash=source.assignment_schema_hash,
+            )
+        )
+        # fit k's VERIFIED sidecar rows only (fold k); never another fold's
+        fold_assignments = source.frame[
+            source.frame["fold_index"].astype(int) == int(fold.fold_index)
         ]
         if grain is ObservationGranularity.CONTEXT_BAR_PANEL:
-            assert candidate_as_of is not None
-            assert panel is not None
+            if candidate_as_of is None or panel is None:  # pragma: no cover - guarded above
+                raise RuntimeError(
+                    "panel-grain fold features require the candidate as-of frame and the "
+                    "verified panel inputs (wiring error)"
+                )
             rows.extend(
                 _panel_grain_rows(
                     columns,
@@ -712,11 +840,7 @@ def build_regime_fold_features(
                 )
             )
     frame = _frame_for_schema(pd.DataFrame(rows, columns=list(columns.ordered)), columns)
-    unknown = set(frame.loc[~frame[columns.valid], columns.missing_reason].dropna()) - set(
-        REGIME_FOLD_FEATURE_MISSING_REASONS
-    )
-    if unknown:  # pragma: no cover - the vocabulary is closed above
-        raise AssertionError(f"unregistered fold-feature reasons {sorted(unknown)}")
+    validate_fold_feature_rows(frame, columns)
     table_bytes = fold_feature_table_bytes(frame, columns)
     artifact_payload = RegimeFoldFeatureArtifactPayload(
         resolved_regime_protocol_id=protocol.resolved_regime_protocol_id,
@@ -773,10 +897,41 @@ def save_regime_fold_features(
     )
 
 
+def verify_fold_fit_refs_against_store(
+    root: Path, envelope: RegimeFoldFeatureArtifactEnvelope
+) -> None:
+    """R6.1-FIX (§3.2): every ``FoldFitRef`` of the artifact is re-checked
+    against the store by EXACT id — the fit's sidecar must still hash to the
+    bound SHA-256 under the bound schema hash. No listing; a missing,
+    tampered or differently-typed sidecar fails the fold-feature load closed."""
+
+    from .regime_store import load_regime_fit_assignments  # noqa: PLC0415
+
+    for ref in envelope.payload.regime_fit_ids_by_fold:
+        if ref.regime_fit_id is None:
+            continue
+        loaded = load_regime_fit_assignments(Path(root), ref.regime_fit_id)
+        if loaded.fold_index != int(ref.fold_index):
+            raise ValueError(
+                f"fit {ref.regime_fit_id[:12]}… is fold {loaded.fold_index} in the store, not "
+                f"fold {ref.fold_index} as the fold-feature artifact binds"
+            )
+        if loaded.assignments_sidecar_sha256 != ref.assignments_sidecar_sha256 or (
+            loaded.assignment_schema_hash != ref.assignment_schema_hash
+        ):
+            raise ValueError(
+                f"fit {ref.regime_fit_id[:12]}… assignment sidecar in the store does not "
+                "match the sidecar ref the fold-feature artifact binds (sha256 / schema); "
+                "refusing"
+            )
+
+
 def load_regime_fold_features(root: Path, artifact_id: str) -> RegimeFoldFeatureArtifactEnvelope:
-    return load_verified_envelope(
+    envelope = load_verified_envelope(
         Path(root), REGIME_FOLD_FEATURE_STORE, artifact_id, RegimeFoldFeatureArtifactEnvelope
     )
+    verify_fold_fit_refs_against_store(Path(root), envelope)
+    return envelope
 
 
 def load_regime_fold_feature_frame(
@@ -793,6 +948,7 @@ def load_regime_fold_feature_frame(
     frame = frame_from_arrow_bytes(data)
     if len(frame) != envelope.payload.row_count:
         raise ValueError("stored fold-feature table row count disagrees with the payload")
+    validate_fold_feature_rows(frame, envelope.payload.columns)
     return frame
 
 
@@ -811,6 +967,7 @@ class RegimeFoldFeatureFrameSource:
         self._envelope = envelope
         self._columns = envelope.payload.columns
         self._frame = _frame_for_schema(frame, self._columns)
+        validate_fold_feature_rows(self._frame, self._columns)
 
     @property
     def envelope(self) -> RegimeFoldFeatureArtifactEnvelope:
@@ -888,7 +1045,14 @@ def _example_payload() -> RegimeFoldFeatureArtifactPayload:
     return RegimeFoldFeatureArtifactPayload(
         resolved_regime_protocol_id="a" * 64,
         observation_granularity=ObservationGranularity.CANDIDATE_STAGE_ROW,
-        regime_fit_ids_by_fold=(FoldFitRef(fold_index=0, regime_fit_id="b" * 64),),
+        regime_fit_ids_by_fold=(
+            FoldFitRef(
+                fold_index=0,
+                regime_fit_id="b" * 64,
+                assignments_sidecar_sha256="2" * 64,
+                assignment_schema_hash="3" * 64,
+            ),
+        ),
         candidate_fold_set_id="c" * 64,
         regime_fold_set_id="d" * 64,
         candidate_fold_set_hash="1" * 64,

@@ -207,6 +207,8 @@ def lane(tmp_path_factory):
         regime_fold_set_id=assignment_envelope.payload.regime_fold_set_id,
         fold_schedule_id=assignment_envelope.payload.fold_schedule_id,
         regime_oos_assignment_id=assignment_envelope.regime_oos_assignment_id,
+        assignment_table_sha256=assignment_envelope.assignment_table_sha256,
+        assignment_schema_hash=assignment_envelope.payload.assignment_schema_hash,
     )
     return {
         "root": root,

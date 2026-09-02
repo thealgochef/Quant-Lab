@@ -187,6 +187,27 @@ def _decision(run, **overrides) -> RegimePromotionDecisionEnvelope:
     return RegimePromotionDecisionEnvelope.from_payload(RegimePromotionDecision(**defaults))
 
 
+def _verified_fits(root, run, observation_frame) -> dict:
+    """R6.1-FIX §3.2: persist the run's fits and exact-load their VERIFIED
+    assignment evidence — the only fold-feature assignment source."""
+
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_store import (
+        load_regime_fit_assignments,
+    )
+
+    for fold_fit in run.fold_fits:
+        persist_regime_fit(
+            root,
+            fold_fit,
+            run.assignments[run.assignments["fold_index"] == fold_fit.fold_index],
+            observation_frame=observation_frame,
+        )
+    return {
+        fit.fold_index: load_regime_fit_assignments(root, fit.fit_envelope.regime_fit_id)
+        for fit in run.fold_fits
+    }
+
+
 @pytest.fixture(scope="module")
 def lane(tmp_path_factory, request):
     # the two study stores are hub registrations (search/store.py); until the
@@ -241,6 +262,7 @@ def lane(tmp_path_factory, request):
     envelope, frame = build_regime_fold_features(
         protocol=protocol,
         regime_run=run,
+        fit_assignments=_verified_fits(root, run, fixture.view.frame),
         candidate_fold_set=fold_set,
         candidate_folds=folds,
         regime_fold_set=fold_set,
@@ -413,6 +435,7 @@ def test_activation_refuses_every_mismatch_naming_the_frozen_decision(lane, tmp_
     other_envelope, other_frame = build_regime_fold_features(
         protocol=other_protocol,
         regime_run=other_run,
+        fit_assignments=_verified_fits(root, other_run, lane["fixture"].view.frame),
         candidate_fold_set=lane["fold_set"],
         candidate_folds=lane["folds"],
         regime_fold_set=lane["fold_set"],
@@ -695,6 +718,7 @@ def test_feature_only_refusals_below_status_schedule_mismatch_and_bundle_shape(l
     other_envelope, other_frame = build_regime_fold_features(
         protocol=lane["protocol"],
         regime_run=other_run,
+        fit_assignments=_verified_fits(lane["root"], other_run, other.view.frame),
         candidate_fold_set=other_fold_set,
         candidate_folds=other_folds,
         regime_fold_set=other_fold_set,

@@ -20,6 +20,7 @@ promotion. A report below its class minimum is UNCONSTRUCTIBLE (validator).
 
 from __future__ import annotations
 
+import math
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Annotated, Any, ClassVar, Literal
@@ -66,6 +67,9 @@ __all__ = [
     "RegimeStratumKey",
     "StratumMetrics",
     "StrategyStratumRow",
+    "NET_R_ACCOUNTING_FORMULA_VERSION",
+    "NET_R_ACCOUNTING_BASIS",
+    "RegimeNetRAccounting",
     "CohortDescriptiveBody",
     "FrontierStratumCell",
     "StratifiedFrontierBody",
@@ -239,13 +243,20 @@ class RegimeReportGate(FrozenContract):
 
 
 class RegimeAssignmentEvidenceRef(FrozenContract):
-    """The exact assignment evidence a report stratified over (D7)."""
+    """The exact assignment evidence a report stratified over (D7).
+
+    R6.1-FIX (§3.1, F-01): the ref also pins the descriptive artifact's
+    post-materialization table hash and its enforced schema hash — so a
+    persisted report names the exact bytes it stratified over, and S14
+    refuses a frame or hash that differs from the verified artifact."""
 
     observation_granularity: ObservationGranularity
     regime_fit_ids: tuple[str, ...] = Field(min_length=1)
     regime_fold_set_id: str = Field(pattern=SHA256_PATTERN)
     fold_schedule_id: str = Field(pattern=SHA256_PATTERN)
     regime_oos_assignment_id: str = Field(pattern=SHA256_PATTERN)
+    assignment_table_sha256: str = Field(pattern=SHA256_PATTERN)
+    assignment_schema_hash: str = Field(pattern=SHA256_PATTERN)
     regime_fold_feature_artifact_id: str | None = Field(default=None, pattern=SHA256_PATTERN)
 
     @model_validator(mode="after")
@@ -308,10 +319,171 @@ class StrategyStratumRow(FrozenContract):
         return self
 
 
+#: R6.1-FIX §3.5 (F-09): the raw net-R accounting formula — EVERY valid
+#: assigned trade enters the concentration facts; the reportability floor
+#: governs interval/reportability metrics only.
+NET_R_ACCOUNTING_FORMULA_VERSION = "regime_net_r_accounting_v1"
+NET_R_ACCOUNTING_BASIS = "all_valid_assigned_trades_v1"
+
+
+def _close(left: float, right: float) -> bool:
+    return math.isclose(float(left), float(right), rel_tol=1e-9, abs_tol=1e-9)
+
+
+class RegimeNetRAccounting(FrozenContract):
+    """Plan §3.5 definitions, persisted verbatim (no statistical confidence
+    is inferred for thin strata — this is arithmetic over per-trade net R):
+
+    * ``net_r_by_regime[r]`` = Σ per-trade net R of the valid trades in ``r``;
+    * ``unassigned_net_r`` = Σ per-trade net R of invalid/unassigned trades;
+    * ``abs_net_r_mass`` = Σ |net_r_by_regime|; shares are |net| / mass, or
+      null with ``zero_abs_net_r_mass``;
+    * ``signed_contribution_fraction_by_regime[r]`` = net_r_by_regime[r] /
+      assigned_net_r_total when that total is nonzero, else null with
+      ``zero_assigned_net_r_total``;
+    * ``works_only_in_regime`` is TRUE only when the assigned net R total is
+      positive, exactly one assigned regime has net R > 0, every other
+      assigned regime has net R ≤ 0, and no trade is unassigned; FALSE
+      otherwise; NULL with ``incomplete_assignment_accounting`` ONLY when
+      unassigned trades prevent a claim the assigned side would otherwise
+      support — a claim the assigned side already refutes is FALSE whatever
+      the unassigned count (adversarial RA-03). The plan's predicate is
+      followed verbatim, so a SINGLE assigned regime with positive net R is
+      a vacuous TRUE ("every other regime" is empty): ``assigned_regime_count``
+      makes that vacuity visible to every reader.
+
+    The validator RECOMPUTES every derived field from ``net_r_by_regime``
+    (adversarial RA-02): a well-typed body whose mass, total, shares,
+    fractions, top share, regime count or claim disagrees with its own
+    per-regime sums is refused.
+    """
+
+    formula_version: Literal["regime_net_r_accounting_v1"] = NET_R_ACCOUNTING_FORMULA_VERSION
+    basis: Literal["all_valid_assigned_trades_v1"] = NET_R_ACCOUNTING_BASIS
+    trade_count_by_regime: ImmutableMap[int, int]
+    net_r_by_regime: ImmutableMap[int, float]
+    #: the number of assigned regimes (``len(net_r_by_regime)``) — 1 marks
+    #: a vacuous ``works_only_in_regime`` truth
+    assigned_regime_count: int = Field(ge=0)
+    assigned_trade_count: int = Field(ge=0)
+    unassigned_trade_count: int = Field(ge=0)
+    unassigned_net_r: float
+    assigned_net_r_total: float
+    abs_net_r_mass: float = Field(ge=0.0)
+    abs_net_r_share_by_regime: ImmutableMap[int, float] | None
+    signed_contribution_fraction_by_regime: ImmutableMap[int, float] | None
+    top_regime_abs_net_r_share: float | None
+    works_only_in_regime: bool | None
+    works_only_in_regime_id: int | None
+    works_only_in_regime_reason: Literal["incomplete_assignment_accounting"] | None
+    zero_denominator_reasons: tuple[
+        Literal["zero_abs_net_r_mass", "zero_assigned_net_r_total"], ...
+    ]
+
+    @model_validator(mode="after")
+    def _coherent(self):
+        net = {int(key): float(value) for key, value in self.net_r_by_regime.items()}
+        counts = {int(key): int(value) for key, value in self.trade_count_by_regime.items()}
+        if set(counts) != set(net):
+            raise ValueError("trade counts and net R must cover the same regimes")
+        if sum(counts.values()) != self.assigned_trade_count:
+            raise ValueError("assigned_trade_count must equal the per-regime counts")
+        if self.assigned_regime_count != len(net):
+            raise ValueError("assigned_regime_count must equal the number of assigned regimes")
+        # RA-02: every derived field is recomputed from the per-regime sums
+        total = float(sum(net.values()))
+        mass = float(sum(abs(value) for value in net.values()))
+        if not _close(self.assigned_net_r_total, total):
+            raise ValueError("assigned_net_r_total must equal the sum of net_r_by_regime")
+        if not _close(self.abs_net_r_mass, mass):
+            raise ValueError("abs_net_r_mass must equal the sum of |net_r_by_regime|")
+        zero_mass = not mass > 0
+        if zero_mass != ("zero_abs_net_r_mass" in self.zero_denominator_reasons):
+            raise ValueError("zero_abs_net_r_mass is recorded exactly when abs_net_r_mass is zero")
+        if (self.abs_net_r_share_by_regime is None) != zero_mass:
+            raise ValueError("abs shares are null exactly under zero_abs_net_r_mass")
+        if self.abs_net_r_share_by_regime is None:
+            if self.top_regime_abs_net_r_share is not None:
+                raise ValueError("the top share is defined exactly when the shares are")
+        else:
+            shares = {
+                int(key): float(value) for key, value in self.abs_net_r_share_by_regime.items()
+            }
+            if set(shares) != set(net) or any(
+                not _close(shares[key], abs(net[key]) / mass) for key in net
+            ):
+                raise ValueError(
+                    "abs_net_r_share_by_regime must equal |net_r_by_regime| / abs_net_r_mass"
+                )
+            if self.top_regime_abs_net_r_share is None or not _close(
+                self.top_regime_abs_net_r_share, max(shares.values())
+            ):
+                raise ValueError("top_regime_abs_net_r_share must equal the maximum abs share")
+        zero_total = total == 0.0
+        if zero_total != ("zero_assigned_net_r_total" in self.zero_denominator_reasons):
+            raise ValueError(
+                "zero_assigned_net_r_total is recorded exactly when assigned_net_r_total is zero"
+            )
+        if (self.signed_contribution_fraction_by_regime is None) != zero_total:
+            raise ValueError(
+                "signed contribution fractions are null exactly under zero_assigned_net_r_total"
+            )
+        if self.signed_contribution_fraction_by_regime is not None:
+            signed = {
+                int(key): float(value)
+                for key, value in self.signed_contribution_fraction_by_regime.items()
+            }
+            if set(signed) != set(net) or any(
+                not _close(signed[key], net[key] / total) for key in net
+            ):
+                raise ValueError(
+                    "signed_contribution_fraction_by_regime must equal net_r_by_regime / "
+                    "assigned_net_r_total"
+                )
+        # the claim (plan §3.5 on the assigned side; RA-03 null semantics)
+        positive = [key for key, value in net.items() if value > 0]
+        assigned_claim = bool(total > 0 and len(positive) == 1)
+        if (self.works_only_in_regime is None) != (
+            self.works_only_in_regime_reason == "incomplete_assignment_accounting"
+        ):
+            raise ValueError(
+                "works_only_in_regime is null exactly under incomplete_assignment_accounting"
+            )
+        if self.works_only_in_regime is None and self.unassigned_trade_count == 0:
+            raise ValueError("a null works_only_in_regime claim requires unassigned trades")
+        expected: bool | None = (
+            assigned_claim
+            if self.unassigned_trade_count == 0
+            else (None if assigned_claim else False)
+        )
+        if (self.works_only_in_regime is None) != (expected is None) or (
+            expected is not None and bool(self.works_only_in_regime) != expected
+        ):
+            raise ValueError(
+                "works_only_in_regime must equal the assigned-side predicate (null only when "
+                "unassigned trades prevent a claim the assigned side supports)"
+            )
+        if (self.works_only_in_regime_id is not None) != (self.works_only_in_regime is True):
+            raise ValueError("works_only_in_regime_id is set exactly when the claim is true")
+        if self.works_only_in_regime is True and int(self.works_only_in_regime_id) != positive[0]:
+            raise ValueError("works_only_in_regime_id must name the unique positive regime")
+        return self
+
+
 class CohortDescriptiveBody(FrozenContract):
     comparison_class: Literal["cohort_descriptive"] = "cohort_descriptive"
     core_replay_id: str = Field(pattern=SHA256_PATTERN)
+    #: the binding hash of the VALIDATED, NORMALIZED executed-trade table
+    #: (R6.1-FIX F-10B) and — when the service verified the child's frame
+    #: against the persisted executed-trade table artifact (§3.7; adversarial
+    #: RA-01) — that artifact's exact id AND its own projection-bytes hash
+    #: (``ExecutedTradeTableEnvelope.executed_trade_table_sha256``); the two
+    #: artifact fields are set together or not at all
     executed_trade_table_sha256: str = Field(pattern=SHA256_PATTERN)
+    executed_trade_table_id: str | None = Field(default=None, pattern=SHA256_PATTERN)
+    executed_trade_table_artifact_sha256: str | None = Field(
+        default=None, pattern=SHA256_PATTERN
+    )
     cost_points: float
     evaluation_config_hash: str = Field(pattern=SHA256_PATTERN)
     trades_total: int = Field(ge=0)
@@ -319,11 +491,13 @@ class CohortDescriptiveBody(FrozenContract):
     coverage_fraction: float = Field(ge=0.0, le=1.0)
     minimum_trades_per_regime_stratum: int = Field(ge=1)
     strata: tuple[StrategyStratumRow, ...]
-    #: concentration: regime ids in which the strategy "works" while every
-    #: other reported regime does not (net expectancy sign), and the share of
-    #: absolute net R held by the top regime
+    #: concentration (R6.1-FIX §3.5): the single regime in which the strategy
+    #: "works" when — and only when — ``net_r_accounting.works_only_in_regime``
+    #: is true (empty otherwise), and the top regime's share of absolute net
+    #: R over ALL valid assigned trades (the floor never excludes a regime)
     works_only_in_regime: tuple[int, ...]
     top_regime_abs_net_r_share: float | None
+    net_r_accounting: RegimeNetRAccounting
     unassigned_reasons: ImmutableMap[str, int]
 
     @model_validator(mode="after")
@@ -340,6 +514,44 @@ class CohortDescriptiveBody(FrozenContract):
             raise ValueError("regime + unassigned shares must sum to one")
         if self.trades_regime_covered > self.trades_total:
             raise ValueError("covered trades exceed the total")
+        accounting = self.net_r_accounting
+        expected_works = (
+            (accounting.works_only_in_regime_id,)
+            if accounting.works_only_in_regime is True
+            else ()
+        )
+        if tuple(self.works_only_in_regime) != expected_works:
+            raise ValueError("works_only_in_regime must mirror the net-R accounting claim")
+        if self.top_regime_abs_net_r_share != accounting.top_regime_abs_net_r_share:
+            raise ValueError("top_regime_abs_net_r_share must mirror the net-R accounting")
+        if accounting.assigned_trade_count != self.trades_regime_covered:
+            raise ValueError("the accounting's assigned trades must equal the covered trades")
+        if accounting.assigned_trade_count + accounting.unassigned_trade_count != (
+            self.trades_total
+        ):
+            raise ValueError("assigned + unassigned trades must equal the total")
+        if (self.executed_trade_table_id is None) != (
+            self.executed_trade_table_artifact_sha256 is None
+        ):
+            raise ValueError(
+                "executed_trade_table_id and executed_trade_table_artifact_sha256 bind the "
+                "persisted artifact together (both set, or neither)"
+            )
+        # RA-02: the accounting's regimes are exactly the regime strata, and the
+        # per-regime trade counts are the strata's executed trades
+        regime_rows = {
+            int(row.key.canonical_reporting_cluster_id): row
+            for row in self.strata
+            if row.key.stratum == "regime"
+        }
+        if set(regime_rows) != {int(key) for key in accounting.trade_count_by_regime}:
+            raise ValueError("the regime strata must cover exactly the accounting's regimes")
+        for regime, row in regime_rows.items():
+            if int(accounting.trade_count_by_regime[regime]) != int(row.executed_trades):
+                raise ValueError(
+                    f"trade_count_by_regime[{regime}] must equal the regime stratum's "
+                    "executed_trades"
+                )
         return self
 
 
@@ -537,6 +749,8 @@ def _example_payload() -> RegimeStratifiedReportPayload:
         regime_fold_set_id="4" * 64,
         fold_schedule_id="5" * 64,
         regime_oos_assignment_id="6" * 64,
+        assignment_table_sha256="9" * 64,
+        assignment_schema_hash="c" * 64,
     )
     # the audit example is a stratified_prop report: the ONE class whose
     # envelope carries the D15 event-regime summary binding (placeholders

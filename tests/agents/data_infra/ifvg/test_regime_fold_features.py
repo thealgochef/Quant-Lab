@@ -6,6 +6,10 @@ OOS); every train/test row of a valid fold has a feature row; model-facing
 columns are fit-local while canonical alignment is reporting-only; typed
 reasons; artifact identity / rehash / relocation; the panel grain through
 the PIT rule with the candidate's OWN partition; and the leakage proof.
+
+R6.1-FIX (§3.2, F-03): the builder consumes the VERIFIED per-fit assignment
+evidence exact-loaded from the store (``fit_assignments``); the in-memory
+run frame is inert.
 """
 
 from __future__ import annotations
@@ -47,6 +51,10 @@ from alpha_lab.agents.data_infra.ifvg.ml.regime_service import (
     resolve_kmeans_protocol,
     run_regime_protocol,
 )
+from alpha_lab.agents.data_infra.ifvg.ml.regime_store import (
+    load_regime_fit_assignments,
+    persist_regime_fit,
+)
 from alpha_lab.agents.data_infra.ifvg.search.store import SearchStoreError, envelope_destination
 from tests.agents.data_infra.ifvg.ml_fixtures.synthetic_clusters import (
     REGIME_INPUT_FEATURES,
@@ -57,6 +65,23 @@ from tests.agents.data_infra.ifvg.ml_fixtures.synthetic_observation_source impor
 )
 
 _B0 = resolve_bundle("B0_CORE").resolved_feature_bundle_id
+
+
+def _verified_for(root, run, observation_frame) -> dict:
+    """Persist the run's fits under ``root`` and exact-load their VERIFIED
+    assignment evidence (R6.1-FIX §3.2)."""
+
+    for fold_fit in run.fold_fits:
+        persist_regime_fit(
+            root,
+            fold_fit,
+            run.assignments[run.assignments["fold_index"] == fold_fit.fold_index],
+            observation_frame=observation_frame,
+        )
+    return {
+        fit.fold_index: load_regime_fit_assignments(root, fit.fit_envelope.regime_fit_id)
+        for fit in run.fold_fits
+    }
 
 
 def _candidate_lane(root, n: int = 600):
@@ -92,6 +117,7 @@ def _candidate_lane(root, n: int = 600):
         "fold_set": fold_set,
         "protocol": protocol,
         "run": run,
+        "verified": _verified_for(root, run, fixture.view.frame),
     }
 
 
@@ -99,6 +125,7 @@ def _build(lane, **overrides):
     kwargs = dict(
         protocol=lane["protocol"],
         regime_run=lane["run"],
+        fit_assignments=lane["verified"],
         candidate_fold_set=lane["fold_set"],
         candidate_folds=lane["folds"],
         regime_fold_set=lane["fold_set"],
@@ -136,7 +163,8 @@ def test_partition_semantics_every_train_and_test_row_has_a_fit_k_row(lane):
         assert set(test.index) == set(fold.test_candidate_ids)
         fit = fits[fold.fold_index]
         assert (rows["regime_fit_id"] == fit.fit_envelope.regime_fit_id).all()
-        own = run.assignments[run.assignments["fold_index"] == fold.fold_index]
+        # the values are the VERIFIED stored sidecar's rows of fit k
+        own = lane["verified"][fold.fold_index].frame
         for partition, subset in (("train", train), ("test", test)):
             source = own[own["partition"] == partition].set_index("row_id")
             valid = subset[subset[columns.valid]]
@@ -170,10 +198,10 @@ def test_partition_semantics_every_train_and_test_row_has_a_fit_k_row(lane):
     )
 
 
-def test_regime_fold_features_cannot_see_future_outer_folds(lane, monkeypatch):
-    """§9.1: perturbing every observation after fold k's test window (and every
-    OTHER fit's rows) leaves fold k's rows byte-identical; the S09b path never
-    opens the descriptive OOS artifact."""
+def test_regime_fold_features_cannot_see_future_outer_folds(lane, monkeypatch, tmp_path):
+    """§9.1: perturbing every observation after fold k's test window leaves
+    fold k's rows byte-identical; the S09b path never opens the descriptive
+    OOS artifact; the in-memory run frame is INERT (R6.1-FIX F-03)."""
 
     fixture, folds, protocol = lane["fixture"], lane["folds"], lane["protocol"]
     reference = lane["frame"]
@@ -199,8 +227,12 @@ def test_regime_fold_features_cannot_see_future_outer_folds(lane, monkeypatch):
         source_artifact_ids=(fixture.view.view_id,),
         bootstrap_refits=2,
     )
+    perturbed_verified = _verified_for(tmp_path / "perturbed", perturbed_run, perturbed)
     _envelope, perturbed_frame = _build(
-        lane, regime_run=perturbed_run, candidate_view_frame=perturbed
+        lane,
+        regime_run=perturbed_run,
+        fit_assignments=perturbed_verified,
+        candidate_view_frame=perturbed,
     )
     before = reference[reference["fold_index"] == fold.fold_index]
     after = perturbed_frame[perturbed_frame["fold_index"] == fold.fold_index]
@@ -213,21 +245,25 @@ def test_regime_fold_features_cannot_see_future_outer_folds(lane, monkeypatch):
     ) != fold_feature_table_bytes(
         perturbed_frame[perturbed_frame["fold_index"] == later_fold.fold_index], columns
     )
-    # tampering every OTHER fit's assignment rows changes nothing in fold k
+    # tampering the IN-MEMORY run frame changes nothing at all: the builder
+    # reads the verified stored sidecars, never ``run.assignments``
     run = lane["run"]
     tampered = run.assignments.copy()
-    others = tampered["fold_index"] != fold.fold_index
-    tampered.loc[others, "fold_local_cluster_id"] = 0
-    tampered.loc[others, "canonical_reporting_cluster_id"] = 0
-    tampered.loc[others, "assignment_margin"] = 9.9
+    tampered["fold_local_cluster_id"] = 0
+    tampered["canonical_reporting_cluster_id"] = 0
+    tampered["assignment_margin"] = 9.9
     tampered_run = replace(run, assignments=tampered)
-    _envelope, tampered_frame = _build(lane, regime_run=tampered_run)
-    assert fold_feature_table_bytes(
-        tampered_frame[tampered_frame["fold_index"] == fold.fold_index], columns
-    ) == fold_feature_table_bytes(before, columns)
+    tampered_envelope, tampered_frame = _build(lane, regime_run=tampered_run)
+    assert fold_feature_table_bytes(tampered_frame, columns) == fold_feature_table_bytes(
+        reference, columns
+    )
+    assert (
+        tampered_envelope.regime_fold_feature_artifact_id
+        == lane["envelope"].regime_fold_feature_artifact_id
+    )
 
 
-def test_typed_reasons_for_missing_fits_rows_and_inputs(lane):
+def test_typed_reasons_for_missing_fits_rows_and_inputs(lane, tmp_path):
     run, folds, fixture = lane["run"], lane["folds"], lane["fixture"]
     columns = lane["envelope"].payload.columns
     valid_folds = [fold for fold in folds.folds if fold.valid]
@@ -238,7 +274,11 @@ def test_typed_reasons_for_missing_fits_rows_and_inputs(lane):
         fold_fits=tuple(fit for fit in run.fold_fits if fit.fold_index != fold.fold_index),
         assignments=run.assignments[run.assignments["fold_index"] != fold.fold_index],
     )
-    envelope, frame = _build(lane, regime_run=without_fit)
+    envelope, frame = _build(
+        lane,
+        regime_run=without_fit,
+        fit_assignments={k: v for k, v in lane["verified"].items() if k != fold.fold_index},
+    )
     rows = frame[frame["fold_index"] == fold.fold_index]
     assert len(rows) == len(fold.train_candidate_ids) + len(fold.test_candidate_ids)
     assert (~rows[columns.valid]).all()
@@ -247,15 +287,15 @@ def test_typed_reasons_for_missing_fits_rows_and_inputs(lane):
     refs = envelope.payload.regime_fit_ids_by_fold
     ref = next(r for r in refs if r.fold_index == fold.fold_index)
     assert ref.regime_fit_id is None
-    # (b) a fit row missing for one candidate → no_fit_assignment_row
+    assert ref.assignments_sidecar_sha256 is None and ref.assignment_schema_hash is None
+    # (b) a fit row missing for one candidate (in the VERIFIED evidence) →
+    # no_fit_assignment_row
     victim = str(fold.test_candidate_ids[0])
-    dropped = run.assignments[
-        ~(
-            (run.assignments["fold_index"] == fold.fold_index)
-            & (run.assignments["row_id"].astype(str) == victim)
-        )
-    ]
-    _envelope, frame = _build(lane, regime_run=replace(run, assignments=dropped))
+    source = lane["verified"][fold.fold_index]
+    dropped = replace(
+        source, frame=source.frame[source.frame["row_id"].astype(str) != victim]
+    )
+    _envelope, frame = _build(lane, fit_assignments={**lane["verified"], fold.fold_index: dropped})
     row = frame[(frame["fold_index"] == fold.fold_index) & (frame["candidate_id"] == victim)]
     assert len(row) == 1 and row.iloc[0][columns.missing_reason] == "no_fit_assignment_row"
     assert np.isnan(row.iloc[0][columns.margin])
@@ -269,7 +309,12 @@ def test_typed_reasons_for_missing_fits_rows_and_inputs(lane):
         source_artifact_ids=(fixture.view.view_id,),
         bootstrap_refits=2,
     )
-    _envelope, frame = _build(lane, regime_run=hollow_run, candidate_view_frame=hollow)
+    _envelope, frame = _build(
+        lane,
+        regime_run=hollow_run,
+        fit_assignments=_verified_for(tmp_path / "hollow", hollow_run, hollow),
+        candidate_view_frame=hollow,
+    )
     row = frame[(frame["fold_index"] == fold.fold_index) & (frame["candidate_id"] == victim)]
     assert row.iloc[0][columns.missing_reason] == "source_feature_missing"
     assert set(frame.loc[~frame[columns.valid], columns.missing_reason].dropna()) <= set(
@@ -288,7 +333,7 @@ def test_artifact_persists_rehashes_relocates_and_serves_the_ladder_seam(lane, t
     verify_regime_fold_feature_frame(reloaded, stored)
     columns = envelope.payload.columns
     assert fold_feature_table_bytes(stored, columns) == fold_feature_table_bytes(frame, columns)
-    # relocation
+    # relocation (the bound fit sidecars travel with the store)
     moved = tmp_path / "moved"
     shutil.copytree(root, moved)
     again = load_regime_fold_feature_source(moved, envelope.regime_fold_feature_artifact_id)
@@ -391,10 +436,12 @@ def test_panel_grain_uses_fit_k_and_the_candidates_own_partition(tmp_path):
         bootstrap_refits=2,
     )
     assert run.fold_fits
+    verified = _verified_for(root, run, panel.panel_frame)
     with pytest.raises(ValueError, match="requires PanelFoldFeatureInputs"):
         build_regime_fold_features(
             protocol=panel.protocol,
             regime_run=run,
+            fit_assignments=verified,
             candidate_fold_set=candidate_fold_set,
             candidate_folds=folds,
             regime_fold_set=panel.fold_set_envelope,
@@ -405,6 +452,7 @@ def test_panel_grain_uses_fit_k_and_the_candidates_own_partition(tmp_path):
     envelope, frame = build_regime_fold_features(
         protocol=panel.protocol,
         regime_run=run,
+        fit_assignments=verified,
         candidate_fold_set=candidate_fold_set,
         candidate_folds=folds,
         regime_fold_set=panel.fold_set_envelope,
@@ -433,10 +481,8 @@ def test_panel_grain_uses_fit_k_and_the_candidates_own_partition(tmp_path):
         train = rows[rows["partition"] == "train"]
         assert set(train["candidate_id"]) == set(fold.train_candidate_ids)
         # every VALID train row of fold k came from fit k's TRAIN partition rows
-        own = run.assignments[
-            (run.assignments["fold_index"] == fold.fold_index)
-            & (run.assignments["partition"] == "train")
-        ]
+        own = verified[fold.fold_index].frame
+        own = own[own["partition"] == "train"]
         valid_train = train[train[columns.valid]]
         assert set(valid_train["panel_row_id"]) <= set(own["row_id"].astype(str))
     reasons = set(frame.loc[~frame[columns.valid], columns.missing_reason].dropna())
@@ -446,6 +492,7 @@ def test_panel_grain_uses_fit_k_and_the_candidates_own_partition(tmp_path):
         build_regime_fold_features(
             protocol=panel.protocol,
             regime_run=run,
+            fit_assignments=verified,
             candidate_fold_set=candidate_fold_set,
             candidate_folds=folds,
             regime_fold_set=panel.fold_set_envelope,

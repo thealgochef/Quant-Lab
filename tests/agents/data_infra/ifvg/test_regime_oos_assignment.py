@@ -93,6 +93,7 @@ def _assignments(frame: pd.DataFrame, *, fold_index: int = 0, partition: str = "
             "assigned_distance": 0.1,
             "assignment_margin": 0.4,
             "valid": True,
+            "missing_reason": None,
         }
     )
 
@@ -279,7 +280,27 @@ def test_candidate_grain_artifact_one_row_per_candidate_and_store_discipline(
 ):
     fixture, folds, protocol, run = candidate_run
     ids = tuple(fixture.view.frame["candidate_id"].astype(str))
-    frame = candidate_fold_oos_assignment(run.assignments, ids)
+    # R6.1-FIX §3.1: the descriptive rows derive from the fits' VERIFIED
+    # stored sidecars — persist first, then exact-load
+    root = tmp_path / "store"
+    for fold_fit in run.fold_fits:
+        persist_regime_fit(
+            root,
+            fold_fit,
+            run.assignments[run.assignments["fold_index"] == fold_fit.fold_index],
+            observation_frame=fixture.view.frame,
+        )
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_oos_assignment import (
+        consulted_assignment_frame,
+    )
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_store import load_regime_fit_assignments
+
+    verified = {
+        fit.fold_index: load_regime_fit_assignments(root, fit.fit_envelope.regime_fit_id)
+        for fit in run.fold_fits
+    }
+    consulted = consulted_assignment_frame(verified)
+    frame = candidate_fold_oos_assignment(consulted, ids)
     assert list(frame["candidate_id"]) == list(ids)
     scored = set(
         run.assignments[(run.assignments["partition"] == "test") & run.assignments["valid"]][
@@ -294,31 +315,21 @@ def test_candidate_grain_artifact_one_row_per_candidate_and_store_discipline(
     envelope, table = build_regime_oos_assignment_artifact(
         frame,
         protocol=protocol,
-        regime_fit_ids=tuple(fit.fit_envelope.regime_fit_id for fit in run.fold_fits),
+        verified_fit_assignments=verified,
         regime_fold_set_id=run.fold_set_id,
         fold_schedule_id=schedule.fold_schedule_id,
-        consulted_assignments=run.assignments,
         candidate_as_of=as_of,
         candidate_as_of_source_ref=f"bundle_feature_view:{fixture.view.view_id}",
+        candidate_as_of_stage=AvailabilityStage.ENTRY_DECISION,
     )
     payload = envelope.payload
     assert payload.assignment_source == "candidate_fold_oos" and payload.panel_context is None
     assert payload.regime_fit_ids == tuple(sorted(payload.regime_fit_ids))
     assert payload.candidate_count == len(ids)
     # the consulted-assignments hash is recomputable from the persisted fits
-    root = tmp_path / "store"
-    for fold_fit in run.fold_fits:
-        persist_regime_fit(
-            root,
-            fold_fit,
-            run.assignments[run.assignments["fold_index"] == fold_fit.fold_index],
-            observation_frame=fixture.view.frame,
-        )
-    from alpha_lab.agents.data_infra.ifvg.ml.regime_store import load_regime_fit_assignments
-
     reloaded = pd.concat(
         [
-            load_regime_fit_assignments(root, fit.fit_envelope.regime_fit_id)[2]
+            load_regime_fit_assignments(root, fit.fit_envelope.regime_fit_id).frame
             for fit in run.fold_fits
         ],
         ignore_index=True,
@@ -338,12 +349,12 @@ def test_candidate_grain_artifact_one_row_per_candidate_and_store_discipline(
     other, _ = build_regime_oos_assignment_artifact(
         frame,
         protocol=protocol,
-        regime_fit_ids=tuple(fit.fit_envelope.regime_fit_id for fit in run.fold_fits),
+        verified_fit_assignments=verified,
         regime_fold_set_id=run.fold_set_id,
         fold_schedule_id=schedule.fold_schedule_id,
-        consulted_assignments=run.assignments,
         candidate_as_of=as_of.iloc[:-1],
         candidate_as_of_source_ref="bundle_feature_view:" + "0" * 64,
+        candidate_as_of_stage=AvailabilityStage.ENTRY_DECISION,
     )
     assert other.regime_oos_assignment_id != envelope.regime_oos_assignment_id
     # tampering the stored table refuses on load
@@ -359,6 +370,36 @@ def test_candidate_grain_artifact_one_row_per_candidate_and_store_discipline(
     sidecar.write_bytes(sidecar.read_bytes() + b"\x00")
     with pytest.raises(SearchStoreError):
         load_regime_oos_assignment_frame(root, stored)
+
+
+def _payload_fields(**overrides) -> dict:
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_contracts import FitAssignmentRef
+
+    fields = dict(
+        resolved_regime_protocol_id="a" * 64,
+        observation_granularity=ObservationGranularity.CANDIDATE_STAGE_ROW,
+        regime_fit_ids=("b" * 64,),
+        regime_fit_assignment_refs=(
+            FitAssignmentRef(
+                regime_fit_id="b" * 64,
+                assignments_sidecar_sha256="2" * 64,
+                assignment_schema_hash="3" * 64,
+            ),
+        ),
+        regime_fold_set_id="c" * 64,
+        fold_schedule_id="d" * 64,
+        assignment_source="candidate_fold_oos",
+        panel_context=None,
+        candidate_as_of_source_hash="e" * 64,
+        candidate_as_of_source_ref="bundle_feature_view:" + "0" * 64,
+        consulted_assignments_hash="f" * 64,
+        candidate_count=0,
+        resolved_cluster_count=3,
+        assignment_schema_hash="1" * 64,
+        candidate_as_of_stage=AvailabilityStage.ENTRY_DECISION,
+    )
+    fields.update(overrides)
+    return fields
 
 
 def test_panel_context_must_agree_with_the_protocol(candidate_run):
@@ -380,40 +421,27 @@ def test_panel_context_must_agree_with_the_protocol(candidate_run):
         build_regime_oos_assignment_artifact(
             frame,
             protocol=panel_protocol,
-            regime_fit_ids=("a" * 64,),
+            verified_fit_assignments={},
             regime_fold_set_id="d" * 64,
             fold_schedule_id="e" * 64,
-            consulted_assignments=pd.DataFrame(),
             candidate_as_of=as_of,
             candidate_as_of_source_ref="bundle_feature_view:" + "0" * 64,
+            candidate_as_of_stage=context.candidate_as_of_stage,
             panel_context=context,
         )
     with pytest.raises(ValueError, match="requires the panel assignment context"):
         build_regime_oos_assignment_artifact(
             frame,
             protocol=panel_protocol,
-            regime_fit_ids=("a" * 64,),
+            verified_fit_assignments={},
             regime_fold_set_id="d" * 64,
             fold_schedule_id="e" * 64,
-            consulted_assignments=pd.DataFrame(),
             candidate_as_of=as_of,
             candidate_as_of_source_ref="bundle_feature_view:" + "0" * 64,
+            candidate_as_of_stage=AvailabilityStage.ENTRY_DECISION,
         )
     with pytest.raises(ValueError, match="panel grain"):
-        RegimeOosAssignmentPayload(
-            resolved_regime_protocol_id="a" * 64,
-            observation_granularity=ObservationGranularity.CANDIDATE_STAGE_ROW,
-            regime_fit_ids=("b" * 64,),
-            regime_fold_set_id="c" * 64,
-            fold_schedule_id="d" * 64,
-            assignment_source="panel_pit",
-            panel_context=None,
-            candidate_as_of_source_hash="e" * 64,
-            candidate_as_of_source_ref="bundle_feature_view:" + "0" * 64,
-            consulted_assignments_hash="f" * 64,
-            candidate_count=0,
-            assignment_schema_hash="1" * 64,
-        )
+        RegimeOosAssignmentPayload(**_payload_fields(assignment_source="panel_pit"))
 
 
 def test_candidate_as_of_source_ref_is_a_loaded_artifact_line_never_a_caller_string():
@@ -427,20 +455,7 @@ def test_candidate_as_of_source_ref_is_a_loaded_artifact_line_never_a_caller_str
     )
 
     def _payload(ref: str) -> RegimeOosAssignmentPayload:
-        return RegimeOosAssignmentPayload(
-            resolved_regime_protocol_id="a" * 64,
-            observation_granularity=ObservationGranularity.CANDIDATE_STAGE_ROW,
-            regime_fit_ids=("b" * 64,),
-            regime_fold_set_id="c" * 64,
-            fold_schedule_id="d" * 64,
-            assignment_source="candidate_fold_oos",
-            panel_context=None,
-            candidate_as_of_source_hash="e" * 64,
-            candidate_as_of_source_ref=ref,
-            consulted_assignments_hash="f" * 64,
-            candidate_count=0,
-            assignment_schema_hash="1" * 64,
-        )
+        return RegimeOosAssignmentPayload(**_payload_fields(candidate_as_of_source_ref=ref))
 
     assert _payload("bundle_feature_view:" + "0" * 64).candidate_as_of_source_ref.startswith(
         "bundle_feature_view:"

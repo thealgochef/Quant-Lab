@@ -1,23 +1,26 @@
-"""The regime executor — S09a's body (R6.1 §6.D / D14).
+"""The regime executor — S09a's body (R6.1 §6.D / D14; R6.1-FIX §3.1).
 
 ``execute_regime_protocol`` persists the protocol, verified-loads the fold
 set (its grain/key must agree with the protocol), verified-loads the
 observations through the provenance seam, runs the kernel, persists every
-fold fit (verified reuse by reproduction — ``regime_store.persist_regime_fit``)
-and the capability assessment, and builds + saves the DESCRIPTIVE
-``RegimeOosAssignmentArtifact`` (candidate grain from the fits' OOS rows;
+fold fit (verified reuse by reproduction AND byte-for-byte assignment
+equality — ``regime_store.persist_regime_fit``) and the capability
+assessment, then EXACT-LOADS every fit's assignment sidecar back from the
+store and builds + saves the DESCRIPTIVE ``RegimeOosAssignmentArtifact``
+from those verified frames only (candidate grain from the fits' OOS rows;
 panel grain through the normative PIT rule at the requested as-of stage).
-Every bound id comes from a loaded envelope; the executor never accepts a
-frame — the panel grain's candidate as-of instants come from a
-VERIFIED-LOADED candidate bundle view named by a
-:class:`RegimeObservationSourceRef` (adversarial R6.1 F1: a caller string
-paired with an in-memory frame is not provenance). Zero valid folds is the
-designed safe failure: the assessment is persisted with its typed gate
-failures and no fit exists.
+The in-memory ``run.assignments`` frame never reaches a persisted artifact
+(R6.1-FIX F-02): every bound id and every consulted value comes from a
+loaded, manifest-verified artifact. The panel grain's candidate as-of
+instants come from a VERIFIED-LOADED candidate bundle view named by a
+:class:`RegimeObservationSourceRef` (adversarial R6.1 F1). Zero valid folds
+is the designed safe failure: the assessment is persisted with its typed
+gate failures and no fit exists.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -40,10 +43,13 @@ from .regime_oos_assignment import (
     build_regime_oos_assignment_artifact,
     candidate_as_of_frame,
     candidate_fold_oos_assignment,
+    consulted_assignment_frame,
     save_regime_oos_assignment,
 )
 from .regime_service import RegimeProtocolRun
 from .regime_store import (
+    VerifiedFitAssignments,
+    load_regime_fit_assignments,
     persist_regime_assessment,
     persist_regime_fit,
     persist_regime_protocol,
@@ -54,6 +60,7 @@ __all__ = [
     "candidate_as_of_source_reference",
     "execute_regime_protocol",
     "load_candidate_as_of_source",
+    "verified_fit_assignments_for_run",
 ]
 
 
@@ -86,6 +93,26 @@ def load_candidate_as_of_source(
     return load_regime_observations(Path(root), candidate_as_of_source)
 
 
+def verified_fit_assignments_for_run(
+    root: Path, run: RegimeProtocolRun
+) -> dict[int, VerifiedFitAssignments]:
+    """Exact-load every persisted fit's assignment sidecar of ``run`` (fold
+    index → verified evidence). The loaded fit must be the run's fit for
+    that fold (id and fold index agree); nothing is listed."""
+
+    verified: dict[int, VerifiedFitAssignments] = {}
+    for fold_fit in run.fold_fits:
+        fit_id = fold_fit.fit_envelope.regime_fit_id
+        loaded = load_regime_fit_assignments(Path(root), fit_id)
+        if loaded.regime_fit_id != fit_id or loaded.fold_index != int(fold_fit.fold_index):
+            raise ValueError(
+                f"the store returned fit {loaded.regime_fit_id[:12]}… (fold "
+                f"{loaded.fold_index}) for fit {fit_id[:12]}… (fold {fold_fit.fold_index})"
+            )
+        verified[int(fold_fit.fold_index)] = loaded
+    return verified
+
+
 @dataclass(frozen=True, slots=True)
 class RegimeExecutionResult:
     protocol: RegimeProtocolEnvelope
@@ -99,6 +126,15 @@ class RegimeExecutionResult:
     source_artifact_ids: tuple[str, ...]
     observation_matrix_hash: str
     fits_reused: tuple[bool, ...]
+    #: R6.1-FIX §3.1: fold index → the VERIFIED per-fit assignment evidence
+    #: (exact store loads) every downstream artifact must consume
+    verified_fit_assignments: Mapping[int, VerifiedFitAssignments]
+
+    @property
+    def consulted_assignments(self) -> pd.DataFrame:
+        """The concatenated VERIFIED fit assignment frames (fold order)."""
+
+        return consulted_assignment_frame(self.verified_fit_assignments)
 
 
 def execute_regime_protocol(
@@ -112,7 +148,8 @@ def execute_regime_protocol(
     bootstrap_refits: int = 50,
 ) -> RegimeExecutionResult:
     """Persist → load fold set → load observations → run → persist fits and
-    assessment → descriptive OOS assignment artifact.
+    assessment → exact-load the fits' assignment sidecars → descriptive OOS
+    assignment artifact from those verified frames.
 
     ``candidate_as_of_source`` (panel grain only) names the PERSISTED
     candidate bundle view whose as-of instants the panel regimes are assigned
@@ -156,6 +193,10 @@ def execute_regime_protocol(
         reused.append(bool(was_reused))
     persist_regime_assessment(root, run.assessment)
     fit_ids = tuple(fit.fit_envelope.regime_fit_id for fit in run.fold_fits)
+    # R6.1-FIX (§3.1, F-02): from here on ONLY the exact-loaded, manifest-
+    # verified sidecar frames are consulted — never ``run.assignments``
+    verified = verified_fit_assignments_for_run(root, run)
+    consulted = consulted_assignment_frame(verified)
 
     if grain is ObservationGranularity.CONTEXT_BAR_PANEL:
         if candidate_as_of_source is None:
@@ -166,7 +207,7 @@ def execute_regime_protocol(
         max_staleness = interval * PANEL_ASSIGNMENT_MAX_STALENESS_INTERVALS
         frame = assign_panel_regimes_to_candidates(
             observations.frame,
-            run.assignments,
+            consulted,
             as_of,
             protocol=protocol,
             max_staleness_seconds=max_staleness,
@@ -187,19 +228,19 @@ def execute_regime_protocol(
             )
         key_column = "candidate_id"
         candidate_ids = tuple(observations.frame[key_column].astype(str))
-        frame = candidate_fold_oos_assignment(run.assignments, candidate_ids)
+        frame = candidate_fold_oos_assignment(consulted, candidate_ids)
         as_of = candidate_as_of_frame(observations.frame, stage=candidate_as_of_stage)
         context = None
         as_of_ref = candidate_as_of_source_reference(observations)
     envelope, table = build_regime_oos_assignment_artifact(
         frame,
         protocol=protocol,
-        regime_fit_ids=fit_ids,
+        verified_fit_assignments=verified,
         regime_fold_set_id=fold_set.payload.fold_set_id,
         fold_schedule_id=fold_set.payload.fold_schedule_id,
-        consulted_assignments=run.assignments,
         candidate_as_of=as_of,
         candidate_as_of_source_ref=as_of_ref,
+        candidate_as_of_stage=candidate_as_of_stage,
         panel_context=context,
     )
     save_regime_oos_assignment(root, envelope, table)
@@ -215,4 +256,5 @@ def execute_regime_protocol(
         source_artifact_ids=observations.source_artifact_ids,
         observation_matrix_hash=observations.observation_matrix_hash,
         fits_reused=tuple(reused),
+        verified_fit_assignments=verified,
     )

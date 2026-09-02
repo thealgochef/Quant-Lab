@@ -94,6 +94,7 @@ __all__ = [
     "s09_regime_fit",
     "s10_regime_diagnostics",
     "s14_regime_reports",
+    "s15_regime_reload_failures",
     "s15_regime_reload_ok",
     "canonical_json_bytes",
 ]
@@ -571,8 +572,10 @@ def s10_regime_diagnostics(context) -> tuple[tuple[str, ...], dict[str, Any], st
     regime = context.regime
     result = regime["execution"]
     assessment = result.run.assessment
+    # R6.1-FIX: the evidence as-of instant is read from the VERIFIED fit
+    # assignment frames (the exact stored bytes), never the in-memory run frame
     decided_at = regime_evidence_as_of(
-        result.run.assignments, fallback=_fallback_as_of(regime["days"])
+        result.consulted_assignments, fallback=_fallback_as_of(regime["days"])
     )
     refusals: list[str] = []
     if request.requires_supervision:
@@ -669,37 +672,108 @@ def s14_regime_reports(context) -> tuple[tuple[str, ...], dict[str, Any], str]:
 # ── S15 ──────────────────────────────────────────────────────────────────────
 
 
-def s15_regime_reload_ok(context) -> bool:
+def s15_regime_reload_failures(context) -> dict[str, str]:
     """Every regime artifact the run produced reloads through the verified
-    stores; a missing or tampered entry fails the publication gate."""
+    stores; each failure is recorded by ``<store>/<id>`` with its sanitized
+    reason (R6.1-FIX §3.8) — the publication gate derives from the record."""
+
+    from .failure import sanitize_failure_message  # noqa: PLC0415
 
     request = regime_request(context.semantic.payload)
     if request is None:
-        return True
+        return {}
     regime = context.regime
     root = context.store_root
-    try:
-        protocol = regime["protocol"]
-        load_regime_protocol(root, protocol.resolved_regime_protocol_id)
-        execution = regime["execution"]
-        load_regime_assessment(root, execution.regime_capability_assessment_id)
-        load_regime_oos_assignment(root, execution.oos_assignment.regime_oos_assignment_id)
-        load_fold_set_artifact(root, execution.fold_set_artifact_id)
-        for decision in regime.get("decisions", ()):
-            load_regime_promotion(root, decision.regime_promotion_decision_id)
-        if request.is_panel:
-            load_context_bar_panel_artifact(
-                root, regime["panel_envelope"].context_bar_panel_artifact_id
+    execution = regime.get("execution")
+    checks: list[tuple[str, str, object]] = [
+        ("regime_protocols", regime["protocol"].resolved_regime_protocol_id, load_regime_protocol)
+    ]
+    if execution is not None:
+        checks.extend(
+            [
+                (
+                    "regime_assessments",
+                    execution.regime_capability_assessment_id,
+                    load_regime_assessment,
+                ),
+                (
+                    "regime_oos_assignments",
+                    execution.oos_assignment.regime_oos_assignment_id,
+                    load_regime_oos_assignment,
+                ),
+                ("fold_sets", execution.fold_set_artifact_id, load_fold_set_artifact),
+            ]
+        )
+    for decision in regime.get("decisions", ()):
+        checks.append(
+            ("regime_promotions", decision.regime_promotion_decision_id, load_regime_promotion)
+        )
+    if request.is_panel and "panel_envelope" in regime:
+        checks.append(
+            (
+                "context_bar_panels",
+                regime["panel_envelope"].context_bar_panel_artifact_id,
+                load_context_bar_panel_artifact,
             )
-        else:
-            load_bundle_feature_view(root, regime["observation_ref"].artifact_id)
-        fold_feature_id = regime.get("fold_feature_artifact_id")
-        if fold_feature_id is not None:
-            from ..ml.regime_fold_features import (  # noqa: PLC0415
-                load_regime_fold_features,
+        )
+    elif not request.is_panel and "observation_ref" in regime:
+        checks.append(
+            (
+                "bundle_feature_views",
+                regime["observation_ref"].artifact_id,
+                load_bundle_feature_view,
             )
+        )
+    fold_feature_id = regime.get("fold_feature_artifact_id")
+    if fold_feature_id is not None:
+        from ..ml.regime_fold_features import load_regime_fold_features  # noqa: PLC0415
 
-            load_regime_fold_features(root, fold_feature_id)
-    except Exception:  # noqa: BLE001 — the gate result is the evidence
-        return False
-    return True
+        checks.append(("regime_fold_features", fold_feature_id, load_regime_fold_features))
+    # review B-03: every executed-trade table S14 stratified over must reload
+    # AND still hash to the evidence S14 recorded; every stratified report
+    # must reload through its store
+    if regime.get("children_evidence"):
+        from .executed_trade_table import load_executed_trade_table  # noqa: PLC0415
+
+        def _table_loader(expected_sha256: str):
+            def _load(root, table_id):
+                loaded = load_executed_trade_table(root, table_id)
+                if loaded.envelope.executed_trade_table_sha256 != expected_sha256:
+                    raise ValueError(
+                        f"executed-trade table {table_id[:12]}… no longer hashes to the "
+                        "evidence S14 recorded"
+                    )
+                return loaded
+
+            return _load
+
+        for _core, evidence in sorted(regime["children_evidence"].items()):
+            checks.append(
+                (
+                    "executed_trade_tables",
+                    str(evidence["executed_trade_table_id"]),
+                    _table_loader(str(evidence["executed_trade_table_sha256"])),
+                )
+            )
+    if regime.get("stratified_report_ids"):
+        from ..ml.regime_stratification_service import (  # noqa: PLC0415
+            load_regime_stratified_report,
+        )
+
+        for report_id in regime["stratified_report_ids"]:
+            checks.append(
+                ("regime_stratified_reports", str(report_id), load_regime_stratified_report)
+            )
+    failures: dict[str, str] = {}
+    for store_name, artifact_id, loader in checks:
+        try:
+            loader(root, artifact_id)
+        except Exception as error:  # noqa: BLE001 — recorded, typed, never silent
+            failures[f"{store_name}/{artifact_id}"] = sanitize_failure_message(str(error))
+    return failures
+
+
+def s15_regime_reload_ok(context) -> bool:
+    """Backward-compatible boolean over :func:`s15_regime_reload_failures`."""
+
+    return not s15_regime_reload_failures(context)

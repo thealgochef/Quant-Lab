@@ -30,6 +30,7 @@ never unpickles anything (it loads JSON envelopes and the Arrow frame).
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import shutil
@@ -51,7 +52,9 @@ from ..search.store import (
     save_or_reuse_envelope,
 )
 from .regime_contracts import (
+    FIT_ASSIGNMENT_SCHEMA_HASH,
     MODEL_FEATURE_PROMOTION_REFUSAL,
+    FitAssignmentRef,
     RegimeCapabilityAssessmentEnvelope,
     RegimeFitArtifact,
     RegimeFitEnvelope,
@@ -59,6 +62,9 @@ from .regime_contracts import (
     RegimeProtocolEnvelope,
     RegimeStatus,
     assert_lawful_promotion,
+    fit_assignment_frame_from_bytes,
+    fit_assignment_table_bytes,
+    validate_assignment_rows,
 )
 from .regime_preprocessing import keyed_observations
 
@@ -81,6 +87,7 @@ __all__ = [
     "load_regime_assessment",
     "load_regime_promotion",
     "ReloadedRegimeFit",
+    "VerifiedFitAssignments",
 ]
 
 REGIME_PROTOCOL_STORE = "regime_protocols"
@@ -109,21 +116,14 @@ def persist_regime_protocol(root: Path, envelope: RegimeProtocolEnvelope):
 
 
 def _assignments_bytes(assignments: pd.DataFrame) -> bytes:
-    import pyarrow as pa
-    import pyarrow.ipc
+    """R6.1-FIX (§3.4): the sidecar is serialized under the ENFORCED
+    ``FIT_ASSIGNMENT_SCHEMA`` — never an inferred frame schema."""
 
-    table = pa.Table.from_pandas(assignments, preserve_index=False)
-    sink = io.BytesIO()
-    with pyarrow.ipc.new_file(sink, table.schema) as writer:
-        writer.write_table(table)
-    return sink.getvalue()
+    return fit_assignment_table_bytes(assignments)
 
 
 def _assignments_from_bytes(data: bytes) -> pd.DataFrame:
-    import pyarrow.ipc
-
-    with pyarrow.ipc.open_file(io.BytesIO(data)) as reader:
-        return reader.read_all().to_pandas()
+    return fit_assignment_frame_from_bytes(data)
 
 
 def _transform_with_bundle(bundle: dict, frame: pd.DataFrame) -> np.ndarray:
@@ -149,7 +149,8 @@ def _software_versions() -> dict[str, str]:
 
 
 def _bound_assignments(fold_fit, fold_assignments: pd.DataFrame) -> pd.DataFrame:
-    """Refuse an assignment frame that is not THIS fit's (review F6)."""
+    """Refuse an assignment frame that is not THIS fit's (review F6), or one
+    that violates the enforced schema / row invariants (R6.1-FIX §3.4)."""
 
     envelope = fold_fit.fit_envelope
     missing = sorted(set(_BINDING_COLUMNS) - set(fold_assignments.columns))
@@ -168,7 +169,40 @@ def _bound_assignments(fold_fit, fold_assignments: pd.DataFrame) -> pd.DataFrame
         raise ValueError("assignment frame carries rows of a different protocol")
     if fold_assignments["row_id"].astype(str).duplicated().any():
         raise ValueError("assignment frame repeats a row id")
-    return fold_assignments.reset_index(drop=True)
+    # the enforced schema (every column present, no inferred fallback) and
+    # the cross-field row invariants of the fit kind
+    bound = _assignments_from_bytes(_assignments_bytes(fold_assignments))
+    validate_assignment_rows(bound, cluster_count=len(fold_fit.centroids_scaled), kind="fit")
+    return bound
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedFitAssignments:
+    """ONE fit's assignment evidence as verified-loaded from the store
+    (R6.1-FIX §3.1): the envelope + artifact JSON, the frame decoded from
+    the manifest-verified sidecar bytes, the SHA-256 of exactly those bytes,
+    and the enforced schema hash. This — never an in-memory run frame — is
+    the only assignment source the descriptive OOS artifact and the
+    fold-local feature artifact may consume."""
+
+    regime_fit_id: str
+    envelope: RegimeFitEnvelope
+    artifact: RegimeFitArtifact
+    frame: pd.DataFrame
+    assignments_sidecar_sha256: str
+    assignment_schema_hash: str
+
+    @property
+    def fold_index(self) -> int:
+        return int(self.envelope.payload.fold_index)
+
+    @property
+    def ref(self) -> FitAssignmentRef:
+        return FitAssignmentRef(
+            regime_fit_id=self.regime_fit_id,
+            assignments_sidecar_sha256=self.assignments_sidecar_sha256,
+            assignment_schema_hash=self.assignment_schema_hash,
+        )
 
 
 def _verify_bundle(
@@ -321,11 +355,15 @@ def persist_regime_fit(
             raise ValueError(
                 f"regime fit {fit_id[:12]}… exists with a DIFFERENT envelope payload"
             )
-        if len(existing.assignments) != len(assignments) or set(
-            existing.assignments["row_id"].astype(str)
-        ) != set(assignments["row_id"].astype(str)):
+        # R6.1-FIX (§3.1, F-02): reuse is byte-for-byte — the candidate
+        # assignment bytes must equal the stored, manifest-verified sidecar
+        # bytes; a value difference under the same fit identity fails closed
+        stored_bytes = load_sidecar_bytes(Path(root), REGIME_FIT_STORE, fit_id, ASSIGNMENTS_SIDECAR)
+        if stored_bytes != assignments_bytes:
             raise ValueError(
-                f"regime fit {fit_id[:12]}… exists over a different assignment row set"
+                f"regime fit {fit_id[:12]}… exists but its stored assignment bytes differ "
+                "from this fit's assignment bytes (same identity, different values); "
+                "refusing to reuse or overwrite it"
             )
         return (existing.artifact, True) if return_reuse else existing.artifact
 
@@ -446,11 +484,12 @@ def load_regime_fit(root: Path, regime_fit_id: str) -> ReloadedRegimeFit:
     )
 
 
-def load_regime_fit_assignments(
-    root: Path, regime_fit_id: str
-) -> tuple[RegimeFitEnvelope, RegimeFitArtifact, pd.DataFrame]:
-    """The UI path: envelope + artifact JSON + the Arrow assignment frame,
-    all manifest-verified — the joblib sidecar is never unpickled here."""
+def load_regime_fit_assignments(root: Path, regime_fit_id: str) -> VerifiedFitAssignments:
+    """The verified assignment evidence of ONE fit (R6.1-FIX §3.1): envelope +
+    artifact JSON + the frame decoded from the manifest-verified sidecar
+    bytes, with the SHA-256 of exactly those bytes and the enforced schema
+    hash — the joblib sidecar is never unpickled here (the UI path). The
+    frame must satisfy the fit-kind row invariants (§3.4)."""
 
     envelope = load_verified_envelope(
         Path(root), REGIME_FIT_STORE, regime_fit_id, RegimeFitEnvelope
@@ -462,16 +501,34 @@ def load_regime_fit_assignments(
             ).decode("utf-8")
         )
     )
-    if artifact.regime_fit_id != regime_fit_id:
+    if artifact.regime_fit_id != regime_fit_id or (
+        artifact.fold_index != envelope.payload.fold_index
+    ):
         raise ValueError("artifact sidecar does not describe this regime fit; refusing")
-    assignments = _assignments_from_bytes(
-        load_sidecar_bytes(
-            Path(root), REGIME_FIT_STORE, regime_fit_id, ASSIGNMENTS_SIDECAR
-        )
-    )
+    data = load_sidecar_bytes(Path(root), REGIME_FIT_STORE, regime_fit_id, ASSIGNMENTS_SIDECAR)
+    assignments = _assignments_from_bytes(data)
     if (assignments["regime_fit_id"].astype(str) != regime_fit_id).any():
         raise ValueError("assignment sidecar carries rows of a different regime fit")
-    return envelope, artifact, assignments
+    if (assignments["fold_index"].astype(int) != int(envelope.payload.fold_index)).any():
+        raise ValueError("assignment sidecar carries rows of a different fold")
+    # adversarial RA-06 (c): the protocol column is re-checked on every verified
+    # load, not only at persist time
+    if (
+        assignments["resolved_regime_protocol_id"].astype(str)
+        != str(envelope.payload.resolved_regime_protocol_id)
+    ).any():
+        raise ValueError("assignment sidecar carries rows of a different regime protocol")
+    validate_assignment_rows(
+        assignments, cluster_count=len(artifact.fold_local_cluster_ids), kind="fit"
+    )
+    return VerifiedFitAssignments(
+        regime_fit_id=regime_fit_id,
+        envelope=envelope,
+        artifact=artifact,
+        frame=assignments,
+        assignments_sidecar_sha256=hashlib.sha256(data).hexdigest(),
+        assignment_schema_hash=FIT_ASSIGNMENT_SCHEMA_HASH,
+    )
 
 
 def persist_regime_assessment(

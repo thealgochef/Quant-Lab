@@ -26,11 +26,13 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import types
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
+from enum import Enum
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, ClassVar, Literal, get_args
+from typing import Any, ClassVar, Literal, Union, get_args, get_origin
 
 from pydantic import (
     BaseModel,
@@ -239,10 +241,74 @@ def deep_freeze(value: Any) -> Any:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _enum_field_shape(annotation: Any) -> tuple[type[Enum] | None, str | None]:
+    """``(enum class, shape)`` of an enum-typed annotation: ``"scalar"`` for a
+    bare ``Enum`` or ``Enum | None``, ``"sequence"`` for a homogeneous
+    ``tuple`` / ``list`` / ``set`` / ``frozenset`` of ONE enum class (each
+    element must be a member); ``(None, None)`` for every other annotation
+    (a mapping, a union of two enums, a non-enum) — passed through untouched
+    (adversarial R6.1-FIX RA-04: a container of members is lawful)."""
+
+    if isinstance(annotation, type) and issubclass(annotation, Enum):
+        return annotation, "scalar"
+    origin = get_origin(annotation)
+    if origin is Union or origin is types.UnionType:
+        members = [member for member in get_args(annotation) if member is not type(None)]
+        if len(members) == 1:
+            return _enum_field_shape(members[0])
+        return None, None
+    if origin in (tuple, list, set, frozenset):
+        element_types = [member for member in get_args(annotation) if member is not Ellipsis]
+        if (
+            len(element_types) == 1
+            and isinstance(element_types[0], type)
+            and issubclass(element_types[0], Enum)
+        ):
+            return element_types[0], "sequence"
+    return None, None
+
+
 class FrozenContract(BaseModel):
-    """Boundary-spec base: frozen pydantic v2, unknown fields forbidden."""
+    """Boundary-spec base: frozen pydantic v2, unknown fields forbidden.
+
+    R6.1-FIX §3.9 (F-10D): ``model_copy(update=...)`` bypasses validation, so
+    an enum-typed field updated with a raw string would serialize with a
+    Pydantic warning and an unexpected value inside an identity payload —
+    the copy seam refuses anything but the enum member for such fields.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+    def model_copy(self, *, update: Mapping[str, Any] | None = None, deep: bool = False):
+        if update:
+            fields = type(self).model_fields
+            for name, value in update.items():
+                field = fields.get(name)
+                if field is None or value is None:
+                    continue
+                enum_cls, shape = _enum_field_shape(field.annotation)
+                if enum_cls is None:
+                    continue
+                if shape == "scalar":
+                    if not isinstance(value, enum_cls):
+                        raise TypeError(
+                            f"{type(self).__name__}.{name} is enum-typed "
+                            f"({enum_cls.__name__}); pass the enum member, not {value!r}"
+                        )
+                    continue
+                if isinstance(value, str | bytes) or not isinstance(value, Iterable):
+                    raise TypeError(
+                        f"{type(self).__name__}.{name} is a sequence of enum members "
+                        f"({enum_cls.__name__}); pass a tuple of members, not {value!r}"
+                    )
+                for element in value:
+                    if not isinstance(element, enum_cls):
+                        raise TypeError(
+                            f"{type(self).__name__}.{name} is a sequence of enum members "
+                            f"({enum_cls.__name__}); every element must be a member, "
+                            f"not {element!r}"
+                        )
+        return super().model_copy(update=update, deep=deep)
 
 
 class EnvelopeBase(FrozenContract):

@@ -53,7 +53,7 @@ from .comparison_rows import (
     comparison_row_id,
     default_fold_schedule_id,
     join_fold_local_features,
-    label_content_hash,
+    label_artifact_content_id,
 )
 from .model_protocols import CATBOOST_BUNDLE_PROTOCOL_ID
 
@@ -308,7 +308,9 @@ def run_catboost_bundle_fold_models(
         else bundle_rung_categorical_features(features, block_declared=block_declared)
     )
     schedule_id = fold_schedule_id or default_fold_schedule_id(folds, labeled_candidates)
-    label_id = label_artifact_id or label_content_hash(labeled_candidates)
+    # R6.1-FIX §3.6 (review RA-05): the helper default is the FULL
+    # consumed-column content hash, never the narrow pair hash
+    label_id = label_artifact_id or label_artifact_content_id(None, labeled_candidates)
     fold_set = candidate_fold_set_id(folds)
     protocol = resolve_catboost_bundle_protocol(
         ordered_features=features,

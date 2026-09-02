@@ -535,10 +535,11 @@ def _render_assignment_view(
 
     st_module.markdown("**Assignment view** (exact fit id; per-row facts of ONE fold-local fit)")
     try:
-        envelope, artifact, assignments = load_regime_fit_assignments(store_root, fit_id)
+        verified = load_regime_fit_assignments(store_root, fit_id)
     except Exception as error:  # noqa: BLE001 — sanitized surface only
         render_empty_state(st_module, "artifact_unavailable", detail=sanitize_error(error))
         return
+    envelope, artifact, assignments = verified.envelope, verified.artifact, verified.frame
     if envelope.payload.resolved_regime_protocol_id != protocol_id:
         render_empty_state(
             st_module,

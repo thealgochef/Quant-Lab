@@ -44,6 +44,7 @@ from .comparison_rows import (
     candidate_fold_set_id,
     comparison_row_id,
     default_fold_schedule_id,
+    label_artifact_content_id,
     label_content_hash,
     with_comparison_row_ids,
 )
@@ -121,6 +122,12 @@ class SupervisedLadderRun:
     #: What supplied the feature list: the frozen tier registry (R5) or one
     #: exact resolved feature bundle (R5B bundle-parametrized rungs).
     feature_source: dict[str, Any] = field(default_factory=dict)
+    #: R6.1-FIX §3.6 (review RA-05): where the label identity the rungs bound
+    #: came from — ``label_artifact`` (the caller passed the exact persisted
+    #: label artifact id, e.g. S07's) or ``content_hash_unpersisted`` (the
+    #: helper form: the FULL consumed-column content hash; such a run can
+    #: never feed a persisted study).
+    label_identity_source: str = "label_artifact"
 
     def rung(self, protocol_id: str) -> LadderRung:
         for rung in self.rungs:
@@ -370,6 +377,7 @@ def run_supervised_ladder(
     fold_local_features: RegimeFoldFeatureSource | None = None,
     fold_schedule_id: str | None = None,
     label_artifact_id: str | None = None,
+    label_identity_source: str | None = None,
 ) -> SupervisedLadderRun:
     """Run every requested rung on identical rows/folds and pair the deltas.
 
@@ -438,7 +446,20 @@ def run_supervised_ladder(
     features = features_for_tier(tier) if tier is not None else tuple(bundle_features)
     # D13: the row identity every rung shares — schedule, fold set, labels
     schedule_id = fold_schedule_id or default_fold_schedule_id(folds, labeled_candidates)
-    label_id = label_artifact_id or label_content_hash(labeled_candidates)
+    # R6.1-FIX §3.6 (review RA-05): without the exact persisted label artifact
+    # id the ladder binds the FULL consumed-column content hash and is stamped
+    # unpersistable — the narrow (candidate, target) pair hash is never the
+    # label identity of a rung
+    if label_artifact_id is not None:
+        label_id = str(label_artifact_id)
+        resolved_label_source = label_identity_source or "label_artifact"
+    else:
+        label_id = label_artifact_content_id(None, labeled_candidates)
+        resolved_label_source = "content_hash_unpersisted"
+    if resolved_label_source not in ("label_artifact", "content_hash_unpersisted"):
+        raise ValueError(
+            "label_identity_source must be 'label_artifact' or 'content_hash_unpersisted'"
+        )
     fold_set = candidate_fold_set_id(folds)
     if bundle_features is not None:
         block_declared = tuple(bundle_categorical_features or ()) + (
@@ -632,4 +653,5 @@ def run_supervised_ladder(
         parity=parity,
         paired_deltas=paired_deltas,
         feature_source=feature_source,
+        label_identity_source=resolved_label_source,
     )

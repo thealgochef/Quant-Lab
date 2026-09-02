@@ -607,11 +607,18 @@ def test_window_definition_changes_mint_a_new_resolved_block_id() -> None:
     base_id = FeatureBlockResolutionEnvelope.from_payload(
         base_payload
     ).resolved_feature_block_id
+    from alpha_lab.agents.data_infra.ifvg.features.mbp1_source_contract import (
+        IntervalBound,
+        WindowTriggerSemantics,
+    )
+
     windows = list(base_payload.mbp1_feature_windows)
+    # R6.1-FIX (F-10D): enum-typed identity fields take enum MEMBERS — a raw
+    # string would serialize with a Pydantic warning (and is now refused)
     for update in (
         {"minimum_event_count": 2},
-        {"trigger_semantics": "pre_trigger_exclusive"},
-        {"lower_bound": "closed"},
+        {"trigger_semantics": WindowTriggerSemantics.PRE_TRIGGER_EXCLUSIVE},
+        {"lower_bound": IntervalBound.CLOSED},
         {"missingness_policy_id": "some_other_policy_v1"},
     ):
         changed = [windows[0].model_copy(update=update), *windows[1:]]

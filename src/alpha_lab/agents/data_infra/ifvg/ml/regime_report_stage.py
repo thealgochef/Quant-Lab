@@ -1,15 +1,22 @@
 """S14's regime half — the stratified reports from PERSISTED artifacts only
-(R6.1 §6.E / §6.G; D14: S14 performs zero fitting).
+(R6.1 §6.E / §6.G; D14: S14 performs zero fitting; R6.1-FIX §3.7 / §3.8).
 
 ``build_reports(context)`` assembles the :class:`StratificationInputs` of
 ``regime_stratification_service`` from the run: the exact S10 decision (or
 the frozen FEATURE_ELIGIBLE decision of a model-bearing request), the
 descriptive OOS-assignment artifact, every gated child's executed-trade
-table with its costed-evaluation identity, the exact persisted account
-simulation ids S12/S13 reported, the pooled frontier, and — for the panel
-grain — a point-in-time assigner over the persisted panel + fits for
-historical no-trade prop events. No estimator is fitted here; every
-refusal is recorded per class, never raised.
+table VERIFIED-LOADED from the immutable ``executed_trade_tables`` store by
+its derived id (R6.1-FIX §3.7 — never an in-memory frame; the table id and
+hash are bound into every report), the exact persisted account simulation
+ids S12/S13 reported, the pooled frontier, and — for the panel grain — a
+point-in-time assigner over the persisted panel + fits for historical
+no-trade prop events. S14 iterates the charter's child set: a child that is
+not gated, or whose table is unavailable, is a TYPED ``children_skipped``
+record — never a silent omission — and the reports are ALWAYS built from
+the present children (review B-03: a prior attempt's report record is never
+returned in place of this attempt's evidence; identical evidence re-mints
+identical report ids, which the store reuses). No estimator is fitted here;
+every class refusal is recorded per class, never raised.
 """
 
 from __future__ import annotations
@@ -20,12 +27,16 @@ from typing import Any
 
 import pandas as pd
 
-from ..contracts import RecordTable
 from ..features.context_bar_panel_materializer import (
     load_context_bar_panel_artifact,
     load_context_bar_panel_frame,
 )
+from ..search.executed_trade_table import (
+    load_executed_trade_table,
+    probe_executed_trade_table,
+)
 from ..search.identities import canonical_contract_sha256
+from ..search.store import SidecarLoadError, load_json_sidecar
 from .regime_oos_assignment import (
     assign_panel_regimes_to_candidates,
     load_regime_oos_assignment,
@@ -39,7 +50,19 @@ from .regime_stratification_service import (
 from .regime_stratified_contracts import RegimeStratificationClass
 from .regime_stratified_prop import load_account_event_detail_from_json
 
-__all__ = ["build_reports", "event_detail_loader_for_policy", "panel_event_assigner"]
+__all__ = [
+    "CHILD_SKIP_REASONS",
+    "build_reports",
+    "event_detail_loader_for_policy",
+    "panel_event_assigner",
+]
+
+#: The typed reasons a charter child is recorded under ``children_skipped``.
+CHILD_SKIP_REASONS: tuple[str, ...] = (
+    "child_not_completed_or_reused",
+    "strategy_gates_not_passed",
+    "executed_trade_table_unavailable",
+)
 
 
 def event_detail_loader_for_policy(policy_id: str):
@@ -85,11 +108,21 @@ def panel_event_assigner(context):
         root, oos_payload.panel_context.context_bar_panel_artifact_id
     )
     panel_frame = load_context_bar_panel_frame(root, panel_envelope)
+    # R6.1-FIX (§3.1): every fit's sidecar is verified against the exact ref
+    # the persisted OOS artifact bound (sidecar sha256 + schema hash)
+    verified_by_id = {
+        fit_id: load_regime_fit_assignments(root, fit_id)
+        for fit_id in oos_payload.regime_fit_ids
+    }
+    for ref in oos_payload.regime_fit_assignment_refs:
+        verified = verified_by_id[ref.regime_fit_id]
+        if verified.ref != ref:
+            raise ValueError(
+                f"fit {ref.regime_fit_id[:12]}… assignment sidecar does not match the "
+                "reference the persisted OOS assignment bound; refusing"
+            )
     assignments = pd.concat(
-        [
-            load_regime_fit_assignments(root, fit_id)[2]
-            for fit_id in oos_payload.regime_fit_ids
-        ],
+        [verified_by_id[fit_id].frame for fit_id in oos_payload.regime_fit_ids],
         ignore_index=True,
     )
     interval = int(protocol.payload.panel_interval_seconds or 0)
@@ -115,35 +148,27 @@ def panel_event_assigner(context):
     return _assign
 
 
-_REPORTS_SIDECAR = "regime_stratified_reports.json"
-_STAGE_S14 = "14_build_frontier_and_insights"
+def _child_table_evidence(context, core_replay_id: str) -> tuple[Any | None, str | None]:
+    """``(evidence, skip_reason)`` for one charter child: the executed-trade
+    table this run holds (S02: persisted after a fresh completion / verified
+    reproduction, or exact-loaded for a reused child), re-verified here by
+    exact id against the store; a corrupt entry propagates typed."""
 
-
-def _prior_reports_record(context) -> dict[str, Any] | None:
-    """The PRIOR attempt's S14 regime record (exact report ids), verified
-    report by report — the S12/S13 prior-vector reuse pattern."""
-
-    from ..search.store import has_envelope, load_sidecar_bytes  # noqa: PLC0415
-    from .regime_stratification_service import load_regime_stratified_report  # noqa: PLC0415
-
-    entry = context.state["stages"].get(_STAGE_S14, {})
-    stage_result_id = entry.get("stage_result_id")
-    if not stage_result_id or not has_envelope(
-        context.store_root, "pipeline_stage_results", stage_result_id
-    ):
-        return None
-    try:
-        raw = load_sidecar_bytes(
-            context.store_root, "pipeline_stage_results", stage_result_id, _REPORTS_SIDECAR
+    held = context.executed_trades_by_child.get(core_replay_id)
+    if held is None:
+        return None, "executed_trade_table_unavailable"
+    table_id = str(held.executed_trade_table_id)
+    state = probe_executed_trade_table(context.store_root, table_id)
+    if state != "present":
+        return None, "executed_trade_table_unavailable"
+    loaded = load_executed_trade_table(context.store_root, table_id)
+    if loaded.envelope.executed_trade_table_sha256 != held.executed_trade_table_sha256:
+        raise SidecarLoadError(
+            "sidecar_hash_mismatch",
+            f"executed-trade table {table_id[:12]}… no longer hashes to the evidence S02 "
+            "recorded for this child",
         )
-    except Exception:  # noqa: BLE001 — a prior attempt without the record
-        return None
-    import json  # noqa: PLC0415
-
-    record = json.loads(raw.decode("utf-8"))
-    for report_id in record.get("report_ids", ()):
-        load_regime_stratified_report(context.store_root, report_id)  # verified reload
-    return record
+    return loaded, None
 
 
 def build_reports(context) -> tuple[tuple[str, ...], dict[str, Any], str]:
@@ -158,26 +183,37 @@ def build_reports(context) -> tuple[tuple[str, ...], dict[str, Any], str]:
         else context.wiring.cost_points
     )
     account_simulations = regime.get("account_simulations", {})
-    # The executed-trade tables are NOT a persisted artifact (a core replay
-    # persists its identity only — R5 design): S14 consumes the tables S02
-    # produced THIS run — fresh, or re-derived and verified against the
-    # persisted costed evaluation (S02 refuses to adopt unverifiable tables)
-    # — recorded as a deviation; every other S14 input is loaded by exact
-    # id from the store (F14).
+    from ..search.orchestrator import _child_evaluation_envelope  # noqa: PLC0415
+
+    # R6.1-FIX §3.7: S14 iterates the CHARTER child set; every child is either
+    # a report subject (its persisted executed-trade table verified-loaded by
+    # exact id) or a typed ``children_skipped`` record — never omitted silently
     children: dict[str, ChildStratificationInputs] = {}
     skipped: dict[str, str] = {}
-    for core_replay_id in sorted(context.gates_passed):
-        result = context.tables_by_child.get(core_replay_id)
-        if result is None:
-            skipped[core_replay_id] = "child reused without rebuilt tables"
+    evidence_by_child: dict[str, dict[str, Any]] = {}
+    for row in sorted(context.children, key=lambda item: str(item["core_replay_id"])):
+        core_replay_id = str(row["core_replay_id"])
+        if row["state"] not in ("completed", "reused"):
+            skipped[core_replay_id] = "child_not_completed_or_reused"
             continue
-        trades = result.tables.get(RecordTable.EXECUTED_TRADE, pd.DataFrame())
-        from ..search.orchestrator import _child_evaluation_envelope  # noqa: PLC0415
-
+        loaded, reason = _child_table_evidence(context, core_replay_id)
+        if loaded is None:
+            # the most specific typed fact first: a reused child whose table
+            # is unavailable could never be gated this run
+            skipped[core_replay_id] = str(reason)
+            continue
+        if core_replay_id not in context.gates_passed:
+            skipped[core_replay_id] = "strategy_gates_not_passed"
+            continue
         evaluation = _child_evaluation_envelope(core_replay_id, cost_policy)
+        evidence_by_child[core_replay_id] = {
+            "executed_trade_table_id": loaded.envelope.executed_trade_table_id,
+            "executed_trade_table_sha256": loaded.envelope.executed_trade_table_sha256,
+            "row_count": int(loaded.envelope.row_count),
+        }
         children[core_replay_id] = ChildStratificationInputs(
             core_replay_id=core_replay_id,
-            trades=trades,
+            trades=loaded.frame,
             cost_points=float(cost),
             evaluation_config_hash=canonical_contract_sha256(
                 {
@@ -188,24 +224,16 @@ def build_reports(context) -> tuple[tuple[str, ...], dict[str, Any], str]:
             costed_evaluation_id=evaluation.costed_evaluation_id,
             pooled_predictions=None,
             account_simulations=dict(account_simulations.get(core_replay_id, {})),
+            executed_trade_table_id=loaded.envelope.executed_trade_table_id,
         )
+    for reason in set(skipped.values()):
+        if reason not in CHILD_SKIP_REASONS:  # pragma: no cover - closed vocabulary
+            raise ValueError(f"unregistered children_skipped reason {reason!r}")
     decision = regime["decision"]
     execution = regime["execution"]
-    if skipped:
-        # a REUSED child carries no rebuilt tables: recover the prior
-        # attempt's verified reports for the identical run (never rebuild
-        # from partial evidence)
-        prior = _prior_reports_record(context)
-        if prior is not None and set(skipped) <= set(prior.get("children", ())) and (
-            prior.get("regime_promotion_decision_id") == decision.regime_promotion_decision_id
-        ):
-            regime["stratified_report_ids"] = tuple(prior["report_ids"])
-            return (
-                tuple(prior["report_ids"]),
-                prior,
-                f"; {len(prior['report_ids'])} stratified regime report(s) reused from the "
-                "prior attempt (verified reload; children reused without rebuilt tables)",
-            )
+    # review B-03: the verified table evidence of THIS attempt is what S15
+    # reloads (executed_trade_tables/<id> by the recorded hash)
+    regime["children_evidence"] = {core: dict(evidence_by_child[core]) for core in sorted(children)}
     classes = tuple(
         RegimeStratificationClass(name) for name in request.comparison_classes_requested
     )
@@ -239,13 +267,15 @@ def build_reports(context) -> tuple[tuple[str, ...], dict[str, Any], str]:
         "refusals": dict(outcome.refusals),
         "delivered_by": dict(outcome.delivered_by),
         "children": sorted(children),
-        "children_skipped": skipped,
+        "children_evidence": {core: evidence_by_child[core] for core in sorted(children)},
+        "children_skipped": dict(sorted(skipped.items())),
         "fitting_performed": False,
     }
     note = (
         f"; {len(outcome.report_ids)} stratified regime report(s) persisted from persisted "
         f"artifacts only ({len(outcome.refusals)} class refusal(s) recorded; "
-        f"{len(outcome.delivered_by)} modeled class(es) delivered by S09c)"
+        f"{len(outcome.delivered_by)} modeled class(es) delivered by S09c; "
+        f"{len(skipped)} child(ren) skipped with a typed reason)"
     )
     return tuple(outcome.report_ids), record, note
 
@@ -257,7 +287,9 @@ _S09_RECORD_SIDECAR = "regime_run.json"
 def _delivered_by_s09c(context, regime) -> dict[str, str]:
     """The exact S09c study ids that DELIVERED the modeled classes of this
     run: the in-memory S09c results when this attempt ran them, else the
-    run's OWN verified S09 stage record (never a store listing)."""
+    run's OWN verified S09 stage record (never a store listing). R6.1-FIX
+    §3.8: a corrupt record is a typed failure; only a manifest-proven
+    "not produced" record means no delivery."""
 
     delivered: dict[str, str] = {}
     study = regime.get("controlled_study")
@@ -268,23 +300,14 @@ def _delivered_by_s09c(context, regime) -> dict[str, str]:
         delivered["cohort_model"] = str(cohort.envelope.regime_cohort_model_study_id)
     if delivered:
         return delivered
-    from ..search.store import has_envelope, load_sidecar_bytes  # noqa: PLC0415
-
     entry = context.state["stages"].get(_STAGE_S09, {})
     stage_result_id = entry.get("stage_result_id")
-    if not stage_result_id or not has_envelope(
-        context.store_root, "pipeline_stage_results", stage_result_id
-    ):
+    if not stage_result_id:
         return delivered
-    try:
-        raw = load_sidecar_bytes(
-            context.store_root, "pipeline_stage_results", stage_result_id, _S09_RECORD_SIDECAR
-        )
-    except Exception:  # noqa: BLE001 — a descriptive run carries no S09c record
-        return delivered
-    import json  # noqa: PLC0415
-
-    s09c = (json.loads(raw.decode("utf-8")) or {}).get("S09c") or {}
+    record = load_json_sidecar(
+        context.store_root, "pipeline_stage_results", stage_result_id, _S09_RECORD_SIDECAR
+    )
+    s09c = ((record or {}).get("S09c") or {}) if record is not None else {}
     for comparison_class, key in (
         ("feature_only", "regime_controlled_study_id"),
         ("cohort_model", "regime_cohort_model_study_id"),

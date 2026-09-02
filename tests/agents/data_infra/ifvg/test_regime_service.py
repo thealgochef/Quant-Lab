@@ -535,6 +535,15 @@ def test_panel_pit_assignment_is_last_completed_bar_never_future_and_oos_only():
             # bar 3: in-sample ONLY → no frozen OOS regime exists
             dict(row_id=f"bar_{interval}_3", fold_index=2, partition="train", local=1, canonical=1),
         ]
+        # R6.1-FIX §3.4/§3.5 (F-05): a VALID assignment row carries the complete
+        # value set — a k-length distance vector whose minimum sits at the local
+        # id, the assigned distance (== that minimum) and the margin (second −
+        # first ≥ 0) — exactly what the kernel produces; ``missing_reason`` null
+        def _distances(local: int) -> list[float]:
+            vector = [0.5, 0.7, 0.9]
+            vector[local] = 0.1
+            return vector
+
         panel_assignments = pd.DataFrame(
             {
                 "row_id": [r["row_id"] for r in rows],
@@ -543,7 +552,14 @@ def test_panel_pit_assignment_is_last_completed_bar_never_future_and_oos_only():
                 "regime_fit_id": [f"{r['fold_index']}" * 64 for r in rows],
                 "fold_local_cluster_id": [r["local"] for r in rows],
                 "canonical_reporting_cluster_id": [r["canonical"] for r in rows],
+                "distances": [_distances(r["local"]) for r in rows],
+                "assigned_distance": [min(_distances(r["local"])) for r in rows],
+                "assignment_margin": [
+                    sorted(_distances(r["local"]))[1] - sorted(_distances(r["local"]))[0]
+                    for r in rows
+                ],
                 "valid": [True] * len(rows),
+                "missing_reason": [None] * len(rows),
             }
         )
         candidates = pd.DataFrame(

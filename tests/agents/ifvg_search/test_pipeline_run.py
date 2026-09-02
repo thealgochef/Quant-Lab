@@ -324,6 +324,12 @@ def test_second_attempt_with_different_workers_shares_every_semantic_identity(
         if entry["stage_result_id"]
     }
     assert second_ids == first_ids  # byte-identical semantic results
+    # R6.1-FIX (review B-05): a non-stratified reuse replays NOTHING
+    assert second_state["children"]
+    assert all(
+        row["state"] == "reused" and row["replay_invocations"] == 0
+        for row in second_state["children"]
+    )
     # every re-derived stage is marked verified-reuse; S11 stays blocked
     for stage, status in second.stage_statuses.items():
         if stage == QuantLabPipelineStage.S11_RUN_FROZEN_MODEL_GATED_REPLAYS.value:

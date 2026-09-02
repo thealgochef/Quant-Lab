@@ -40,6 +40,7 @@ from typing import Any, ClassVar, Literal
 import pandas as pd
 from pydantic import Field, model_validator
 
+from ..contracts import RecordTable
 from ..data_access import allowlist_sha256
 from ..ml.decision_policies import S11_BLOCKED_REASON
 from ..ml.regime_study import RegimeStudyRequest
@@ -47,7 +48,14 @@ from ..preparation import _write_json_atomic
 from . import pipeline_regime as _regime
 from .authorization import SyntheticAuthorizationMarker
 from .charter import SearchCharterEnvelope, SimulationProtocol
-from .failure import FailureReason, sanitize_failure_message
+from .executed_trade_table import (
+    build_executed_trade_table,
+    executed_trade_table_id_for,
+    load_executed_trade_table,
+    probe_executed_trade_table,
+    save_executed_trade_table,
+)
+from .failure import FailureReason, PipelineWiringError, sanitize_failure_message
 from .frontier import ObjectiveSpec, build_frontier
 from .gates import evaluate_strategy_gates
 from .identities import (
@@ -79,8 +87,9 @@ from .orchestrator import (
     merge_prop_vectors,
 )
 from .store import (
+    SidecarLoadError,
     has_envelope,
-    load_sidecar_bytes,
+    load_json_sidecar,
     load_verified_envelope,
     save_or_reuse_envelope,
 )
@@ -389,6 +398,10 @@ class PipelineResultPayload(FrozenContract):
     frontier_id: str | None = Field(default=None, pattern=SHA256_PATTERN)
     control_flow_gates: ControlFlowGateReport | None
     verification_stamps: ImmutableMap[str, Any] | None
+    #: R6.1-FIX §3.8 (review B-09): every artifact reload failure S15 observed
+    #: (``<store>/<id>`` → sanitized typed reason) is part of the IMMUTABLE
+    #: result — two attempts that failed differently mint different results
+    reload_failure_reasons: ImmutableMap[str, str] = ImmutableMap()
 
 
 class PipelineResultEnvelope(EnvelopeBase):
@@ -651,6 +664,10 @@ class _RunContext:
     specs: tuple[Any, ...] | None = None
     children: list[dict[str, Any]] = field(default_factory=list)
     tables_by_child: dict[str, Any] = field(default_factory=dict)
+    #: R6.1-FIX §3.7: core_replay_id → the VERIFIED executed-trade table
+    #: evidence this run holds (persisted after a fresh completion / verified
+    #: reproduction, or exact-loaded for a reused child)
+    executed_trades_by_child: dict[str, Any] = field(default_factory=dict)
     metrics_by_child: dict[str, Any] = field(default_factory=dict)
     gates_passed: dict[str, dict[str, float]] = field(default_factory=dict)
     neutrality_by_child: dict[str, bool] = field(default_factory=dict)
@@ -681,6 +698,41 @@ class _RunContext:
 
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def _reset_publication_block(state: dict[str, Any]) -> None:
+    """R6.1-FIX §3.8 (review B-04): the publication block describes the
+    attempt that produced it. When THIS attempt does not reach S15 (a typed
+    failure or a safe cancel), no earlier attempt's pipeline result, gates or
+    reload record may be carried forward into an activation."""
+
+    state["publication"] = {
+        "state": "prepared_not_published",
+        "gates": None,
+        "activated": False,
+        "pipeline_result_id": None,
+        "control_flow_gates_passed": False,
+        "reload_failures": {},
+    }
+
+
+def _mark_downstream_not_run(state: dict[str, Any], later: list) -> None:
+    """R6.1-FIX §3.8: when an attempt halts, every later planned stage is
+    PENDING for this attempt — a prior attempt's terminal status is never
+    carried forward as if this attempt had reached it (S11 keeps its
+    registered blocked state); the publication block is reset with them
+    (review B-04)."""
+
+    for stage in later:
+        if stage is QuantLabPipelineStage.S11_RUN_FROZEN_MODEL_GATED_REPLAYS:
+            continue
+        later_entry = state["stages"][stage.value]
+        later_entry["status"] = StageStatus.PENDING.value
+        later_entry["explanation"] = "not run: an earlier stage failed in this attempt"
+        later_entry["started_at"] = None
+        later_entry["ended_at"] = None
+    if QuantLabPipelineStage.S15_VERIFY_AND_PUBLISH in later:
+        _reset_publication_block(state)
 
 
 def _safe_isna(value: Any) -> bool:
@@ -988,6 +1040,204 @@ def _stage_s01_prepare(context: _RunContext) -> tuple[tuple[str, ...], str]:
     )
 
 
+@dataclass(frozen=True)
+class ExecutedTradeEvidence:
+    """The verified executed-trade table THIS run holds for a child (§3.7)."""
+
+    executed_trade_table_id: str
+    executed_trade_table_sha256: str
+    row_count: int
+    frame: pd.DataFrame
+
+
+def _record_schema_version_for(core_replay_id: str, envelope) -> int:
+    """The executed-trade table identity derives from the CORE REPLAY
+    (R6.1-FIX §3.7; review B-07): the record schema version is the resolved
+    core replay envelope's, never inferred from the frame. A child whose
+    identity resolver returned a bare id has no core replay envelope and
+    therefore no persistable table — a wiring gap, typed."""
+
+    if envelope is None:
+        raise PipelineWiringError(
+            f"child {core_replay_id[:12]}… resolved to a bare core id (no core replay "
+            "envelope); the executed-trade table identity derives from the core replay "
+            "and is never inferred from the frame"
+        )
+    return int(envelope.payload.record_schema_version)
+
+
+def _executed_trade_evidence_for_result(core_replay_id: str, envelope, result):
+    """The child's executed-trade table artifact built from THIS run's raw
+    tables (R6.1-FIX §3.7): ``(table_envelope, table_bytes)``."""
+
+    trades = result.tables.get(RecordTable.EXECUTED_TRADE, pd.DataFrame())
+    version = _record_schema_version_for(core_replay_id, envelope)
+    return build_executed_trade_table(core_replay_id, trades, record_schema_version=version)
+
+
+def _persist_and_load_executed_trade_table(context: _RunContext, table_envelope, table_bytes):
+    """Publish the projection (identical bytes reuse; different bytes under
+    one id refuse) and exact-load it back: the LOADED artifact — never the
+    in-memory projection — is the child's evidence (review B-01)."""
+
+    stored_envelope, _reused = save_executed_trade_table(
+        context.store_root, table_envelope, table_bytes
+    )
+    return load_executed_trade_table(context.store_root, stored_envelope.executed_trade_table_id)
+
+
+def _child_costed_evaluation(
+    context: _RunContext,
+    row: dict[str, Any],
+    core_replay_id: str,
+    evaluation,
+    evidence: ExecutedTradeEvidence | None,
+    cost: float,
+):
+    """R6.1-FIX §3.7 (review B-01): EVERY costed evaluation derives from ONE
+    canonical frame — the verified persisted executed-trade projection this
+    run exact-loaded — so ``costed_evaluation_id → strategy_metrics.json`` is
+    provenance-independent: a fresh child, a verified-reproduced child and a
+    plain reused child publish byte-identical evaluation bytes. A child
+    without verified table evidence can only carry an already persisted
+    evaluation (``None`` → ``executed_trade_table_unavailable``)."""
+
+    charter_payload = context.charter.payload
+    if evidence is None:
+        return _load_child_evaluation(context.store_root, evaluation.costed_evaluation_id)
+    fresh = row["state"] == "completed"
+    metrics = (
+        None
+        if fresh
+        else _load_child_evaluation(context.store_root, evaluation.costed_evaluation_id)
+    )
+    if metrics is None:
+        metrics = compute_strategy_metrics(
+            {RecordTable.EXECUTED_TRADE: evidence.frame},
+            cost_points=cost,
+            evaluation_config_hash=_evaluation_config_hash(core_replay_id, charter_payload),
+        )
+        _publish_child_evaluation(context.store_root, evaluation, metrics)
+        if not fresh:
+            row["explanation"] = (
+                str(row["explanation"])
+                + "; costed evaluation published from the verified persisted "
+                "executed-trade table"
+            )
+    return metrics
+
+
+def _record_executed_trade_evidence(
+    context: _RunContext, row: dict[str, Any], table_envelope, frame
+) -> None:
+    core_replay_id = str(row["core_replay_id"])
+    context.executed_trades_by_child[core_replay_id] = ExecutedTradeEvidence(
+        executed_trade_table_id=table_envelope.executed_trade_table_id,
+        executed_trade_table_sha256=table_envelope.executed_trade_table_sha256,
+        row_count=int(table_envelope.row_count),
+        frame=frame,
+    )
+    row["executed_trade_table_id"] = table_envelope.executed_trade_table_id
+    row["executed_trade_table_sha256"] = table_envelope.executed_trade_table_sha256
+
+
+def _evaluation_config_hash(core_replay_id: str, charter_payload) -> str:
+    return canonical_contract_sha256(
+        {
+            "core_replay_id": core_replay_id,
+            "cost_policy": charter_payload.cost_policy.model_dump(mode="json"),
+        }
+    )
+
+
+def _reuse_child_with_regime_tables(
+    context: _RunContext,
+    *,
+    spec_child,
+    row: dict[str, Any],
+    core_replay_id: str,
+    envelope,
+    table_id: str,
+    table_state: str,
+    cost: float,
+) -> None:
+    """R6.1 / R6.1-FIX §3.7: a REUSED child whose executed-trade tables a
+    stratified report needs — re-derive them through the wired runner and
+    REQUIRE the reproduction to match the persisted executed-trade table
+    byte-for-byte; when no table was persisted, the persisted costed
+    evaluation must reproduce exactly (then the table is persisted); when
+    nothing persisted can verify the reproduction the re-derived tables are
+    NOT adopted (typed: ``executed_trade_table_unavailable``)."""
+
+    charter_payload = context.charter.payload
+    result = context.wiring.child_runner(spec=spec_child, core_replay_id=core_replay_id)
+    row["replay_invocations"] = 1
+    table_envelope, table_bytes = _executed_trade_evidence_for_result(
+        core_replay_id, envelope, result
+    )
+    if table_state == "present":
+        stored = load_executed_trade_table(context.store_root, table_id)
+        if stored.table_bytes != table_bytes:
+            raise RuntimeError(
+                "the re-derived executed-trade table does not reproduce the persisted "
+                "executed-trade table byte-for-byte; refusing to treat the reused replay "
+                "as this run's evidence"
+            )
+        # review B-05: the RAW core table (the value the neutrality report
+        # hashes; it feeds S12's trade stream and the lineage maps) must
+        # reproduce too — a drift confined to non-projected columns is refused
+        if table_envelope.source_core_table_hash != stored.envelope.source_core_table_hash:
+            raise RuntimeError(
+                "the re-derived child's raw executed-trade core table does not reproduce "
+                "the persisted table's source core-table hash (a drift outside the "
+                "projection); refusing to treat the reused replay as this run's evidence"
+            )
+        context.tables_by_child[core_replay_id] = result
+        _record_executed_trade_evidence(context, row, stored.envelope, stored.frame)
+        row["explanation"] = (
+            "verified reuse by reproduction: the immutable replay exists; the child was "
+            "re-derived for the regime study's stratified reports and reproduced its "
+            "persisted executed-trade table byte-for-byte"
+        )
+        return
+    persisted = _load_child_evaluation(
+        context.store_root,
+        _child_evaluation_envelope(
+            core_replay_id, charter_payload.cost_policy
+        ).costed_evaluation_id,
+    )
+    if persisted is None:
+        # adversarial R6.1 S4: nothing persisted can verify the reproduction —
+        # the re-derived tables are NOT adopted (the child stays reused; its
+        # gates are not evaluated this run; S14 records the typed skip)
+        row["explanation"] = (
+            "verified reuse: the immutable replay exists; the child was re-derived for "
+            "the regime study's stratified reports but no executed-trade table is "
+            "persisted and this cost policy has no persisted costed evaluation to "
+            "reproduce — reproduction unverifiable; the re-derived tables are not this "
+            "run's evidence (executed_trade_table_unavailable)"
+        )
+        return
+    reproduced = compute_strategy_metrics(
+        result.tables,
+        cost_points=cost,
+        evaluation_config_hash=_evaluation_config_hash(core_replay_id, charter_payload),
+    )
+    if reproduced.model_dump(mode="json") != persisted.model_dump(mode="json"):
+        raise RuntimeError(
+            "the re-derived child tables do not reproduce the persisted costed "
+            "evaluation; refusing to treat the reused replay as this run's evidence"
+        )
+    context.tables_by_child[core_replay_id] = result
+    stored = _persist_and_load_executed_trade_table(context, table_envelope, table_bytes)
+    _record_executed_trade_evidence(context, row, stored.envelope, stored.frame)
+    row["explanation"] = (
+        "verified reuse by reproduction: the immutable replay exists; the child was "
+        "re-derived for the regime study's stratified reports, reproduced its persisted "
+        "costed evaluation, and its executed-trade table is now persisted"
+    )
+
+
 def _stage_s02_replays(context: _RunContext) -> tuple[tuple[str, ...], str]:
 
     specs = _ensure_specs(context)
@@ -1016,70 +1266,45 @@ def _stage_s02_replays(context: _RunContext) -> tuple[tuple[str, ...], str]:
             _record_children(context)
             continue
         _, envelope = _resolve_core_id(context, spec_child)
+        row["executed_trade_table_id"] = None
+        row["executed_trade_table_sha256"] = None
         if has_envelope(context.store_root, "core_replays", core_replay_id):
             row["state"] = "reused"
             row["explanation"] = (
                 "verified reuse: an immutable replay with this exact identity "
                 "already exists (zero replay invocations)"
             )
+            # R6.1-FIX §3.7: the child's persisted executed-trade table, by the
+            # identity DERIVED from the core replay (no listing); corrupt is a
+            # typed child failure, absent is a typed fact — never silence
+            version = _record_schema_version_for(core_replay_id, envelope)
+            table_id = executed_trade_table_id_for(core_replay_id, record_schema_version=version)
+            try:
+                table_state = probe_executed_trade_table(context.store_root, table_id)
+            except SidecarLoadError as error:
+                row["state"] = "failed"
+                row["failure_reason"] = FailureReason.REPLAY.value
+                row["explanation"] = (
+                    "persisted executed-trade table for this child is corrupt "
+                    f"({error.reason}): " + sanitize_failure_message(str(error))
+                )
+                _record_children(context)
+                _checkpoint(context)
+                continue
             if _regime_needs_child_tables(context):
-                # R6.1: the regime study's stratified reports need this child's
-                # executed-trade tables, which a reused replay does not carry —
-                # re-derive them and REQUIRE the reproduction to match the
-                # persisted costed evaluation exactly (verified reuse by
-                # reproduction; the immutable replay is never rewritten)
                 try:
-                    result = context.wiring.child_runner(
-                        spec=spec_child, core_replay_id=core_replay_id
+                    _reuse_child_with_regime_tables(
+                        context,
+                        spec_child=spec_child,
+                        row=row,
+                        core_replay_id=core_replay_id,
+                        envelope=envelope,
+                        table_id=table_id,
+                        table_state=table_state,
+                        cost=cost,
                     )
-                    row["replay_invocations"] = 1
-                    persisted = _load_child_evaluation(
-                        context.store_root,
-                        _child_evaluation_envelope(
-                            core_replay_id, charter_payload.cost_policy
-                        ).costed_evaluation_id,
-                    )
-                    if persisted is None:
-                        # adversarial R6.1 S4: nothing persisted can verify the
-                        # reproduction under THIS cost policy — the re-derived
-                        # tables are NOT adopted as this run's evidence (the
-                        # child stays reused; its gates are not evaluated this
-                        # run and it is left out of the stratified reports)
-                        row["explanation"] = (
-                            "verified reuse: the immutable replay exists; the child was "
-                            "re-derived for the regime study's stratified reports but "
-                            "this cost policy has no persisted costed evaluation to "
-                            "reproduce — reproduction unverifiable; the re-derived "
-                            "tables are not this run's evidence"
-                        )
-                    else:
-                        reproduced = compute_strategy_metrics(
-                            result.tables,
-                            cost_points=cost,
-                            evaluation_config_hash=canonical_contract_sha256(
-                                {
-                                    "core_replay_id": core_replay_id,
-                                    "cost_policy": charter_payload.cost_policy.model_dump(
-                                        mode="json"
-                                    ),
-                                }
-                            ),
-                        )
-                        if reproduced.model_dump(mode="json") != persisted.model_dump(
-                            mode="json"
-                        ):
-                            raise RuntimeError(
-                                "the re-derived child tables do not reproduce the "
-                                "persisted costed evaluation; refusing to treat the "
-                                "reused replay as this run's evidence"
-                            )
-                        context.tables_by_child[core_replay_id] = result
-                        row["explanation"] = (
-                            "verified reuse by reproduction: the immutable replay "
-                            "exists; the child was re-derived for the regime study's "
-                            "stratified reports and reproduced its persisted costed "
-                            "evaluation"
-                        )
+                except PipelineWiringError:
+                    raise
                 except Exception as error:  # noqa: BLE001 — per-child containment
                     row["state"] = "failed"
                     row["failure_reason"] = FailureReason.REPLAY.value
@@ -1087,6 +1312,9 @@ def _stage_s02_replays(context: _RunContext) -> tuple[tuple[str, ...], str]:
                     _record_children(context)
                     _checkpoint(context)
                     continue
+            elif table_state == "present":
+                stored = load_executed_trade_table(context.store_root, table_id)
+                _record_executed_trade_evidence(context, row, stored.envelope, stored.frame)
         else:
             row["state"] = "running"
             _record_children(context)
@@ -1109,7 +1337,27 @@ def _stage_s02_replays(context: _RunContext) -> tuple[tuple[str, ...], str]:
                 context.tables_by_child[core_replay_id] = result
                 if envelope is not None:
                     save_or_reuse_envelope(context.store_root, "core_replays", envelope)
+                # R6.1-FIX §3.7: persist the exact executed-trade projection
+                # (identical bytes reuse; different bytes under one id refuse);
+                # a neutrality report's core-table hash must agree
+                table_envelope, table_bytes = _executed_trade_evidence_for_result(
+                    core_replay_id, envelope, result
+                )
+                if neutrality is not None:
+                    hashes = neutrality.audit_disabled_core_table_hashes or {}
+                    declared = hashes.get(RecordTable.EXECUTED_TRADE.value)
+                    if declared is not None and declared != table_envelope.source_core_table_hash:
+                        raise RuntimeError(
+                            "the executed-trade table's source hash disagrees with the "
+                            "child neutrality report's core table hash"
+                        )
+                stored = _persist_and_load_executed_trade_table(
+                    context, table_envelope, table_bytes
+                )
+                _record_executed_trade_evidence(context, row, stored.envelope, stored.frame)
                 row["state"] = "completed"
+            except PipelineWiringError:
+                raise
             except Exception as error:  # noqa: BLE001 — per-child containment
                 if isinstance(error, AssertionError) and (
                     "IFVG source" in str(error) or "source access" in str(error)
@@ -1137,59 +1385,64 @@ def _stage_s02_replays(context: _RunContext) -> tuple[tuple[str, ...], str]:
 
         evaluation = _child_evaluation_envelope(core_replay_id, charter_payload.cost_policy)
         result = context.tables_by_child.get(core_replay_id)
-        if result is not None:
-            metrics = compute_strategy_metrics(
-                result.tables,
-                cost_points=cost,
-                evaluation_config_hash=canonical_contract_sha256(
-                    {
-                        "core_replay_id": core_replay_id,
-                        "cost_policy": charter_payload.cost_policy.model_dump(mode="json"),
-                    }
-                ),
+        evidence = context.executed_trades_by_child.get(core_replay_id)
+        try:
+            metrics = _child_costed_evaluation(
+                context, row, core_replay_id, evaluation, evidence, cost
             )
-            _publish_child_evaluation(context.store_root, evaluation, metrics)
-            # DEV-R4-16 closure: persist the profile-independent lineage
-            # evidence — the uniqueness report immutably, the delta-capable
-            # key projection as this stage's sidecar.
-            lineage_map = build_native_lineage_map(
-                result.tables, core_replay_id=core_replay_id
-            )
-            persist_lineage_uniqueness(context.store_root, lineage_map.uniqueness_report)
-            serialized = serialize_native_lineage_map(lineage_map)
-            context.lineage_sidecars[core_replay_id] = serialized
-            context.stage_sidecars[f"lineage_map_{core_replay_id}.json"] = (
-                json.dumps(serialized, sort_keys=True) + "\n"
-            ).encode("utf-8")
-            day_funnels = getattr(result, "day_funnels", None)
-            if day_funnels:
-                context.stage_sidecars[f"day_funnels_{core_replay_id}.json"] = (
-                    json.dumps(
-                        {
-                            str(day): {
-                                str(key): int(value)
-                                for key, value in dict(counters).items()
-                                if isinstance(value, (int, float))
-                                and not _safe_isna(value)
-                            }
-                            for day, counters in dict(day_funnels).items()
-                        },
-                        sort_keys=True,
-                    )
-                    + "\n"
+            if result is not None:
+                # DEV-R4-16 closure: persist the profile-independent lineage
+                # evidence — the uniqueness report immutably, the delta-capable
+                # key projection as this stage's sidecar (the RAW tables: the
+                # lineage keys are outside the executed-trade projection).
+                lineage_map = build_native_lineage_map(
+                    result.tables, core_replay_id=core_replay_id
+                )
+                persist_lineage_uniqueness(context.store_root, lineage_map.uniqueness_report)
+                serialized = serialize_native_lineage_map(lineage_map)
+                context.lineage_sidecars[core_replay_id] = serialized
+                context.stage_sidecars[f"lineage_map_{core_replay_id}.json"] = (
+                    json.dumps(serialized, sort_keys=True) + "\n"
                 ).encode("utf-8")
-        else:
-            metrics = _load_child_evaluation(
-                context.store_root, evaluation.costed_evaluation_id
+                day_funnels = getattr(result, "day_funnels", None)
+                if day_funnels:
+                    context.stage_sidecars[f"day_funnels_{core_replay_id}.json"] = (
+                        json.dumps(
+                            {
+                                str(day): {
+                                    str(key): int(value)
+                                    for key, value in dict(counters).items()
+                                    if isinstance(value, (int, float))
+                                    and not _safe_isna(value)
+                                }
+                                for day, counters in dict(day_funnels).items()
+                            },
+                            sort_keys=True,
+                        )
+                        + "\n"
+                    ).encode("utf-8")
+        except PipelineWiringError:
+            raise
+        except Exception as error:  # noqa: BLE001 — per-child containment (review B-01)
+            # a store refusal (e.g. an evaluation id whose persisted bytes
+            # differ) is a TYPED child failure, never a half-processed stage
+            row["state"] = "failed"
+            row["failure_reason"] = FailureReason.INVARIANT.value
+            row["explanation"] = "costed evaluation refused: " + sanitize_failure_message(
+                str(error)
             )
-            if metrics is None:
-                if "reproduction unverifiable" not in str(row.get("explanation") or ""):
-                    row["explanation"] = (
-                        "reused replay has no published costed evaluation for "
-                        "this cost policy; gates were not evaluated this run"
-                    )
-                _record_children(context)
-                continue
+            _record_children(context)
+            _checkpoint(context)
+            continue
+        if metrics is None:
+            if "reproduction unverifiable" not in str(row.get("explanation") or ""):
+                row["explanation"] = (
+                    "reused replay has no published costed evaluation for this cost "
+                    "policy and no persisted executed-trade table; gates were not "
+                    "evaluated this run (executed_trade_table_unavailable)"
+                )
+            _record_children(context)
+            continue
         context.metrics_by_child[core_replay_id] = metrics
         report = evaluate_strategy_gates(
             metrics, charter_payload.objective_policy.feasibility_gates
@@ -1235,12 +1488,18 @@ def _companion_stage(
 
 
 def _stage_s03_audit(context: _RunContext) -> tuple[tuple[str, ...], str]:
-    assert context.wiring.audit_builder is not None
+    if context.wiring.audit_builder is None:
+        raise PipelineWiringError(
+            "03_build_or_reuse_fsm_audit is planned but no audit_builder is wired"
+        )
     return _companion_stage(context, context.wiring.audit_builder, "audit")
 
 
 def _stage_s04_charts(context: _RunContext) -> tuple[tuple[str, ...], str]:
-    assert context.wiring.chart_builder is not None
+    if context.wiring.chart_builder is None:
+        raise PipelineWiringError(
+            "04_build_or_reuse_replay_charts is planned but no chart_builder is wired"
+        )
     outputs: list[str] = []
     charts_by_child: dict[str, tuple[str, ...]] = {}
     built = 0
@@ -1290,7 +1549,10 @@ def _ensure_mbp1_evidence(context: _RunContext) -> dict[str, Any]:
         save_mbp1_source_artifact,
     )
 
-    assert context.wiring.mbp1_evidence_source is not None
+    if context.wiring.mbp1_evidence_source is None:
+        raise PipelineWiringError(
+            "an MBP-1-bearing plan requires the mbp1_evidence_source seam; none is wired"
+        )
     source_envelope, events_by_day, anchors = context.wiring.mbp1_evidence_source()
     # R5B.1: synthetic coverage evidence is lawful only under the synthetic
     # marker — a real scope refuses it before the artifact is trusted
@@ -1342,7 +1604,10 @@ def _stage_s05_feature_views(context: _RunContext) -> tuple[tuple[str, ...], str
     )
     from ..features.feature_bundles import resolve_bundle  # noqa: PLC0415
 
-    assert context.wiring.candidate_view_source is not None
+    if context.wiring.candidate_view_source is None:
+        raise PipelineWiringError(
+            "05_materialize_feature_views is planned but no candidate_view_source is wired"
+        )
     context.view = context.wiring.candidate_view_source()
     outputs: list[str] = []
     dumped: dict[str, Any] = {}
@@ -1435,7 +1700,8 @@ def _stage_s06_coverage(context: _RunContext) -> tuple[tuple[str, ...], str]:
 
 
 def _stage_s07_labels(context: _RunContext) -> tuple[tuple[str, ...], str]:
-    assert context.wiring.label_builder is not None
+    if context.wiring.label_builder is None:
+        raise PipelineWiringError("07_derive_labels is planned but no label_builder is wired")
     if context.view is None and context.wiring.candidate_view_source is not None:
         context.view = context.wiring.candidate_view_source()
     label_policy_id, labeled = context.wiring.label_builder(context.view)
@@ -1445,23 +1711,14 @@ def _stage_s07_labels(context: _RunContext) -> tuple[tuple[str, ...], str]:
             f"pipeline pins {context.semantic.payload.label_policy_id!r}"
         )
     context.labeled = labeled
-    # adversarial M-1: the id hashes SORTED (candidate_id, target) PAIRS —
-    # binding candidate to target (two different labelings can never share
-    # an id) and order-invariantly (a row reorder can never fork it)
-    context.label_artifact_id = canonical_contract_sha256(
-        {
-            "label_policy_id": label_policy_id,
-            "labeled_pairs": sorted(
-                (
-                    str(candidate_id),
-                    None if _safe_isna(target) else int(target),
-                )
-                for candidate_id, target in zip(
-                    labeled["candidate_id"], labeled["binary_target"], strict=True
-                )
-            ),
-        }
-    )
+    # adversarial M-1 + R6.1-FIX §3.6 (F-08): the exact label artifact id
+    # binds the registered label policy and EVERY consumed label / economic
+    # column of every row (candidate, setup, trading day, entry / resolution
+    # instants, availability flags, target, gross / net R), order-invariantly —
+    # two labelings differing in any consumed value can never share an id
+    from ..ml.comparison_rows import label_artifact_content_id  # noqa: PLC0415
+
+    context.label_artifact_id = label_artifact_content_id(label_policy_id, labeled)
     return (context.label_artifact_id,), (
         f"labels derived for {len(labeled)} candidates under {label_policy_id}"
     )
@@ -1750,20 +2007,16 @@ def _prior_stage_vectors(
 
     entry = context.state["stages"][stage.value]
     stage_result_id = entry.get("stage_result_id")
-    if not stage_result_id or not has_envelope(
-        context.store_root, "pipeline_stage_results", stage_result_id
-    ):
+    if not stage_result_id:
         return {}
-    try:
-        raw = load_sidecar_bytes(
-            context.store_root,
-            "pipeline_stage_results",
-            stage_result_id,
-            _PROP_VECTORS_SIDECAR,
-        )
-    except Exception:  # noqa: BLE001 — a prior attempt without prop vectors
+    # R6.1-FIX §3.8 (F-07): only a manifest-proven "not produced" sidecar is
+    # optional; a missing entry, hash / manifest / identity mismatch, malformed
+    # content or I/O error propagates as a typed stage failure
+    decoded = load_json_sidecar(
+        context.store_root, "pipeline_stage_results", stage_result_id, _PROP_VECTORS_SIDECAR
+    )
+    if decoded is None:
         return {}
-    decoded = json.loads(raw.decode("utf-8"))
     return {
         core_id: {
             label: PayoutReliabilityVector.model_validate(vector)
@@ -1780,20 +2033,15 @@ def _prior_stage_simulations(
 
     entry = context.state["stages"][stage.value]
     stage_result_id = entry.get("stage_result_id")
-    if not stage_result_id or not has_envelope(
-        context.store_root, "pipeline_stage_results", stage_result_id
-    ):
+    if not stage_result_id:
         return {}
-    try:
-        raw = load_sidecar_bytes(
-            context.store_root,
-            "pipeline_stage_results",
-            stage_result_id,
-            _ACCOUNT_SIMULATIONS_SIDECAR,
-        )
-    except Exception:  # noqa: BLE001 — a prior attempt without the sidecar
-        return {}
-    return json.loads(raw.decode("utf-8"))
+    decoded = load_json_sidecar(
+        context.store_root,
+        "pipeline_stage_results",
+        stage_result_id,
+        _ACCOUNT_SIMULATIONS_SIDECAR,
+    )
+    return {} if decoded is None else decoded
 
 
 def _run_prop_modes(
@@ -2117,20 +2365,20 @@ def _persist_cross_profile_deltas(context: _RunContext) -> str:
             QuantLabPipelineStage.S02_RUN_OR_REUSE_SEQUENTIAL_REPLAYS.value
         ]
         stage_result_id = entry.get("stage_result_id")
-        if stage_result_id and has_envelope(
-            context.store_root, "pipeline_stage_results", stage_result_id
-        ):
+        if stage_result_id:
+            # R6.1-FIX §3.8: a lineage sidecar the prior attempt never produced
+            # (a reused / failed child) is lawfully absent; any corruption of a
+            # produced one is a typed failure of this stage
             for row in context.children:
-                with suppress(Exception):
-                    raw = load_sidecar_bytes(
-                        context.store_root,
-                        "pipeline_stage_results",
-                        stage_result_id,
-                        f"lineage_map_{row['core_replay_id']}.json",
-                    )
-                    maps[row["core_replay_id"]] = deserialize_native_lineage_map(
-                        json.loads(raw.decode("utf-8"))
-                    )
+                decoded = load_json_sidecar(
+                    context.store_root,
+                    "pipeline_stage_results",
+                    stage_result_id,
+                    f"lineage_map_{row['core_replay_id']}.json",
+                )
+                if decoded is None:
+                    continue
+                maps[row["core_replay_id"]] = deserialize_native_lineage_map(decoded)
     baseline_row = next(
         (row for row in context.children if row["comparison_role"] == "baseline"),
         None,
@@ -2223,7 +2471,9 @@ def _stage_s15_verify_publish(context: _RunContext) -> tuple[tuple[str, ...], st
     completed_children = [
         row for row in context.children if row["state"] in ("completed", "reused")
     ]
-    reload_ok = True
+    # R6.1-FIX §3.8: every reload failure is RECORDED by store/id with its
+    # sanitized reason (the gate derives from the record; nothing is swallowed)
+    reload_failures: dict[str, str] = {}
     if context.frontier_id is not None:
         try:
             load_verified_envelope(
@@ -2232,17 +2482,20 @@ def _stage_s15_verify_publish(context: _RunContext) -> tuple[tuple[str, ...], st
                 context.frontier_id,
                 SearchFrontierEnvelope,
             )
-        except Exception:  # noqa: BLE001 — the gate result is the evidence
-            reload_ok = False
+        except Exception as error:  # noqa: BLE001 — recorded, typed, never silent
+            reload_failures[f"frontiers/{context.frontier_id}"] = sanitize_failure_message(
+                str(error)
+            )
     for insight_id in context.insight_ids:
         try:
             load_verified_envelope(
                 context.store_root, "insights", insight_id, InsightPanelEnvelope
             )
-        except Exception:  # noqa: BLE001
-            reload_ok = False
+        except Exception as error:  # noqa: BLE001 — recorded, typed, never silent
+            reload_failures[f"insights/{insight_id}"] = sanitize_failure_message(str(error))
     # R6.1: every regime artifact of the run must reload through the stores
-    reload_ok = reload_ok and _regime.s15_regime_reload_ok(context)
+    reload_failures.update(_regime.s15_regime_reload_failures(context))
+    reload_ok = not reload_failures
     chart_entry = stages[QuantLabPipelineStage.S04_BUILD_OR_REUSE_REPLAY_CHARTS.value]
     verifier_link = bool(chart_entry["in_plan"]) and bool(
         chart_entry["output_artifact_ids"]
@@ -2308,6 +2561,7 @@ def _stage_s15_verify_publish(context: _RunContext) -> tuple[tuple[str, ...], st
             frontier_id=context.frontier_id,
             control_flow_gates=gates,
             verification_stamps=stamps,
+            reload_failure_reasons=dict(sorted(reload_failures.items())),
         )
     )
     save_or_reuse_envelope(context.store_root, "search_results", result_envelope)
@@ -2317,12 +2571,19 @@ def _stage_s15_verify_publish(context: _RunContext) -> tuple[tuple[str, ...], st
         "activated": False,
         "pipeline_result_id": result_envelope.pipeline_result_id,
         "control_flow_gates_passed": gates.passed,
+        # R6.1-FIX §3.8: the reload-failure reasons this attempt observed
+        "reload_failures": dict(sorted(reload_failures.items())),
     }
     context.result_envelope = result_envelope
+    failure_note = (
+        f"; {len(reload_failures)} artifact reload failure(s) recorded"
+        if reload_failures
+        else ""
+    )
     return (result_envelope.pipeline_result_id,), (
         f"pipeline result persisted (control-flow gates "
         f"{'passed' if gates.passed else 'NOT passed'}); publication state is "
-        "prepared_not_published — activation is a separate explicit action"
+        f"prepared_not_published — activation is a separate explicit action{failure_note}"
     )
 
 
@@ -2418,6 +2679,8 @@ def run_pipeline(
                     later_entry["explanation"] = (
                         "safe cancel honored at the stage boundary"
                     )
+                if QuantLabPipelineStage.S15_VERIFY_AND_PUBLISH in planned[index:]:
+                    _reset_publication_block(state)
                 halted = True
                 _checkpoint(context, heartbeat=lock_path)
                 break
@@ -2442,6 +2705,7 @@ def run_pipeline(
                 entry["explanation"] = sanitize_failure_message(str(error))
                 entry["ended_at"] = _now()
                 halted = True
+                _mark_downstream_not_run(state, planned[index + 1 :])
                 _checkpoint(context, heartbeat=lock_path)
                 break
             stage_result = PipelineStageResultEnvelope.from_payload(
@@ -2469,6 +2733,7 @@ def run_pipeline(
                 )
                 entry["ended_at"] = _now()
                 halted = True
+                _mark_downstream_not_run(state, planned[index + 1 :])
                 _checkpoint(context, heartbeat=lock_path)
                 break
             if prior_result_id == stage_result.stage_result_id:
@@ -2519,6 +2784,35 @@ PUBLICATION_GATE_IDS: tuple[str, ...] = (
 )
 
 
+def _publication_gates(state: dict[str, Any], store_root: Path) -> dict[str, Any]:
+    """The publication checklist derived from the LATEST attempt's state."""
+
+    planned_entries = [entry for entry in state["stages"].values() if entry["in_plan"]]
+    terminal = all(
+        entry["status"]
+        in (
+            StageStatus.COMPLETED.value,
+            StageStatus.REUSED.value,
+            StageStatus.BLOCKED.value,
+        )
+        for entry in planned_entries
+    )
+    no_failures = all(
+        entry["status"] != StageStatus.FAILED.value for entry in planned_entries
+    )
+    publication = state.get("publication") or {}
+    result_id = publication.get("pipeline_result_id")
+    result_persisted = bool(result_id) and has_envelope(
+        Path(store_root), "search_results", result_id
+    )
+    return {
+        "all_planned_stages_terminal": terminal,
+        "no_failed_stages": no_failures,
+        "pipeline_result_persisted": result_persisted,
+        "control_flow_gates_passed": bool(publication.get("control_flow_gates_passed")),
+    }
+
+
 def run_publication_gates(
     state_root: Path, pipeline_semantic_id: str, *, store_root: Path
 ) -> dict[str, Any]:
@@ -2530,34 +2824,8 @@ def run_publication_gates(
         state = read_pipeline_state(state_root, pipeline_semantic_id)
         if state is None:
             raise PublicationError("no pipeline state exists for this semantic id")
-        planned_entries = [
-            entry for entry in state["stages"].values() if entry["in_plan"]
-        ]
-        terminal = all(
-            entry["status"]
-            in (
-                StageStatus.COMPLETED.value,
-                StageStatus.REUSED.value,
-                StageStatus.BLOCKED.value,
-            )
-            for entry in planned_entries
-        )
-        no_failures = all(
-            entry["status"] != StageStatus.FAILED.value for entry in planned_entries
-        )
+        gates = _publication_gates(state, Path(store_root))
         publication = state.get("publication") or {}
-        result_id = publication.get("pipeline_result_id")
-        result_persisted = bool(result_id) and has_envelope(
-            Path(store_root), "search_results", result_id
-        )
-        gates = {
-            "all_planned_stages_terminal": terminal,
-            "no_failed_stages": no_failures,
-            "pipeline_result_persisted": result_persisted,
-            "control_flow_gates_passed": bool(
-                publication.get("control_flow_gates_passed")
-            ),
-        }
         publication["gates"] = gates
         publication["state"] = (
             "gates_passed" if all(gates.values()) else "prepared_not_published"
@@ -2575,7 +2843,10 @@ def activate_pipeline_result(
     """Activate the published research catalog entry (development scope only).
 
     Verification-only artifacts can NEVER activate a research catalog entry —
-    the refusal is scope-based and has no override.
+    the refusal is scope-based and has no override. R6.1-FIX (review B-04):
+    the gates are RE-DERIVED from the latest attempt's state at activation
+    time — a recorded all-true checklist from an earlier attempt never
+    authorizes an activation after a later attempt failed closed.
     """
 
     with _search_lock(
@@ -2590,11 +2861,19 @@ def activate_pipeline_result(
                 "catalog entry (verify-then-activate boundary)"
             )
         publication = state.get("publication") or {}
-        gates = publication.get("gates")
-        if not gates or not all(gates.values()):
+        recorded = publication.get("gates")
+        if not recorded or not all(recorded.values()):
             raise PublicationError(
                 "activation requires every publication gate to pass first — "
                 "run the publication gates"
+            )
+        gates = _publication_gates(state, Path(store_root))
+        if not all(gates.values()):
+            failed = sorted(name for name, passed in gates.items() if not passed)
+            raise PublicationError(
+                "activation refused: the publication gates do not pass on the latest "
+                f"attempt ({', '.join(failed)}); the recorded checklist belongs to an "
+                "earlier attempt"
             )
         from .catalog import append_catalog_event  # noqa: PLC0415
 
@@ -2605,6 +2884,7 @@ def activate_pipeline_result(
             artifact_id=result_id,
             payload={"note": "research catalog entry activated (verify-then-activate)"},
         )
+        publication["gates"] = gates
         publication["state"] = "published_activated"
         publication["activated"] = True
         state["publication"] = publication

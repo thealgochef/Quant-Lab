@@ -544,14 +544,12 @@ class Mbp1PartitionEvidence(FrozenContract):
             if self.completeness_report is not None:
                 raise ValueError("a completeness report requires its gap manifest")
         else:
-            if (
-                manifest.payload.scope.physical_partition_key
-                != self.scope.physical_partition_key
-                or manifest.payload.scope.utc_date != self.scope.utc_date
-            ):
+            # R6.1-FIX §3.9 (F-10C): FULL scope equality — every scope field,
+            # not only the partition key and the UTC date
+            if manifest.payload.scope != self.scope:
                 raise ValueError(
-                    "the gap manifest describes a different physical partition; "
-                    "scope-mismatched evidence is refused"
+                    "the gap manifest describes a different physical partition scope "
+                    "(full scope equality is required); scope-mismatched evidence is refused"
                 )
             if self.provenance is Mbp1EvidenceProvenance.NONE:
                 raise ValueError("partition-scope evidence must declare its provenance")
@@ -899,14 +897,29 @@ def compute_partition_coverage(
         manifest is not None
         and manifest.payload.completeness_assertion == "verified_complete_outside_intervals"
     )
-    if positive_claim and partition_content_refs is not None:
-        report = evidence.completeness_report
-        certified = set(report.payload.verified_partition_refs) if report is not None else set()
-        if not certified & set(partition_content_refs):
+    if positive_claim:
+        # R6.1-FIX §3.9 (F-10C): a positive claim requires the COMPLETE ordered
+        # partition-content refs, and the compilation report's certified refs
+        # must EQUAL them — never merely intersect, never an unbound claim
+        if partition_content_refs is None:
             raise ValueError(
-                "positive completeness claim does not reference the partition content "
-                "it certifies (verified_partition_refs ∩ partition content hashes is "
-                "empty); refused"
+                "positive completeness claim requires the partition content refs it "
+                "certifies (partition_content_refs=None is lawful for interval diagnostics "
+                "only); refused"
+            )
+        if manifest.payload.scope != scope:
+            raise ValueError(
+                "positive completeness claim: the gap manifest scope is not the evidence "
+                "scope (full scope equality is required); refused"
+            )
+        report = evidence.completeness_report
+        certified = tuple(report.payload.verified_partition_refs) if report is not None else ()
+        supplied = tuple(str(ref) for ref in partition_content_refs)
+        if not supplied or set(certified) != set(supplied) or len(set(supplied)) != len(supplied):
+            raise ValueError(
+                "positive completeness claim does not reference the partition content it "
+                "certifies exactly (verified_partition_refs must equal the complete "
+                "partition content refs); refused"
             )
     session_start, session_end = authorized_session_span_ns(trading_day)
     span_start = max(int(scope.partition_expected_start_ts), session_start)

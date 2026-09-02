@@ -112,7 +112,13 @@ owner-decision evidence `ifvg/search/owner_decisions.py` + the
 `ifvg/ml/regime_strat*.py`, the bundle-aware CatBoost rung
 `ifvg/ml/catboost_bundle_model.py` + D13 comparison rows, the D15 prop-event
 detail `alpha_lab/propsim/event_detail.py`, per-fold stability + grain
-transition policies, and the regime surfaces of the pipeline tab)
+transition policies, and the regime surfaces of the pipeline tab), and
+R6.1-FIX (verified per-fit assignment evidence with an enforced sidecar
+schema, fold-feature source refs, the typed `candidate_as_of_missing`
+reason, raw thin-regime net-R accounting, the exact label artifact id, the
+immutable `executed_trade_tables` store consumed by S02/S14, the typed
+sidecar probe with fail-closed prior-stage recoveries, and the
+`PipelineWiringError` / MBP-1 scope-equality / enum-copy corrections)
 implementations are complete;
 **R1 acceptance is blocked pending the owner-approved verification fixture**
 (`VerificationAuthorizationRef`; owner decisions 21/R-5) — no real five-day

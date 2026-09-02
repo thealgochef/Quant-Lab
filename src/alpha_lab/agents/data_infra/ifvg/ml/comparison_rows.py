@@ -39,9 +39,12 @@ from .fold_set_artifact import fold_set_id
 __all__ = [
     "COMPARISON_ROW_IDENTITY_KEY",
     "LEGACY_ROW_IDENTITY_KEY",
+    "LABEL_CONSUMED_COLUMNS",
+    "LABEL_ARTIFACT_FORMULA_VERSION",
     "RegimeFoldFeatureSource",
     "comparison_row_id",
     "label_content_hash",
+    "label_artifact_content_id",
     "default_fold_schedule_id",
     "candidate_fold_set_id",
     "assert_fold_local_source_coherent",
@@ -51,6 +54,71 @@ __all__ = [
 
 COMPARISON_ROW_IDENTITY_KEY = "comparison_row_id"
 LEGACY_ROW_IDENTITY_KEY = "oos_row_id"
+
+#: R6.1-FIX §3.6 (F-08): EVERY label / economic column a supervised study
+#: consumes — the exact label artifact binds all of them (plus the registered
+#: label policy), never only the ``(candidate_id, binary_target)`` pairs.
+LABEL_CONSUMED_COLUMNS: tuple[str, ...] = (
+    "candidate_id",
+    "setup_id",
+    "trading_day",
+    "entry_ts_utc",
+    "resolution_ts_utc",
+    "entry_available",
+    "resolution_available",
+    "binary_target",
+    "gross_r",
+    "net_r",
+)
+LABEL_ARTIFACT_FORMULA_VERSION = "label_artifact_consumed_columns_v2"
+
+
+def _label_cell(value: object) -> object:
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, bool):
+        return bool(value)
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    if hasattr(value, "item"):
+        value = value.item()
+    if isinstance(value, bool | int | str):
+        return value
+    if isinstance(value, float):
+        return float(value)
+    return str(value)
+
+
+def label_artifact_content_id(label_policy_id: str | None, labeled_candidates: pd.DataFrame) -> str:
+    """The exact label artifact identity (R6.1-FIX §3.6): the registered
+    label policy plus EVERY consumed label/economic column of every row,
+    order-invariantly (rows sorted by candidate id). ``label_policy_id=None``
+    is the UNPERSISTED helper form (``label_identity_source =
+    content_hash_unpersisted``) — it can never name a persisted study."""
+
+    missing = sorted(set(LABEL_CONSUMED_COLUMNS) - set(labeled_candidates.columns))
+    if missing:
+        raise ValueError(f"labeled candidates lack consumed label columns: {missing}")
+    rows = sorted(
+        (
+            [_label_cell(row[column]) for column in LABEL_CONSUMED_COLUMNS]
+            for row in labeled_candidates.loc[:, list(LABEL_CONSUMED_COLUMNS)].to_dict("records")
+        ),
+        key=lambda cells: str(cells[0]),
+    )
+    return canonical_contract_sha256(
+        {
+            "formula": LABEL_ARTIFACT_FORMULA_VERSION,
+            "label_policy_id": None if label_policy_id is None else str(label_policy_id),
+            "columns": list(LABEL_CONSUMED_COLUMNS),
+            "rows": rows,
+        }
+    )
 
 
 @runtime_checkable
