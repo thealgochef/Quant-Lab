@@ -34,6 +34,7 @@ logical-day sequence. Both are exposed here so no caller mixes the domains.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -56,6 +57,13 @@ __all__ = [
     "EVIDENCE_VERIFIED_SESSIONS",
     "TradingCalendarPolicy",
     "CME_GLOBEX_18ET_WEEKDAY_V1",
+    "SourceKind",
+    "LEGACY_VERIFIED_REPLAY_SOURCE",
+    "PUBLIC_SOURCE_KINDS",
+    "PhysicalSourceDescriptor",
+    "assert_public_source_kind",
+    "physical_source_descriptor",
+    "physical_descriptors_from_permitted_source_hashes",
     "PhysicalPartition",
     "SourcePartitionRef",
     "VerificationTradingDayRef",
@@ -105,7 +113,15 @@ EVIDENCE_VERIFIED_SESSIONS: Mapping[str, str] = {
     "2026-05-25": "Memorial Day — funnel htf_taps=19, parent_candidates=96 (partial session)",
 }
 
-SourceKind = Literal["mbp1", "mbp10", "trades"]
+#: The PUBLIC source kind of a partition (HARDENING-BACKEND-FIX §5): MBP-1,
+#: trades, or the opaque provenance literal for the historical pre-MBP-1
+#: physical files the accepted replay consumed. The historical physical
+#: file name is NOT a public contract value: the private physical-file
+#: resolver below maps it to the public kind and keeps the truthful
+#: physical provenance in an INTERNAL descriptor.
+SourceKind = Literal["mbp1", "trades", "legacy_verified_replay_source"]
+LEGACY_VERIFIED_REPLAY_SOURCE = "legacy_verified_replay_source"
+PUBLIC_SOURCE_KINDS: tuple[str, ...] = ("mbp1", "trades", LEGACY_VERIFIED_REPLAY_SOURCE)
 PartitionKey = Literal["prev_utc_date", "utc_date"]
 
 
@@ -328,29 +344,121 @@ class VerificationTradingDayRef(FrozenContract):
         return self
 
 
+# ── the private physical-file resolver ───────────────────────────────────────
+# The ONLY place the historical physical file stem is named (HARDENING-
+# BACKEND-FIX §5.1). A physical partition file resolves DETERMINISTICALLY to
+# its PUBLIC source kind plus its physical schema era; the file is never
+# renamed or re-read, and the descriptor built here implies nothing beyond
+# the bytes the accepted replay consumed — no MBP-10 features, no live depth,
+# no search control, no model feature, no UI capability.
+_LEGACY_PHYSICAL_SCHEMA_ERA_ID = "legacy_verified_replay_source_era_v1"
+_PHYSICAL_STEM_RESOLVER: Mapping[str, tuple[str, str]] = {
+    "mbp1": ("mbp1", "mbp1_era_v1"),
+    "trades": ("trades", "trades_era_v1"),
+    # the historical pre-MBP-1 physical file of the accepted replay inventory
+    "mbp10": (LEGACY_VERIFIED_REPLAY_SOURCE, _LEGACY_PHYSICAL_SCHEMA_ERA_ID),
+}
+_CONTENT_SHA256 = re.compile(r"[0-9a-f]{64}")
+
+
+@dataclass(frozen=True)
+class PhysicalSourceDescriptor:
+    """INTERNAL physical provenance of one inventory partition file — not a
+    contract, never serialized into a public contract, never registered.
+    ``physical_filename`` keeps the truthful on-disk name; ``source_kind`` is
+    the PUBLIC kind every contract carries; ``replay_bytes_only`` states the
+    only capability the descriptor implies."""
+
+    physical_partition_key: str
+    physical_filename: str
+    physical_schema_era_id: str
+    physical_content_sha256: str
+    source_kind: SourceKind
+    replay_bytes_only: Literal[True] = True
+
+
+def assert_public_source_kind(value: object) -> SourceKind:
+    """``value`` as a public source kind, else ``ValueError`` (a physical file
+    stem is not a public contract value)."""
+
+    if not isinstance(value, str) or value not in PUBLIC_SOURCE_KINDS:
+        raise ValueError(
+            f"{value!r} is not a public source kind; the public contract admits "
+            f"{PUBLIC_SOURCE_KINDS} (a historical physical file resolves to "
+            f"{LEGACY_VERIFIED_REPLAY_SOURCE!r})"
+        )
+    return value  # type: ignore[return-value]
+
+
+def _physical_stem(filename: str) -> str:
+    return str(filename).split("/")[-1].split(".")[0]
+
+
 def source_kind_of_partition_file(filename: str) -> SourceKind:
-    stem = str(filename).split("/")[-1].split(".")[0]
-    if stem not in ("mbp1", "mbp10", "trades"):
-        raise ValueError(f"unregistered source partition file {filename!r}")
-    return stem  # type: ignore[return-value]
+    """The PUBLIC source kind a physical partition file resolves to."""
+
+    stem = _physical_stem(filename)
+    try:
+        return _PHYSICAL_STEM_RESOLVER[stem][0]  # type: ignore[return-value]
+    except KeyError:
+        raise ValueError(f"unregistered source partition file {filename!r}") from None
+
+
+def physical_source_descriptor(partition_key: str, content_sha256: str) -> PhysicalSourceDescriptor:
+    """The INTERNAL descriptor of one ``"<utc_date>/<file>"`` inventory entry
+    (deterministic, content-preserving; the file is never re-read)."""
+
+    key = str(partition_key)
+    day, _slash, filename = key.partition("/")
+    date.fromisoformat(day)
+    stem = _physical_stem(filename)
+    try:
+        kind, era = _PHYSICAL_STEM_RESOLVER[stem]
+    except KeyError:
+        raise ValueError(f"unregistered source partition file {filename!r}") from None
+    digest = str(content_sha256)
+    if not _CONTENT_SHA256.fullmatch(digest):
+        raise ValueError(f"partition {key!r} carries no lowercase 64-hex content sha256")
+    return PhysicalSourceDescriptor(
+        physical_partition_key=key,
+        physical_filename=filename,
+        physical_schema_era_id=era,
+        physical_content_sha256=digest,
+        source_kind=kind,  # type: ignore[arg-type]
+    )
+
+
+def physical_descriptors_from_permitted_source_hashes(
+    entries: Iterable[tuple[str, str] | list],
+) -> dict[str, PhysicalSourceDescriptor]:
+    """``{physical_utc_date: PhysicalSourceDescriptor}`` — the INTERNAL view of
+    an accepted manifest's ``permitted_source_hashes``; two files for one date
+    are refused (the accepted inventory has exactly one)."""
+
+    descriptors: dict[str, PhysicalSourceDescriptor] = {}
+    for entry in entries:
+        descriptor = physical_source_descriptor(str(entry[0]), str(entry[1]))
+        day = descriptor.physical_partition_key.partition("/")[0]
+        if day in descriptors:
+            raise ValueError(f"the inventory carries two partition files for {day}")
+        descriptors[day] = descriptor
+    return descriptors
 
 
 def inventory_from_permitted_source_hashes(
     entries: Iterable[tuple[str, str] | list],
 ) -> dict[str, tuple[str, str]]:
-    """``{physical_utc_date: (source_kind, content_sha256)}`` from an accepted
-    manifest's ``permitted_source_hashes`` (``["<date>/<file>", sha]``). Two
+    """``{physical_utc_date: (PUBLIC source_kind, content_sha256)}`` from an
+    accepted manifest's ``permitted_source_hashes`` (``["<date>/<file>", sha]``).
+    A historical physical file maps to ``legacy_verified_replay_source``; two
     files for one date are refused (the accepted inventory has exactly one)."""
 
-    inventory: dict[str, tuple[str, str]] = {}
-    for entry in entries:
-        name, digest = str(entry[0]), str(entry[1])
-        day, _slash, filename = name.partition("/")
-        date.fromisoformat(day)
-        if day in inventory:
-            raise ValueError(f"the inventory carries two partition files for {day}")
-        inventory[day] = (source_kind_of_partition_file(filename), digest)
-    return inventory
+    return {
+        day: (descriptor.source_kind, descriptor.physical_content_sha256)
+        for day, descriptor in physical_descriptors_from_permitted_source_hashes(
+            entries
+        ).items()
+    }
 
 
 def trading_day_ref_from_inventory(
@@ -375,7 +483,7 @@ def trading_day_ref_from_inventory(
             SourcePartitionRef(
                 physical_utc_date=partition.physical_utc_date,
                 relative_logical_partition_key=partition.relative_logical_partition_key,  # type: ignore[arg-type]
-                source_kind=kind,  # type: ignore[arg-type]
+                source_kind=assert_public_source_kind(kind),
                 content_sha256=digest,
             )
         )

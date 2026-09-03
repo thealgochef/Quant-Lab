@@ -74,7 +74,9 @@ from .fold_set_artifact import (
 from .regime_contracts import (
     REGIME_ASSIGNMENT_MISSING_REASONS,
     ObservationGranularity,
+    RegimeAssignmentEvidenceError,
     RegimeProtocolEnvelope,
+    validate_native_values,
 )
 from .regime_oos_assignment import (
     PanelAssignmentContext,
@@ -105,7 +107,9 @@ __all__ = [
     "fold_feature_schema",
     "build_regime_fold_features",
     "fold_feature_table_bytes",
+    "fold_feature_native_spec",
     "validate_fold_feature_rows",
+    "assert_fold_feature_spine_bound",
     "verify_regime_fold_feature_frame",
     "verify_fold_fit_refs_against_store",
     "save_regime_fold_features",
@@ -250,6 +254,25 @@ def fold_feature_schema(columns: RegimeFoldFeatureColumns) -> pa.Schema:
         )
     )
     return pa.schema(fields)
+
+
+def fold_feature_native_spec(columns: RegimeFoldFeatureColumns) -> dict[str, tuple[str, bool]]:
+    """HARDENING-BACKEND-FIX §6.2: the native spec proven BEFORE any conversion
+    of a fold-feature table (the spine columns are never null)."""
+
+    spec: dict[str, tuple[str, bool]] = {
+        "fold_index": ("int", False),
+        "candidate_id": ("id", False),
+        "partition": ("str", False),
+        "regime_fit_id": ("id", True),
+        "panel_row_id": ("str", True),
+    }
+    spec.update({name: ("float", True) for name in columns.numeric})
+    spec[columns.local_id] = ("str", True)
+    spec["canonical_reporting_cluster_id"] = ("int", True)
+    spec[columns.valid] = ("bool", False)
+    spec[columns.missing_reason] = ("str", True)
+    return spec
 
 
 # ── contracts ────────────────────────────────────────────────────────────────
@@ -473,7 +496,15 @@ def _candidate_grain_rows(
             )
             continue
         if not bool(row.valid):
-            reason = str(row.missing_reason) if row.missing_reason else "coverage_gap"
+            missing_reason = row.missing_reason
+            if missing_reason is None or (
+                not isinstance(missing_reason, str) and pd.isna(missing_reason)
+            ) or str(missing_reason).strip() == "":
+                raise RegimeAssignmentEvidenceError(
+                    "assignment_provenance_incomplete",
+                    f"fit {fit_id[:12]}… row {candidate_id} is invalid without a typed reason",
+                )
+            reason = str(missing_reason)
             rows.append(
                 _typed_row(
                     columns,
@@ -577,6 +608,8 @@ def _panel_grain_rows(
 
 
 def _frame_for_schema(frame: pd.DataFrame, columns: RegimeFoldFeatureColumns) -> pd.DataFrame:
+    # §6.2: native values are proven BEFORE the canonical conversions below
+    validate_native_values(frame, fold_feature_native_spec(columns), context="fold-feature table")
     out = frame.loc[:, list(columns.ordered)].copy()
     out["fold_index"] = out["fold_index"].astype("int64")
     out["candidate_id"] = out["candidate_id"].astype(str)
@@ -609,8 +642,11 @@ def validate_fold_feature_rows(frame: pd.DataFrame, columns: RegimeFoldFeatureCo
     missing = sorted(required - set(frame.columns))
     if missing:
         raise ValueError(f"fold-feature table lacks columns: {missing}")
+    # HARDENING-BACKEND-FIX §6.2 / §6.4: native values first — a malformed value
+    # is never coerced into lawful missingness (no ``errors="coerce"``)
+    validate_native_values(frame, fold_feature_native_spec(columns), context="fold-feature table")
     valid = frame[columns.valid].astype(bool).to_numpy()
-    numeric = frame.loc[:, list(columns.numeric)].apply(pd.to_numeric, errors="coerce")
+    numeric = frame.loc[:, list(columns.numeric)].apply(pd.to_numeric, errors="raise")
     finite = np.isfinite(numeric.to_numpy(dtype=float)).all(axis=1)
     local = frame[columns.local_id]
     local_present = local.notna().to_numpy() & (local.astype(str) != "")
@@ -640,6 +676,86 @@ def validate_fold_feature_rows(frame: pd.DataFrame, columns: RegimeFoldFeatureCo
             "an invalid fold-feature row requires exactly one registered missing reason; "
             f"unregistered: {sorted(unregistered)}"
         )
+    # HARDENING-BACKEND-FIX §6.4: EVERY row keeps its reconciliation spine —
+    # a non-negative fold index, a lawful partition, and (for an invalid row
+    # that came from an applicable fit) that fit's 64-hex id; the fit-less
+    # reason ``no_valid_regime_fit`` never names a fit
+    folds = pd.to_numeric(frame["fold_index"], errors="raise")
+    if (folds < 0).any():
+        raise RegimeAssignmentEvidenceError(
+            "assignment_row_invariant_violated", "a fold-feature row carries a negative fold index"
+        )
+    if (~partitions.isin(("train", "test")).to_numpy()).any():
+        raise RegimeAssignmentEvidenceError(
+            "assignment_row_invariant_violated",
+            "every fold-feature row carries a lawful partition (train / test)",
+        )
+    fit_nonnull = fit_ids.notna().to_numpy()
+    fit_wellformed = fit_ids.astype(str).str.fullmatch(r"[0-9a-f]{64}").fillna(False).to_numpy()
+    if (fit_nonnull & ~fit_wellformed).any():
+        raise RegimeAssignmentEvidenceError(
+            "assignment_provenance_incomplete",
+            "a fold-feature row carries a malformed regime fit id",
+        )
+    fit_less = (reasons.astype(object) == "no_valid_regime_fit").to_numpy()
+    if (invalid & fit_less & fit_nonnull).any():
+        raise RegimeAssignmentEvidenceError(
+            "assignment_provenance_incomplete",
+            "no_valid_regime_fit never names a fit (the fold had none)",
+        )
+    if (invalid & ~fit_less & ~fit_nonnull).any():
+        raise RegimeAssignmentEvidenceError(
+            "assignment_provenance_incomplete",
+            "an invalid fold-feature row from an applicable fit retains that fit's id (the "
+            "reconciliation spine); a known invalid assignment never collapses into "
+            "generic absence",
+        )
+
+
+def assert_fold_feature_spine_bound(
+    frame: pd.DataFrame, payload: RegimeFoldFeatureArtifactPayload
+) -> None:
+    """HARDENING-BACKEND-FIX §6.4: every row's ``(fold_index, regime_fit_id)`` is
+    bound by the artifact's ``FoldFitRef`` for that fold — the ref carries the
+    source assignment-table SHA-256 and schema hash, so each row's spine
+    resolves to exact evidence; a fold whose ref names no fit carries only
+    ``no_valid_regime_fit`` rows."""
+
+    refs = {int(ref.fold_index): ref for ref in payload.regime_fit_ids_by_fold}
+    columns = payload.columns
+    for fold_value, group in frame.groupby(frame["fold_index"].astype(int), sort=True):
+        ref = refs.get(int(fold_value))
+        if ref is None:
+            raise RegimeAssignmentEvidenceError(
+                "assignment_provenance_incomplete",
+                f"fold {fold_value}: rows exist but the artifact binds no FoldFitRef for it",
+            )
+        fits = set(group["regime_fit_id"].dropna().astype(str))
+        if ref.regime_fit_id is None:
+            if fits or group[columns.valid].astype(bool).any():
+                raise RegimeAssignmentEvidenceError(
+                    "assignment_provenance_incomplete",
+                    f"fold {fold_value}: rows name a fit but the artifact binds none for it",
+                )
+            continue
+        fitless = group["regime_fit_id"].isna()
+        if fitless.any():
+            # review RB-02: the artifact binds a fit for this fold, so EVERY row of
+            # the fold names it — a fit-less row here (a null id, the fit-less
+            # reason) is a known invalid assignment of the applicable fit
+            # collapsed into generic absence
+            raise RegimeAssignmentEvidenceError(
+                "assignment_provenance_incomplete",
+                f"fold {fold_value}: {int(fitless.sum())} row(s) name no fit although the "
+                f"artifact binds FoldFitRef {ref.regime_fit_id[:12]}… for it",
+            )
+        outside = sorted(fits - {ref.regime_fit_id})
+        if outside:
+            raise RegimeAssignmentEvidenceError(
+                "assignment_provenance_incomplete",
+                f"fold {fold_value}: rows name fit(s) {[f[:12] for f in outside[:2]]}… outside "
+                f"the bound FoldFitRef {ref.regime_fit_id[:12]}…",
+            )
 
 
 def _verified_fit_frames(regime_run, fit_assignments: Mapping[int, Any]) -> dict[int, Any]:
@@ -842,6 +958,7 @@ def build_regime_fold_features(
     frame = _frame_for_schema(pd.DataFrame(rows, columns=list(columns.ordered)), columns)
     validate_fold_feature_rows(frame, columns)
     table_bytes = fold_feature_table_bytes(frame, columns)
+    spine_refs = tuple(fit_refs)
     artifact_payload = RegimeFoldFeatureArtifactPayload(
         resolved_regime_protocol_id=protocol.resolved_regime_protocol_id,
         observation_granularity=grain,
@@ -862,6 +979,9 @@ def build_regime_fold_features(
         row_count=int(len(frame)),
         valid_row_count=int(frame[columns.valid].sum()),
     )
+    if tuple(artifact_payload.regime_fit_ids_by_fold) != spine_refs:  # pragma: no cover
+        raise RuntimeError("fold fit refs diverged from the built rows (wiring error)")
+    assert_fold_feature_spine_bound(frame, artifact_payload)
     envelope = RegimeFoldFeatureArtifactEnvelope.from_payload(
         artifact_payload, feature_table_sha256=bytes_sha256(table_bytes)
     )
@@ -949,6 +1069,8 @@ def load_regime_fold_feature_frame(
     if len(frame) != envelope.payload.row_count:
         raise ValueError("stored fold-feature table row count disagrees with the payload")
     validate_fold_feature_rows(frame, envelope.payload.columns)
+    # HARDENING-BACKEND-FIX §6.4: the loader re-proves the spine binding
+    assert_fold_feature_spine_bound(frame, envelope.payload)
     return frame
 
 

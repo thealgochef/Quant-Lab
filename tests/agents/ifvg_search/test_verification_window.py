@@ -225,3 +225,56 @@ def test_shortlist_contains_the_required_entries_and_never_registers(
     assert "NOT PERFORMED" in markdown and "register_program_allowlist" in markdown
     # no allowlist marker was written anywhere
     assert not list(tmp_path.rglob("VERIFICATION_ALLOWLIST_MARKER.json"))
+
+
+# ── HARDENING-BACKEND-FIX §5 — public serialization of a legacy-era inventory ─
+
+
+def test_legacy_era_inventory_serializes_only_public_source_kinds(synthetic_evidence) -> None:
+    """HB-FIX-03: an inventory whose early physical files are the historical
+    pre-MBP-1 partitions serializes ``legacy_verified_replay_source`` in every
+    ref, report JSON and rendered markdown — never the physical stem — and the
+    era boundary is still detected from the public kinds."""
+
+    from alpha_lab.agents.data_infra.ifvg.search.trading_calendar import (
+        inventory_from_permitted_source_hashes,
+    )
+
+    days = store_day_chain("2026-01-01", "2026-02-20")
+    boundary = "2026-02-09"
+    entries = [
+        [f"{day}/{'mbp10' if day < boundary else 'mbp1'}.parquet", f"{index:064x}"]
+        for index, day in enumerate(days, start=1)
+    ]
+    inventory = inventory_from_permitted_source_hashes(entries)
+    kinds = {kind for kind, _digest in inventory.values()}
+    assert kinds == {"legacy_verified_replay_source", "mbp1"}
+    coverage = build_logical_day_coverage(
+        logical_days=logical_trading_days("2026-01-02", "2026-02-20"),
+        inventory=inventory,
+        tables=synthetic_evidence["tables"],
+        funnel_days=synthetic_evidence["funnel_days"],
+    )
+    shortlist = build_verification_window_shortlist(
+        coverage,
+        inventory=inventory,
+        evidence_source_dataset_id="1" * 64,
+        evidence_source_manifest_sha256="2" * 64,
+        audit_artifact_id="3" * 64,
+    )
+    document = shortlist.model_dump_json()
+    assert "mbp10" not in document.lower().replace("-", "").replace("_", "")
+    assert "legacy_verified_replay_source" in document
+    markdown = render_shortlist_markdown(shortlist)
+    assert "mbp10" not in markdown
+    spanning = [
+        window for window in shortlist.ranked_windows if window.schema_era_boundary_inside_window
+    ]
+    assert spanning, "the public-kind era boundary must still be detected"
+    for window in spanning:
+        physical = [
+            ref.physical_utc_date
+            for day_ref in window.trading_day_refs
+            for ref in day_ref.ordered_source_partition_refs
+        ]
+        assert boundary in physical

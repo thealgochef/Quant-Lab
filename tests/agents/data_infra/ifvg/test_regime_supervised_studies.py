@@ -45,7 +45,7 @@ from alpha_lab.agents.data_infra.ifvg.fold_schedules import derive_fold_schedule
 from alpha_lab.agents.data_infra.ifvg.ml import regime_oos_assignment as oos_module
 from alpha_lab.agents.data_infra.ifvg.ml.comparison_rows import (
     COMPARISON_ROW_IDENTITY_KEY,
-    label_content_hash,
+    label_artifact_content_id,
 )
 from alpha_lab.agents.data_infra.ifvg.ml.fold_set_artifact import (
     build_fold_set_artifact,
@@ -126,6 +126,7 @@ _B0 = resolve_bundle("B0_CORE").resolved_feature_bundle_id
 _DECIDED_AT = "2026-08-28T12:00:00+00:00"
 #: the controlled regime study runs the WHOLE bundle ladder on both arms
 #: (plan §6.G: prevalence + logistic + the CatBoost bundle rung)
+_LABEL_POLICY = "synthetic_fixture_labels_v1"
 _STUDY_PROTOCOLS = DEFAULT_BUNDLE_LADDER_PROTOCOLS
 #: the cohort study fits one ladder per fold × stratum; the two linear rungs
 #: keep the unit test bounded (the bundle rung is proven on the pooled arm above)
@@ -316,7 +317,10 @@ def lane(tmp_path_factory, request):
         "owner": owner,
         "eligible": eligible,
         "activation": activation,
-        "label_artifact_id": label_content_hash(labels),
+        # review RB-01 (§7.2): the exact, policy-bearing label artifact id + its policy —
+        # the persisting study seams prove the pair before any run can be saved
+        "label_artifact_id": label_artifact_content_id(_LABEL_POLICY, labels),
+        "label_policy_id": _LABEL_POLICY,
     }
 
 
@@ -463,6 +467,7 @@ def controlled(lane):
         fold_features=lane["source"],
         candidate_fold_set=lane["fold_set"],
         label_artifact_id=lane["label_artifact_id"],
+        label_policy_id=lane["label_policy_id"],
         bundle_registry=_b7_registry(),
         protocols=_STUDY_PROTOCOLS,
     )
@@ -595,6 +600,12 @@ def test_planted_signal_in_the_fold_features_lowers_the_challenger_brier(control
 
 def test_controlled_study_persists_and_reloads(controlled, lane):
     root = lane["root"]
+    # review RB-01 (§7.2): only a run whose label identity was PROVEN exact persists
+    assert controlled.label_identity_proof == "exact"
+    with pytest.raises(PermissionError, match="not proven exact"):
+        save_regime_controlled_study(
+            root, replace(controlled, label_identity_proof="caller_supplied_unproven")
+        )
     save_regime_controlled_study(root, controlled)
     save_regime_controlled_study(root, controlled)  # verified reuse
     reloaded = load_regime_controlled_study(root, controlled.envelope.regime_controlled_study_id)
@@ -683,6 +694,7 @@ def test_feature_only_refusals_below_status_schedule_mismatch_and_bundle_shape(l
         fold_features=lane["source"],
         candidate_fold_set=lane["fold_set"],
         label_artifact_id=lane["label_artifact_id"],
+        label_policy_id=lane["label_policy_id"],
         bundle_registry=_b7_registry(),
         protocols=_STUDY_PROTOCOLS,
     )
@@ -776,6 +788,7 @@ def cohort(lane):
         fold_features=lane["source"],
         candidate_fold_set=lane["fold_set"],
         label_artifact_id=lane["label_artifact_id"],
+        label_policy_id=lane["label_policy_id"],
         bundle_registry=_b7_registry(),
         protocols=_COHORT_PROTOCOLS,
     )
@@ -823,6 +836,12 @@ def test_cohort_model_pairs_rows_and_types_thin_and_single_class_strata(cohort, 
 
 def test_cohort_model_floor_refusals_persistence_and_bundle_shape(cohort, lane):
     root = lane["root"]
+    # review RB-01 (§7.2): only a run whose label identity was PROVEN exact persists
+    assert cohort.label_identity_proof == "exact"
+    with pytest.raises(PermissionError, match="not proven exact"):
+        save_regime_cohort_model_study(
+            root, replace(cohort, label_identity_proof="caller_supplied_unproven")
+        )
     save_regime_cohort_model_study(root, cohort)
     reloaded = load_regime_cohort_model_study(root, cohort.envelope.regime_cohort_model_study_id)
     assert reloaded.model_dump(mode="json") == cohort.envelope.model_dump(mode="json")
@@ -834,6 +853,7 @@ def test_cohort_model_floor_refusals_persistence_and_bundle_shape(cohort, lane):
         fold_features=lane["source"],
         candidate_fold_set=lane["fold_set"],
         label_artifact_id=lane["label_artifact_id"],
+        label_policy_id=lane["label_policy_id"],
         bundle_registry=_b7_registry(),
         protocols=_COHORT_PROTOCOLS,
     )

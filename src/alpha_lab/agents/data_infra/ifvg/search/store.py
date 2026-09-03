@@ -16,6 +16,7 @@ import json
 import os
 import re
 import shutil
+import unicodedata
 import uuid
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -136,12 +137,18 @@ class SearchStoreError(ValueError):
 SIDECAR_NOT_PRODUCED_FOR_PATH = "sidecar_not_produced_for_path"
 SIDECAR_LOAD_FAILURE_REASONS: tuple[str, ...] = (
     "store_entry_missing",
+    # HARDENING-BACKEND-FIX §7.1: an invalid store name / envelope id is a
+    # locator error, distinct from a genuinely absent entry
+    "invalid_store_locator",
     "manifest_missing_for_existing_entry",
     "malformed_manifest",
     "manifest_hash_mismatch",
     "envelope_identity_mismatch",
     "sidecar_missing_but_manifest_declares_it",
     "sidecar_hash_mismatch",
+    # HARDENING-BACKEND-FIX §7.1: a declared artifact that is a symlink or
+    # resolves outside its artifact directory
+    "sidecar_path_escape",
     "malformed_sidecar",
     "unexpected_io_error",
 )
@@ -251,6 +258,116 @@ def _run_sidecar_producer(
             f"{sorted(stray)}"
         )
     return produced
+
+
+_SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+#: the store-owned file the manifest itself lives in — never an artifact entry
+_RESERVED_MANIFEST_NAMES = frozenset({_MANIFEST_FILE})
+
+
+def _validate_manifest_entries(
+    manifest: dict, *, store_name: str, envelope_id: str
+) -> dict[str, dict]:
+    """HARDENING-BACKEND-FIX §7.1 — the ONE validator every sidecar probe and
+    load path shares. Every artifact entry must be a mapping with a bare
+    relative file name (the save-side whitelist: no absolute, drive-qualified,
+    empty, dot, separator or ``..`` paths), a lowercase 64-hex SHA-256 and a
+    non-negative byte count; entries may not repeat a path, collide after
+    Unicode / case normalization, or name a store-owned reserved file; the
+    envelope entry must be declared exactly once. Every violation is the
+    typed ``malformed_manifest`` — never ``AttributeError`` / ``KeyError``,
+    never silent absence."""
+
+    label = f"manifest of {store_name}/{envelope_id}"
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, list):
+        raise SidecarLoadError("malformed_manifest", f"{label}: artifacts is not a list")
+    entries: dict[str, dict] = {}
+    normalized: dict[str, str] = {}
+    for position, entry in enumerate(artifacts):
+        if not isinstance(entry, dict):
+            raise SidecarLoadError(
+                "malformed_manifest", f"{label}: artifact entry {position} is not a mapping"
+            )
+        missing = [key for key in ("path", "sha256", "bytes") if key not in entry]
+        if missing:
+            raise SidecarLoadError(
+                "malformed_manifest",
+                f"{label}: artifact entry {position} lacks required keys {missing}",
+            )
+        path = entry["path"]
+        if not isinstance(path, str) or not _SIDECAR_NAME_PATTERN.fullmatch(path):
+            raise SidecarLoadError(
+                "malformed_manifest",
+                f"{label}: artifact entry {position} path {path!r} is not a bare relative "
+                "file name (absolute, drive-qualified, empty, dot, separator and traversal "
+                "paths are refused)",
+            )
+        if path in _RESERVED_MANIFEST_NAMES:
+            raise SidecarLoadError(
+                "malformed_manifest",
+                f"{label}: artifact entry {position} names the reserved store file {path!r}",
+            )
+        digest = entry["sha256"]
+        if not isinstance(digest, str) or not _SHA256_HEX.fullmatch(digest):
+            raise SidecarLoadError(
+                "malformed_manifest",
+                f"{label}: artifact entry {position} ({path!r}) sha256 is not a lowercase "
+                "64-hex digest",
+            )
+        size = entry["bytes"]
+        if isinstance(size, bool) or not isinstance(size, int) or size < 0:
+            raise SidecarLoadError(
+                "malformed_manifest",
+                f"{label}: artifact entry {position} ({path!r}) bytes is not a non-negative "
+                "integer",
+            )
+        if path in entries:
+            raise SidecarLoadError(
+                "malformed_manifest", f"{label}: artifact path {path!r} is declared twice"
+            )
+        key = unicodedata.normalize("NFC", path).casefold()
+        if key in normalized:
+            raise SidecarLoadError(
+                "malformed_manifest",
+                f"{label}: artifact path {path!r} collides with {normalized[key]!r} after "
+                "normalization",
+            )
+        normalized[key] = path
+        entries[path] = entry
+    if _ENVELOPE_FILE not in entries:
+        raise SidecarLoadError(
+            "malformed_manifest", f"{label}: the manifest does not declare {_ENVELOPE_FILE}"
+        )
+    return entries
+
+
+def _sidecar_path(destination: Path, name: str, *, store_name: str, envelope_id: str) -> Path:
+    """The on-disk path of a DECLARED artifact, resolved and compared before it
+    is opened: a symbolic link, or a path that resolves outside the artifact
+    directory, is the typed ``sidecar_path_escape``."""
+
+    candidate = destination / name
+    try:
+        if candidate.is_symlink():
+            raise SidecarLoadError(
+                "sidecar_path_escape",
+                f"artifact {name} of {store_name}/{envelope_id} is a symbolic link; refusing "
+                "to follow it",
+            )
+        base = destination.resolve()
+        resolved = candidate.resolve()
+    except SidecarLoadError:
+        raise
+    except OSError as error:
+        raise SidecarLoadError("unexpected_io_error", str(error)) from error
+    if resolved.parent != base or resolved.name != name:
+        raise SidecarLoadError(
+            "sidecar_path_escape",
+            f"artifact {name} of {store_name}/{envelope_id} resolves outside its artifact "
+            "directory; refusing",
+        )
+    return candidate
 
 
 def envelope_destination(root: Path, store_name: str, envelope_id: str) -> Path:
@@ -391,30 +508,25 @@ def load_verified_envelope[E: EnvelopeBase](
     is never inferred from an exception's text by a caller.
     """
 
-    destination, manifest = _verified_manifest(root, store_name, envelope_id)
-    for entry in manifest.get("artifacts", ()):
+    destination, _manifest, entries = _verified_manifest(root, store_name, envelope_id)
+    for name, entry in entries.items():
+        expected = str(entry["sha256"])
+        declared_size = int(entry["bytes"])
+        path = _sidecar_path(destination, name, store_name=store_name, envelope_id=envelope_id)
         try:
-            name = str(entry["path"])
-            expected = str(entry["sha256"])
-        except (KeyError, TypeError) as error:
-            raise SidecarLoadError(
-                "malformed_manifest",
-                f"manifest of {store_name}/{envelope_id} carries a malformed artifact entry",
-            ) from error
-        path = destination / name
-        try:
-            if not path.exists():
+            if not path.is_file():
                 raise SidecarLoadError(
                     "sidecar_missing_but_manifest_declares_it",
                     f"artifact {name} failed verification in {store_name}/{envelope_id} "
                     "(declared by the manifest but absent)",
                 )
+            size = path.stat().st_size
             digest = file_sha256(path)
         except SidecarLoadError:
             raise
         except OSError as error:
             raise SidecarLoadError("unexpected_io_error", str(error)) from error
-        if digest != expected:
+        if size != declared_size or digest != expected:
             raise SidecarLoadError(
                 "sidecar_hash_mismatch",
                 f"artifact {name} failed verification in {store_name}/{envelope_id}",
@@ -454,35 +566,43 @@ def load_sidecar_bytes(root: Path, store_name: str, envelope_id: str, name: str)
         _MANIFEST_FILE,
     ):
         raise SearchStoreError(f"invalid sidecar file name {name!r}")
-    destination, manifest = _verified_manifest(root, store_name, envelope_id)
-    for entry in manifest.get("artifacts", ()):
-        if entry.get("path") == name:
-            try:
-                data = (destination / name).read_bytes()
-            except FileNotFoundError as error:
-                raise SidecarLoadError(
-                    "sidecar_missing_but_manifest_declares_it",
-                    f"sidecar {name} is declared by {store_name}/{envelope_id} but absent",
-                ) from error
-            except OSError as error:
-                raise SidecarLoadError("unexpected_io_error", str(error)) from error
-            if hashlib.sha256(data).hexdigest() != entry.get("sha256"):
-                raise SidecarLoadError(
-                    "sidecar_hash_mismatch",
-                    f"sidecar {name} failed hash verification in {store_name}/{envelope_id}",
-                )
-            return data
-    raise SearchStoreError(f"sidecar {name!r} is not in {store_name}/{envelope_id}")
+    destination, _manifest, entries = _verified_manifest(root, store_name, envelope_id)
+    entry = entries.get(name)
+    if entry is None:
+        raise SearchStoreError(f"sidecar {name!r} is not in {store_name}/{envelope_id}")
+    path = _sidecar_path(destination, name, store_name=store_name, envelope_id=envelope_id)
+    try:
+        data = path.read_bytes()
+    except FileNotFoundError as error:
+        raise SidecarLoadError(
+            "sidecar_missing_but_manifest_declares_it",
+            f"sidecar {name} is declared by {store_name}/{envelope_id} but absent",
+        ) from error
+    except OSError as error:
+        raise SidecarLoadError("unexpected_io_error", str(error)) from error
+    if len(data) != int(entry["bytes"]) or hashlib.sha256(data).hexdigest() != (
+        entry["sha256"]
+    ):
+        raise SidecarLoadError(
+            "sidecar_hash_mismatch",
+            f"sidecar {name} failed hash verification in {store_name}/{envelope_id}",
+        )
+    return data
 
 
-def _verified_manifest(root: Path, store_name: str, envelope_id: str) -> tuple[Path, dict]:
-    """The manifest of one store entry, hash- and identity-verified, or a
-    typed :class:`SidecarLoadError` (R6.1-FIX §3.8)."""
+def _verified_manifest(
+    root: Path, store_name: str, envelope_id: str
+) -> tuple[Path, dict, dict[str, dict]]:
+    """The manifest of one store entry, hash- and identity-verified, with its
+    validated artifact entries keyed by path (HARDENING-BACKEND-FIX §7.1), or
+    a typed :class:`SidecarLoadError` (R6.1-FIX §3.8). An invalid store name
+    or envelope id is ``invalid_store_locator`` — never confused with a
+    genuinely absent entry."""
 
     try:
         destination = envelope_destination(root, store_name, envelope_id)
     except SearchStoreError as error:
-        raise SidecarLoadError("store_entry_missing", str(error)) from error
+        raise SidecarLoadError("invalid_store_locator", str(error)) from error
     manifest_path = destination / _MANIFEST_FILE
     try:
         if not manifest_path.exists():
@@ -522,7 +642,10 @@ def _verified_manifest(root: Path, store_name: str, envelope_id: str) -> tuple[P
             "envelope_identity_mismatch",
             f"manifest identity mismatch for {store_name}/{envelope_id}",
         )
-    return destination, manifest
+    entries = _validate_manifest_entries(
+        manifest, store_name=store_name, envelope_id=envelope_id
+    )
+    return destination, manifest, entries
 
 
 def probe_sidecar(root: Path, store_name: str, envelope_id: str, name: str) -> str:
@@ -536,29 +659,29 @@ def probe_sidecar(root: Path, store_name: str, envelope_id: str, name: str) -> s
         _MANIFEST_FILE,
     ):
         raise SearchStoreError(f"invalid sidecar file name {name!r}")
-    destination, manifest = _verified_manifest(root, store_name, envelope_id)
-    for entry in manifest.get("artifacts", ()):
-        if entry.get("path") != name:
-            continue
-        path = destination / name
-        try:
-            if not path.exists():
-                raise SidecarLoadError(
-                    "sidecar_missing_but_manifest_declares_it",
-                    f"sidecar {name!r} is declared by {store_name}/{envelope_id} but absent",
-                )
-            digest = file_sha256(path)
-        except SidecarLoadError:
-            raise
-        except OSError as error:
-            raise SidecarLoadError("unexpected_io_error", str(error)) from error
-        if digest != entry.get("sha256"):
+    destination, _manifest, entries = _verified_manifest(root, store_name, envelope_id)
+    entry = entries.get(name)
+    if entry is None:
+        return SIDECAR_NOT_PRODUCED_FOR_PATH
+    path = _sidecar_path(destination, name, store_name=store_name, envelope_id=envelope_id)
+    try:
+        if not path.is_file():
             raise SidecarLoadError(
-                "sidecar_hash_mismatch",
-                f"sidecar {name!r} failed hash verification in {store_name}/{envelope_id}",
+                "sidecar_missing_but_manifest_declares_it",
+                f"sidecar {name!r} is declared by {store_name}/{envelope_id} but absent",
             )
-        return "present"
-    return SIDECAR_NOT_PRODUCED_FOR_PATH
+        size = path.stat().st_size
+        digest = file_sha256(path)
+    except SidecarLoadError:
+        raise
+    except OSError as error:
+        raise SidecarLoadError("unexpected_io_error", str(error)) from error
+    if size != int(entry["bytes"]) or digest != entry["sha256"]:
+        raise SidecarLoadError(
+            "sidecar_hash_mismatch",
+            f"sidecar {name!r} failed hash verification in {store_name}/{envelope_id}",
+        )
+    return "present"
 
 
 def has_sidecar(root: Path, store_name: str, envelope_id: str, name: str) -> bool:
@@ -630,16 +753,10 @@ def save_or_reuse_envelope[E: EnvelopeBase](
             # verify them against the stored manifest — a same-identity
             # publication with DIFFERENT sidecar bytes fails closed instead of
             # silently "reusing" the old bytes.
-            manifest = json.loads(
-                (
-                    envelope_destination(root, store_name, envelope_id)
-                    / _MANIFEST_FILE
-                ).read_text(encoding="utf-8")
+            _destination, _manifest, entries = _verified_manifest(
+                root, store_name, envelope_id
             )
-            stored_hashes = {
-                entry["path"]: entry["sha256"]
-                for entry in manifest.get("artifacts", ())
-            }
+            stored_hashes = {name: entry["sha256"] for name, entry in entries.items()}
             for name, payload in sorted(extra_files.items()):
                 digest = hashlib.sha256(payload).hexdigest()
                 if stored_hashes.get(name) != digest:
@@ -663,9 +780,8 @@ def _verify_reuse_with_producer(
     to the entry and every produced file must reproduce the stored manifest
     hash byte for byte; the scratch directory never survives."""
 
-    destination = envelope_destination(root, store_name, envelope_id)
-    manifest = json.loads((destination / _MANIFEST_FILE).read_text(encoding="utf-8"))
-    stored_hashes = {entry["path"]: entry["sha256"] for entry in manifest.get("artifacts", ())}
+    destination, _manifest, entries = _verified_manifest(root, store_name, envelope_id)
+    stored_hashes = {name: entry["sha256"] for name, entry in entries.items()}
     scratch = destination.parent / f".{envelope_id}.verify-{uuid.uuid4().hex}"
     scratch.mkdir(parents=True)
     try:

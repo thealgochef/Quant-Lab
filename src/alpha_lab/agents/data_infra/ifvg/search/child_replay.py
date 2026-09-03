@@ -15,15 +15,18 @@ profile/seed mismatch is refused before any source read).
 
 from __future__ import annotations
 
+import copy
+import dataclasses
 import io
 import pickle
 from dataclasses import replace
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import ClassVar, Literal
+from typing import Any, ClassVar, Literal
 
+import numpy as np
 import pandas as pd
-from pydantic import Field
+from pydantic import BaseModel, Field
 from strategy_core.strategies.ifvg_smc.records import IFVG_RECORD_SCHEMA_VERSION
 from strategy_core.strategies.ifvg_smc.state import IfvgDaySeed, seed_hash
 
@@ -74,6 +77,8 @@ __all__ = [
     "SeedSnapshotPayload",
     "SeedSnapshotEnvelope",
     "DaySeedsRecord",
+    "canonicalize_seed_datetimes",
+    "canonical_seed_hash",
     "save_seed_snapshot",
     "load_seed_snapshot",
     "SeedSnapshotError",
@@ -146,23 +151,135 @@ class SeedSnapshotError(PermissionError):
     """A seed snapshot failed verification or profile binding."""
 
 
+def canonicalize_seed_datetimes(value: Any) -> Any:
+    """HARDENING-BACKEND-FIX §8 — the ONE recursive datetime canonicalization
+    every seed persistence path runs (``save_seed_snapshot`` applies it
+    unconditionally, so no caller can bypass it):
+
+    * an AWARE datetime already exactly UTC (the stdlib ``UTC``, ``pytz.UTC``,
+      ``ZoneInfo("UTC")``, a zero fixed offset) → the same instant under the
+      stdlib ``UTC`` tzinfo (identical ``isoformat`` → identical ``seed_hash``;
+      the seed sandbox unpickler admits stdlib ``datetime`` only);
+    * an AWARE datetime in any other zone or fixed offset → ``astimezone(UTC)``
+      (the represented instant preserved; ``isinstance(tzinfo, timezone)`` is
+      NOT a UTC test — a stdlib ``UTC−05:00`` is not UTC);
+    * a NAIVE datetime → returned unchanged (the existing seed contract; the
+      machine's local timezone is never inferred);
+    * a ``pandas.Timestamp`` (a datetime subclass) → the stdlib datetime it
+      represents, then the rules above; sub-microsecond precision, ``NaT`` and
+      ``numpy.datetime64`` cannot be represented losslessly and are REFUSED
+      (typed), never silently dropped (review RA-03).
+
+    Covers dataclasses (every field, ``init=False`` fields included — a
+    ``dataclasses.replace`` would silently reset them), pydantic models (their
+    ``extra="allow"`` values included), tuples (named tuples included), lists,
+    dicts (KEYS and values), sets / frozensets and their nesting; every
+    container and every aware datetime is rebuilt (the canonical bytes never
+    depend on incidental object sharing), so caller-owned objects are never
+    mutated; a ``date`` is not a datetime and passes through.
+    """
+
+    if isinstance(value, datetime):
+        if type(value) is not datetime:
+            to_pydatetime = getattr(value, "to_pydatetime", None)
+            nanosecond = getattr(value, "nanosecond", 0)
+            if (
+                to_pydatetime is None
+                or isinstance(nanosecond, bool)
+                or not isinstance(nanosecond, int | np.integer)
+                or int(nanosecond) != 0
+            ):
+                raise SeedSnapshotError(
+                    f"seed carries a {type(value).__name__} that cannot be canonicalized to a "
+                    "stdlib datetime without loss (only stdlib datetimes and microsecond-"
+                    "precision pandas Timestamps are lawful seed datetimes)"
+                )
+            value = to_pydatetime()
+            if type(value) is not datetime:
+                raise SeedSnapshotError(
+                    f"seed carries a {type(value).__name__} that is not a stdlib datetime"
+                )
+        if value.tzinfo is None or value.utcoffset() is None:
+            return value
+        # ALWAYS a fresh object under the stdlib UTC tzinfo: the canonical pickle
+        # graph then never depends on incidental object sharing in the input,
+        # so two representations of the same instants pickle byte-identically
+        return value.astimezone(UTC).replace(tzinfo=UTC)
+    if isinstance(value, np.datetime64):
+        raise SeedSnapshotError(
+            "seed carries a numpy.datetime64 (no timezone semantics; not admitted by the seed "
+            "sandbox) — supply a stdlib datetime"
+        )
+    if isinstance(value, BaseModel):
+        update = {
+            name: canonicalize_seed_datetimes(getattr(value, name))
+            for name in type(value).model_fields
+        }
+        extra = value.model_extra  # ``extra="allow"`` values are seed content too
+        if extra:
+            update.update(
+                {name: canonicalize_seed_datetimes(item) for name, item in extra.items()}
+            )
+        return value.model_copy(update=update)
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        # EVERY field (``init=False`` included) is canonicalized onto a shallow
+        # copy — ``dataclasses.replace`` would silently reset an ``init=False``
+        # field to its default (review RA-03)
+        rebuilt = copy.copy(value)
+        for field in dataclasses.fields(value):
+            object.__setattr__(
+                rebuilt, field.name, canonicalize_seed_datetimes(getattr(value, field.name))
+            )
+        return rebuilt
+    if isinstance(value, tuple):
+        items = [canonicalize_seed_datetimes(item) for item in value]
+        if hasattr(value, "_fields"):  # a named tuple keeps its type
+            return type(value)(*items)
+        return tuple(items)
+    if isinstance(value, list):
+        return [canonicalize_seed_datetimes(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            canonicalize_seed_datetimes(key): canonicalize_seed_datetimes(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, set | frozenset):
+        return type(value)(canonicalize_seed_datetimes(item) for item in value)
+    return value
+
+
+def canonical_seed_hash(seed: IfvgDaySeed) -> str:
+    """The seed identity every snapshot carries: the hash of the seed in its
+    canonical UTC datetime form (a seed already in stdlib UTC hashes to its
+    existing value — canonical goldens are unchanged)."""
+
+    return seed_hash(canonicalize_seed_datetimes(seed))
+
+
 def save_seed_snapshot(
     root: Path,
     payload: SeedSnapshotPayload,
     seed: IfvgDaySeed,
 ) -> SeedSnapshotEnvelope:
-    """Persist the snapshot immutably: envelope + hashed seed sidecar."""
+    """Persist the snapshot immutably: envelope + hashed seed sidecar. The seed
+    is canonicalized here (HARDENING-BACKEND-FIX §8) — the payload's
+    ``seed_hash`` is the canonical hash and the pickled bytes are canonical,
+    whatever timezone representation the caller supplied."""
 
-    if seed_hash(seed) != payload.seed_hash:
-        raise SeedSnapshotError("seed does not hash to the snapshot payload's seed_hash")
-    if seed.profile_hash != payload.resolved_section_config_hash:
+    canonical = canonicalize_seed_datetimes(seed)
+    if seed_hash(canonical) != payload.seed_hash:
+        raise SeedSnapshotError(
+            "seed does not hash to the snapshot payload's seed_hash (seeds are hashed and "
+            "persisted in their canonical UTC datetime form)"
+        )
+    if canonical.profile_hash != payload.resolved_section_config_hash:
         raise SeedSnapshotError("seed profile_hash does not match the snapshot payload")
     envelope = SeedSnapshotEnvelope.from_payload(payload)
     save_or_reuse_envelope(
         root,
         "seed_snapshots",
         envelope,
-        extra_files={_SEED_SIDECAR: pickle.dumps(seed)},
+        extra_files={_SEED_SIDECAR: pickle.dumps(canonical)},
     )
     return envelope
 

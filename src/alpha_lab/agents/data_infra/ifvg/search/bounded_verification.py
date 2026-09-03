@@ -69,7 +69,6 @@ from .store_namespace import (
     path_looks_like_research_store,
     require_store_namespace,
 )
-from .supersession_chain import assert_head_witness_current
 from .verification import (
     VERIFICATION_CONTROL_FLOW_GATE_IDS,
     ControlFlowGateReport,
@@ -266,7 +265,14 @@ def preflight_bounded_verification(
                 "store_namespace_identity_mismatch",
                 "the authorization names another store namespace",
             )
-        assert_head_witness_current(store_root, authorization.supersession_head_witness)
+        # HARDENING-BACKEND-FIX §10: the COMPLETE owner-authority chain proof
+        from .owner_decisions import (  # noqa: PLC0415
+            verify_complete_owner_authority_chain,
+        )
+
+        verify_complete_owner_authority_chain(
+            store_root, expected_head_witness=authorization.supersession_head_witness
+        )
     except StoreNamespaceError as error:
         raise _refuse("supersession_head_witness_refused", str(error)) from error
     checks["supersession_head_witness_current"] = True

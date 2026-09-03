@@ -278,3 +278,56 @@ def synthetic_artifacts(doc_default_cfg) -> list[DayArtifacts]:
 @pytest.fixture(scope="session")
 def synthetic_chain(doc_default_cfg, synthetic_artifacts):
     return run_synthetic_chain(doc_default_cfg, synthetic_artifacts)
+
+
+
+# ── HARDENING-BACKEND-FIX §8 — seed datetime helpers for the canonicalization tests ─
+
+
+def rezone_seed_datetimes(value, tz):
+    """Re-express every AWARE datetime of a seed graph in ``tz`` (the same
+    instants under another timezone representation); naive datetimes and
+    every other value are returned as they are."""
+
+    import dataclasses as _dataclasses
+
+    if isinstance(value, datetime):
+        return value.astimezone(tz) if value.tzinfo is not None else value
+    if _dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return _dataclasses.replace(
+            value,
+            **{
+                field.name: rezone_seed_datetimes(getattr(value, field.name), tz)
+                for field in _dataclasses.fields(value)
+                if field.init
+            },
+        )
+    if isinstance(value, tuple):
+        items = [rezone_seed_datetimes(item, tz) for item in value]
+        return type(value)(*items) if hasattr(value, "_fields") else tuple(items)
+    if isinstance(value, list):
+        return [rezone_seed_datetimes(item, tz) for item in value]
+    if isinstance(value, dict):
+        return {key: rezone_seed_datetimes(item, tz) for key, item in value.items()}
+    return value
+
+
+def aware_seed_datetimes(value) -> list:
+    """Every AWARE datetime inside a seed graph, in traversal order."""
+
+    import dataclasses as _dataclasses
+
+    found: list = []
+    if isinstance(value, datetime):
+        if value.tzinfo is not None:
+            found.append(value)
+    elif _dataclasses.is_dataclass(value) and not isinstance(value, type):
+        for field in _dataclasses.fields(value):
+            found.extend(aware_seed_datetimes(getattr(value, field.name)))
+    elif isinstance(value, list | tuple):
+        for item in value:
+            found.extend(aware_seed_datetimes(item))
+    elif isinstance(value, dict):
+        for item in value.values():
+            found.extend(aware_seed_datetimes(item))
+    return found

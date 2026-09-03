@@ -800,3 +800,57 @@ def test_delivered_by_s09c_fails_closed_on_a_tampered_s09_record(completed_candi
     finally:
         path.write_bytes(original)
     assert not hasattr(regime_report_stage, "_prior_reports_record")
+
+
+# ── HARDENING-BACKEND-FIX §7.1 — the executed-trade table store fails closed ─
+
+
+def test_a_traversal_entry_in_a_trade_table_manifest_fails_typed(tmp_path) -> None:
+    """HB-FIX-08: a persisted executed-trade table whose manifest is rewritten
+    (and rehashed) with a traversal / duplicate / malformed entry is refused
+    by the store's central validator on the probe AND the load path — a
+    typed ``malformed_manifest``, never an attribute error or silent absence."""
+
+    import json
+
+    from alpha_lab.agents.data_infra.ifvg.manifest import canonical_sha256
+    from alpha_lab.agents.data_infra.ifvg.search.executed_trade_table import (
+        EXECUTED_TRADE_TABLE_STORE,
+        build_executed_trade_table,
+        load_executed_trade_table,
+        probe_executed_trade_table,
+        save_executed_trade_table,
+    )
+    from alpha_lab.agents.data_infra.ifvg.search.store import SidecarLoadError, envelope_destination
+    from tests.agents.ifvg_search.conftest import make_resolved_trades_frame
+
+    root = tmp_path / "store"
+    trades = make_resolved_trades_frame(("2026-01-13", "2026-01-14"), trades_per_day=3)
+    envelope, table_bytes = build_executed_trade_table("a" * 64, trades, record_schema_version=2)
+    stored, _reused = save_executed_trade_table(root, envelope, table_bytes)
+    table_id = stored.executed_trade_table_id
+    assert probe_executed_trade_table(root, table_id) == "present"
+    directory = envelope_destination(root, EXECUTED_TRADE_TABLE_STORE, table_id)
+    manifest_path = directory / "manifest.json"
+    original = manifest_path.read_bytes()
+    for bad_entry in (
+        {"path": "../escape.arrow", "sha256": "0" * 64, "bytes": 0},
+        {"path": "C:\\escape.arrow", "sha256": "0" * 64, "bytes": 0},
+        ["not", "a", "mapping"],
+        {"path": "envelope.json", "sha256": "0" * 64, "bytes": 0},
+    ):
+        manifest = json.loads(original.decode("utf-8"))
+        manifest["artifacts"].append(bad_entry)
+        core = {k: v for k, v in manifest.items() if k != "manifest_payload_sha256"}
+        manifest["manifest_payload_sha256"] = canonical_sha256(core)
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        try:
+            with pytest.raises(SidecarLoadError) as probed:
+                probe_executed_trade_table(root, table_id)
+            assert probed.value.reason == "malformed_manifest", bad_entry
+            with pytest.raises(SidecarLoadError) as loaded:
+                load_executed_trade_table(root, table_id)
+            assert loaded.value.reason == "malformed_manifest", bad_entry
+        finally:
+            manifest_path.write_bytes(original)
+    assert load_executed_trade_table(root, table_id).envelope.executed_trade_table_id == table_id

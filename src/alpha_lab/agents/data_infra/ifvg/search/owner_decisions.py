@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, ClassVar, Literal
@@ -77,16 +78,19 @@ from .store_namespace import (
     SUPERSESSIONS_HEAD_FILE,
     StoreNamespaceEnvelope,
     StoreNamespaceError,
+    SupersessionHeadWitness,
+    chain_head_digest,
     initialize_test_namespace,
     namespace_class_of,
     path_looks_like_research_store,
+    read_supersession_head,
     require_store_namespace,
 )
 from .supersession_chain import (
     OWNER_DECISION_SUPERSESSION_STORE,
     SupersessionRecord,
-    load_supersession_records,
     publish_supersession,
+    verify_chain_structure,
 )
 
 __all__ = [
@@ -108,6 +112,8 @@ __all__ = [
     "plain_decision_values",
     "persist_owner_decision",
     "load_owner_decision",
+    "CompleteOwnerAuthorityChain",
+    "verify_complete_owner_authority_chain",
     "load_supersession_chain",
     "assert_owner_decision_authorizes",
     "build_owner_decision_proposal",
@@ -382,32 +388,208 @@ def load_owner_decision(root: Path, artifact_id: str) -> OwnerDecisionArtifactEn
     return envelope
 
 
+@dataclass(frozen=True)
+class CompleteOwnerAuthorityChain:
+    """The result of :func:`verify_complete_owner_authority_chain`: the
+    verified current head witness, the chain records in order, and the
+    superseded / replacement decision ids the chain names (every one
+    verified-loaded)."""
+
+    store_namespace_id: str
+    witness: SupersessionHeadWitness
+    records: tuple[SupersessionRecord, ...]
+    superseded_decision_ids: tuple[str, ...]
+    replacement_decision_ids: tuple[str, ...]
+
+
+def _load_chain_decision(
+    root: Path, artifact_id: str, *, role: str
+) -> OwnerDecisionArtifactEnvelope:
+    try:
+        return load_owner_decision(root, artifact_id)
+    except (SearchStoreError, OwnerDecisionRefusalError) as error:
+        raise StoreNamespaceError(
+            "supersession_decision_unverifiable",
+            f"the {role} owner decision {artifact_id[:12]}… named by the supersession chain "
+            f"is not a verified store entry of this namespace ({error})",
+        ) from error
+
+
+def verify_complete_owner_authority_chain(
+    root: Path,
+    *,
+    expected_head_witness: SupersessionHeadWitness | None = None,
+    store_namespace_id: str | None = None,
+) -> CompleteOwnerAuthorityChain:
+    """HARDENING-BACKEND-FIX §10.1 — the ONE complete proof every real authority
+    seam runs before any data-path construction or publication. A current
+    head witness alone is insufficient; this proves, from the genesis anchor
+    to the current head:
+
+    * the head record and digest are current (the head file commits to the
+      verified chain);
+    * every chain record exists and hashes correctly (manifest-verified,
+      namespace-bound, prior-head linked);
+    * every superseded decision exists and verifies; every replacement
+      decision exists and verifies (namespace-bound, provenance-lawful);
+    * the replacement points to the expected predecessor;
+    * the namespace and effective-time rules are lawful (both artifacts of
+      this namespace and of one protocol; a replacement is never approved
+      before the decision it supersedes, never recorded before it was
+      approved, never of weaker provenance);
+    * no divergent transition exists (a decision is superseded at most once;
+      no transition repeats).
+
+    ``expected_head_witness`` (an authorization's signed witness) must equal
+    the verified current head — missing, shorter, or different refuses.
+    Every refusal is a typed :class:`StoreNamespaceError`.
+    """
+
+    root = Path(root)
+    namespace = require_store_namespace(root)
+    if store_namespace_id is not None and namespace.store_namespace_id != store_namespace_id:
+        raise StoreNamespaceError(
+            "store_namespace_identity_mismatch",
+            "the authority names another store namespace "
+            f"({store_namespace_id[:12]}… ≠ {namespace.store_namespace_id[:12]}…)",
+        )
+    ordered = verify_chain_structure(root, namespace=namespace)
+    digest = namespace.payload.authority_genesis_id
+    records: list[SupersessionRecord] = []
+    for number, record in enumerate(ordered, start=1):
+        digest = chain_head_digest(digest, record.supersession_record_id)
+        records.append(
+            SupersessionRecord(
+                supersession_record_id=record.supersession_record_id,
+                line_number=number,
+                superseded_artifact_id=record.payload.superseded_decision_id,
+                replacement_artifact_id=record.payload.replacement_decision_id,
+                recorded_at=record.payload.effective_at,
+                head_sha256=digest,
+            )
+        )
+    current = SupersessionHeadWitness(
+        store_namespace_id=namespace.store_namespace_id,
+        line_count=len(ordered),
+        head_sha256=digest,
+    )
+    head = read_supersession_head(root, store_namespace_id=namespace.store_namespace_id)
+    if int(head["line_count"]) != current.line_count or head["head_sha256"] != (
+        current.head_sha256
+    ):
+        raise StoreNamespaceError(
+            "supersession_chain_broken",
+            "the supersession head file does not commit to the verified chain",
+        )
+    if expected_head_witness is not None:
+        if not isinstance(expected_head_witness, SupersessionHeadWitness):
+            raise StoreNamespaceError(
+                "supersession_head_witness_mismatch", "a supersession head witness is required"
+            )
+        if current.store_namespace_id != expected_head_witness.store_namespace_id:
+            raise StoreNamespaceError(
+                "supersession_head_witness_mismatch",
+                "the witness was recorded against another store namespace",
+            )
+        if current.line_count < expected_head_witness.line_count:
+            raise StoreNamespaceError(
+                "supersession_head_shorter_than_witness",
+                f"the current supersession head ({current.line_count} records) is SHORTER "
+                f"than the witnessed head ({expected_head_witness.line_count}) — a rolled-back "
+                "chain",
+            )
+        if current.line_count != expected_head_witness.line_count or (
+            current.head_sha256 != expected_head_witness.head_sha256
+        ):
+            raise StoreNamespaceError(
+                "supersession_head_witness_mismatch",
+                f"the current supersession head ({current.line_count}, "
+                f"{current.head_sha256[:12]}…) differs from the witnessed head "
+                f"({expected_head_witness.line_count}, "
+                f"{expected_head_witness.head_sha256[:12]}…); the authorization must be "
+                "re-signed against the current head",
+            )
+    superseded_by: dict[str, str] = {}
+    superseded_ids: list[str] = []
+    replacement_ids: list[str] = []
+    for record in ordered:
+        payload = record.payload
+        if payload.superseded_decision_id in superseded_by:
+            raise StoreNamespaceError(
+                "supersession_chain_divergent",
+                f"decision {payload.superseded_decision_id[:12]}… is superseded twice (by "
+                f"{superseded_by[payload.superseded_decision_id][:12]}… and "
+                f"{payload.replacement_decision_id[:12]}…) — a divergent transition",
+            )
+        superseded_by[payload.superseded_decision_id] = payload.replacement_decision_id
+        superseded = _load_chain_decision(root, payload.superseded_decision_id, role="superseded")
+        replacement = _load_chain_decision(
+            root, payload.replacement_decision_id, role="replacement"
+        )
+        if replacement.payload.supersedes != payload.superseded_decision_id:
+            raise StoreNamespaceError(
+                "supersession_transition_unlawful",
+                f"replacement {payload.replacement_decision_id[:12]}… does not point to the "
+                f"expected predecessor {payload.superseded_decision_id[:12]}… (it names "
+                f"{(replacement.payload.supersedes or 'none')[:12]})",
+            )
+        if superseded.payload.resolved_regime_protocol_id != (
+            replacement.payload.resolved_regime_protocol_id
+        ):
+            raise StoreNamespaceError(
+                "supersession_transition_unlawful",
+                f"replacement {payload.replacement_decision_id[:12]}… ratifies another regime "
+                "protocol than the decision it supersedes",
+            )
+        if _PROVENANCE_RANK[replacement.payload.provenance] < (
+            _PROVENANCE_RANK[superseded.payload.provenance]
+        ):
+            raise StoreNamespaceError(
+                "supersession_transition_unlawful",
+                f"replacement {payload.replacement_decision_id[:12]}… carries weaker provenance "
+                "than the decision it supersedes",
+            )
+        replacement_approved = _parse_instant(replacement.payload.approved_at, field="approved_at")
+        superseded_approved = _parse_instant(superseded.payload.approved_at, field="approved_at")
+        recorded = _parse_instant(payload.effective_at, field="effective_at")
+        if replacement_approved < superseded_approved:
+            raise StoreNamespaceError(
+                "supersession_transition_unlawful",
+                f"replacement {payload.replacement_decision_id[:12]}… was approved before the "
+                "decision it supersedes",
+            )
+        if recorded < replacement_approved:
+            raise StoreNamespaceError(
+                "supersession_transition_unlawful",
+                f"the supersession of {payload.superseded_decision_id[:12]}… was recorded "
+                "before its replacement was approved",
+            )
+        superseded_ids.append(payload.superseded_decision_id)
+        replacement_ids.append(payload.replacement_decision_id)
+    return CompleteOwnerAuthorityChain(
+        store_namespace_id=namespace.store_namespace_id,
+        witness=current,
+        records=tuple(records),
+        superseded_decision_ids=tuple(superseded_ids),
+        replacement_decision_ids=tuple(replacement_ids),
+    )
+
+
 def load_supersession_chain(root: Path) -> tuple[SupersessionRecord, ...]:
-    """Every recorded supersession — the immutable record chain verified
-    from the head back to the namespace's genesis anchor, each record backed
-    by a VERIFIED replacement artifact whose ``supersedes`` names the
-    superseded id — fail closed on any inconsistency."""
+    """Every recorded supersession — the COMPLETE authority proof of
+    :func:`verify_complete_owner_authority_chain` (records verified from the
+    head back to the genesis anchor; every superseded and replacement
+    artifact verified-loaded; predecessor, protocol, provenance and
+    effective-time rules; no divergent transition) — fail closed on any
+    inconsistency."""
 
     root = Path(root)
     try:
-        records = load_supersession_records(root)
+        return verify_complete_owner_authority_chain(root).records
     except StoreNamespaceError as error:
-        raise _chain_refusal(f"supersession chain unverifiable ({error})") from error
-    for record in records:
-        try:
-            replacement = load_owner_decision(root, record.replacement_artifact_id)
-        except SearchStoreError as error:
-            raise _chain_refusal(
-                "supersession record names a replacement that is not a verified store "
-                f"entry ({record.replacement_artifact_id[:12]}…)"
-            ) from error
-        if replacement.payload.supersedes != record.superseded_artifact_id:
-            raise _chain_refusal(
-                "supersession record is not backed by its replacement artifact "
-                f"(replacement {record.replacement_artifact_id[:12]}… does not name "
-                f"{record.superseded_artifact_id[:12]}… as superseded)"
-            )
-    return records
+        refusal = _chain_refusal(f"supersession chain unverifiable ({error})")
+        refusal.reason = error.reason  # type: ignore[attr-defined]
+        raise refusal from error
 
 
 def persist_owner_decision(

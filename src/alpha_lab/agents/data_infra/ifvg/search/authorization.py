@@ -329,10 +329,14 @@ def assert_authorization_bound_to_store(
 ) -> None:
     """HARDENING-BACKEND §4.1 / §4.2: the authorization must name THIS store's
     verified namespace and its witness must equal the CURRENT supersession
-    head (missing, shorter, or different refuses). Typed
+    head (missing, shorter, or different refuses). HARDENING-BACKEND-FIX §10:
+    the head witness alone is insufficient — the COMPLETE chain from the
+    genesis anchor to the current head is proven, every superseded and
+    replacement owner decision verified-loaded, before the authority is
+    accepted (the ONE shared proof every real seam runs). Typed
     :class:`AuthorizationError` carrying the namespace ``reason``."""
 
-    from .supersession_chain import assert_head_witness_current  # noqa: PLC0415
+    from .owner_decisions import verify_complete_owner_authority_chain  # noqa: PLC0415
 
     try:
         namespace = require_store_namespace(
@@ -347,7 +351,11 @@ def assert_authorization_bound_to_store(
                 "the authorization names another store namespace "
                 f"({store_namespace_id[:12]}… ≠ {namespace.store_namespace_id[:12]}…)",
             )
-        assert_head_witness_current(Path(store_root), supersession_head_witness)
+        verify_complete_owner_authority_chain(
+            Path(store_root),
+            expected_head_witness=supersession_head_witness,
+            store_namespace_id=store_namespace_id,
+        )
     except StoreNamespaceError as error:
         refusal = AuthorizationError(f"owner authorization is not bound to this store: {error}")
         refusal.reason = error.reason  # type: ignore[attr-defined]

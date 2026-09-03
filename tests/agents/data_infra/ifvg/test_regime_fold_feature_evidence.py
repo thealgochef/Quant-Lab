@@ -268,3 +268,59 @@ def test_fold_feature_loader_rechecks_every_fit_ref_against_the_store(lane, tmp_
     with pytest.raises(ValueError, match="sidecar|ref"):
         load_regime_fold_feature_source(other_root, forged.regime_fold_feature_artifact_id)
     assert isinstance(frame, pd.DataFrame)
+
+
+# ── HARDENING-BACKEND-FIX §6.4 — the loader re-proves the spine binding ─────
+
+
+def test_loader_refuses_a_stored_row_outside_the_bound_fold_fit_refs(lane, tmp_path, monkeypatch):
+    import shutil
+
+    from alpha_lab.agents.data_infra.ifvg.ml import regime_fold_features as module
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_contracts import (
+        RegimeAssignmentEvidenceError,
+    )
+
+    root = tmp_path / "store"
+    shutil.copytree(lane["root"], root)  # the fits every FoldFitRef binds
+    envelope, frame = _build(lane)
+    save_regime_fold_features(root, envelope, frame)
+    loaded = load_regime_fold_features(root, envelope.regime_fold_feature_artifact_id)
+    assert len(module.load_regime_fold_feature_frame(root, loaded)) == len(frame)
+    # a stored table whose first fit-bearing row names a fit the artifact never
+    # bound (the bytes hash is forced to pass so the spine proof is exercised)
+    foreign = frame.copy()
+    foreign["regime_fit_id"] = foreign["regime_fit_id"].astype(object)
+    bearing = foreign.index[foreign["regime_fit_id"].notna()]
+    foreign.loc[bearing[:1], "regime_fit_id"] = "f" * 64
+    foreign_bytes = module.fold_feature_table_bytes(foreign, envelope.payload.columns)
+    monkeypatch.setattr(module, "load_sidecar_bytes", lambda *_args, **_kwargs: foreign_bytes)
+    monkeypatch.setattr(module, "bytes_sha256", lambda _data: envelope.feature_table_sha256)
+    with pytest.raises(RegimeAssignmentEvidenceError) as refused:
+        module.load_regime_fold_feature_frame(root, loaded)
+    assert refused.value.reason == "assignment_provenance_incomplete"
+    # review RB-02: a stored fit-bearing fold row collapsed into fit-less absence
+    # (null fit id + ``no_valid_regime_fit``, otherwise a lawful invalid row) is
+    # refused at load by the same spine proof
+    import numpy as np
+
+    columns = envelope.payload.columns
+    collapsed = frame.copy()
+    for name in ("regime_fit_id", columns.missing_reason, columns.local_id):
+        collapsed[name] = collapsed[name].astype(object)
+    collapsed["canonical_reporting_cluster_id"] = collapsed[
+        "canonical_reporting_cluster_id"
+    ].astype(object)
+    victim = bearing[:1]
+    collapsed.loc[victim, "regime_fit_id"] = None
+    collapsed.loc[victim, columns.missing_reason] = "no_valid_regime_fit"
+    collapsed.loc[victim, columns.local_id] = None
+    collapsed.loc[victim, "canonical_reporting_cluster_id"] = None
+    collapsed.loc[victim, columns.valid] = False
+    collapsed.loc[victim, list(columns.numeric)] = np.nan
+    collapsed_bytes = module.fold_feature_table_bytes(collapsed, columns)
+    monkeypatch.setattr(module, "load_sidecar_bytes", lambda *_args, **_kwargs: collapsed_bytes)
+    with pytest.raises(RegimeAssignmentEvidenceError) as fitless:
+        module.load_regime_fold_feature_frame(root, loaded)
+    assert fitless.value.reason == "assignment_provenance_incomplete"
+    assert "name no fit" in str(fitless.value)

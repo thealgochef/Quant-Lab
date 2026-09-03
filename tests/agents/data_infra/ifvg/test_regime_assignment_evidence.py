@@ -881,3 +881,247 @@ def test_executor_refuses_an_unparseable_anchor_and_types_a_null_one(tmp_path, m
     )
     assert clean.oos_assignment.payload.candidate_as_of_stage is AvailabilityStage.ENTRY_DECISION
     assert oos_module.OOS_ASSIGNMENT_FORMULA_VERSION == "regime_oos_assignment_v2"
+
+
+# ── HARDENING-BACKEND-FIX §6.2 / §6.5 — native validation, schema identity ──
+
+
+def _native_refusal(frame_builder, row, reason):
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_contracts import (
+        RegimeAssignmentEvidenceError,
+    )
+
+    with pytest.raises(RegimeAssignmentEvidenceError) as refused:
+        frame_builder(_frame(row))
+    assert refused.value.reason == reason, str(refused.value)
+
+
+def test_malformed_bool_integer_and_id_evidence_is_refused_before_coercion():
+    """HB-FIX-05: the fit sidecar serializer proves NATIVE values before any
+    pandas / Arrow canonicalization."""
+
+    assert fit_assignment_table_bytes(_frame(_valid_row(), _invalid_row(row_id="cand-2")))
+    # "False" cannot serialize as true; an integer is not a boolean
+    _native_refusal(fit_assignment_table_bytes, _valid_row(valid="False"), "native_value_refused")
+    _native_refusal(fit_assignment_table_bytes, _valid_row(valid=1), "native_value_refused")
+    # fractional integral fields are refused, never truncated
+    _native_refusal(
+        fit_assignment_table_bytes, _valid_row(fold_index=1.5), "fractional_integral_refused"
+    )
+    _native_refusal(
+        fit_assignment_table_bytes,
+        _valid_row(fold_local_cluster_id=0.5),
+        "fractional_integral_refused",
+    )
+    # bool is not an integer; numeric strings are refused everywhere
+    _native_refusal(fit_assignment_table_bytes, _valid_row(fold_index=True), "native_value_refused")
+    _native_refusal(fit_assignment_table_bytes, _valid_row(fold_index="0"), "native_value_refused")
+    _native_refusal(
+        fit_assignment_table_bytes, _valid_row(assigned_distance="0.1"), "native_value_refused"
+    )
+    # infinity and foreign objects are refused in float fields
+    _native_refusal(
+        fit_assignment_table_bytes,
+        _valid_row(assignment_margin=float("inf")),
+        "native_value_refused",
+    )
+    _native_refusal(
+        fit_assignment_table_bytes, _valid_row(log_density=object()), "native_value_refused"
+    )
+    # a null / sentinel identifier can never become "None" or "nan"
+    for bad in (None, "", "None", "nan", "<NA>", "NaN", "null"):
+        _native_refusal(
+            fit_assignment_table_bytes, _valid_row(row_id=bad), "sentinel_identifier_refused"
+        )
+        _native_refusal(
+            fit_assignment_table_bytes, _valid_row(regime_fit_id=bad), "sentinel_identifier_refused"
+        )
+    _native_refusal(fit_assignment_table_bytes, _valid_row(row_id=12345), "native_value_refused")
+    _native_refusal(
+        fit_assignment_table_bytes,
+        _invalid_row(missing_reason="nan"),
+        "sentinel_identifier_refused",
+    )
+    # an integral float from a nullable upcast is lawful (2.0 == 2); a boolean
+    # inside a distance vector is not
+    assert fit_assignment_table_bytes(_frame(_valid_row(fold_index=0.0)))
+    _native_refusal(
+        fit_assignment_table_bytes, _valid_row(distances=[0.5, True, 0.9]), "native_value_refused"
+    )
+
+
+def test_oos_and_fold_feature_tables_validate_native_values_too(candidate_run):
+    from alpha_lab.agents.data_infra.ifvg.ml import regime_oos_assignment as oos_module
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_contracts import (
+        RegimeAssignmentEvidenceError,
+    )
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_fold_features import (
+        fold_feature_columns,
+        fold_feature_table_bytes,
+        validate_fold_feature_rows,
+    )
+
+    fixture, _folds, _protocol, run = candidate_run
+    ids = tuple(fixture.view.frame["candidate_id"].astype(str))[:8]
+    frame = oos_module.candidate_fold_oos_assignment(run.assignments, ids)
+    assert oos_module.assignment_table_bytes(frame)
+    # review RB-05: the candidate index validates its INPUT fit assignments natively
+    # before any bool(row.valid) coercion
+    laundered = run.assignments.copy()
+    laundered["valid"] = laundered["valid"].astype(object)
+    laundered.loc[laundered.index[0], "valid"] = "False"
+    with pytest.raises(RegimeAssignmentEvidenceError) as refused_input:
+        oos_module.candidate_fold_oos_assignment(laundered, ids)
+    assert refused_input.value.reason == "native_value_refused"
+    for column, value, reason in (
+        ("valid", "False", "native_value_refused"),
+        ("fold_index", 1.5, "fractional_integral_refused"),
+        ("candidate_id", "None", "sentinel_identifier_refused"),
+        ("assigned_distance", "0.1", "native_value_refused"),
+    ):
+        broken = frame.copy()
+        broken[column] = broken[column].astype(object)
+        broken.loc[broken.index[0], column] = value
+        with pytest.raises(RegimeAssignmentEvidenceError) as refused:
+            oos_module.assignment_table_bytes(broken)
+        assert refused.value.reason == reason, str(refused.value)
+    columns = fold_feature_columns("a" * 64, 3)
+
+    def _fold_row(**overrides):
+        row = {
+            "fold_index": 0,
+            "candidate_id": "cand-1",
+            "partition": "test",
+            "regime_fit_id": "b" * 64,
+            "panel_row_id": None,
+        }
+        for name, value in zip(columns.distances, (0.5, 0.1, 0.9), strict=True):
+            row[name] = value
+        row[columns.assigned_distance] = 0.1
+        row[columns.margin] = 0.4
+        row[columns.local_id] = "1"
+        row["canonical_reporting_cluster_id"] = 2
+        row[columns.valid] = True
+        row[columns.missing_reason] = None
+        row.update(overrides)
+        return row
+
+    good = pd.DataFrame([_fold_row()], columns=list(columns.ordered))
+    assert fold_feature_table_bytes(good, columns)
+    validate_fold_feature_rows(good, columns)
+    for overrides, reason in (
+        ({columns.valid: "False"}, "native_value_refused"),
+        ({"fold_index": 0.5}, "fractional_integral_refused"),
+        ({"candidate_id": "nan"}, "sentinel_identifier_refused"),
+        ({columns.margin: "abc"}, "native_value_refused"),
+    ):
+        bad = pd.DataFrame([_fold_row(**overrides)], columns=list(columns.ordered))
+        with pytest.raises(RegimeAssignmentEvidenceError) as refused:
+            fold_feature_table_bytes(bad, columns)
+        assert refused.value.reason == reason, str(refused.value)
+        with pytest.raises(RegimeAssignmentEvidenceError):
+            validate_fold_feature_rows(bad, columns)
+    # errors="coerce" never launders: a string in a numeric column of an
+    # INVALID row is refused, never lawful missingness
+    invalid = _fold_row(
+        **{
+            columns.valid: False,
+            columns.missing_reason: "coverage_gap",
+            columns.local_id: None,
+            "canonical_reporting_cluster_id": None,
+            columns.assigned_distance: float("nan"),
+            columns.margin: "not-a-number",
+        }
+    )
+    for name in columns.distances:
+        invalid[name] = float("nan")
+    with pytest.raises(RegimeAssignmentEvidenceError) as laundered:
+        validate_fold_feature_rows(pd.DataFrame([invalid], columns=list(columns.ordered)), columns)
+    assert laundered.value.reason == "native_value_refused"
+
+
+def test_wrong_schema_hash_is_refused_at_save_and_a_tampered_schema_at_reload(
+    candidate_run, tmp_path, monkeypatch
+):
+    """HB-FIX-07: the payload binds exactly the registered OOS schema hash;
+    the saver decodes the actual Arrow bytes and refuses another schema even
+    when the bytes hash to the envelope; the loader repeats the proof."""
+
+    import pyarrow as pa
+
+    from alpha_lab.agents.data_infra.ifvg.features.arrow_tables import (
+        bytes_sha256,
+        frame_to_arrow_bytes,
+    )
+    from alpha_lab.agents.data_infra.ifvg.ml import regime_oos_assignment as oos_module
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_contracts import (
+        RegimeAssignmentEvidenceError,
+    )
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_oos_assignment import (
+        OOS_ASSIGNMENT_SCHEMA,
+        REGIME_OOS_ASSIGNMENT_STORE,
+        RegimeOosAssignmentEnvelope,
+        save_regime_oos_assignment,
+    )
+
+    fixture, _folds, protocol, run = candidate_run
+    root = tmp_path / "store"
+    verified = _persist_all(root, candidate_run)
+    ids = tuple(fixture.view.frame["candidate_id"].astype(str))
+    frame = oos_module.candidate_fold_oos_assignment(
+        oos_module.consulted_assignment_frame(verified), ids
+    )
+    as_of = candidate_as_of_frame(fixture.view.frame, stage=AvailabilityStage.ENTRY_DECISION)
+    envelope, table = build_regime_oos_assignment_artifact(
+        frame,
+        protocol=protocol,
+        verified_fit_assignments=verified,
+        regime_fold_set_id=run.fold_set_id,
+        fold_schedule_id=derive_fold_schedule(fixture.trading_days).fold_schedule_id,
+        candidate_as_of=as_of,
+        candidate_as_of_source_ref=f"bundle_feature_view:{fixture.view.view_id}",
+        candidate_as_of_stage=AvailabilityStage.ENTRY_DECISION,
+    )
+    assert envelope.payload.assignment_schema_hash == OOS_ASSIGNMENT_SCHEMA_HASH
+    # (i) the payload refuses any other registered-schema claim
+    with pytest.raises(ValueError, match="registered OOS assignment schema hash"):
+        RegimeOosAssignmentPayload(
+            **{**envelope.payload.model_dump(), "assignment_schema_hash": "1" * 64}
+        )
+    # (ii) the same rows under ANOTHER Arrow schema are refused at save even
+    # though they hash to the (forged) envelope
+    other_schema = pa.schema(
+        [
+            pa.field(field.name, pa.int32() if field.name == "fold_index" else field.type)
+            for field in OOS_ASSIGNMENT_SCHEMA
+        ]
+    )
+    other_bytes = frame_to_arrow_bytes(oos_module._frame_for_schema(frame), other_schema)
+    forged = RegimeOosAssignmentEnvelope(
+        **{**envelope.model_dump(), "assignment_table_sha256": bytes_sha256(other_bytes)}
+    )
+    with pytest.raises(RegimeAssignmentEvidenceError) as at_save:
+        save_regime_oos_assignment(root, forged, other_bytes)
+    assert at_save.value.reason == "assignment_schema_hash_mismatch"
+    store_dir = root / REGIME_OOS_ASSIGNMENT_STORE
+    assert not store_dir.exists() or not list(store_dir.iterdir())
+    # a row-count claim that disagrees with the bytes is refused at save too
+    miscounted = RegimeOosAssignmentEnvelope.from_payload(
+        RegimeOosAssignmentPayload(
+            **{**envelope.payload.model_dump(), "candidate_count": len(ids) - 1}
+        ),
+        assignment_table_sha256=envelope.assignment_table_sha256,
+    )
+    with pytest.raises(RegimeAssignmentEvidenceError) as counted:
+        save_regime_oos_assignment(root, miscounted, table)
+    assert counted.value.reason == "assignment_row_invariant_violated"
+    # (iii) a lawful save, then a tampered sidecar schema at reload (the bytes
+    # hash is forced to pass so the schema proof itself is exercised)
+    save_regime_oos_assignment(root, envelope, table)
+    stored = load_regime_oos_assignment(root, envelope.regime_oos_assignment_id)
+    assert len(load_regime_oos_assignment_frame(root, stored)) == len(ids)
+    monkeypatch.setattr(oos_module, "load_sidecar_bytes", lambda *_args, **_kwargs: other_bytes)
+    monkeypatch.setattr(oos_module, "bytes_sha256", lambda _data: envelope.assignment_table_sha256)
+    with pytest.raises(RegimeAssignmentEvidenceError) as at_load:
+        load_regime_oos_assignment_frame(root, stored)
+    assert at_load.value.reason == "assignment_schema_hash_mismatch"

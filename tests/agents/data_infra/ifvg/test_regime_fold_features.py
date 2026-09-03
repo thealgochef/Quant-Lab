@@ -506,3 +506,99 @@ def test_panel_grain_uses_fit_k_and_the_candidates_own_partition(tmp_path):
                 ),
             ),
         )
+
+
+# ── HARDENING-BACKEND-FIX §6.4 — the reconciliation spine of every row ───────
+
+
+def test_invalid_fold_feature_rows_retain_the_complete_reconciliation_spine(lane, tmp_path):
+    """HB-FIX-06: an invalid row keeps candidate / fold / partition / the
+    applicable fit id and the EXACT typed source reason; the fold's
+    ``FoldFitRef`` binds the source assignment-table hash + schema hash; a
+    known invalid assignment never collapses into generic absence."""
+
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_contracts import (
+        RegimeAssignmentEvidenceError,
+    )
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_fold_features import (
+        assert_fold_feature_spine_bound,
+        validate_fold_feature_rows,
+    )
+
+    folds, fixture = lane["folds"], lane["fixture"]
+    columns = lane["envelope"].payload.columns
+    fold = next(f for f in folds.folds if f.valid)
+    victim = str(fold.test_candidate_ids[0])
+    hollow = fixture.view.frame.copy()
+    hollow.loc[hollow["candidate_id"] == victim, list(REGIME_INPUT_FEATURES)] = np.nan
+    hollow_run = run_regime_protocol(
+        hollow,
+        folds,
+        lane["protocol"],
+        source_artifact_ids=(fixture.view.view_id,),
+        bootstrap_refits=2,
+    )
+    envelope, frame = _build(
+        lane,
+        regime_run=hollow_run,
+        fit_assignments=_verified_for(tmp_path / "hollow", hollow_run, hollow),
+        candidate_view_frame=hollow,
+    )
+    mask = (frame["fold_index"] == fold.fold_index) & (frame["candidate_id"] == victim)
+    row = frame[mask].iloc[0]
+    fit_id = next(
+        f.fit_envelope.regime_fit_id
+        for f in hollow_run.fold_fits
+        if f.fold_index == fold.fold_index
+    )
+    assert not bool(row[columns.valid]) and row[columns.missing_reason] == "source_feature_missing"
+    assert row["regime_fit_id"] == fit_id
+    assert int(row["fold_index"]) == fold.fold_index and row["partition"] == "test"
+    assert all(np.isnan(row[name]) for name in columns.numeric)
+    assert row[columns.local_id] is None
+    ref = next(
+        r for r in envelope.payload.regime_fit_ids_by_fold if r.fold_index == fold.fold_index
+    )
+    assert ref.regime_fit_id == fit_id
+    assert ref.assignments_sidecar_sha256 and ref.assignment_schema_hash
+    assert_fold_feature_spine_bound(frame, envelope.payload)
+    # dropping the fit id of a known invalid row is refused
+    collapsed = frame.copy()
+    collapsed["regime_fit_id"] = collapsed["regime_fit_id"].astype(object)
+    collapsed.loc[mask, "regime_fit_id"] = None
+    with pytest.raises(RegimeAssignmentEvidenceError) as refused:
+        validate_fold_feature_rows(collapsed, columns)
+    assert refused.value.reason == "assignment_provenance_incomplete"
+    # no_valid_regime_fit never names a fit
+    named = frame.copy()
+    named[columns.missing_reason] = named[columns.missing_reason].astype(object)
+    named.loc[mask, columns.missing_reason] = "no_valid_regime_fit"
+    with pytest.raises(RegimeAssignmentEvidenceError) as fabricated:
+        validate_fold_feature_rows(named, columns)
+    assert fabricated.value.reason == "assignment_provenance_incomplete"
+    # every row (valid or not) carries a lawful partition
+    unlawful = frame.copy()
+    unlawful.loc[mask, "partition"] = "holdout"
+    with pytest.raises(RegimeAssignmentEvidenceError) as partition:
+        validate_fold_feature_rows(unlawful, columns)
+    assert partition.value.reason == "assignment_row_invariant_violated"
+    # a row naming a fit outside its fold's bound FoldFitRef breaks the spine
+    foreign = frame.copy()
+    foreign["regime_fit_id"] = foreign["regime_fit_id"].astype(object)
+    foreign.loc[mask, "regime_fit_id"] = "f" * 64
+    with pytest.raises(RegimeAssignmentEvidenceError) as unbound:
+        assert_fold_feature_spine_bound(foreign, envelope.payload)
+    assert unbound.value.reason == "assignment_provenance_incomplete"
+    # review RB-02: a fit-bearing fold never carries a fit-less row — dropping the
+    # fit id TOGETHER with the fit-less reason passes the row-local rules (which
+    # cannot see the fold's binding) but is refused by the spine bound
+    fitless = frame.copy()
+    fitless["regime_fit_id"] = fitless["regime_fit_id"].astype(object)
+    fitless[columns.missing_reason] = fitless[columns.missing_reason].astype(object)
+    fitless.loc[mask, "regime_fit_id"] = None
+    fitless.loc[mask, columns.missing_reason] = "no_valid_regime_fit"
+    validate_fold_feature_rows(fitless, columns)
+    with pytest.raises(RegimeAssignmentEvidenceError) as collapsed_fit:
+        assert_fold_feature_spine_bound(fitless, envelope.payload)
+    assert collapsed_fit.value.reason == "assignment_provenance_incomplete"
+    assert "name no fit" in str(collapsed_fit.value)

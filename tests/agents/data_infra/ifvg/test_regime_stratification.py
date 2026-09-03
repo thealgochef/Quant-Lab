@@ -833,6 +833,7 @@ def test_event_regime_summary_budget_refuses_before_publication(lane):
                         evaluation_config_hash=_EVAL_HASH,
                         costed_evaluation_id="2" * 64,
                         account_simulations=simulations,
+                        executed_trade_table_id=_persisted_table_id(root, _CORE_A, trades),
                     )
                 },
                 summary_budget=tiny_rows,
@@ -951,6 +952,7 @@ def test_service_persists_descriptive_reports_and_records_modeled_delivery(lane,
                 evaluation_config_hash=_EVAL_HASH,
                 costed_evaluation_id="2" * 64,
                 account_simulations={historical_id: ("firm_a", "historical_closed_trade")},
+                executed_trade_table_id=_persisted_table_id(root, _CORE_A, trades),
             )
         },
         frontier_id=frontier.frontier_id,
@@ -1142,3 +1144,19 @@ def test_reports_are_built_from_persisted_artifacts_only(lane, tmp_path):
             )
     finally:
         sidecar.write_bytes(original)
+
+
+def _persisted_table_id(root, core_replay_id: str, trades: pd.DataFrame) -> str:
+    """HARDENING-BACKEND-FIX §7.3: the persisting service binds every child to
+    its exact executed-trade table artifact."""
+
+    from alpha_lab.agents.data_infra.ifvg.search.executed_trade_table import (
+        build_executed_trade_table,
+        save_executed_trade_table,
+    )
+
+    envelope, table_bytes = build_executed_trade_table(
+        core_replay_id, trades, record_schema_version=2
+    )
+    stored, _reused = save_executed_trade_table(root, envelope, table_bytes)
+    return stored.executed_trade_table_id

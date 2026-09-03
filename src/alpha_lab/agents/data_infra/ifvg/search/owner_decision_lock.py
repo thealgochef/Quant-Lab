@@ -12,12 +12,30 @@ it), a random lock token, host, creation time and a heartbeat:
   host, a malformed body, or a platform that cannot assess liveness is
   ``unknown`` and is NEVER reclaimed — the waiter times out with a typed
   reason for operator intervention.
+* **Token-safe reclamation** (HARDENING-BACKEND-FIX §4.1). A stale verdict
+  reached OUTSIDE the reclaim mutex grants no authority to unlink: two
+  reclaimers that both inspected stale body ``S`` could otherwise race —
+  the first replaces ``S`` with its live lock ``A`` and the second unlinks
+  ``A``. Reclamation therefore runs under a dedicated cross-process mutex
+  (:class:`~.file_mutex.ExclusiveFileMutex`; ``msvcrt`` / ``fcntl``): the
+  body is re-read under the mutex, heartbeat age / host / pid liveness /
+  start token are re-evaluated, and the file is unlinked ONLY when the
+  still-current body is byte-for-byte the same dead holder that was
+  observed (same ``lock_token``, same body). Ordinary acquisition stays
+  ``O_CREAT | O_EXCL``; the mutex guards nothing else.
+* **Typed reads**: the lock distinguishes ``absent`` / ``malformed`` /
+  persistent read I/O failure (``lock_read_failed``) — a read failure is
+  never converted into absence.
 * **Heartbeat** — :meth:`OwnerDecisionLock.refresh` rewrites the body
   (atomically) before long verification and before commit.
 * **Token re-verification** — :meth:`OwnerDecisionLock.verify_held` reads
   the body back and refuses to continue when the token is not ours (a lost
   lock aborts the writer BEFORE publication).
-* **Release** unlinks only its own token.
+* **Release** unlinks only its own token and raises a typed
+  ``lock_release_failed`` when it cannot read or verify its own lock.
+* **Partial creation**: when ``O_EXCL`` creation succeeds but the body
+  write / fsync fails, the partial file is removed (or quarantined) before
+  the typed ``lock_create_failed`` is raised.
 
 No new dependency: the Win32 liveness reader uses ``ctypes`` (``OpenProcess``
 / ``GetExitCodeProcess`` / ``GetProcessTimes``); POSIX uses ``os.kill(pid, 0)``
@@ -38,10 +56,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+from .file_mutex import ExclusiveFileMutex, FileMutexError, FileMutexTimeoutError
 from .store_namespace import OWNER_DECISION_STORE
 
 __all__ = [
     "OWNER_DECISION_LOCK_FILE",
+    "OWNER_DECISION_RECLAIM_MUTEX_FILE",
     "LOCK_FAILURE_REASONS",
     "OwnerDecisionLockError",
     "LockBody",
@@ -51,6 +71,9 @@ __all__ = [
 ]
 
 OWNER_DECISION_LOCK_FILE = "SUPERSESSIONS.lock"
+#: The reclaim mutex lives beside the lock; it carries no body and no token
+#: and is never unlinked (see ``file_mutex``).
+OWNER_DECISION_RECLAIM_MUTEX_FILE = "SUPERSESSIONS.reclaim.mutex"
 LOCK_SCHEMA_VERSION = 1
 LOCK_FAILURE_REASONS: tuple[str, ...] = (
     "lock_held_by_live_holder",
@@ -59,6 +82,14 @@ LOCK_FAILURE_REASONS: tuple[str, ...] = (
     "lock_body_malformed",
     "lock_release_failed",
     "lock_refresh_failed",
+    # HARDENING-BACKEND-FIX §4.1: a persistent read I/O failure is typed,
+    # never absence; a failed body write after exclusive creation is typed
+    # and leaves no partial lock behind
+    "lock_read_failed",
+    "lock_create_failed",
+    # review RA-02: a persistent NON-contention failure of the reclaim mutex file
+    # is typed — never reported as a live holder
+    "lock_mutex_failed",
 )
 #: Adversarial RA-02: Windows refuses ``unlink`` / ``replace`` while ANY other
 #: handle has the lock body open (a polling waiter's read is enough). Every
@@ -67,6 +98,7 @@ LOCK_FAILURE_REASONS: tuple[str, ...] = (
 _FS_RETRY_ATTEMPTS = 40
 _FS_RETRY_DELAY_SECONDS = 0.025
 Liveness = Literal["alive", "dead", "unknown"]
+ReadState = Literal["absent", "malformed", "present"]
 
 _STILL_ACTIVE = 259
 _ERROR_INVALID_PARAMETER = 87
@@ -88,11 +120,12 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _retry_fs(operation, *, attempts: int = _FS_RETRY_ATTEMPTS,
-              delay: float = _FS_RETRY_DELAY_SECONDS):
+def _retry_fs(operation, *, attempts: int | None = None, delay: float | None = None):
     """Run a filesystem operation, retrying transient ``OSError``s (sharing
     violations) with a short backoff; the last error propagates."""
 
+    attempts = _FS_RETRY_ATTEMPTS if attempts is None else attempts
+    delay = _FS_RETRY_DELAY_SECONDS if delay is None else delay
     last: OSError | None = None
     for _ in range(max(1, int(attempts))):
         try:
@@ -282,6 +315,7 @@ class OwnerDecisionLock:
         poll_seconds: float = 0.05,
     ) -> None:
         self.path = Path(root) / OWNER_DECISION_STORE / OWNER_DECISION_LOCK_FILE
+        self.reclaim_mutex_path = self.path.with_name(OWNER_DECISION_RECLAIM_MUTEX_FILE)
         self.wait_seconds = float(wait_seconds)
         self.heartbeat_timeout_seconds = float(heartbeat_timeout_seconds)
         self.poll_seconds = float(poll_seconds)
@@ -303,19 +337,40 @@ class OwnerDecisionLock:
             heartbeat_at=now,
         )
 
-    def _read(self) -> LockBody | None:
-        for attempt in range(2):  # RA-02: one retry on a transient sharing violation
+    def _read_raw(self) -> str:
+        """One raw read of the lock file (the seam every retry goes through)."""
+
+        return self.path.read_text(encoding="utf-8")
+
+    def _read_state(self) -> tuple[ReadState, LockBody | None]:
+        """``absent`` / ``malformed`` / ``present`` (with the parsed body). A
+        transient ``OSError`` (RA-02 sharing violation) is retried; a
+        PERSISTENT read failure is the typed ``lock_read_failed`` — never
+        absence, never a malformed body."""
+
+        last: OSError | None = None
+        for _ in range(max(1, int(_FS_RETRY_ATTEMPTS))):
             try:
-                raw = self.path.read_text(encoding="utf-8")
+                raw = self._read_raw()
             except FileNotFoundError:
-                return None
-            except OSError:
-                if attempt == 0:
-                    time.sleep(_FS_RETRY_DELAY_SECONDS)
-                    continue
-                return None
-            return LockBody.parse(raw)
-        return None
+                return "absent", None
+            except OSError as error:
+                last = error
+                time.sleep(_FS_RETRY_DELAY_SECONDS)
+                continue
+            body = LockBody.parse(raw)
+            return ("present", body) if body is not None else ("malformed", None)
+        raise OwnerDecisionLockError(
+            "lock_read_failed",
+            f"the owner-decision lock body could not be read after retries ({last}); a "
+            "persistent read failure is never treated as an absent lock",
+        )
+
+    def _read(self) -> LockBody | None:
+        """The parsed body, or ``None`` for an absent / malformed lock (a
+        persistent read failure raises ``lock_read_failed``)."""
+
+        return self._read_state()[1]
 
     def _heartbeat_age(self, body: LockBody | None) -> float | None:
         if body is not None:
@@ -330,21 +385,55 @@ class OwnerDecisionLock:
     # -- acquire / refresh / verify / release --------------------------------
 
     def _try_create(self) -> bool:
+        """Ordinary ``O_CREAT | O_EXCL`` acquisition. When creation succeeds
+        but the body cannot be written / fsynced, the partial file is removed
+        (or quarantined) BEFORE the typed ``lock_create_failed`` is raised —
+        a token-less lock file never survives."""
+
         self.path.parent.mkdir(parents=True, exist_ok=True)
         try:
             handle = os.open(str(self.path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except FileExistsError:
             return False
         try:
-            os.write(handle, self._body().to_json().encode("utf-8"))
-        finally:
-            os.close(handle)
+            data = self._body().to_json().encode("utf-8")
+            written = 0
+            while written < len(data):
+                written += os.write(handle, data[written:])
+            os.fsync(handle)
+        except OSError as error:
+            with contextlib.suppress(OSError):
+                os.close(handle)
+            disposition = self._discard_partial_lock()
+            raise OwnerDecisionLockError(
+                "lock_create_failed",
+                f"the owner-decision lock body could not be written after exclusive creation "
+                f"({error}); the partial lock file was {disposition}",
+            ) from error
+        os.close(handle)
         return True
 
-    def _reclaimable(self) -> tuple[bool, str]:
-        """Whether the present lock may be reclaimed, with the reason it may not."""
+    def _discard_partial_lock(self) -> str:
+        try:
+            _retry_fs(lambda: os.unlink(self.path))
+            return "removed"
+        except FileNotFoundError:
+            return "removed"
+        except OSError:
+            pass
+        quarantine = self.path.with_name(f".{self.path.name}.partial-{uuid.uuid4().hex}")
+        try:
+            _retry_fs(lambda: os.replace(self.path, quarantine))
+            return f"quarantined as {quarantine.name}"
+        except OSError:
+            return "NOT removed (operator intervention required)"
 
-        body = self._read()
+    def _evaluate(self, state: ReadState, body: LockBody | None) -> tuple[bool, str]:
+        """Whether the present lock may be reclaimed, with the reason it may
+        not. ``absent`` is reported as such (the caller retries creation)."""
+
+        if state == "absent":
+            return False, "absent"
         age = self._heartbeat_age(body)
         if age is None:
             return False, "lock_holder_liveness_unknown"
@@ -354,30 +443,89 @@ class OwnerDecisionLock:
             return False, "lock_body_malformed"
         liveness = process_liveness(body.pid, body.process_start_token, body.host)
         if liveness == "dead":
-            self._reclaimed = body
             return True, "dead"
         if liveness == "alive":
             return False, "lock_held_by_live_holder"
         return False, "lock_holder_liveness_unknown"
+
+    def _observe_stale(self) -> tuple[LockBody | None, str]:
+        """The UNLOCKED pre-check: the body that APPEARS reclaimable (or
+        ``None``) with the reason. This observation grants no authority to
+        unlink — only :meth:`_reclaim` (under the reclaim mutex) does."""
+
+        state, body = self._read_state()
+        reclaimable, reason = self._evaluate(state, body)
+        return (body if reclaimable else None), reason
+
+    def _reclaim(self, observed: LockBody, *, deadline: float) -> tuple[bool, str]:
+        """Token-safe reclamation under the dedicated reclaim mutex: re-read
+        the ordinary lock, re-evaluate heartbeat age / host / pid liveness /
+        start token, and unlink ONLY when the still-current body is exactly
+        the same dead holder that was observed (same ``lock_token``, same
+        body). Returns ``(reclaimed, reason)``."""
+
+        wait = max(0.0, deadline - time.monotonic())
+        mutex = ExclusiveFileMutex(
+            self.reclaim_mutex_path, wait_seconds=wait, poll_seconds=self.poll_seconds
+        )
+        try:
+            with mutex:
+                state, current = self._read_state()
+                reclaimable, reason = self._evaluate(state, current)
+                if not reclaimable:
+                    return False, reason
+                if current != observed:
+                    # a different body now holds the file (a new live lock, a
+                    # refreshed heartbeat, or another dead holder): the stale
+                    # verdict for `observed` grants nothing; the loop observes
+                    # the current body afresh
+                    return False, "lock_held_by_live_holder"
+                try:
+                    _retry_fs(lambda: os.unlink(self.path))
+                except FileNotFoundError:
+                    return False, "absent"
+                except OSError:
+                    # a persistent sharing violation while reclaiming: keep
+                    # waiting (contention), never a silent false success
+                    return False, "lock_held_by_live_holder"
+                self._reclaimed = current
+                return True, "dead"
+        except FileMutexTimeoutError:
+            return False, "lock_held_by_live_holder"
+        except FileMutexError as error:
+            raise OwnerDecisionLockError(
+                "lock_mutex_failed",
+                f"the reclaim mutex failed persistently ({error}); the stale lock cannot be "
+                "assessed under the mutex — never reported as a live holder; operator "
+                "intervention required",
+            ) from error
 
     def acquire(self) -> LockBody:
         deadline = time.monotonic() + self.wait_seconds
         last_reason = "lock_held_by_live_holder"
         while True:
             if self._try_create():
-                self._held = True
-                return self._read() or self._body()
-            reclaimable, last_reason = self._reclaimable()
-            if reclaimable:
                 try:
-                    _retry_fs(lambda: os.unlink(self.path))
-                except FileNotFoundError:
-                    pass
-                except OSError:
-                    # a persistent sharing violation while reclaiming: keep
-                    # waiting (contention), never a silent false success
-                    last_reason = "lock_held_by_live_holder"
-                continue
+                    body = self._read()
+                except OwnerDecisionLockError as error:
+                    # review RA-04: the file was created by THIS writer microseconds
+                    # ago — a persistent read failure must not leave a live,
+                    # non-reclaimable orphan behind for the life of this process
+                    disposition = self._discard_partial_lock()
+                    raise OwnerDecisionLockError(
+                        error.reason,
+                        f"{error}; the freshly created lock was {disposition} so that the "
+                        "store is not denied for the life of this process",
+                    ) from error
+                self._held = True
+                return body if body is not None and body.lock_token == self.token else self._body()
+            observed, last_reason = self._observe_stale()
+            if observed is not None:
+                reclaimed, last_reason = self._reclaim(observed, deadline=deadline)
+                if reclaimed:
+                    continue
+            if last_reason == "absent":
+                continue  # the lock vanished between the probes: retry creation now
             if time.monotonic() > deadline:
                 detail = (
                     "the owner-decision lock is held by a writer whose heartbeat is current "
@@ -415,7 +563,8 @@ class OwnerDecisionLock:
             ) from error
 
     def verify_held(self) -> LockBody:
-        """The lock body, which MUST carry our token (else ``lock_lost``)."""
+        """The lock body, which MUST carry our token (else ``lock_lost``); a
+        persistent read failure is ``lock_read_failed`` (never a silent pass)."""
 
         body = self._read()
         if body is None or body.lock_token != self.token:
@@ -428,16 +577,64 @@ class OwnerDecisionLock:
         return body
 
     def release(self) -> None:
-        """Unlink ONLY our own token; a persistent failure to unlink is a typed
-        error (RA-02: never a silently orphaned lock owned by a live pid)."""
+        """Unlink ONLY our own token. A persistent failure to read, verify or
+        unlink our own lock is the typed ``lock_release_failed`` (RA-02 /
+        HARDENING-BACKEND-FIX §4.1: never a silently orphaned or silently
+        vanished lock); a lock that carries another writer's token is left
+        untouched."""
 
-        body = self._read()
-        self._held = False
-        if body is None or body.lock_token != self.token:
+        was_held = self._held
+        try:
+            state, body = self._read_state()
+        except OwnerDecisionLockError as error:
+            raise OwnerDecisionLockError(
+                "lock_release_failed",
+                f"the owner-decision lock could not be read to verify ownership before "
+                f"release ({error}); the lock may still carry this writer's token — operator "
+                "intervention required",
+            ) from error
+        if state == "absent":
+            self._held = False
+            if was_held:
+                raise OwnerDecisionLockError(
+                    "lock_release_failed",
+                    "the owner-decision lock file is absent although this writer held the "
+                    "lock: another party removed it and a publication may have overlapped",
+                )
             return
+        if state == "malformed":
+            self._held = False
+            if was_held:
+                raise OwnerDecisionLockError(
+                    "lock_release_failed",
+                    "the owner-decision lock body is malformed; this writer cannot verify "
+                    "its own ownership before release — operator intervention required",
+                )
+            return
+        if body is None or body.lock_token != self.token:
+            self._held = False
+            if was_held:
+                # review RA-01: a lock this writer HELD now carries another writer's
+                # token — the one state that means a publication may have
+                # overlapped; typed, never a silent success (the foreign lock is
+                # left untouched)
+                raise OwnerDecisionLockError(
+                    "lock_release_failed",
+                    "the owner-decision lock carries another writer's token although this "
+                    "writer held the lock: it was replaced by a non-conforming actor and a "
+                    "publication may have overlapped — operator intervention required",
+                )
+            return  # never remove a lock this writer does not own
         try:
             _retry_fs(lambda: os.unlink(self.path))
         except FileNotFoundError:
+            self._held = False
+            if was_held:
+                raise OwnerDecisionLockError(
+                    "lock_release_failed",
+                    "the owner-decision lock vanished between ownership verification and "
+                    "release: another party removed this writer's lock",
+                ) from None
             return
         except OSError as error:
             raise OwnerDecisionLockError(
@@ -446,6 +643,7 @@ class OwnerDecisionLock:
                 "the lock file still carries this writer's token — operator intervention "
                 "required (a live holder is never reclaimed by age)",
             ) from error
+        self._held = False
 
     @property
     def reclaimed_from(self) -> LockBody | None:

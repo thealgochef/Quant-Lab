@@ -198,3 +198,52 @@ def test_controlled_study_payload_requires_the_label_identity_source():
     fields.pop("label_identity_source")
     with pytest.raises(ValueError, match="label_identity_source"):
         ControlledFeatureStudyPayload(**fields)
+
+
+# ── HARDENING-BACKEND-FIX §6.5 — OOS schema identity at save / load ──────────
+
+
+def test_oos_payload_and_saver_bind_the_registered_schema_hash(tmp_path):
+    """HB-FIX-07: the payload accepts exactly the registered schema hash; the
+    saver decodes the actual bytes and proves schema, count and uniqueness."""
+
+    import pandas as pd
+
+    from alpha_lab.agents.data_infra.ifvg.features.arrow_tables import bytes_sha256
+    from alpha_lab.agents.data_infra.ifvg.ml import regime_oos_assignment as oos_module
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_contracts import (
+        RegimeAssignmentEvidenceError,
+    )
+
+    example = oos_module._example_payload()
+    assert example.assignment_schema_hash == oos_module.OOS_ASSIGNMENT_SCHEMA_HASH
+    with pytest.raises(ValueError, match="registered OOS assignment schema hash"):
+        oos_module.RegimeOosAssignmentPayload(
+            **{**example.model_dump(), "assignment_schema_hash": "1" * 64}
+        )
+    empty = pd.DataFrame(columns=list(oos_module._REQUIRED_ASSIGNMENT_COLUMNS))
+    frame = oos_module.candidate_fold_oos_assignment(empty, ("c1", "c2"))
+    table = oos_module.assignment_table_bytes(frame)
+    payload = oos_module.RegimeOosAssignmentPayload(
+        **{**example.model_dump(), "candidate_count": 2}
+    )
+    envelope = oos_module.RegimeOosAssignmentEnvelope.from_payload(
+        payload, assignment_table_sha256=bytes_sha256(table)
+    )
+    assert oos_module.verify_assignment_table_bytes(envelope, table).shape[0] == 2
+    oos_module.save_regime_oos_assignment(tmp_path, envelope, table)
+    stored = oos_module.load_regime_oos_assignment(tmp_path, envelope.regime_oos_assignment_id)
+    assert set(oos_module.load_regime_oos_assignment_frame(tmp_path, stored)["missing_reason"]) == {
+        "no_oos_assignment"
+    }
+    # a duplicated candidate inside the bytes is refused before publication
+    duplicated = oos_module.assignment_table_bytes(
+        pd.concat([frame, frame.iloc[:1]], ignore_index=True)
+    )
+    forged = oos_module.RegimeOosAssignmentEnvelope.from_payload(
+        oos_module.RegimeOosAssignmentPayload(**{**example.model_dump(), "candidate_count": 3}),
+        assignment_table_sha256=bytes_sha256(duplicated),
+    )
+    with pytest.raises(RegimeAssignmentEvidenceError) as refused:
+        oos_module.save_regime_oos_assignment(tmp_path / "other", forged, duplicated)
+    assert refused.value.reason == "duplicate_candidate_id"

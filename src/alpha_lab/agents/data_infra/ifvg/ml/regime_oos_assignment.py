@@ -78,10 +78,15 @@ from ..search.identities import (
 )
 from ..search.store import load_sidecar_bytes, load_verified_envelope, save_or_reuse_envelope
 from .regime_contracts import (
+    FIT_ASSIGNMENT_NATIVE_SPEC,
+    REGIME_ASSIGNMENT_MISSING_REASONS,
+    SENTINEL_STRINGS,
     FitAssignmentRef,
     ObservationGranularity,
+    RegimeAssignmentEvidenceError,
     RegimeProtocolEnvelope,
     validate_assignment_rows,
+    validate_native_values,
 )
 
 __all__ = [
@@ -91,6 +96,7 @@ __all__ = [
     "OOS_ASSIGNMENT_COLUMNS",
     "OOS_ASSIGNMENT_SCHEMA",
     "OOS_ASSIGNMENT_SCHEMA_HASH",
+    "OOS_ASSIGNMENT_NATIVE_SPEC",
     "STAGE_AS_OF_COLUMNS",
     "CANDIDATE_AS_OF_SOURCE_REF_PATTERN",
     "CANDIDATE_AS_OF_MISSING_REASON",
@@ -105,6 +111,7 @@ __all__ = [
     "candidate_as_of_source_hash",
     "build_regime_oos_assignment_artifact",
     "save_regime_oos_assignment",
+    "verify_assignment_table_bytes",
     "load_regime_oos_assignment",
     "load_regime_oos_assignment_frame",
     "verify_regime_oos_assignment_frame",
@@ -165,6 +172,22 @@ OOS_ASSIGNMENT_SCHEMA: pa.Schema = pa.schema(
     ]
 )
 OOS_ASSIGNMENT_SCHEMA_HASH = arrow_schema_hash(OOS_ASSIGNMENT_SCHEMA)
+#: HARDENING-BACKEND-FIX §6.2: the native spec proven BEFORE canonicalization
+OOS_ASSIGNMENT_NATIVE_SPEC: Mapping[str, tuple[str, bool]] = {
+    "candidate_id": ("id", False),
+    "regime_fit_id": ("id", True),
+    "fold_index": ("int", True),
+    "partition": ("str", True),
+    "panel_row_id": ("str", True),
+    "fold_local_cluster_id": ("int", True),
+    "canonical_reporting_cluster_id": ("int", True),
+    "distances": ("distances", True),
+    "assigned_distance": ("float", True),
+    "assignment_margin": ("float", True),
+    "valid": ("bool", False),
+    "missing_reason": ("str", True),
+    "elapsed_seconds_since_bar_close": ("float", True),
+}
 
 _CANDIDATE_MISSING_REASONS: tuple[str, ...] = ("no_oos_assignment",)
 _PANEL_REASON_FOR_VALIDITY: Mapping[str, str] = {
@@ -235,6 +258,12 @@ class RegimeOosAssignmentPayload(FrozenContract):
             raise ValueError(
                 "candidate_as_of_stage must equal the panel context's candidate_as_of_stage"
             )
+        # HARDENING-BACKEND-FIX §6.5: the payload binds exactly the registered
+        # OOS schema; any other claim is refused at construction (so at save)
+        if self.assignment_schema_hash != OOS_ASSIGNMENT_SCHEMA_HASH:
+            raise ValueError(
+                "assignment_schema_hash must equal the registered OOS assignment schema hash"
+            )
         return self
 
 
@@ -293,12 +322,58 @@ def _trading_day_of(ns: int) -> str | None:
     return info.trading_day.isoformat() if info.trading_day else None
 
 
-def _typed(candidate_id: str, reason: str, *, bar_id: str | None = None, elapsed=None) -> dict:
+def _is_missing(value: Any) -> bool:
+    """``None`` / NaN / pandas NA / a sentinel string (the kernel writes ``""``
+    for a fold that has no fit)."""
+
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value.strip() in SENTINEL_STRINGS
+    if isinstance(value, list | tuple | np.ndarray):
+        return False
+    try:
+        verdict = pd.isna(value)
+    except (TypeError, ValueError):
+        return False
+    return bool(verdict) if isinstance(verdict, bool | np.bool_) else False
+
+
+def _typed(
+    candidate_id: str,
+    reason: str,
+    *,
+    bar_id: str | None = None,
+    elapsed=None,
+    regime_fit_id: str | None = None,
+    fold_index: int | None = None,
+    partition: str | None = None,
+) -> dict:
+    """A typed (invalid) descriptive row. HARDENING-BACKEND-FIX §6.1: a row
+    that came from an OOS test row of an APPLICABLE fit (case B) retains that
+    fit's id / fold / partition and the fit's own typed reason — only the
+    assignment outputs are null; ``no_oos_assignment`` (case C: no OOS test
+    row exists) never names a fit or a fold."""
+
+    if (fold_index is None) != (partition is None) or (
+        regime_fit_id is not None and fold_index is None
+    ):
+        raise RegimeAssignmentEvidenceError(
+            "assignment_provenance_incomplete",
+            f"candidate {candidate_id}: fold index and partition are retained together "
+            "and a fit id requires its fold and partition",
+        )
+    if reason == "no_oos_assignment" and fold_index is not None:
+        raise RegimeAssignmentEvidenceError(
+            "assignment_provenance_incomplete",
+            f"candidate {candidate_id}: no_oos_assignment is reserved for a candidate with "
+            "NO OOS test row; a known invalid row keeps its own typed reason",
+        )
     return {
         "candidate_id": candidate_id,
-        "regime_fit_id": None,
-        "fold_index": None,
-        "partition": None,
+        "regime_fit_id": regime_fit_id,
+        "fold_index": None if fold_index is None else int(fold_index),
+        "partition": partition,
         "panel_row_id": bar_id,
         "fold_local_cluster_id": None,
         "canonical_reporting_cluster_id": None,
@@ -311,6 +386,36 @@ def _typed(candidate_id: str, reason: str, *, bar_id: str | None = None, elapsed
             np.nan if elapsed is None else float(elapsed)
         ),
     }
+
+
+def _retained_invalid_row(
+    candidate_id: str, row: Mapping[str, Any], *, bar_id: str | None = None, elapsed=None
+) -> dict:
+    """Case B of §6.1: the INVALID OOS test row of the applicable fit keeps its
+    fit id (absent only when the fold had no fit), fold, partition and the
+    fit's own typed reason; a row that lacks them is refused rather than
+    collapsed into generic absence."""
+
+    fold_index = row.get("fold_index")
+    partition = row.get("partition")
+    reason = row.get("missing_reason")
+    if _is_missing(fold_index) or _is_missing(partition) or _is_missing(reason):
+        raise RegimeAssignmentEvidenceError(
+            "assignment_provenance_incomplete",
+            f"candidate {candidate_id}: the invalid OOS assignment row lacks its fold / "
+            "partition / typed reason (a known invalid assignment never collapses into "
+            "generic absence)",
+        )
+    fit_id = row.get("regime_fit_id")
+    return _typed(
+        candidate_id,
+        str(reason),
+        bar_id=bar_id,
+        elapsed=elapsed,
+        regime_fit_id=None if _is_missing(fit_id) else str(fit_id),
+        fold_index=int(fold_index),
+        partition=str(partition),
+    )
 
 
 _REQUIRED_PANEL_COLUMNS = (
@@ -337,6 +442,37 @@ _REQUIRED_ASSIGNMENT_COLUMNS = (
 )
 
 
+#: review RB-05: the fit-assignment columns the OOS / panel seams READ (and formerly
+#: coerced with ``bool`` / ``astype(bool)`` before any validation). ``regime_fit_id``
+#: is deliberately NOT here: the kernel writes an EMPTY fit id for a fold that had no
+#: fit and these seams map it to ``None`` themselves (never a sentinel refusal).
+_CONSUMED_FIT_ASSIGNMENT_COLUMNS: tuple[str, ...] = (
+    "row_id",
+    "fold_index",
+    "partition",
+    "valid",
+    "missing_reason",
+)
+
+
+def validate_consumed_natively(
+    frame: pd.DataFrame,
+    spec: Mapping[str, tuple[str, bool]],
+    columns: tuple[str, ...],
+    *,
+    context: str,
+) -> None:
+    """Review RB-05: the columns a seam consumes are validated NATIVELY before the
+    seam coerces them (a ``"False"`` string never becomes ``True`` through
+    ``bool`` / ``astype(bool)``); only the columns present in ``frame`` are checked."""
+
+    validate_native_values(
+        frame,
+        {name: spec[name] for name in columns if name in spec and name in frame.columns},
+        context=context,
+    )
+
+
 def assign_panel_regimes_to_candidates(
     panel_frame: pd.DataFrame,
     panel_assignments: pd.DataFrame,
@@ -360,6 +496,12 @@ def assign_panel_regimes_to_candidates(
     missing = sorted(set(_REQUIRED_ASSIGNMENT_COLUMNS) - set(panel_assignments.columns))
     if missing:
         raise ValueError(f"panel assignments lack required columns: {missing}")
+    validate_consumed_natively(
+        panel_assignments,
+        FIT_ASSIGNMENT_NATIVE_SPEC,
+        _CONSUMED_FIT_ASSIGNMENT_COLUMNS,
+        context="panel assignments (PIT rule input)",
+    )
     if not {"candidate_id", "as_of_ts_utc"} <= set(candidate_as_of.columns):
         raise ValueError("candidate as-of frame requires candidate_id and as_of_ts_utc")
     candidate_ids = candidate_as_of["candidate_id"].astype(str)
@@ -391,15 +533,31 @@ def assign_panel_regimes_to_candidates(
         )
 
     lookup: dict[Any, pd.Series] = {}
+    fallback: dict[str, pd.Series] = {}
     if len(panel_assignments):
         rows = panel_assignments.copy()
         rows["row_id"] = rows["row_id"].astype(str)
-        rows = rows[rows["valid"].astype(bool)]
         if partition_for_candidate is None:
-            rows = rows[rows["partition"].astype(str) == "test"]
-            rows = rows.sort_values(["row_id", "fold_index"], kind="stable")
-            lookup = {row_id: group.iloc[0] for row_id, group in rows.groupby("row_id", sort=True)}
+            # descriptive mode: the valid OOS test row (lowest fold) answers; a
+            # bar whose test rows are ALL invalid retains the lowest-fold fit's
+            # provenance and typed reason (HARDENING-BACKEND-FIX §6.1)
+            test_rows = rows[rows["partition"].astype(str) == "test"]
+            valid_rows = test_rows[test_rows["valid"].astype(bool)].sort_values(
+                ["row_id", "fold_index"], kind="stable"
+            )
+            lookup = {
+                row_id: group.iloc[0] for row_id, group in valid_rows.groupby("row_id", sort=True)
+            }
+            invalid_rows = test_rows[~test_rows["valid"].astype(bool)].sort_values(
+                ["row_id", "fold_index"], kind="stable"
+            )
+            fallback = {
+                row_id: group.iloc[0]
+                for row_id, group in invalid_rows.groupby("row_id", sort=True)
+            }
         else:
+            # fold-feature mode: the candidate's OWN (fold, partition) row, valid
+            # or not — an invalid row keeps the fit's exact typed reason
             rows = rows.sort_values(["row_id", "fold_index", "partition"], kind="stable")
             for key, group in rows.groupby(["row_id", "fold_index", "partition"], sort=True):
                 if len(group) != 1:
@@ -435,13 +593,25 @@ def assign_panel_regimes_to_candidates(
         if elapsed > max_staleness_seconds:
             out.append(_typed(candidate_id, "panel_stale", bar_id=bar_id, elapsed=elapsed))
             continue
+        source: pd.Series | None = None
         if partition_for_candidate is None:
             chosen = lookup.get(bar_id)
+            if chosen is None:
+                source = fallback.get(bar_id)
         else:
             own = partition_for_candidate.get(candidate_id)
             chosen = None if own is None else lookup.get((bar_id, int(own[0]), str(own[1])))
+            if chosen is not None and not bool(chosen["valid"]):
+                source, chosen = chosen, None
         if chosen is None:
-            out.append(_typed(candidate_id, "coverage_gap", bar_id=bar_id, elapsed=elapsed))
+            if source is not None:
+                out.append(
+                    _retained_invalid_row(
+                        candidate_id, source.to_dict(), bar_id=bar_id, elapsed=elapsed
+                    )
+                )
+            else:
+                out.append(_typed(candidate_id, "coverage_gap", bar_id=bar_id, elapsed=elapsed))
             continue
         canonical = chosen["canonical_reporting_cluster_id"]
         distances = chosen["distances"]
@@ -469,8 +639,10 @@ def assign_panel_regimes_to_candidates(
             }
         )
     frame = pd.DataFrame(out, columns=list(OOS_ASSIGNMENT_COLUMNS))
-    unknown = set(frame.loc[~frame["valid"].astype(bool), "missing_reason"].dropna()) - set(
-        PANEL_ASSIGNMENT_MISSING_REASONS
+    unknown = (
+        set(frame.loc[~frame["valid"].astype(bool), "missing_reason"].dropna())
+        - set(PANEL_ASSIGNMENT_MISSING_REASONS)
+        - set(REGIME_ASSIGNMENT_MISSING_REASONS)
     )
     if unknown:  # pragma: no cover - the vocabulary is closed above
         raise AssertionError(f"unregistered panel assignment reasons {sorted(unknown)}")
@@ -481,25 +653,43 @@ def candidate_fold_oos_assignment(
     assignments: pd.DataFrame, candidate_ids: tuple[str, ...]
 ) -> pd.DataFrame:
     """Candidate grain: one row per candidate — the single fold in which it
-    was scored OOS (``build_context_folds`` guarantees at most one); a
-    candidate never scored OOS is typed ``no_oos_assignment``."""
+    was scored OOS (``build_context_folds`` guarantees at most one).
+
+    HARDENING-BACKEND-FIX §6.1 — the index is built from ALL test-partition
+    rows, not only valid ones, with three-way semantics: (A) a valid OOS row
+    keeps fit / fold / partition and its outputs; (B) an INVALID OOS row keeps
+    fit / fold / partition and the fit's own typed reason with null outputs;
+    (C) a candidate with NO OOS test row is ``no_oos_assignment`` with no
+    fit / fold. Two test rows for one candidate are refused whatever their
+    validity."""
 
     ids = tuple(str(value) for value in candidate_ids)
     if len(set(ids)) != len(ids):
-        raise ValueError("candidate ids must be unique")
+        raise RegimeAssignmentEvidenceError(
+            "duplicate_candidate_id", "candidate ids must be unique"
+        )
     rows: dict[str, dict] = {}
     missing = sorted(set(_REQUIRED_ASSIGNMENT_COLUMNS) - set(assignments.columns))
     if missing:
         raise ValueError(f"fit assignments lack required columns: {missing}")
+    validate_consumed_natively(
+        assignments,
+        FIT_ASSIGNMENT_NATIVE_SPEC,
+        _CONSUMED_FIT_ASSIGNMENT_COLUMNS,
+        context="fit assignments (candidate OOS index input)",
+    )
     if len(assignments):
-        oos = assignments[
-            (assignments["partition"].astype(str) == "test")
-            & assignments["valid"].astype(bool)
-        ]
-        duplicated = oos["row_id"].astype(str).duplicated()
+        test_rows = assignments[assignments["partition"].astype(str) == "test"]
+        duplicated = test_rows["row_id"].astype(str).duplicated()
         if duplicated.any():
-            raise ValueError("a candidate carries more than one OOS assignment row")
-        for row in oos.itertuples():
+            raise RegimeAssignmentEvidenceError(
+                "duplicate_candidate_id",
+                "a candidate carries more than one OOS (test-partition) assignment row",
+            )
+        for row in test_rows.itertuples():
+            if not bool(row.valid):
+                rows[str(row.row_id)] = _retained_invalid_row(str(row.row_id), row._asdict())
+                continue
             distances = row.distances
             if distances is None or (isinstance(distances, float) and np.isnan(distances)):
                 raise ValueError(
@@ -641,6 +831,8 @@ def candidate_as_of_source_hash(candidate_as_of: pd.DataFrame) -> str:
 
 
 def _frame_for_schema(frame: pd.DataFrame) -> pd.DataFrame:
+    # §6.2: native values are proven BEFORE the canonical conversions below
+    validate_native_values(frame, OOS_ASSIGNMENT_NATIVE_SPEC, context="OOS assignment table")
     out = frame.loc[:, list(OOS_ASSIGNMENT_COLUMNS)].copy()
     for column in ("fold_index", "fold_local_cluster_id", "canonical_reporting_cluster_id"):
         out[column] = out[column].astype("Int64")
@@ -653,6 +845,35 @@ def _frame_for_schema(frame: pd.DataFrame) -> pd.DataFrame:
 
 def assignment_table_bytes(frame: pd.DataFrame) -> bytes:
     return frame_to_arrow_bytes(_frame_for_schema(frame), OOS_ASSIGNMENT_SCHEMA)
+
+
+def _assert_candidate_sets_equal(frame: pd.DataFrame, candidate_as_of: pd.DataFrame) -> None:
+    """HARDENING-BACKEND-FIX §6.5: the candidate-as-of INPUT candidate set and
+    the assignment OUTPUT candidate set are exactly equal — same ids, same
+    count, no duplicates, no extras, no omissions."""
+
+    frame_ids = frame["candidate_id"].astype(str)
+    if frame_ids.duplicated().any():
+        raise RegimeAssignmentEvidenceError(
+            "duplicate_candidate_id", "assignment frame repeats a candidate"
+        )
+    if not {"candidate_id", "as_of_ts_utc"} <= set(candidate_as_of.columns):
+        raise ValueError("candidate as-of frame requires candidate_id and as_of_ts_utc")
+    as_of_ids = candidate_as_of["candidate_id"].astype(str)
+    if as_of_ids.duplicated().any():
+        raise RegimeAssignmentEvidenceError(
+            "duplicate_candidate_id", "candidate as-of frame repeats a candidate_id"
+        )
+    output, inputs = set(frame_ids), set(as_of_ids)
+    if output != inputs or len(frame_ids) != len(as_of_ids):
+        omitted = sorted(inputs - output)
+        extra = sorted(output - inputs)
+        raise RegimeAssignmentEvidenceError(
+            "candidate_set_mismatch",
+            "the assignment output candidate set is not the candidate-as-of input set: "
+            f"{len(omitted)} omitted (e.g. {omitted[:3]}), {len(extra)} extra "
+            f"(e.g. {extra[:3]})",
+        )
 
 
 def build_regime_oos_assignment_artifact(
@@ -694,8 +915,7 @@ def build_regime_oos_assignment_artifact(
             raise ValueError("panel context names a different as-of policy")
         if panel_context.panel_interval_seconds != payload.panel_interval_seconds:
             raise ValueError("panel context names a different panel interval")
-    if frame["candidate_id"].astype(str).duplicated().any():
-        raise ValueError("assignment frame repeats a candidate")
+    _assert_candidate_sets_equal(frame, candidate_as_of)
     for fold_index, verified in verified_fit_assignments.items():
         if not isinstance(verified, VerifiedFitAssignments):
             raise TypeError(
@@ -744,11 +964,53 @@ def build_regime_oos_assignment_artifact(
     return envelope, table_bytes
 
 
+def verify_assignment_table_bytes(
+    envelope: RegimeOosAssignmentEnvelope, table_bytes: bytes
+) -> pd.DataFrame:
+    """HARDENING-BACKEND-FIX §6.5: decode the ACTUAL Arrow bytes and prove the
+    registered schema (== the payload's bound schema hash), the row count,
+    candidate uniqueness and the descriptive row invariants — the saver runs
+    this before publication and the loader repeats it."""
+
+    if bytes_sha256(table_bytes) != envelope.assignment_table_sha256:
+        raise ValueError("assignment table bytes do not hash to the envelope")
+    payload = envelope.payload
+    stored = arrow_schema_hash(pa.ipc.open_file(pa.BufferReader(table_bytes)).schema)
+    if (
+        stored != OOS_ASSIGNMENT_SCHEMA_HASH
+        or payload.assignment_schema_hash != OOS_ASSIGNMENT_SCHEMA_HASH
+        or stored != payload.assignment_schema_hash
+    ):
+        raise RegimeAssignmentEvidenceError(
+            "assignment_schema_hash_mismatch",
+            f"stored assignment table schema {stored[:12]}… is not the registered OOS "
+            f"assignment schema {OOS_ASSIGNMENT_SCHEMA_HASH[:12]}… bound by the payload "
+            f"({payload.assignment_schema_hash[:12]}…)",
+        )
+    frame = frame_from_arrow_bytes(table_bytes)
+    if len(frame) != payload.candidate_count:
+        raise RegimeAssignmentEvidenceError(
+            "assignment_row_invariant_violated",
+            "stored assignment table row count disagrees with the payload",
+        )
+    frame["distances"] = frame["distances"].map(
+        lambda v: None if v is None else [float(x) for x in v]
+    )
+    if frame["candidate_id"].astype(str).duplicated().any():
+        raise RegimeAssignmentEvidenceError(
+            "duplicate_candidate_id", "stored assignment table repeats a candidate_id"
+        )
+    # R6.1-FIX §3.4: the descriptive invariants hold on every proof
+    validate_assignment_rows(
+        frame, cluster_count=int(payload.resolved_cluster_count), kind="descriptive"
+    )
+    return frame
+
+
 def save_regime_oos_assignment(
     root: Path, envelope: RegimeOosAssignmentEnvelope, table_bytes: bytes
 ):
-    if bytes_sha256(table_bytes) != envelope.assignment_table_sha256:
-        raise ValueError("assignment table bytes do not hash to the envelope")
+    verify_assignment_table_bytes(envelope, table_bytes)
     return save_or_reuse_envelope(
         Path(root),
         REGIME_OOS_ASSIGNMENT_STORE,
@@ -774,21 +1036,8 @@ def load_regime_oos_assignment_frame(
     )
     if bytes_sha256(data) != envelope.assignment_table_sha256:
         raise ValueError("stored assignment table fails the envelope hash check")
-    frame = frame_from_arrow_bytes(data)
-    if len(frame) != envelope.payload.candidate_count:
-        raise ValueError("stored assignment table row count disagrees with the payload")
-    if arrow_schema_hash(pa.ipc.open_file(pa.BufferReader(data)).schema) != (
-        envelope.payload.assignment_schema_hash
-    ):
-        raise ValueError("stored assignment table schema disagrees with the payload")
-    frame["distances"] = frame["distances"].map(
-        lambda v: None if v is None else [float(x) for x in v]
-    )
-    # R6.1-FIX §3.4: the descriptive invariants hold on every verified load
-    validate_assignment_rows(
-        frame, cluster_count=int(envelope.payload.resolved_cluster_count), kind="descriptive"
-    )
-    return frame
+    # HARDENING-BACKEND-FIX §6.5: the loader repeats the saver's full proof
+    return verify_assignment_table_bytes(envelope, data)
 
 
 def verify_regime_oos_assignment_frame(

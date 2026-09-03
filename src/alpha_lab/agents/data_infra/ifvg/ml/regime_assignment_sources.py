@@ -19,10 +19,13 @@ from pathlib import Path
 import pandas as pd
 
 from ..study.cohort import BASELINE_COHORT, CohortEnvelope, InterpretationMode, RegimeFilterRef
+from .regime_contracts import SENTINEL_STRINGS, RegimeAssignmentEvidenceError
 from .regime_oos_assignment import (
+    OOS_ASSIGNMENT_NATIVE_SPEC,
     RegimeOosAssignmentEnvelope,
     load_regime_oos_assignment,
     load_regime_oos_assignment_frame,
+    validate_consumed_natively,
     verify_regime_oos_assignment_frame,
 )
 
@@ -68,14 +71,16 @@ def regime_for_trades(trades: pd.DataFrame, assignment: pd.DataFrame) -> pd.Data
     Refuses duplicated candidate ids on either side and missing columns; a
     trade whose candidate is absent from the artifact keeps its row with
     ``valid=False, missing_reason="candidate_not_in_assignment"``; a present
-    but typed-null assignment keeps the artifact's own reason. Never a
+    but typed-null assignment keeps the artifact's own reason AND its known
+    fit / fold (HARDENING-BACKEND-FIX §6.1: an invalid assignment never loses
+    its provenance because the trade-facing outputs are null). Never a
     nearest-time or row-order fallback.
     """
 
     for column in ("trade_id", "candidate_id"):
         if column not in trades.columns:
             raise ValueError(f"executed trades lack the {column!r} column")
-    for column in (
+    consumed = (
         "candidate_id",
         "regime_fit_id",
         "fold_index",
@@ -83,9 +88,18 @@ def regime_for_trades(trades: pd.DataFrame, assignment: pd.DataFrame) -> pd.Data
         "assignment_margin",
         "valid",
         "missing_reason",
-    ):
+    )
+    for column in consumed:
         if column not in assignment.columns:
             raise ValueError(f"the assignment artifact lacks the {column!r} column")
+    # review RB-05: the INPUT is validated natively before any ``bool(row["valid"])``
+    # coercion — a "False" string never projects as a valid assignment
+    validate_consumed_natively(
+        assignment,
+        OOS_ASSIGNMENT_NATIVE_SPEC,
+        consumed,
+        context="descriptive OOS assignment (trade projection input)",
+    )
     trade_keys = trades["candidate_id"].astype(str)
     if trade_keys.duplicated().any():
         raise ValueError("executed trades repeat a candidate_id; the join is one-to-one")
@@ -115,12 +129,20 @@ def regime_for_trades(trades: pd.DataFrame, assignment: pd.DataFrame) -> pd.Data
         row = keyed.loc[candidate_id]
         valid = bool(row["valid"])
         cluster = row["canonical_reporting_cluster_id"]
+        fit_id = row["regime_fit_id"]
+        fold_index = row["fold_index"]
+        reason = row["missing_reason"]
+        if not valid and _absent(reason):
+            raise RegimeAssignmentEvidenceError(
+                "assignment_provenance_incomplete",
+                f"candidate {candidate_id}: an invalid assignment row carries no typed reason",
+            )
         rows.append(
             {
                 "trade_id": trade_id,
                 "candidate_id": candidate_id,
-                "regime_fit_id": str(row["regime_fit_id"]) if valid else None,
-                "fold_index": int(row["fold_index"]) if valid else None,
+                "regime_fit_id": None if _absent(fit_id) else str(fit_id),
+                "fold_index": None if _absent(fold_index) else int(fold_index),
                 "canonical_reporting_cluster_id": (
                     int(cluster) if valid and pd.notna(cluster) else None
                 ),
@@ -128,12 +150,23 @@ def regime_for_trades(trades: pd.DataFrame, assignment: pd.DataFrame) -> pd.Data
                     float(row["assignment_margin"]) if valid else float("nan")
                 ),
                 "valid": valid,
-                "missing_reason": None if valid else str(row["missing_reason"]),
+                "missing_reason": None if valid else str(reason),
             }
         )
     frame = pd.DataFrame(rows, columns=list(TRADE_REGIME_COLUMNS))
     frame["valid"] = frame["valid"].astype(bool)
     return frame
+
+
+def _absent(value) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value.strip() in SENTINEL_STRINGS
+    try:
+        return bool(pd.isna(value))
+    except (TypeError, ValueError):
+        return False
 
 
 def regime_filter_mask(assigned: pd.DataFrame, cluster_ids: tuple[int, ...]) -> pd.Series:

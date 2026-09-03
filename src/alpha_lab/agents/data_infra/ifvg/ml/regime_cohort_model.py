@@ -162,6 +162,9 @@ class RegimeCohortModelStudyRun:
     #: every specialized OOS prediction row (re-keyed onto the pooled D13 identity)
     specialized_predictions: pd.DataFrame
     detail_bytes: bytes
+    #: review RB-01 (§7.2): ``"exact"`` ONLY when the label artifact id was proven to
+    #: derive from the registered policy and these labels — the one persistable state
+    label_identity_proof: str = "caller_supplied_unproven"
 
 
 def _one_fold_set(
@@ -226,9 +229,21 @@ def run_regime_cohort_model_study(
     protocols: tuple[str, ...] = DEFAULT_BUNDLE_LADDER_PROTOCOLS,
     minimum_training_rows: int = MINIMUM_TRAINING_ROWS_PER_REGIME_STRATUM,
     calibration_policy_id: str = "raw_probability_diagnostics_v1",
+    label_policy_id: str | None = None,
 ) -> RegimeCohortModelStudyRun:
     """Module docstring."""
 
+    if label_policy_id is not None:
+        # HARDENING-BACKEND-FIX §7.2: the persisting seam proves the exact label identity
+        from .comparison_rows import assert_exact_label_artifact  # noqa: PLC0415
+
+        label_artifact_id = assert_exact_label_artifact(
+            label_artifact_id, label_policy_id, labeled_candidates
+        )
+        label_identity_proof = "exact"
+    else:
+        # review RB-01: trusted in memory only — never persistable
+        label_identity_proof = "caller_supplied_unproven"
     assert_supervised_regime_authority(
         activation, fold_features, candidate_fold_set=candidate_fold_set, folds=folds
     )
@@ -462,6 +477,7 @@ def run_regime_cohort_model_study(
         specialized=specialized,
         specialized_predictions=specialized_predictions,
         detail_bytes=detail_bytes,
+        label_identity_proof=label_identity_proof,
     )
 
 
@@ -469,6 +485,10 @@ def run_regime_cohort_model_study(
 
 
 def save_regime_cohort_model_study(root: Path, run: RegimeCohortModelStudyRun) -> tuple:
+    # review RB-01 (§7.2): only a run whose label identity was PROVEN exact persists
+    from .comparison_rows import assert_persistable_label_proof  # noqa: PLC0415
+
+    assert_persistable_label_proof(run.label_identity_proof, runner="run_regime_cohort_model_study")
     return save_or_reuse_envelope(
         Path(root),
         REGIME_COHORT_MODEL_STORE,

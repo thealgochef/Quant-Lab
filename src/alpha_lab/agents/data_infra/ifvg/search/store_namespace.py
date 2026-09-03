@@ -32,6 +32,21 @@ contract every authority-bearing artifact references by content id:
 * The namespace is initialized with an explicit GENESIS supersession head
   (``owner_decisions/SUPERSESSIONS.head``); a missing head is corruption,
   never "no supersessions" (§4.2).
+
+**Atomic, recoverable initialization (HARDENING-BACKEND-FIX §4.2).** The
+envelope and the genesis head are one coherent pair. Initialization runs
+under a dedicated one-time mutex (``owner_decisions/STORE_NAMESPACE.init.mutex``;
+independent of the owner-decision lock) and classifies the store as exactly
+one of: both absent → publish the precomputed deterministic pair through
+temporary files and verified-load both before returning; both present and
+coherent → the identical request is idempotent reuse, a divergent class or
+instance is ``store_namespace_divergent``; one present → recover ONLY when
+the existing object is exactly the deterministic object the same requested
+initialization (class + explicit instance id) would produce and no
+supersession record exists, else ``incomplete_store_namespace_initialization``
+(conflicting bytes are never overwritten); both present but inconsistent →
+fail closed (no object is ever selected as authoritative by pathname or
+modification time).
 """
 
 from __future__ import annotations
@@ -47,12 +62,15 @@ from typing import ClassVar, Literal
 from pydantic import Field, model_validator
 
 from ..manifest import canonical_sha256
+from .file_mutex import ExclusiveFileMutex, FileMutexError, FileMutexTimeoutError
 from .identities import SHA256_PATTERN, EnvelopeBase, FrozenContract, register_identity_pair
 
 __all__ = [
     "STORE_NAMESPACE_FILE",
     "OWNER_DECISION_STORE",
+    "OWNER_DECISION_SUPERSESSION_STORE",
     "SUPERSESSIONS_HEAD_FILE",
+    "STORE_NAMESPACE_INIT_MUTEX_FILE",
     "NAMESPACE_SCHEMA_VERSION",
     "NAMESPACE_CLASSES",
     "SUPERSESSION_HEAD_SCHEMA_VERSION",
@@ -79,13 +97,20 @@ __all__ = [
 
 STORE_NAMESPACE_FILE = "STORE_NAMESPACE.json"
 OWNER_DECISION_STORE = "owner_decisions"
+#: The immutable supersession-record store (the chain module publishes into
+#: it; initialization only asks whether any record exists).
+OWNER_DECISION_SUPERSESSION_STORE = "owner_decision_supersessions"
 SUPERSESSIONS_HEAD_FILE = "SUPERSESSIONS.head"
+#: The one-time initialization mutex (beside the head; it carries no
+#: authority and is never unlinked — see ``file_mutex``).
+STORE_NAMESPACE_INIT_MUTEX_FILE = "STORE_NAMESPACE.init.mutex"
 NAMESPACE_SCHEMA_VERSION = 1
 SUPERSESSION_HEAD_SCHEMA_VERSION = 2
 NAMESPACE_CLASSES: tuple[str, ...] = ("research", "test")
 NamespaceClass = Literal["research", "test"]
 _GENESIS_KIND = "owner_decision_supersessions_v2"
 _INSTANCE_PATTERN = r"^[0-9a-f]{32}$"
+_INIT_MUTEX_WAIT_SECONDS = 30.0
 
 #: Every typed refusal of this module (never inferred from message text).
 STORE_NAMESPACE_FAILURE_REASONS: tuple[str, ...] = (
@@ -104,6 +129,16 @@ STORE_NAMESPACE_FAILURE_REASONS: tuple[str, ...] = (
     "supersession_record_unverifiable",
     "supersession_divergent_replay",
     "atomic_write_failed",
+    # HARDENING-BACKEND-FIX §4.2: a half-initialized store that the request
+    # cannot provably complete, and a contended initialization mutex
+    "incomplete_store_namespace_initialization",
+    "store_namespace_initialization_busy",
+    # review RA-02: a persistent non-contention failure of the init mutex file
+    "store_namespace_initialization_failed",
+    # HARDENING-BACKEND-FIX §10: the complete owner-authority chain proof
+    "supersession_decision_unverifiable",
+    "supersession_transition_unlawful",
+    "supersession_chain_divergent",
 )
 #: Adversarial RA-10: the head / namespace ``os.replace`` retries a transient
 #: sharing violation (a concurrent reader) with a short backoff; a persistent
@@ -196,6 +231,10 @@ def _namespace_path(root: Path) -> Path:
     return Path(root) / STORE_NAMESPACE_FILE
 
 
+def _init_mutex_path(root: Path) -> Path:
+    return Path(root) / OWNER_DECISION_STORE / STORE_NAMESPACE_INIT_MUTEX_FILE
+
+
 def _atomic_write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.tmp-{uuid.uuid4().hex}")
@@ -216,6 +255,38 @@ def _atomic_write_text(path: Path, text: str) -> None:
     )
 
 
+def _head_document(
+    *, store_namespace_id: str, record_id: str | None, line_count: int, head_sha256: str
+) -> dict:
+    return {
+        "head_schema_version": SUPERSESSION_HEAD_SCHEMA_VERSION,
+        "store_namespace_id": str(store_namespace_id),
+        "record_id": None if record_id is None else str(record_id),
+        "line_count": int(line_count),
+        "head_sha256": str(head_sha256),
+    }
+
+
+def _head_text(head: dict) -> str:
+    return json.dumps(head, sort_keys=True, indent=2) + "\n"
+
+
+def _namespace_text(envelope: StoreNamespaceEnvelope) -> str:
+    return json.dumps(envelope.model_dump(mode="json"), sort_keys=True, indent=2) + "\n"
+
+
+def _genesis_head_document(envelope: StoreNamespaceEnvelope) -> dict:
+    """The deterministic genesis head of ``envelope`` (the exact bytes an
+    initialization publishes; recovery compares against it)."""
+
+    return _head_document(
+        store_namespace_id=envelope.store_namespace_id,
+        record_id=None,
+        line_count=0,
+        head_sha256=envelope.payload.authority_genesis_id,
+    )
+
+
 def write_supersession_head_atomic(
     root: Path,
     *,
@@ -230,16 +301,13 @@ def write_supersession_head_atomic(
         raise ValueError("a head that names a record must have line_count >= 1")
     if record_id is None and line_count != 0:
         raise ValueError("the genesis head has line_count 0")
-    head = {
-        "head_schema_version": SUPERSESSION_HEAD_SCHEMA_VERSION,
-        "store_namespace_id": str(store_namespace_id),
-        "record_id": None if record_id is None else str(record_id),
-        "line_count": int(line_count),
-        "head_sha256": str(head_sha256),
-    }
-    _atomic_write_text(
-        supersession_head_path(root), json.dumps(head, sort_keys=True, indent=2) + "\n"
+    head = _head_document(
+        store_namespace_id=store_namespace_id,
+        record_id=record_id,
+        line_count=line_count,
+        head_sha256=head_sha256,
     )
+    _atomic_write_text(supersession_head_path(root), _head_text(head))
 
 
 def read_supersession_head(root: Path, *, store_namespace_id: str) -> dict:
@@ -300,6 +368,179 @@ def read_supersession_head(root: Path, *, store_namespace_id: str) -> dict:
 # ── namespace initialization / verified load ────────────────────────────────
 
 
+def _envelope_for(namespace_class: str, store_instance_id: str) -> StoreNamespaceEnvelope:
+    payload = StoreNamespacePayload(
+        namespace_class=namespace_class,  # type: ignore[arg-type]
+        store_instance_id=store_instance_id,
+        authority_genesis_id=genesis_id_for(store_instance_id, namespace_class),
+    )
+    return StoreNamespaceEnvelope.from_payload(payload)
+
+
+def _read_namespace_state(root: Path) -> tuple[bool, StoreNamespaceEnvelope | None]:
+    """``(present, verified envelope)``; a malformed or tampered file is a
+    typed refusal that initialization never overwrites."""
+
+    try:
+        return True, load_store_namespace(root)
+    except StoreNamespaceError as error:
+        if error.reason == "store_namespace_missing":
+            return False, None
+        raise
+
+
+def _read_head_state(root: Path) -> tuple[Literal["absent", "malformed", "present"], dict | None]:
+    path = supersession_head_path(root)
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return "absent", None
+    except OSError as error:
+        raise StoreNamespaceError("supersession_head_malformed", str(error)) from error
+    try:
+        head = json.loads(raw)
+    except ValueError:
+        return "malformed", None
+    if not isinstance(head, dict):
+        return "malformed", None
+    return "present", head
+
+
+def _supersession_records_exist(root: Path) -> bool:
+    directory = Path(root) / OWNER_DECISION_SUPERSESSION_STORE
+    if not directory.is_dir():
+        return False
+    return any(entry.is_dir() for entry in directory.iterdir())
+
+
+def _assert_same_request(
+    existing: StoreNamespaceEnvelope, namespace_class: str, store_instance_id: str | None
+) -> None:
+    same_class = existing.payload.namespace_class == namespace_class
+    same_instance = store_instance_id is None or (
+        existing.payload.store_instance_id == store_instance_id
+    )
+    if not (same_class and same_instance):
+        raise StoreNamespaceError(
+            "store_namespace_divergent",
+            f"the store is already marked {existing.payload.namespace_class!r} "
+            f"(instance {existing.payload.store_instance_id[:8]}…); the namespace "
+            "envelope is immutable and cannot be re-initialized differently",
+        )
+
+
+def _verified_genesis_pair(
+    root: Path, expected: StoreNamespaceEnvelope
+) -> StoreNamespaceEnvelope:
+    """Verified-load BOTH objects and prove the pair before success:
+    ``namespace.store_namespace_id == head.store_namespace_id``,
+    ``namespace.authority_genesis_id == head.head_sha256`` (the genesis
+    anchor), the requested class is the persisted class."""
+
+    reloaded = load_store_namespace(root)
+    if reloaded.model_dump(mode="json") != expected.model_dump(mode="json"):
+        raise StoreNamespaceError(
+            "store_namespace_malformed", "the reloaded namespace differs from the written one"
+        )
+    head = read_supersession_head(root, store_namespace_id=reloaded.store_namespace_id)
+    if head != _genesis_head_document(reloaded):
+        raise StoreNamespaceError(
+            "supersession_head_malformed",
+            "the reloaded supersession head is not the genesis head of the namespace",
+        )
+    return reloaded
+
+
+def _initialize_under_mutex(
+    root: Path, *, namespace_class: str, store_instance_id: str | None
+) -> StoreNamespaceEnvelope:
+    _namespace_present, existing = _read_namespace_state(root)
+    head_state, head = _read_head_state(root)
+
+    if existing is not None and head_state != "absent":
+        # ── both present: coherent, or fail closed ────────────────────────
+        verified = read_supersession_head(root, store_namespace_id=existing.store_namespace_id)
+        if verified["line_count"] == 0 and verified != _genesis_head_document(existing):
+            raise StoreNamespaceError(
+                "supersession_head_malformed",
+                "the genesis head does not anchor this namespace's authority genesis "
+                "(an inconsistent namespace / head pair; refusing to select either)",
+            )
+        _assert_same_request(existing, namespace_class, store_instance_id)
+        return existing
+
+    if existing is None and head_state == "absent":
+        # ── both absent: publish the precomputed deterministic pair ───────
+        instance = store_instance_id if store_instance_id is not None else uuid.uuid4().hex
+        envelope = _envelope_for(namespace_class, instance)
+        genesis_text = _head_text(_genesis_head_document(envelope))
+        namespace_text = _namespace_text(envelope)
+        _atomic_write_text(supersession_head_path(root), genesis_text)
+        _atomic_write_text(_namespace_path(root), namespace_text)
+        return _verified_genesis_pair(root, envelope)
+
+    if existing is not None:
+        # ── namespace present / genesis absent ────────────────────────────
+        if store_instance_id is None or (
+            existing.payload.namespace_class,
+            existing.payload.store_instance_id,
+        ) != (namespace_class, store_instance_id):
+            raise StoreNamespaceError(
+                "incomplete_store_namespace_initialization",
+                "the store carries a namespace envelope but no supersession head; recovery "
+                "requires the identical initialization request (the same class AND the "
+                "explicit store instance id) — otherwise operator intervention",
+            )
+        if _supersession_records_exist(root):
+            raise StoreNamespaceError(
+                "incomplete_store_namespace_initialization",
+                "the store carries a namespace envelope, no supersession head, and "
+                "supersession records: the missing head cannot be recovered as the genesis "
+                "head (a rolled-back or truncated chain) — operator intervention",
+            )
+        expected = _envelope_for(namespace_class, store_instance_id)
+        if expected.model_dump(mode="json") != existing.model_dump(mode="json"):
+            raise StoreNamespaceError(
+                "incomplete_store_namespace_initialization",
+                "the existing namespace envelope is not the deterministic envelope of the "
+                "requested initialization; conflicting bytes are never overwritten",
+            )
+        _atomic_write_text(
+            supersession_head_path(root), _head_text(_genesis_head_document(expected))
+        )
+        return _verified_genesis_pair(root, expected)
+
+    # ── genesis present / namespace absent ────────────────────────────────
+    if head_state == "malformed" or head is None:
+        raise StoreNamespaceError(
+            "supersession_head_malformed",
+            "a malformed supersession head exists for an unmarked store (corruption; "
+            "refusing to initialize over it)",
+        )
+    if head.get("record_id") is not None or head.get("line_count") != 0:
+        raise StoreNamespaceError(
+            "supersession_head_malformed",
+            "a supersession head naming records exists for an unmarked store "
+            "(corruption; refusing to initialize over it)",
+        )
+    if store_instance_id is None:
+        raise StoreNamespaceError(
+            "incomplete_store_namespace_initialization",
+            "the store carries a genesis supersession head but no namespace envelope; "
+            "recovery requires the identical initialization request (the same class AND "
+            "the explicit store instance id) — otherwise operator intervention",
+        )
+    expected = _envelope_for(namespace_class, store_instance_id)
+    if head != _genesis_head_document(expected):
+        raise StoreNamespaceError(
+            "incomplete_store_namespace_initialization",
+            "the orphan genesis head is not the deterministic genesis head of the requested "
+            "initialization; conflicting bytes are never overwritten",
+        )
+    _atomic_write_text(_namespace_path(root), _namespace_text(expected))
+    return _verified_genesis_pair(root, expected)
+
+
 def initialize_store_namespace(
     root: Path,
     *,
@@ -312,10 +553,12 @@ def initialize_store_namespace(
     acting); it is never inferred from the path. Idempotent on an identical
     payload; a different class or instance for an already-marked store is a
     typed ``store_namespace_divergent`` refusal (namespace bytes are
-    immutable). Writes the genesis head FIRST, then the namespace file, so a
-    crash in between leaves an unmarked store whose genesis head is
-    rewritten by the retry (only a genesis head — a head naming records
-    without a namespace is corruption).
+    immutable). The envelope and the genesis head are published as one
+    coherent pair under a one-time initialization mutex (HARDENING-BACKEND-FIX
+    §4.2): a crash between the two writes is recovered EXACTLY by the same
+    request (class + explicit instance id) and refused otherwise
+    (``incomplete_store_namespace_initialization``); an inconsistent pair
+    fails closed.
     """
 
     root = Path(root)
@@ -323,60 +566,24 @@ def initialize_store_namespace(
         raise ValueError(
             f"namespace_class must be one of {NAMESPACE_CLASSES}, got {namespace_class!r}"
         )
-    path = _namespace_path(root)
-    if path.exists():
-        existing = load_store_namespace(root)
-        same_class = existing.payload.namespace_class == namespace_class
-        same_instance = store_instance_id is None or (
-            existing.payload.store_instance_id == store_instance_id
-        )
-        if not (same_class and same_instance):
-            raise StoreNamespaceError(
-                "store_namespace_divergent",
-                f"the store is already marked {existing.payload.namespace_class!r} "
-                f"(instance {existing.payload.store_instance_id[:8]}…); the namespace "
-                "envelope is immutable and cannot be re-initialized differently",
+    mutex = ExclusiveFileMutex(_init_mutex_path(root), wait_seconds=_INIT_MUTEX_WAIT_SECONDS)
+    try:
+        with mutex:
+            return _initialize_under_mutex(
+                root, namespace_class=namespace_class, store_instance_id=store_instance_id
             )
-        # the head must exist for a marked store (never re-created here)
-        read_supersession_head(root, store_namespace_id=existing.store_namespace_id)
-        return existing
-    instance = store_instance_id if store_instance_id is not None else uuid.uuid4().hex
-    payload = StoreNamespacePayload(
-        namespace_class=namespace_class,  # type: ignore[arg-type]
-        store_instance_id=instance,
-        authority_genesis_id=genesis_id_for(instance, namespace_class),
-    )
-    envelope = StoreNamespaceEnvelope.from_payload(payload)
-    head_path = supersession_head_path(root)
-    if head_path.exists():
-        # an orphan head from an interrupted initialization is lawful ONLY
-        # while it names no record (line_count 0); anything else is corruption
-        try:
-            orphan = json.loads(head_path.read_text(encoding="utf-8"))
-        except (ValueError, OSError):
-            orphan = None
-        if not (isinstance(orphan, dict) and orphan.get("line_count") == 0):
-            raise StoreNamespaceError(
-                "supersession_head_malformed",
-                "a supersession head naming records exists for an unmarked store "
-                "(corruption; refusing to initialize over it)",
-            )
-    write_supersession_head_atomic(
-        root,
-        store_namespace_id=envelope.store_namespace_id,
-        record_id=None,
-        line_count=0,
-        head_sha256=payload.authority_genesis_id,
-    )
-    _atomic_write_text(
-        path, json.dumps(envelope.model_dump(mode="json"), sort_keys=True, indent=2) + "\n"
-    )
-    reloaded = load_store_namespace(root)
-    if reloaded.model_dump(mode="json") != envelope.model_dump(mode="json"):
+    except FileMutexTimeoutError as error:
         raise StoreNamespaceError(
-            "store_namespace_malformed", "the reloaded namespace differs from the written one"
-        )
-    return reloaded
+            "store_namespace_initialization_busy",
+            "another initializer holds the store-namespace initialization mutex; refusing "
+            "to proceed without it",
+        ) from error
+    except FileMutexError as error:
+        raise StoreNamespaceError(
+            "store_namespace_initialization_failed",
+            f"the store-namespace initialization mutex failed persistently ({error}); "
+            "this is not a busy initializer — operator intervention required",
+        ) from error
 
 
 def initialize_test_namespace(root: Path) -> StoreNamespaceEnvelope:

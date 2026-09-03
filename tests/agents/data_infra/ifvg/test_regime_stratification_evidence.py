@@ -147,6 +147,9 @@ def test_evidence_ref_binds_assignment_table_and_schema_hashes(lane):
                 cost_points=_COST,
                 evaluation_config_hash=_EVAL_HASH,
                 costed_evaluation_id="2" * 64,
+                executed_trade_table_id=_persist_table(
+                    lane["root"], _CORE_A, lane["trades"]
+                ).executed_trade_table_id,
             )
         },
     )
@@ -577,3 +580,119 @@ def test_cohort_descriptive_hashes_and_joins_the_normalized_table(lane):
     )
     assert float(np.mean(net.to_numpy())) == pytest.approx(pooled.net_expectancy_r)
     assert set(net.index) == set(trades["trade_id"].astype(str))
+
+
+# ── HARDENING-BACKEND-FIX §7.3 — persisted reports bind the exact trade table ─
+
+
+def test_persisted_reports_require_and_verify_the_exact_executed_trade_table(lane) -> None:
+    """HB-FIX-09: the persisting service refuses a child without its
+    executed-trade table id before anything is published; the ephemeral
+    helper still serves a caller frame without publishing; a tampered
+    declared table (a traversal entry in its manifest) fails closed."""
+
+    import json
+
+    from alpha_lab.agents.data_infra.ifvg.manifest import canonical_sha256
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_stratification_service import (
+        StratificationEvidenceError,
+    )
+    from alpha_lab.agents.data_infra.ifvg.search.executed_trade_table import (
+        EXECUTED_TRADE_TABLE_STORE,
+    )
+    from alpha_lab.agents.data_infra.ifvg.search.store import SidecarLoadError, envelope_destination
+
+    root = lane["root"]
+    trades = lane["trades"]
+    store_dir = root / "regime_stratified_reports"
+
+    def _published() -> set[str]:
+        return {p.name for p in store_dir.iterdir()} if store_dir.exists() else set()
+
+    def _inputs(child: ChildStratificationInputs) -> StratificationInputs:
+        return StratificationInputs(
+            root=root,
+            protocol_id=lane["protocol_id"],
+            decision_id=lane["ready"].regime_promotion_decision_id,
+            owner_decision_artifact_id=None,
+            regime_oos_assignment_id=lane["oos_id"],
+            requested_classes=(RegimeStratificationClass.COHORT_DESCRIPTIVE,),
+            children={_CORE_A: child},
+        )
+
+    before = _published()
+    # (i) a caller frame without the table id: typed refusal, nothing published
+    with pytest.raises(StratificationEvidenceError) as refused:
+        build_regime_stratified_reports(
+            _inputs(
+                ChildStratificationInputs(
+                    core_replay_id=_CORE_A,
+                    trades=trades,
+                    cost_points=_COST,
+                    evaluation_config_hash=_EVAL_HASH,
+                    costed_evaluation_id="2" * 64,
+                )
+            )
+        )
+    assert refused.value.reason == "executed_trade_table_required"
+    assert _published() == before
+    # (ii) the explicitly non-persisting helper serves the same frame in memory
+    ephemeral = build_cohort_descriptive_body(
+        trades=trades,
+        assignment=lane["assignment"],
+        core_replay_id=_CORE_A,
+        protocol_id=lane["protocol_id"],
+        fit_ids=lane["fit_ids"],
+        cost_points=_COST,
+        evaluation_config_hash=_EVAL_HASH,
+    )
+    assert ephemeral.body.executed_trade_table_id is None
+    assert _published() == before
+    # (iii) the exact table binds the persisted report
+    table = _persist_table(root, _CORE_A, trades)
+    outcome = build_regime_stratified_reports(
+        _inputs(
+            ChildStratificationInputs(
+                core_replay_id=_CORE_A,
+                trades=trades,
+                cost_points=_COST,
+                evaluation_config_hash=_EVAL_HASH,
+                costed_evaluation_id="2" * 64,
+                executed_trade_table_id=table.executed_trade_table_id,
+            )
+        )
+    )
+    report = load_regime_stratified_report(root, outcome.report_ids[0])
+    assert report.payload.body.executed_trade_table_id == table.executed_trade_table_id
+    assert table.executed_trade_table_id in report.payload.source_metric_refs
+    # (iv) a tampered declared table fails closed: a traversal entry smuggled
+    # into the table's manifest (rehashed) is refused by the central validator
+    directory = envelope_destination(
+        root, EXECUTED_TRADE_TABLE_STORE, table.executed_trade_table_id
+    )
+    manifest_path = directory / "manifest.json"
+    original = manifest_path.read_bytes()
+    manifest = json.loads(original.decode("utf-8"))
+    manifest["artifacts"].append({"path": "../escape.arrow", "sha256": "0" * 64, "bytes": 0})
+    core = {k: v for k, v in manifest.items() if k != "manifest_payload_sha256"}
+    manifest["manifest_payload_sha256"] = canonical_sha256(core)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    published = _published()
+    try:
+        with pytest.raises(SidecarLoadError) as tampered:
+            build_regime_stratified_reports(
+                _inputs(
+                    ChildStratificationInputs(
+                        core_replay_id=_CORE_A,
+                        trades=trades,
+                        cost_points=_COST,
+                        evaluation_config_hash=_EVAL_HASH,
+                        costed_evaluation_id="3" * 64,
+                        executed_trade_table_id=table.executed_trade_table_id,
+                    )
+                )
+            )
+        assert tampered.value.reason == "malformed_manifest"
+        assert _published() == published
+    finally:
+        manifest_path.write_bytes(original)

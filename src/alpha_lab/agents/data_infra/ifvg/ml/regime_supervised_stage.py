@@ -136,6 +136,7 @@ def run_supervised_substeps(context) -> tuple[list[str], dict[str, Any], str]:
             fold_features=fold_features,
             candidate_fold_set=regime["candidate_fold_set"],
             label_artifact_id=context.label_artifact_id,
+            label_policy_id=spec.label_policy_id,
         )
         save_regime_controlled_study(store_root, study)
         study_id = study.envelope.regime_controlled_study_id
@@ -162,6 +163,7 @@ def run_supervised_substeps(context) -> tuple[list[str], dict[str, Any], str]:
             fold_features=fold_features,
             candidate_fold_set=regime["candidate_fold_set"],
             label_artifact_id=context.label_artifact_id,
+            label_policy_id=spec.label_policy_id,
         )
         save_regime_cohort_model_study(store_root, cohort)
         cohort_id = cohort.envelope.regime_cohort_model_study_id

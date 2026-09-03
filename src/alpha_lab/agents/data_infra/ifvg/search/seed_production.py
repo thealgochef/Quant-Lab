@@ -43,12 +43,11 @@ verification evidence footprint.
 
 from __future__ import annotations
 
-import dataclasses
 import hashlib
 import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, ClassVar, Literal
 
@@ -71,6 +70,7 @@ from .child_replay import (
     SeedSnapshotEnvelope,
     SeedSnapshotError,
     SeedSnapshotPayload,
+    canonicalize_seed_datetimes,
     load_seed_snapshot,
     save_seed_snapshot,
 )
@@ -92,12 +92,13 @@ from .store_namespace import (
     load_store_namespace,
     path_looks_like_research_store,
 )
-from .supersession_chain import assert_head_witness_current, current_supersession_head_witness
+from .supersession_chain import current_supersession_head_witness
 from .trading_calendar import (
     CANONICAL_CHAIN_START_DAY,
     PERMITTED_WINDOW_LAST_DAY,
     TRADING_CALENDAR_POLICY_ID,
     assert_consecutive_logical_days,
+    assert_public_source_kind,
     is_logical_trading_day,
     store_day_chain,
     trading_day_ref_from_inventory,
@@ -170,6 +171,12 @@ SEED_PRODUCTION_FAILURE_REASONS: tuple[str, ...] = (
     "authorization_ref_mismatch",
     "supersession_head_witness_mismatch",
     "supersession_head_shorter_than_witness",
+    # HARDENING-BACKEND-FIX §10: the complete chain proof's typed refusals
+    "supersession_chain_broken",
+    "supersession_record_unverifiable",
+    "supersession_decision_unverifiable",
+    "supersession_transition_unlawful",
+    "supersession_chain_divergent",
     "profile_mismatch",
     "chain_mismatch",
     "source_inventory_mismatch",
@@ -448,17 +455,23 @@ def seed_chain_source_inventory_hash(
     chain_replay_days: Iterable[str], inventory: Mapping[str, tuple[str, str]]
 ) -> str:
     """The expected source-inventory hash of a chain: every physical store
-    day's ``(kind, content sha256)`` from the ALREADY-AUTHORIZED inventory."""
+    day's ``(PUBLIC kind, content sha256)`` from the ALREADY-AUTHORIZED
+    inventory. A kind outside the public contract (a physical file stem) is
+    refused before hashing (HARDENING-BACKEND-FIX §5)."""
 
     days = tuple(str(day) for day in chain_replay_days)
     missing = [day for day in days if day not in inventory]
     if missing:
         raise ValueError(f"the inventory lacks the chain's partitions: {missing[:5]}")
+    partitions = [
+        [day, assert_public_source_kind(inventory[day][0]), str(inventory[day][1])]
+        for day in days
+    ]
     return canonical_contract_sha256(
         {
             "policy": SEED_PRODUCTION_ACCESS_POLICY_ID,
             "chain_replay_days": list(days),
-            "partitions": [[day, inventory[day][0], inventory[day][1]] for day in days],
+            "partitions": partitions,
         }
     )
 
@@ -485,8 +498,13 @@ def _namespace_for_authority(root: Path, *, provenance: str) -> StoreNamespaceEn
 
 
 def _witness_current(root: Path, witness: SupersessionHeadWitness) -> None:
+    """HARDENING-BACKEND-FIX §10: the seed-production authorization seam runs
+    the COMPLETE owner-authority chain proof (never a head witness alone)."""
+
+    from .owner_decisions import verify_complete_owner_authority_chain  # noqa: PLC0415
+
     try:
-        assert_head_witness_current(root, witness)
+        verify_complete_owner_authority_chain(root, expected_head_witness=witness)
     except StoreNamespaceError as error:
         reason = (
             error.reason
@@ -688,32 +706,12 @@ def verify_seed_production_authorization(
 
 
 def _canonical_utc(value: Any) -> Any:
-    """Canonicalize every aware ``datetime`` inside a seed graph to the stdlib
-    ``timezone.utc`` (same instant, identical ``isoformat`` → identical
-    ``seed_hash``). Day artifacts loaded from Parquet carry ``pytz`` tzinfo
-    objects, which the seed sandbox unpickler (Strategy-Core state graphs +
-    ``datetime`` only) rightly refuses; the seed a chain produces must not
-    depend on which timezone library loaded its bars."""
+    """HARDENING-BACKEND-FIX §8: delegates to the ONE central seam
+    (:func:`~.child_replay.canonicalize_seed_datetimes`) — kept as a name for
+    existing callers; ``save_seed_snapshot`` repeats the canonicalization, so
+    no direct save can bypass it."""
 
-    if isinstance(value, datetime):
-        if value.tzinfo is None or isinstance(value.tzinfo, timezone):
-            return value
-        return value.astimezone(UTC)
-    if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        return dataclasses.replace(
-            value,
-            **{
-                field.name: _canonical_utc(getattr(value, field.name))
-                for field in dataclasses.fields(value)
-            },
-        )
-    if isinstance(value, tuple):
-        return tuple(_canonical_utc(item) for item in value)
-    if isinstance(value, list):
-        return [_canonical_utc(item) for item in value]
-    if isinstance(value, dict):
-        return {key: _canonical_utc(item) for key, item in value.items()}
-    return value
+    return canonicalize_seed_datetimes(value)
 
 
 def _entering_day_seeds(last: DayArtifacts) -> DaySeeds:
@@ -861,12 +859,10 @@ def run_seed_production_chain(
         raise SeedProductionAuthorizationError(
             "profile_mismatch", "the produced seed is bound to another profile section"
         )
-    produced_hash = seed_hash(seed)
-    seed = _canonical_utc(seed)
-    if seed_hash(seed) != produced_hash:
-        raise SeedSnapshotError(
-            "timezone canonicalization changed the seed hash; refusing to persist"
-        )
+    # HARDENING-BACKEND-FIX §8: the seed is hashed and persisted in its canonical
+    # UTC datetime form — the same instant under any timezone library or fixed
+    # offset yields the same seed identity and byte-identical sidecar bytes
+    seed = canonicalize_seed_datetimes(seed)
     last = load_day_artifacts(chain[-1], cfg, expected_seeds=None, access_policy=policy)
     if last is None:
         raise SeedProductionAuthorizationError(

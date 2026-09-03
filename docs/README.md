@@ -126,7 +126,12 @@ summary under measured capacity gates, the warnings-as-errors policy, the
 sequential-execution truth of the V1 executor, the logical trading-day
 calendar with the rebuilt verification-window shortlist, the seed-production
 authorization/run contracts, and the bounded-verification preflight and
-reports)
+reports), and HARDENING-BACKEND-FIX (the compact backend correction: token-safe
+stale-lock reclamation, atomic recoverable namespace initialization, the public
+source-kind boundary, exact regime provenance with native validation, fail-closed
+manifests with exact label / executed-trade evidence, central seed
+canonicalization, the bounded event-detail partition, and the complete
+authority-chain proof at every real seam)
 implementations are complete;
 **R1 acceptance is blocked pending the owner-approved verification fixture**
 (`VerificationAuthorizationRef`; owner decisions 21/R-5) — no real five-day

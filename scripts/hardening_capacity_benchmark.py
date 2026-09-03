@@ -61,6 +61,15 @@ DEFAULT_SIZES = (250_000, 500_000, 1_000_000)
 GIB = 1024**3
 MIB = 1024**2
 B1_EVENTS_PER_PATH = 200
+#: HARDENING-BACKEND-FIX §9.3: the B1 input shapes — ``normal`` (200 events per
+#: path, the registered policy's benchmark shape), ``skewed`` (five paths carry
+#: 90 % of the rows) and ``dense`` (250 paths — ONE path block — whose rows
+#: exceed one partition many times); every shape must obey the hard
+#: resident-row bound (max partition rows ≤ max_rows_per_partition).
+B1_SHAPES = ("normal", "skewed", "dense")
+B1_EXTRA_SHAPES = ("skewed", "dense")
+B1_SKEWED_WHALES = 5
+B1_DENSE_PATHS = 250
 B2_EVENTS_PER_PATH = 4
 B2_SIMULATIONS = 4
 B2_PARTITION_ROWS = 50_000
@@ -89,6 +98,9 @@ _EXTRA_KEYS = (
     "events_total",
     "build_seconds",
     "read_seconds",
+    "max_partition_rows",
+    "max_resident_rows_observed",
+    "max_rows_per_partition",
 )
 
 
@@ -241,13 +253,35 @@ _B1_TYPES = ("equity_update", "fee", "payout", "daily_halt", "equity_update", "e
 _FUNDED = _Phase("funded")
 
 
-def _b1_walks(rows: int, simulation_id: str):
+def _b1_path_plan(rows: int, shape: str) -> list[int]:
+    """Events per path in draw order for one shape (sums to ``rows``)."""
+
+    if shape == "normal":
+        paths = rows // B1_EVENTS_PER_PATH
+        remainder = rows - paths * B1_EVENTS_PER_PATH
+        return [B1_EVENTS_PER_PATH] * paths + ([remainder] if remainder else [])
+    if shape == "dense":
+        per_path = rows // B1_DENSE_PATHS
+        remainder = rows - per_path * B1_DENSE_PATHS
+        plan = [per_path] * B1_DENSE_PATHS
+        for index in range(remainder):
+            plan[index] += 1
+        return [count for count in plan if count]
+    if shape == "skewed":
+        whale = (rows * 9) // (10 * B1_SKEWED_WHALES)  # 90 % of the rows in five paths
+        plan = [whale] * B1_SKEWED_WHALES
+        remaining = rows - whale * B1_SKEWED_WHALES
+        full = remaining // B1_EVENTS_PER_PATH
+        remainder = remaining - full * B1_EVENTS_PER_PATH
+        plan += [B1_EVENTS_PER_PATH] * full + ([remainder] if remainder else [])
+        return plan
+    raise ValueError(f"unregistered B1 shape {shape!r}; registered: {B1_SHAPES}")
+
+
+def _b1_walks(rows: int, simulation_id: str, shape: str = "normal"):
     """Lazily yield ``(record, walk)`` pairs for exactly ``rows`` events."""
 
-    paths = rows // B1_EVENTS_PER_PATH
-    remainder = rows - paths * B1_EVENTS_PER_PATH
-    for draw in range(paths + (1 if remainder else 0)):
-        count = B1_EVENTS_PER_PATH if draw < paths else remainder
+    for draw, count in enumerate(_b1_path_plan(rows, shape)):
         path_id = f"path-{draw:05d}-{simulation_id[:16]}"
         events = []
         for ordinal in range(count):
@@ -284,9 +318,8 @@ def _b1_walks(rows: int, simulation_id: str):
         yield _Record(path_id, draw), _Walk(tuple(events))
 
 
-def _b1_path_count(rows: int) -> int:
-    paths = rows // B1_EVENTS_PER_PATH
-    return paths + (1 if rows - paths * B1_EVENTS_PER_PATH else 0)
+def _b1_path_count(rows: int, shape: str = "normal") -> int:
+    return len(_b1_path_plan(rows, shape))
 
 
 def _v2_simulation_envelope(seed: int):
@@ -318,13 +351,13 @@ def _v2_simulation_envelope(seed: int):
     return AccountSimulationEnvelope.from_payload(payload)
 
 
-def run_b1(rows: int, workdir: Path) -> dict:
+def run_b1(rows: int, workdir: Path, shape: str = "normal") -> dict:
     from alpha_lab.agents.data_infra.ifvg.search.store import (  # noqa: PLC0415
         save_envelope_immutable,
     )
     from alpha_lab.propsim.calendar import BOOTSTRAP_CLOCK_POLICY  # noqa: PLC0415
     from alpha_lab.propsim.event_detail import (  # noqa: PLC0415
-        EVENT_DETAIL_BUDGET_V1,
+        EVENT_DETAIL_BUDGET_V2,
         build_account_event_detail,
         load_account_event_detail,
         load_account_event_detail_manifest,
@@ -336,16 +369,34 @@ def run_b1(rows: int, workdir: Path) -> dict:
     bundle_facts: dict = {}
 
     def producer(directory: Path):
-        bundle = build_account_event_detail(
-            _b1_walks(rows, simulation_id),
-            clock_policy_id=BOOTSTRAP_CLOCK_POLICY.policy_id,
-            budget=EVENT_DETAIL_BUDGET_V1,
-            event_order_policy_id="prop_account_event_order_v1",
-            directory=directory,
-            total_rows=rows,
-            path_count=_b1_path_count(rows),
-        )
+        from alpha_lab.propsim import event_detail as event_detail_module  # noqa: PLC0415
+
+        # review RB-04: an INDEPENDENT observation of the writer's resident batch
+        # at its Parquet seam (never the manifest's own claim): every flushed
+        # table's row count is the number of rows resident right before the flush
+        observed = {"max_rows": 0}
+        real_write = event_detail_module._write_parquet
+
+        def _observing_write(table, path):
+            observed["max_rows"] = max(observed["max_rows"], int(table.num_rows))
+            real_write(table, path)
+
+        event_detail_module._write_parquet = _observing_write
+        try:
+            bundle = build_account_event_detail(
+                _b1_walks(rows, simulation_id, shape),
+                clock_policy_id=BOOTSTRAP_CLOCK_POLICY.policy_id,
+                budget=EVENT_DETAIL_BUDGET_V2,
+                event_order_policy_id="prop_account_event_order_v1",
+                directory=directory,
+                total_rows=rows,
+                path_count=_b1_path_count(rows, shape),
+            )
+        finally:
+            event_detail_module._write_parquet = real_write
         bundle_facts["partitions"] = bundle.partition_count
+        bundle_facts["max_partition_rows"] = bundle.max_partition_rows
+        bundle_facts["max_resident_rows_observed"] = observed["max_rows"]
         bundle_facts["total_bytes"] = bundle.total_bytes
         bundle_facts["manifest_sha256"] = bundle.manifest_sidecar.sha256
         return bundle.produced()
@@ -366,8 +417,13 @@ def run_b1(rows: int, workdir: Path) -> dict:
         raise RuntimeError(f"B1 read back {rows_read} rows, expected {rows}")
     return {
         "rows": rows,
-        "paths": _b1_path_count(rows),
+        "shape": shape,
+        "paths": _b1_path_count(rows, shape),
         "partitions": bundle_facts["partitions"],
+        "max_partition_rows": int(bundle_facts["max_partition_rows"]),
+        "max_resident_rows_observed": int(bundle_facts["max_resident_rows_observed"]),
+        "max_rows_per_partition": int(EVENT_DETAIL_BUDGET_V2.max_rows_per_partition),
+        "partition_bound_policy_id": manifest["partition_bound_policy_id"],
         "artifact_bytes": int(bundle_facts["total_bytes"]),
         "output_hash": digest.hexdigest(),
         "manifest_sha256": bundle_facts["manifest_sha256"],
@@ -527,7 +583,9 @@ def run_b2(rows: int, workdir: Path) -> dict:
 # ── worker / parent ─────────────────────────────────────────────────────────
 
 
-def _worker(benchmark: str, rows: int, mode: str, workdir: Path) -> dict:
+def _worker(
+    benchmark: str, rows: int, mode: str, workdir: Path, shape: str = "normal"
+) -> dict:
     import gc  # noqa: PLC0415
 
     # import everything the run touches BEFORE the baseline
@@ -544,7 +602,7 @@ def _worker(benchmark: str, rows: int, mode: str, workdir: Path) -> dict:
     baseline_rss, baseline_peak = memory_counters()
     if mode == "tracemalloc":
         tracemalloc.start()
-    facts = run_b1(rows, workdir) if benchmark == "B1" else run_b2(rows, workdir)
+    facts = run_b1(rows, workdir, shape) if benchmark == "B1" else run_b2(rows, workdir)
     python_peak = None
     if mode == "tracemalloc":
         python_peak = int(tracemalloc.get_traced_memory()[1])
@@ -567,8 +625,8 @@ def _worker(benchmark: str, rows: int, mode: str, workdir: Path) -> dict:
     return facts
 
 
-def _spawn(benchmark: str, rows: int, mode: str) -> dict:
-    workdir = Path(tempfile.mkdtemp(prefix=f"hardening_capacity_{benchmark}_{rows}_"))
+def _spawn(benchmark: str, rows: int, mode: str, shape: str = "normal") -> dict:
+    workdir = Path(tempfile.mkdtemp(prefix=f"hardening_capacity_{benchmark}_{rows}_{shape}_"))
     try:
         command = [
             sys.executable,
@@ -581,6 +639,8 @@ def _spawn(benchmark: str, rows: int, mode: str) -> dict:
             mode,
             "--workdir",
             str(workdir),
+            "--shape",
+            shape,
         ]
         started = time.perf_counter()
         completed = subprocess.run(  # noqa: S603 - the exact local interpreter/script only
@@ -725,6 +785,95 @@ def _evaluate(benchmark: str, sizes: tuple[int, ...], runs: dict) -> dict:
     }
 
 
+def _evaluate_b1_shapes(largest: int, normal_runs: dict, shape_runs: dict) -> dict:
+    """HARDENING-BACKEND-FIX §9.3: the hard resident-row bound must hold for
+    EVERY lawful shape (a shape-conditional projection is not sufficient),
+    and the skewed / dense 1M-row runs must meet the same absolute gates."""
+
+    bound_rows = []
+    for (size, mode, repeat), facts in normal_runs.items():
+        bound_rows.append(("normal", size, mode, repeat, facts))
+    for (shape, mode, repeat), facts in shape_runs.items():
+        bound_rows.append((shape, largest, mode, repeat, facts))
+    bound_ok = all(
+        facts["max_resident_rows_observed"] <= facts["max_rows_per_partition"]
+        for *_k, facts in bound_rows
+    )
+    bound_measured = max(facts["max_resident_rows_observed"] for *_k, facts in bound_rows)
+    bound_limit = bound_rows[0][-1]["max_rows_per_partition"]
+    gate_rows = [
+        (
+            "maximum resident writer batch (observed at the writer's Parquet seam) ≤ "
+            "max_rows_per_partition (every shape, every size)",
+            bound_ok,
+            f"{bound_measured:,} rows",
+            f"{bound_limit:,} rows",
+        )
+    ]
+    shapes: dict[str, dict] = {}
+    for shape in B1_EXTRA_SHAPES:
+        rss = shape_runs[(shape, "rss", 1)]
+        repeat = shape_runs[(shape, "rss", 2)]
+        traced = shape_runs[(shape, "tracemalloc", 1)]
+        determinism = rss["output_hash"] == repeat["output_hash"]
+        rows = [
+            (
+                f"{shape}: 1M-row peak RSS increase ≤ 1.5 GiB",
+                rss["peak_rss_increase_bytes"] <= PEAK_RSS_INCREASE_MAX,
+                _gib(rss["peak_rss_increase_bytes"]),
+                _gib(PEAK_RSS_INCREASE_MAX),
+            ),
+            (
+                f"{shape}: 1M-row Python allocation peak ≤ 512 MiB",
+                traced["python_allocation_peak_bytes"] <= GATES["B1"]["tracemalloc_peak_max"],
+                _mib(traced["python_allocation_peak_bytes"]),
+                _mib(GATES["B1"]["tracemalloc_peak_max"]),
+            ),
+            (
+                f"{shape}: 1M-row wall time ≤ 300 s",
+                rss["wall_seconds"] <= WALL_MAX_SECONDS,
+                f"{rss['wall_seconds']:.1f} s",
+                f"{WALL_MAX_SECONDS:.0f} s",
+            ),
+            (
+                f"{shape}: byte-identical output hash on repeat",
+                determinism,
+                "identical" if determinism else "DIFFERENT",
+                "identical",
+            ),
+            (
+                f"{shape}: maximum resident writer batch (observed) ≤ max_rows_per_partition",
+                rss["max_resident_rows_observed"] <= rss["max_rows_per_partition"],
+                f"{rss['max_resident_rows_observed']:,} rows",
+                f"{rss['max_rows_per_partition']:,} rows",
+            ),
+        ]
+        gate_rows.extend(rows)
+        shapes[shape] = {
+            "rows": largest,
+            "paths": rss["paths"],
+            "partitions": rss["partitions"],
+            "max_partition_rows": rss["max_partition_rows"],
+            "max_resident_rows_observed": rss["max_resident_rows_observed"],
+            "peak_rss_increase_bytes": rss["peak_rss_increase_bytes"],
+            "peak_rss_increase_bytes_repeat": repeat["peak_rss_increase_bytes"],
+            "python_allocation_peak_bytes": traced["python_allocation_peak_bytes"],
+            "wall_seconds": rss["wall_seconds"],
+            "wall_seconds_repeat": repeat["wall_seconds"],
+            "artifact_bytes": rss["artifact_bytes"],
+            "output_hash": rss["output_hash"],
+            "output_hash_repeat": repeat["output_hash"],
+        }
+    return {
+        "shapes": shapes,
+        "gates": [
+            {"gate": name, "passed": bool(passed), "measured": measured, "limit": limit}
+            for name, passed, measured, limit in gate_rows
+        ],
+        "passed": all(passed for _name, passed, _m, _l in gate_rows),
+    }
+
+
 def _markdown(report: dict) -> str:
     lines = [
         "# CAPACITY_BENCHMARKS — HARDENING_CAPACITY_POLICY_V1 (plan §4.4, F-17)",
@@ -744,7 +893,7 @@ def _markdown(report: dict) -> str:
         "```",
         "",
     ]
-    for benchmark in ("B1", "B2"):
+    for benchmark in [name for name in ("B1", "B2") if name in report["benchmarks"]]:
         section = report["benchmarks"][benchmark]
         title = (
             "B1 — event-detail writer (production writer over a generator + store publish + "
@@ -818,6 +967,32 @@ def _markdown(report: dict) -> str:
                 f"{'PASS' if gate['passed'] else 'FAIL'} |"
             )
         lines.append("")
+        shapes = section.get("shape_evaluation")
+        if shapes:
+            lines += [
+                "### Worst-lawful-shape proof (HARDENING-BACKEND-FIX §9.3; 1M rows)",
+                "",
+                "| shape | paths | partitions | max partition rows | peak RSS increase | repeat "
+                "| Python alloc peak | wall | artifact bytes | output hash (first 12) "
+                "| repeat hash |",
+                "|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|",
+            ]
+            for shape, row in shapes["shapes"].items():
+                lines.append(
+                    f"| {shape} | {row['paths']:,} | {row['partitions']:,} | "
+                    f"{row['max_partition_rows']:,} | {_gib(row['peak_rss_increase_bytes'])} | "
+                    f"{_gib(row['peak_rss_increase_bytes_repeat'])} | "
+                    f"{_mib(row['python_allocation_peak_bytes'])} | {row['wall_seconds']:.1f} s | "
+                    f"{row['artifact_bytes']:,} | `{row['output_hash'][:12]}` | "
+                    f"`{row['output_hash_repeat'][:12]}` |"
+                )
+            lines += ["", "| gate | measured | limit | result |", "|---|---:|---:|---|"]
+            for gate in shapes["gates"]:
+                lines.append(
+                    f"| {gate['gate']} | {gate['measured']} | {gate['limit']} | "
+                    f"{'PASS' if gate['passed'] else 'FAIL'} |"
+                )
+            lines.append("")
     lines += [
         "## Reading",
         "",
@@ -849,12 +1024,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--rows", type=int, default=None)
     parser.add_argument("--mode", choices=("rss", "tracemalloc"), default="rss")
     parser.add_argument("--workdir", default=None)
+    parser.add_argument("--shape", choices=B1_SHAPES, default="normal")
+    parser.add_argument(
+        "--shapes",
+        default=",".join(B1_EXTRA_SHAPES),
+        help="the extra B1 shapes proven at the largest size (HARDENING-BACKEND-FIX 9.3)",
+    )
     parser.add_argument("--sizes", default=",".join(str(size) for size in DEFAULT_SIZES))
     parser.add_argument("--benchmarks", default="B1,B2")
     parser.add_argument("--out-dir", default=None)
     args = parser.parse_args(argv)
     if args.worker:
-        facts = _worker(args.worker, int(args.rows), args.mode, Path(args.workdir))
+        facts = _worker(
+            args.worker, int(args.rows), args.mode, Path(args.workdir), args.shape
+        )
         print(json.dumps(facts, sort_keys=True))
         return 0
     sizes = tuple(int(value) for value in args.sizes.split(","))
@@ -880,12 +1063,33 @@ def main(argv: list[str] | None = None) -> int:
                     flush=True,
                 )
         benchmarks[benchmark] = _evaluate(benchmark, sizes, runs)
+        if benchmark == "B1" and args.shapes:
+            shape_runs: dict[tuple[str, str, int], dict] = {}
+            for shape in [s for s in args.shapes.split(",") if s]:
+                for mode, repeat in (("rss", 1), ("rss", 2), ("tracemalloc", 1)):
+                    facts = _spawn(benchmark, sizes[-1], mode, shape)
+                    facts["repeat"] = repeat
+                    shape_runs[(shape, mode, repeat)] = facts
+                    raw.append(facts)
+                    print(
+                        f"{benchmark} shape={shape} rows={sizes[-1]:,} mode={mode} "
+                        f"repeat={repeat}: peak RSS +{_gib(facts['peak_rss_increase_bytes'])}, "
+                        f"max partition rows {facts['max_partition_rows']:,}, "
+                        f"wall {facts['wall_seconds']:.1f} s, hash {facts['output_hash'][:12]}",
+                        flush=True,
+                    )
+            evaluation = _evaluate_b1_shapes(sizes[-1], runs, shape_runs)
+            benchmarks[benchmark]["shape_evaluation"] = evaluation
+            benchmarks[benchmark]["passed"] = bool(
+                benchmarks[benchmark]["passed"] and evaluation["passed"]
+            )
     import duckdb  # noqa: PLC0415
     import pandas  # noqa: PLC0415
     import pyarrow  # noqa: PLC0415
 
     report = {
         "policy_id": POLICY_ID,
+        "partition_bound_policy_id": "event_detail_partition_row_bound_v2",
         "started_at": started_at,
         "finished_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "command": "python scripts/hardening_capacity_benchmark.py "

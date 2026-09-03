@@ -2014,8 +2014,10 @@ def _run_controlled_mbp1_stage(
         mbp1_features=evidence["feature_frame"],
         mbp1_feature_artifact=evidence["feature_envelope"],
         headline_protocol_id=pinned,
-        # D13: S07's exact label artifact id keys the comparison rows
+        # D13: S07's exact label artifact id keys the comparison rows; the
+        # registered policy proves it derives from these labels (§7.2)
         label_artifact_id=context.label_artifact_id,
+        label_policy_id=context.semantic.payload.label_policy_id,
         fold_schedule_id=(
             context.regime["schedule"].fold_schedule_id
             if context.regime.get("schedule") is not None

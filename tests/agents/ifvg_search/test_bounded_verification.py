@@ -239,7 +239,7 @@ def test_preflight_types_every_window_defect(bounded_env) -> None:
                 SourcePartitionRef(
                     physical_utc_date=partition.physical_utc_date,
                     relative_logical_partition_key=partition.relative_logical_partition_key,
-                    source_kind="mbp10",
+                    source_kind="legacy_verified_replay_source",
                     content_sha256="7" * 64,
                 )
                 for partition in physical_partitions_for("2026-06-04")

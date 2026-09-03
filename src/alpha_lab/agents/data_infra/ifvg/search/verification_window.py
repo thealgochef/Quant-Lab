@@ -296,8 +296,9 @@ def build_logical_day_coverage(
 
 
 def _schema_era_boundary(inventory: Mapping[str, tuple[str, str]]) -> str | None:
-    """The first physical date whose source kind differs from its predecessor
-    (the mbp10 → mbp1 era boundary of the accepted inventory), if any."""
+    """The first physical date whose PUBLIC source kind differs from its
+    predecessor (the ``legacy_verified_replay_source`` → ``mbp1`` era boundary
+    of the accepted inventory), if any."""
 
     previous_kind: str | None = None
     for day in sorted(inventory):

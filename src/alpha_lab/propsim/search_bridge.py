@@ -54,7 +54,7 @@ from alpha_lab.propsim.adapters import (
 )
 from alpha_lab.propsim.contract_evidence import PropContractSupersession
 from alpha_lab.propsim.event_detail import (
-    EVENT_DETAIL_BUDGET_V1,
+    EVENT_DETAIL_BUDGET_V2,
     EVENT_DETAIL_PERSISTENCE_POLICIES,
     EVENT_DETAIL_POLICY_NONE,
     EVENT_DETAIL_POLICY_PARQUET_V2,
@@ -297,7 +297,7 @@ def make_prop_simulator(
     | None = None,
     store_root: Path | None = None,
     event_detail_persistence_policy_id: str = EVENT_DETAIL_POLICY_NONE,
-    event_detail_budget: EventDetailBudget = EVENT_DETAIL_BUDGET_V1,
+    event_detail_budget: EventDetailBudget = EVENT_DETAIL_BUDGET_V2,
     on_simulation_persisted: Callable[[str, str, str, str], None] | None = None,
 ) -> Callable[..., dict[str, PayoutReliabilityVector]]:
     """Build the orchestrator-seam callable over the real simulation chain.

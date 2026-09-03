@@ -14,6 +14,7 @@ from alpha_lab.agents.data_infra.ifvg.fold_schedules import derive_fold_schedule
 from alpha_lab.agents.data_infra.ifvg.ml.regime_contracts import ObservationGranularity
 from alpha_lab.agents.data_infra.ifvg.ml.regime_oos_assignment import (
     OOS_ASSIGNMENT_COLUMNS,
+    OOS_ASSIGNMENT_SCHEMA_HASH,
     PanelAssignmentContext,
     RegimeOosAssignmentPayload,
     assign_panel_regimes_to_candidates,
@@ -345,14 +346,15 @@ def test_candidate_grain_artifact_one_row_per_candidate_and_store_discipline(
         verify_regime_oos_assignment_frame(stored, frame.iloc[:-1])
     with pytest.raises(ValueError, match="do not hash"):
         save_regime_oos_assignment(tmp_path / "x", envelope, table + b"x")
-    # identity binding: a different as-of source or fit set → a different id
+    # identity binding: a different as-of source → a different id (the
+    # candidate sets must stay exactly equal — HARDENING-BACKEND-FIX §6.5)
     other, _ = build_regime_oos_assignment_artifact(
         frame,
         protocol=protocol,
         verified_fit_assignments=verified,
         regime_fold_set_id=run.fold_set_id,
         fold_schedule_id=schedule.fold_schedule_id,
-        candidate_as_of=as_of.iloc[:-1],
+        candidate_as_of=as_of,
         candidate_as_of_source_ref="bundle_feature_view:" + "0" * 64,
         candidate_as_of_stage=AvailabilityStage.ENTRY_DECISION,
     )
@@ -395,7 +397,7 @@ def _payload_fields(**overrides) -> dict:
         consulted_assignments_hash="f" * 64,
         candidate_count=0,
         resolved_cluster_count=3,
-        assignment_schema_hash="1" * 64,
+        assignment_schema_hash=OOS_ASSIGNMENT_SCHEMA_HASH,
         candidate_as_of_stage=AvailabilityStage.ENTRY_DECISION,
     )
     fields.update(overrides)
@@ -464,3 +466,262 @@ def test_candidate_as_of_source_ref_is_a_loaded_artifact_line_never_a_caller_str
         with pytest.raises(ValueError, match="pattern|string_pattern_mismatch"):
             _payload(bad)
     assert "64" not in CANDIDATE_AS_OF_SOURCE_REF_PATTERN.replace("{64}", "")
+
+
+# ── HARDENING-BACKEND-FIX §6 — exact OOS provenance, set equality, projection ─
+
+
+def _fit_row(row_id, *, fold_index, partition, valid, reason=None, local=0):
+    fit_id = str(fold_index) * 64
+    if valid:
+        return {
+            "row_id": row_id,
+            "fold_index": fold_index,
+            "partition": partition,
+            "regime_fit_id": fit_id,
+            "fold_local_cluster_id": local,
+            "canonical_reporting_cluster_id": local,
+            "distances": [0.1, 0.5, 0.9] if local == 0 else [0.5, 0.1, 0.9],
+            "assigned_distance": 0.1,
+            "assignment_margin": 0.4,
+            "valid": True,
+            "missing_reason": None,
+        }
+    return {
+        "row_id": row_id,
+        "fold_index": fold_index,
+        "partition": partition,
+        "regime_fit_id": fit_id,
+        "fold_local_cluster_id": None,
+        "canonical_reporting_cluster_id": None,
+        "distances": None,
+        "assigned_distance": float("nan"),
+        "assignment_margin": float("nan"),
+        "valid": False,
+        "missing_reason": reason,
+    }
+
+
+def test_invalid_oos_rows_retain_exact_provenance_and_no_coverage_is_bare():
+    """HB-FIX-04 (candidate grain): A = valid OOS row (fit / fold / partition
+    and outputs), B = INVALID OOS row of an applicable fit (fit / fold /
+    partition and the fit's own typed reason; outputs null), C / D = no OOS
+    test row at all (``no_oos_assignment``; no fit, no fold)."""
+
+    from alpha_lab.agents.data_infra.ifvg.ml import regime_oos_assignment as oos_module
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_contracts import (
+        RegimeAssignmentEvidenceError,
+        validate_assignment_rows,
+    )
+
+    assignments = pd.DataFrame(
+        [
+            _fit_row("A", fold_index=1, partition="test", valid=True),
+            _fit_row("A", fold_index=0, partition="train", valid=True),
+            _fit_row(
+                "B", fold_index=0, partition="test", valid=False, reason="source_feature_missing"
+            ),
+            _fit_row(
+                "B", fold_index=1, partition="train", valid=False, reason="source_feature_missing"
+            ),
+            _fit_row("C", fold_index=0, partition="train", valid=True),
+        ]
+    )
+    frame = candidate_fold_oos_assignment(assignments, ("A", "B", "C", "D"))
+    assert list(frame["candidate_id"]) == ["A", "B", "C", "D"]
+    indexed = frame.set_index("candidate_id")
+    a = indexed.loc["A"]
+    assert bool(a["valid"]) and a["regime_fit_id"] == "1" * 64 and int(a["fold_index"]) == 1
+    assert a["partition"] == "test" and a["missing_reason"] is None
+    b = indexed.loc["B"]
+    assert not bool(b["valid"])
+    assert b["regime_fit_id"] == "0" * 64 and int(b["fold_index"]) == 0 and b["partition"] == "test"
+    assert b["missing_reason"] == "source_feature_missing"
+    assert b["distances"] is None and pd.isna(b["fold_local_cluster_id"])
+    assert pd.isna(b["assigned_distance"]) and pd.isna(b["assignment_margin"])
+    for candidate_id in ("C", "D"):
+        row = indexed.loc[candidate_id]
+        assert not bool(row["valid"]) and row["missing_reason"] == "no_oos_assignment"
+        assert row["regime_fit_id"] is None and pd.isna(row["fold_index"])
+        assert row["partition"] is None
+    # the descriptive invariants accept the three shapes …
+    canonical = oos_module._frame_for_schema(frame)
+    validate_assignment_rows(canonical, cluster_count=3, kind="descriptive")
+    # … refuse PARTIAL provenance …
+    partial = canonical.copy()
+    partial.loc[partial["candidate_id"] == "B", "fold_index"] = pd.NA
+    with pytest.raises(RegimeAssignmentEvidenceError) as incomplete:
+        validate_assignment_rows(partial, cluster_count=3, kind="descriptive")
+    assert incomplete.value.reason == "assignment_provenance_incomplete"
+    # … and a fabricated fit / fold under no_oos_assignment
+    fabricated = canonical.copy()
+    mask = fabricated["candidate_id"] == "D"
+    fabricated.loc[mask, "regime_fit_id"] = "2" * 64
+    fabricated.loc[mask, "fold_index"] = 2
+    fabricated.loc[mask, "partition"] = "test"
+    with pytest.raises(RegimeAssignmentEvidenceError) as fake:
+        validate_assignment_rows(fabricated, cluster_count=3, kind="descriptive")
+    assert fake.value.reason == "assignment_provenance_incomplete"
+    # two test rows for one candidate are refused whatever their validity
+    twice = pd.concat(
+        [assignments, pd.DataFrame([_fit_row("B", fold_index=2, partition="test", valid=True)])],
+        ignore_index=True,
+    )
+    with pytest.raises(RegimeAssignmentEvidenceError) as duplicated:
+        candidate_fold_oos_assignment(twice, ("A", "B"))
+    assert duplicated.value.reason == "duplicate_candidate_id"
+    # a fold that had NO fit (the kernel writes an empty fit id) keeps fold /
+    # partition and the typed reason without inventing a fit
+    fit_less = pd.DataFrame(
+        [{**_fit_row("E", fold_index=3, partition="test", valid=False, reason="fold_invalid"),
+          "regime_fit_id": ""}]
+    )
+    row = candidate_fold_oos_assignment(fit_less, ("E",)).set_index("candidate_id").loc["E"]
+    assert row["missing_reason"] == "fold_invalid" and row["regime_fit_id"] is None
+    assert int(row["fold_index"]) == 3 and row["partition"] == "test"
+    validate_assignment_rows(
+        oos_module._frame_for_schema(candidate_fold_oos_assignment(fit_less, ("E",))),
+        cluster_count=3,
+        kind="descriptive",
+    )
+
+
+def test_panel_descriptive_mode_retains_invalid_fit_provenance():
+    """HB-FIX-04 (panel grain): a bar whose ONLY test rows are invalid keeps
+    the lowest-fold fit's id / fold / partition and typed reason; a valid
+    row still wins; the fold-feature mode keeps the exact fit reason for the
+    candidate's OWN row; a bar with no test row stays a bare coverage gap."""
+
+    day = "2026-01-13"
+    panel = _panel(day)
+    valid_rows = _assignments(panel, fold_index=1)
+    invalid = pd.DataFrame(
+        [
+            _fit_row(f"{day}:12", fold_index=0, partition="test", valid=False,
+                     reason="below_confidence_floor"),
+            _fit_row(f"{day}:13", fold_index=0, partition="test", valid=False,
+                     reason="below_confidence_floor"),
+        ]
+    )
+    assignments = pd.concat(
+        [valid_rows[valid_rows["row_id"] != f"{day}:12"], invalid], ignore_index=True
+    )
+    base = pd.Timestamp(f"{day}T14:00:00Z")
+    at_12 = (base + pd.Timedelta(seconds=300 * 13)).isoformat()
+    at_13 = (base + pd.Timedelta(seconds=300 * 14)).isoformat()
+    assigned = _assign(panel, assignments, [("c12", at_12), ("c13", at_13)])
+    c12 = assigned.loc["c12"]
+    assert not bool(c12["valid"]) and c12["missing_reason"] == "below_confidence_floor"
+    assert c12["regime_fit_id"] == "0" * 64 and int(c12["fold_index"]) == 0
+    assert c12["partition"] == "test" and c12["panel_row_id"] == f"{day}:12"
+    assert c12["distances"] is None and pd.isna(c12["assigned_distance"])
+    c13 = assigned.loc["c13"]
+    assert bool(c13["valid"]) and int(c13["fold_index"]) == 1
+    own = _assign(
+        panel, assignments, [("c13", at_13)], partition_for_candidate={"c13": (0, "test")}
+    )
+    assert own.loc["c13"]["missing_reason"] == "below_confidence_floor"
+    assert own.loc["c13"]["regime_fit_id"] == "0" * 64 and int(own.loc["c13"]["fold_index"]) == 0
+    gap = _assign(panel, assignments[assignments["row_id"] != f"{day}:12"], [("c12", at_12)])
+    assert gap.loc["c12"]["missing_reason"] == "coverage_gap"
+    assert gap.loc["c12"]["regime_fit_id"] is None and pd.isna(gap.loc["c12"]["fold_index"])
+
+
+def test_candidate_as_of_and_assignment_sets_must_be_exactly_equal(candidate_run, tmp_path):
+    """HB-FIX-07: same ids, same count, no duplicates, no extras, no omissions."""
+
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_contracts import RegimeAssignmentEvidenceError
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_oos_assignment import (
+        consulted_assignment_frame,
+    )
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_store import load_regime_fit_assignments
+
+    fixture, folds, protocol, run = candidate_run
+    root = tmp_path / "store"
+    for fold_fit in run.fold_fits:
+        persist_regime_fit(
+            root,
+            fold_fit,
+            run.assignments[run.assignments["fold_index"] == fold_fit.fold_index],
+            observation_frame=fixture.view.frame,
+        )
+    verified = {
+        fit.fold_index: load_regime_fit_assignments(root, fit.fit_envelope.regime_fit_id)
+        for fit in run.fold_fits
+    }
+    ids = tuple(fixture.view.frame["candidate_id"].astype(str))
+    frame = candidate_fold_oos_assignment(consulted_assignment_frame(verified), ids)
+    schedule = derive_fold_schedule(fixture.trading_days)
+    as_of = candidate_as_of_frame(fixture.view.frame, stage=AvailabilityStage.ENTRY_DECISION)
+
+    def _build(frame_, as_of_):
+        return build_regime_oos_assignment_artifact(
+            frame_,
+            protocol=protocol,
+            verified_fit_assignments=verified,
+            regime_fold_set_id=run.fold_set_id,
+            fold_schedule_id=schedule.fold_schedule_id,
+            candidate_as_of=as_of_,
+            candidate_as_of_source_ref=f"bundle_feature_view:{fixture.view.view_id}",
+            candidate_as_of_stage=AvailabilityStage.ENTRY_DECISION,
+        )
+
+    _build(frame, as_of)
+    extra = pd.concat([as_of, as_of.iloc[:1].assign(candidate_id="extra")], ignore_index=True)
+    for bad_as_of in (as_of.iloc[:-1], extra):
+        with pytest.raises(RegimeAssignmentEvidenceError) as mismatch:
+            _build(frame, bad_as_of)
+        assert mismatch.value.reason == "candidate_set_mismatch"
+    with pytest.raises(RegimeAssignmentEvidenceError) as omitted:
+        _build(frame.iloc[:-1], as_of)
+    assert omitted.value.reason == "candidate_set_mismatch"
+    with pytest.raises(RegimeAssignmentEvidenceError) as duplicate_output:
+        _build(pd.concat([frame, frame.iloc[:1]], ignore_index=True), as_of)
+    assert duplicate_output.value.reason == "duplicate_candidate_id"
+    with pytest.raises(RegimeAssignmentEvidenceError) as duplicate_input:
+        _build(frame, pd.concat([as_of, as_of.iloc[:1]], ignore_index=True))
+    assert duplicate_input.value.reason == "duplicate_candidate_id"
+
+
+def test_trade_projection_retains_invalid_assignment_provenance():
+    """HB-FIX-04: the executed-trade projection keeps the known fit / fold of
+    an invalid assignment; only the trade-facing outputs are null."""
+
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_assignment_sources import regime_for_trades
+
+    assignments = pd.DataFrame(
+        [
+            _fit_row("A", fold_index=1, partition="test", valid=True),
+            _fit_row("B", fold_index=0, partition="test", valid=False,
+                     reason="source_feature_missing"),
+        ]
+    )
+    descriptive = candidate_fold_oos_assignment(assignments, ("A", "B", "C"))
+    trades = pd.DataFrame(
+        {"trade_id": ["t1", "t2", "t3", "t4"], "candidate_id": ["A", "B", "C", "Z"]}
+    )
+    projected = regime_for_trades(trades, descriptive).set_index("trade_id")
+    t1 = projected.loc["t1"]
+    assert bool(t1["valid"]) and t1["regime_fit_id"] == "1" * 64 and int(t1["fold_index"]) == 1
+    t2 = projected.loc["t2"]
+    assert not bool(t2["valid"])
+    assert t2["regime_fit_id"] == "0" * 64 and int(t2["fold_index"]) == 0
+    assert t2["missing_reason"] == "source_feature_missing"
+    assert pd.isna(t2["canonical_reporting_cluster_id"]) and pd.isna(t2["assignment_margin"])
+    t3 = projected.loc["t3"]
+    assert t3["missing_reason"] == "no_oos_assignment"
+    assert t3["regime_fit_id"] is None and pd.isna(t3["fold_index"])
+    t4 = projected.loc["t4"]
+    assert t4["missing_reason"] == "candidate_not_in_assignment" and t4["regime_fit_id"] is None
+    # review RB-05: the projection validates its INPUT natively before any bool()
+    # coercion — a "False" string never projects as a valid assignment
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_contracts import (
+        RegimeAssignmentEvidenceError,
+    )
+
+    laundered = descriptive.copy()
+    laundered["valid"] = laundered["valid"].astype(object)
+    laundered.loc[laundered["candidate_id"] == "B", "valid"] = "False"
+    with pytest.raises(RegimeAssignmentEvidenceError) as refused:
+        regime_for_trades(trades, laundered)
+    assert refused.value.reason == "native_value_refused"

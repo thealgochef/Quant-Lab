@@ -355,3 +355,207 @@ def test_real_scope_seed_requires_the_loaded_artifact_source() -> None:
     disagrees = dc_replace(wired, expected_seed_snapshot_id="b" * 64)
     with pytest.raises(PermissionError, match="disagrees"):
         _loaded_seed_snapshot_id_for_real_scope(disagrees)
+
+
+# ── HARDENING-BACKEND-FIX §8 — canonical UTC seed datetimes at the ONE seam ──
+
+
+def _zones() -> dict:
+    from datetime import UTC, timedelta, timezone
+    from zoneinfo import ZoneInfo
+
+    import pytz
+
+    return {
+        "stdlib_utc": UTC,
+        "pytz_utc": pytz.UTC,
+        "pytz_new_york": pytz.timezone("America/New_York"),
+        "zoneinfo_utc": ZoneInfo("UTC"),
+        "zoneinfo_tokyo": ZoneInfo("Asia/Tokyo"),
+        "fixed_minus_5": timezone(timedelta(hours=-5)),
+        "fixed_plus_9_30": timezone(timedelta(hours=9, minutes=30)),
+    }
+
+
+@pytest.mark.parametrize("zone_label", sorted(_zones()))
+def test_direct_seed_save_canonicalizes_every_aware_timezone_to_utc(
+    tmp_path, synthetic_chain, zone_label
+) -> None:
+    """HB-FIX-10: the same instants under pytz / zoneinfo / fixed offsets
+    produce the identical seed identity, the identical snapshot id and
+    byte-identical canonical sidecar bytes through a DIRECT
+    ``save_seed_snapshot``; the caller's object is never mutated; a seed
+    already in stdlib UTC keeps its existing (golden) hash."""
+
+    from datetime import UTC
+
+    from alpha_lab.agents.data_infra.ifvg.search.child_replay import (
+        canonical_seed_hash,
+        canonicalize_seed_datetimes,
+    )
+    from alpha_lab.agents.data_infra.ifvg.search.store import load_sidecar_bytes
+    from tests.agents.ifvg_search.conftest import aware_seed_datetimes, rezone_seed_datetimes
+
+    zone = _zones()[zone_label]
+    seed = synthetic_chain[1].end_seed
+    stamps = aware_seed_datetimes(seed)
+    assert stamps, "the synthetic seed carries aware datetimes"
+    assert all(stamp.tzinfo is UTC for stamp in stamps)
+    golden = seed_hash(seed)
+    assert canonical_seed_hash(seed) == golden  # an already-canonical seed is unchanged
+    rezoned = rezone_seed_datetimes(seed, zone)
+    rezoned_stamps = aware_seed_datetimes(rezoned)
+    assert [s.timestamp() for s in rezoned_stamps] == [s.timestamp() for s in stamps]
+    canonical = canonicalize_seed_datetimes(rezoned)
+    assert seed_hash(canonical) == golden
+    assert canonical_seed_hash(rezoned) == golden
+    assert all(stamp.tzinfo is UTC for stamp in aware_seed_datetimes(canonical))
+    # the instants are preserved exactly
+    assert [s.timestamp() for s in aware_seed_datetimes(canonical)] == [
+        s.timestamp() for s in stamps
+    ]
+    # the caller's object was not mutated by the canonicalization
+    assert [s.tzinfo for s in aware_seed_datetimes(rezoned)] == [s.tzinfo for s in rezoned_stamps]
+    # the DIRECT save accepts the rezoned seed against the canonical payload hash,
+    # mints the same snapshot id and persists byte-identical canonical bytes
+    envelope = save_seed_snapshot(tmp_path / "rezoned", _snapshot_payload(seed), rezoned)
+    reference = save_seed_snapshot(tmp_path / "reference", _snapshot_payload(seed), seed)
+    assert envelope.seed_snapshot_id == reference.seed_snapshot_id
+    assert load_sidecar_bytes(
+        tmp_path / "rezoned", "seed_snapshots", envelope.seed_snapshot_id, "seed.pickle"
+    ) == load_sidecar_bytes(
+        tmp_path / "reference", "seed_snapshots", reference.seed_snapshot_id, "seed.pickle"
+    )
+    _loaded, chain_start = load_seed_snapshot(
+        tmp_path / "rezoned",
+        envelope.seed_snapshot_id,
+        expected_section_config_hash=seed.profile_hash,
+    )
+    assert seed_hash(chain_start.seed) == golden
+    assert all(stamp.tzinfo is UTC for stamp in aware_seed_datetimes(chain_start.seed))
+
+
+def test_seed_canonicalization_covers_nested_containers_and_keeps_naive_datetimes() -> None:
+    from dataclasses import dataclass
+    from datetime import UTC, datetime, timedelta, timezone
+    from typing import NamedTuple
+
+    import pytz
+    from pydantic import BaseModel
+
+    from alpha_lab.agents.data_infra.ifvg.search.child_replay import canonicalize_seed_datetimes
+
+    instant = datetime(2026, 1, 13, 14, 30, tzinfo=UTC)
+    minus_five = instant.astimezone(timezone(timedelta(hours=-5)))
+    tokyo = instant.astimezone(pytz.timezone("Asia/Tokyo"))
+    naive = datetime(2026, 1, 13, 14, 30)
+
+    class Pair(NamedTuple):
+        first: datetime
+        second: datetime
+
+    class Model(BaseModel):
+        when: datetime
+        items: tuple[datetime, ...]
+
+    @dataclass(frozen=True)
+    class Node:
+        when: datetime
+        naive: datetime
+        children: tuple
+        listed: list
+        mapped: dict
+        pair: Pair
+        model: Model
+        day: date
+
+    node = Node(
+        when=minus_five,
+        naive=naive,
+        children=(tokyo, (minus_five,)),
+        listed=[tokyo, [minus_five]],
+        mapped={"a": tokyo, "b": {"c": minus_five}},
+        pair=Pair(minus_five, tokyo),
+        model=Model(when=tokyo, items=(minus_five,)),
+        day=date(2026, 1, 13),
+    )
+    canonical = canonicalize_seed_datetimes(node)
+    # every aware datetime is the same instant under stdlib UTC …
+    for stamp in (
+        canonical.when,
+        canonical.children[0],
+        canonical.children[1][0],
+        canonical.listed[0],
+        canonical.listed[1][0],
+        canonical.mapped["a"],
+        canonical.mapped["b"]["c"],
+        canonical.pair.first,
+        canonical.pair.second,
+        canonical.model.when,
+        canonical.model.items[0],
+    ):
+        assert stamp.tzinfo is UTC and stamp == instant and stamp.isoformat() == instant.isoformat()
+    assert isinstance(canonical.pair, Pair) and isinstance(canonical.model, Model)
+    # … the naive datetime and the date pass through untouched (never localized)
+    assert canonical.naive is naive and canonical.naive.tzinfo is None
+    assert canonical.day == date(2026, 1, 13)
+    # the caller's graph is untouched
+    assert node.when.utcoffset() == timedelta(hours=-5)
+    assert node.mapped["b"]["c"].utcoffset() == timedelta(hours=-5)
+    assert node.model.when.utcoffset() == timedelta(hours=9)
+    # a stdlib fixed offset is NOT UTC (the former ``isinstance(tzinfo, timezone)`` shortcut)
+    assert canonicalize_seed_datetimes(minus_five).tzinfo is UTC
+    assert canonicalize_seed_datetimes(minus_five).isoformat() == instant.isoformat()
+    # an already-canonical stdlib UTC datetime keeps its value (a fresh, equal object)
+    assert canonicalize_seed_datetimes(instant) == instant
+    assert canonicalize_seed_datetimes(instant).isoformat() == instant.isoformat()
+    # pytz UTC → stdlib UTC (the same isoformat)
+    pytz_instant = instant.astimezone(pytz.UTC)
+    assert canonicalize_seed_datetimes(pytz_instant).tzinfo is UTC
+    assert canonicalize_seed_datetimes(pytz_instant).isoformat() == instant.isoformat()
+    # review RA-03: datetime dict KEYS, set / frozenset members, pydantic
+    # ``extra="allow"`` values and ``init=False`` dataclass fields are seed
+    # content too — canonicalized, never dropped
+    from dataclasses import field as dc_field
+
+    import numpy as np
+    from pydantic import ConfigDict
+
+    class Extra(BaseModel):
+        model_config = ConfigDict(extra="allow")
+        when: datetime
+
+    @dataclass
+    class Derived:
+        when: datetime
+        derived: datetime = dc_field(init=False)
+
+        def __post_init__(self) -> None:
+            self.derived = self.when + timedelta(hours=1)
+
+    keyed = canonicalize_seed_datetimes({minus_five: tokyo})
+    assert list(keyed) == [instant] and list(keyed)[0].tzinfo is UTC
+    assert keyed[instant].tzinfo is UTC and keyed[instant] == instant
+    members = canonicalize_seed_datetimes(frozenset({tokyo}))
+    assert isinstance(members, frozenset) and next(iter(members)).tzinfo is UTC
+    plain = canonicalize_seed_datetimes({minus_five})
+    assert isinstance(plain, set) and next(iter(plain)).tzinfo is UTC
+    extra = canonicalize_seed_datetimes(Extra(when=tokyo, later=minus_five))
+    assert extra.when.tzinfo is UTC and extra.model_extra["later"].tzinfo is UTC
+    assert extra.model_extra["later"] == instant
+    derived = Derived(when=minus_five)
+    canonical_derived = canonicalize_seed_datetimes(derived)
+    assert canonical_derived.when.tzinfo is UTC and canonical_derived.when == instant
+    assert canonical_derived.derived == derived.derived  # the init=False value survives
+    assert canonical_derived.derived.tzinfo is UTC
+    assert derived.when.utcoffset() == timedelta(hours=-5)  # the caller's object untouched
+    # a pandas Timestamp is rebuilt as the stdlib datetime it represents …
+    stamp = canonicalize_seed_datetimes(pd.Timestamp(tokyo))
+    assert type(stamp) is datetime and stamp == instant and stamp.tzinfo is UTC
+    # … while sub-microsecond precision, numpy datetime64 and NaT are refused, never dropped
+    with pytest.raises(SeedSnapshotError):
+        canonicalize_seed_datetimes(pd.Timestamp(instant) + pd.Timedelta(1, "ns"))
+    with pytest.raises(SeedSnapshotError):
+        canonicalize_seed_datetimes(np.datetime64("2026-01-13T14:30"))
+    with pytest.raises(SeedSnapshotError):
+        canonicalize_seed_datetimes(pd.NaT)

@@ -300,12 +300,18 @@ def test_bundle_binds_the_namespace_and_the_current_supersession_head(tmp_path) 
             bundle, envelope, as_of_utc="2026-08-18T00:00:00Z", store_root=root
         )
     assert moved.value.reason == "supersession_head_witness_mismatch"
-    # re-signed against the current head: accepted; a rollback then refuses
+    # re-signed against the current head: the witness is current, but the chain
+    # names decisions that are not verified store entries, so the COMPLETE
+    # authority proof (HARDENING-BACKEND-FIX §10) refuses; a rollback then
+    # refuses on the witness first
     resigned = owner_authorization_bundle(
         root, requirement_set_id=envelope.requirement_set_id, decision_refs=refs
     )
-    validate_owner_authorization(resigned, envelope, as_of_utc="2026-08-18T00:00:00Z",
-                                 store_root=root)
+    with pytest.raises(AuthorizationError) as unverifiable:
+        validate_owner_authorization(
+            resigned, envelope, as_of_utc="2026-08-18T00:00:00Z", store_root=root
+        )
+    assert unverifiable.value.reason == "supersession_decision_unverifiable"
     from alpha_lab.agents.data_infra.ifvg.search.store_namespace import (
         load_store_namespace,
         write_supersession_head_atomic,

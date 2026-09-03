@@ -1111,3 +1111,73 @@ no real seed replay, no real ≤5-day run):
   `feature_block_registry_hash`, the `B0_CORE` bundle id. Re-minted (synthetic only):
   owner-decision artifact ids (`store_namespace_id`), verification-run ids and charter ids that
   carry a real bundle (namespace + witness), execution-attempt receipts.
+
+HARDENING-BACKEND-FIX additions (the compact backend correction of
+`QL-FSM-PROP-SEARCH-DASHBOARD/implementation-progress/HARDENING-BACKEND-FIX/IMPLEMENTATION_PLAN.md`
+— ten corrections, nothing else; no owner action taken, no seed production, no real ≤5-day
+run; `backend_dev_complete_for_ui = true`, acceptance still transitively blocked by R1):
+
+- **Token-safe stale-lock reclamation** (`ifvg/search/file_mutex.py`, `owner_decision_lock.py`):
+  reclamation runs under a private standard-library cross-process mutex (`msvcrt` byte range /
+  `fcntl.flock`; never unlinked; carries no authority); the stale body is re-read and re-evaluated
+  under the mutex and unlinked ONLY when byte-identical to the dead holder observed; a persistent
+  read failure is the typed `lock_read_failed` (never absence); `release()` raises
+  `lock_release_failed` when it cannot verify its own lock; a failed body write removes the partial
+  exclusive file.
+- **Atomic, recoverable namespace initialization** (`ifvg/search/store_namespace.py`): the
+  envelope and the genesis head are published as one pair through temporary files and
+  verified-loaded together under a one-time init mutex; a half-initialized store is recovered only
+  by the identical request (class + explicit instance id, no supersession records) and is otherwise
+  the typed `incomplete_store_namespace_initialization`; conflicting bytes are never overwritten.
+- **Public source-kind boundary** (`ifvg/search/trading_calendar.py`): the public `SourceKind` is
+  exactly `mbp1` / `trades` / `legacy_verified_replay_source`; a historical physical partition
+  resolves to the opaque legacy value through the private physical-file resolver (an internal
+  `PhysicalSourceDescriptor` keeps the truthful file name, era, hash and partition key and implies
+  nothing beyond replay bytes); every inventory, window ref and the seed inventory hash refuse the
+  physical stem.
+- **Exact regime provenance and native validation** (`ifvg/ml/regime_contracts.py`,
+  `regime_oos_assignment.py`, `regime_fold_features.py`, `regime_assignment_sources.py`): the
+  descriptive OOS assignment keeps three-way semantics (valid; invalid with its applicable fit /
+  fold / partition and the fit's typed reason; `no_oos_assignment` only for a candidate with no
+  OOS test row) on the candidate grain, the panel PIT rule, the fold-feature spine and the
+  executed-trade projection; every assignment / fold-feature table is validated natively before
+  any conversion (actual booleans, integral values, no numeric strings / infinity / sentinel
+  identifiers, no `errors="coerce"`); the OOS payload binds the registered schema hash, the saver
+  and the loader decode the Arrow bytes and prove schema / count / uniqueness / row invariants, and
+  the candidate-as-of and assignment sets are exactly equal.
+- **Fail-closed manifests; exact label and executed-trade evidence** (`ifvg/search/store.py`,
+  `ifvg/ml/comparison_rows.py`, the three study runners, `regime_stratification_service.py`): one
+  central manifest-entry validator is shared by every probe / load / reuse path (bare relative file
+  names, lowercase 64-hex digests, non-negative byte counts, no duplicates / reserved names, the
+  envelope entry exactly once; artifacts resolved and compared before opening —
+  `sidecar_path_escape`; `invalid_store_locator` distinguished from absence); duplicate label
+  candidates are refused before hashing; the pipeline's persisting study seams prove the label
+  artifact derives exactly from the registered policy; the persisting stratification service
+  requires every child's exact `executed_trade_table_id`.
+- **Central seed canonicalization** (`ifvg/search/child_replay.py::save_seed_snapshot`): the one
+  seam rebuilds every aware datetime (pytz / zoneinfo / fixed offsets) under the stdlib UTC
+  tzinfo, leaves naive datetimes unchanged and rebuilds containers, so the same instants under any
+  representation mint the same seed hash, snapshot id and sidecar bytes; the seed-production runner
+  delegates to it.
+- **Bounded event-detail partition** (`propsim/event_detail.py`, `propsim/search_bridge.py`,
+  `scripts/hardening_capacity_benchmark.py`): `EVENT_DETAIL_BUDGET_V2` registers
+  `max_rows_per_partition = 50,000` (the benchmark's measured row-group size; no ceiling lowered);
+  the writer flushes at the bound even inside one path, partitions are keyed
+  `(path_block_id, partition_ordinal)` with first / last event keys, rows, bytes, digest and schema
+  hash, a refused build leaves no partition behind, the reader proves the bound and the total
+  order; the V1 budget stays loadable but is refused by the writer; the benchmark's `normal` /
+  `skewed` / `dense` shapes and the resident-batch gate passed at 250k / 500k / 1M rows.
+- **Complete authority-chain proof** (`ifvg/search/owner_decisions.py::verify_complete_owner_authority_chain`):
+  the ONE proof every real authority seam runs (charter freeze / load, pipeline launch, activation,
+  executors, verification run, MBP-1 diagnostic, the seed-production and bounded-verification
+  authorizations, the regime chain loader) — every record verified from the genesis anchor, every
+  superseded and replacement decision verified-loaded, lawful transitions only, and the signed
+  witness equal to the verified current head (`supersession_decision_unverifiable`,
+  `supersession_transition_unlawful`, `supersession_chain_divergent`).
+- **Unchanged (golden-tested)**: the Strategy-Core pin, the fixed M0–M3 lane, the R6.1-FIX goldens
+  (`B0_CORE` bundle id, candidate protocol id, `core_replay_id`, `account_simulation_id`,
+  `feature_block_registry_hash`), R5B formulas, model protocol parameters, KMeans fit identities,
+  prop-firm rule contracts, the S11 blocked reason, `order_flow_depth_policy="mbp1_only_v1"`.
+  Re-minted (synthetic only): inventories / windows / seed authorizations that serialized the
+  physical stem, seeds created from non-UTC representations, simulations under the default (V2)
+  event-detail budget, regime OOS / fold artifacts whose invalid rows previously collapsed.

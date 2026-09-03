@@ -74,13 +74,16 @@ def study_inputs():
     return view, labels, folds, envelope, full_frame
 
 
+_LABEL_POLICY = "synthetic_fixture_labels_v1"
+
+
 def _label_artifact_id(labels):
     """R6.1-FIX §3.6: the exact (policy-bearing, every-consumed-column) label
     artifact id a persisting caller passes."""
 
     from alpha_lab.agents.data_infra.ifvg.ml.comparison_rows import label_artifact_content_id
 
-    return label_artifact_content_id("synthetic_fixture_labels_v1", labels)
+    return label_artifact_content_id(_LABEL_POLICY, labels)
 
 
 @pytest.fixture(scope="module")
@@ -94,6 +97,7 @@ def study(study_inputs):
         mbp1_features=full_frame,
         mbp1_feature_artifact=envelope,
         label_artifact_id=_label_artifact_id(labels),
+        label_policy_id=_LABEL_POLICY,
     )
 
 
@@ -150,6 +154,7 @@ def test_study_identity_is_deterministic(study, study_inputs):
         mbp1_features=full_frame,
         mbp1_feature_artifact=envelope,
         label_artifact_id=_label_artifact_id(labels),
+        label_policy_id=_LABEL_POLICY,
     )
     assert (
         again.envelope.controlled_feature_study_id
@@ -172,6 +177,7 @@ def test_study_identity_is_deterministic(study, study_inputs):
         mbp1_features=other_frame,
         mbp1_feature_artifact=other_envelope,
         label_artifact_id=_label_artifact_id(labels),
+        label_policy_id=_LABEL_POLICY,
     )
     assert (
         other.envelope.controlled_feature_study_id

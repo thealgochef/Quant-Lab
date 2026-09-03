@@ -104,6 +104,22 @@ MODELED_DELIVERY_ARTIFACTS: MappingProxyType[str, tuple[str, str]] = MappingProx
 )
 
 
+STRATIFICATION_EVIDENCE_FAILURE_REASONS: tuple[str, ...] = (
+    "executed_trade_table_required",
+)
+
+
+class StratificationEvidenceError(ValueError):
+    """HARDENING-BACKEND-FIX §7.3: a persisting stratification refused for a
+    typed ``reason`` before anything is published."""
+
+    def __init__(self, reason: str, message: str) -> None:
+        if reason not in STRATIFICATION_EVIDENCE_FAILURE_REASONS:
+            raise ValueError(f"unregistered stratification evidence reason {reason!r}")
+        super().__init__(f"{reason}: {message}")
+        self.reason = reason
+
+
 @dataclass(frozen=True)
 class ChildStratificationInputs:
     core_replay_id: str
@@ -118,7 +134,10 @@ class ChildStratificationInputs:
     #: reproduces — the SERVICE verifies it (exact load; byte-for-byte after
     #: projection; adversarial RA-01) and binds the artifact's id + bytes hash
     #: into every report of this child; the loaded frame is then the only
-    #: frame the child's reports consume
+    #: frame the child's reports consume. HARDENING-BACKEND-FIX §7.3: the
+    #: PERSISTING service requires it for every child (a caller frame without
+    #: one is served only by the non-persisting ``build_cohort_descriptive_body``
+    #: helper)
     executed_trade_table_id: str | None = None
 
 
@@ -286,9 +305,20 @@ def _verified_child_tables(
     only frame the child's reports consume."""
 
     verified: dict[str, VerifiedExecutedTradeTable] = {}
+    missing = sorted(
+        str(core) for core, child in children.items() if child.executed_trade_table_id is None
+    )
+    if missing:
+        raise StratificationEvidenceError(
+            "executed_trade_table_required",
+            "every persisted stratified report binds its child's EXACT executed-trade "
+            f"table artifact; children without one: {[core[:12] for core in missing]} "
+            "(an ephemeral caller frame is served only by the non-persisting "
+            "build_cohort_descriptive_body helper)",
+        )
     for core_replay_id, child in children.items():
         table_id = child.executed_trade_table_id
-        if table_id is None:
+        if table_id is None:  # pragma: no cover - refused above
             continue
         loaded = load_executed_trade_table(root, str(table_id))
         if loaded.envelope.payload.core_replay_id != str(core_replay_id):

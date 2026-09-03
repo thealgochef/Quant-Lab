@@ -45,6 +45,8 @@ __all__ = [
     "comparison_row_id",
     "label_content_hash",
     "label_artifact_content_id",
+    "assert_exact_label_artifact",
+    "assert_unique_label_candidates",
     "default_fold_schedule_id",
     "candidate_fold_set_id",
     "assert_fold_local_source_coherent",
@@ -94,6 +96,68 @@ def _label_cell(value: object) -> object:
     return str(value)
 
 
+def assert_unique_label_candidates(labeled_candidates: pd.DataFrame) -> None:
+    """HARDENING-BACKEND-FIX §7.2: duplicate (or null) candidate ids are refused
+    BEFORE any label content is hashed — a label identity over a repeated
+    candidate is not an identity."""
+
+    if "candidate_id" not in labeled_candidates.columns:
+        raise ValueError("labeled candidates lack candidate_id")
+    ids = labeled_candidates["candidate_id"]
+    if ids.isna().any():
+        raise ValueError("labeled candidates carry a null candidate_id")
+    if ids.astype(str).duplicated().any():
+        raise ValueError(
+            "labeled candidates repeat a candidate_id; the label identity is refused "
+            "before hashing"
+        )
+
+
+def assert_exact_label_artifact(
+    label_artifact_id: str, label_policy_id: str | None, labeled_candidates: pd.DataFrame
+) -> str:
+    """HARDENING-BACKEND-FIX §7.2: a persisting caller's label artifact id must
+    be EXACTLY ``label_artifact_content_id(policy, labels)`` — the registered
+    policy plus every consumed label / economic column of every row. A caller
+    string that does not derive from these labels is refused."""
+
+    if not label_policy_id:
+        raise ValueError(
+            "an exact label artifact id requires its registered label policy id "
+            "(exact label identity refused)"
+        )
+    expected = label_artifact_content_id(str(label_policy_id), labeled_candidates)
+    if str(label_artifact_id) != expected:
+        raise ValueError(
+            "label_artifact_id does not derive from the registered label policy and the "
+            "consumed label columns of these labels (exact label identity refused)"
+        )
+    return expected
+
+
+#: Review RB-01 (§7.2): the ONE run-level state a persisting save accepts — the label
+#: artifact id was proven to derive exactly from the registered policy and these labels.
+PERSISTABLE_LABEL_PROOF = "exact"
+LABEL_IDENTITY_PROOFS: tuple[str, ...] = (
+    PERSISTABLE_LABEL_PROOF,
+    "caller_supplied_unproven",  # an id passed WITHOUT the policy: in-memory use only
+    "content_hash_unpersisted",  # the helper form (no id at all)
+)
+
+
+def assert_persistable_label_proof(label_identity_proof: str, *, runner: str) -> None:
+    """Review RB-01 (HARDENING-BACKEND-FIX §7.2): ONLY a run whose label artifact id
+    was proven exact may be persisted — a caller-supplied id without the registered
+    policy is trusted in memory only and never publishes a study artifact."""
+
+    if label_identity_proof != PERSISTABLE_LABEL_PROOF:
+        raise PermissionError(
+            "a study whose label artifact id was not proven exact cannot be saved "
+            f"(label_identity_proof={label_identity_proof!r}); pass label_policy_id to {runner} "
+            "so the persisting seam proves the label identity (HARDENING-BACKEND-FIX §7.2)"
+        )
+
+
 def label_artifact_content_id(label_policy_id: str | None, labeled_candidates: pd.DataFrame) -> str:
     """The exact label artifact identity (R6.1-FIX §3.6): the registered
     label policy plus EVERY consumed label/economic column of every row,
@@ -104,6 +168,7 @@ def label_artifact_content_id(label_policy_id: str | None, labeled_candidates: p
     missing = sorted(set(LABEL_CONSUMED_COLUMNS) - set(labeled_candidates.columns))
     if missing:
         raise ValueError(f"labeled candidates lack consumed label columns: {missing}")
+    assert_unique_label_candidates(labeled_candidates)
     rows = sorted(
         (
             [_label_cell(row[column]) for column in LABEL_CONSUMED_COLUMNS]
@@ -169,6 +234,7 @@ def label_content_hash(labeled_candidates: pd.DataFrame) -> str:
     (the pipeline's S07 passes its own policy-bearing ``label_artifact_id``
     explicitly; this is the default when a ladder runs outside S07)."""
 
+    assert_unique_label_candidates(labeled_candidates)
     return canonical_contract_sha256(
         {
             "labeled_pairs": sorted(

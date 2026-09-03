@@ -46,7 +46,7 @@ from alpha_lab.agents.data_infra.ifvg.search.store import (
 from alpha_lab.propsim.account import AccountPolicySetPayload, AccountTrade
 from alpha_lab.propsim.calendar import BOOTSTRAP_CLOCK_POLICY, HISTORICAL_CLOCK_POLICY
 from alpha_lab.propsim.event_detail import (
-    EVENT_DETAIL_BUDGET_V1,
+    EVENT_DETAIL_BUDGET_V2,
     EVENT_DETAIL_MANIFEST_SIDECAR,
     EVENT_DETAIL_POLICY_NONE,
     EVENT_DETAIL_POLICY_PARQUET_V2,
@@ -209,7 +209,7 @@ def _fresh_dir(base: Path, name: str) -> Path:
     return directory
 
 
-def _build(run, directory: Path, *, clock=BOOTSTRAP_CLOCK_POLICY, budget=EVENT_DETAIL_BUDGET_V1):
+def _build(run, directory: Path, *, clock=BOOTSTRAP_CLOCK_POLICY, budget=EVENT_DETAIL_BUDGET_V2):
     return build_account_event_detail(
         run.walk_results,
         run.path_records,
@@ -238,10 +238,11 @@ def test_policy_representation_and_budget_enter_the_simulation_identities():
             max_event_detail_rows=10,
             max_published_bytes=10,
             path_block_size=2,
+            max_rows_per_partition=2,
         ),
     )
     assert canonical_contract_sha256(smaller) != canonical_contract_sha256(v2)
-    assert v2.event_detail_budget == EVENT_DETAIL_BUDGET_V1
+    assert v2.event_detail_budget == EVENT_DETAIL_BUDGET_V2
     assert v2.event_detail_storage_policy_id == EVENT_DETAIL_STORAGE_ZSTD_PARQUET_V2
     assert v2.event_detail_schema_version == EVENT_DETAIL_SCHEMA_VERSION_V2
     # the four fields are ONE coherent identity — partial combinations refuse
@@ -252,7 +253,7 @@ def test_policy_representation_and_budget_enter_the_simulation_identities():
     with pytest.raises(ValueError, match="requires a registered budget"):
         _payload(EVENT_DETAIL_POLICY_PARQUET_V2, event_detail_budget=None)
     with pytest.raises(ValueError, match="none_v0 carries no storage policy"):
-        _payload(EVENT_DETAIL_POLICY_NONE, event_detail_budget=EVENT_DETAIL_BUDGET_V1)
+        _payload(EVENT_DETAIL_POLICY_NONE, event_detail_budget=EVENT_DETAIL_BUDGET_V2)
     with pytest.raises(ValueError, match="unregistered event_detail_persistence_policy_id"):
         event_detail_identity_fields("account_event_detail_json_v9")
     # the portfolio identity carries the same fields
@@ -364,8 +365,8 @@ def test_prop_event_detail_capacity_and_exact_order(tmp_path):
     run = _run(_bootstrap_payload(1200))
     simulation_id = _persist(root, run)
     detail = load_account_event_detail_manifest(root, simulation_id)
-    assert detail["total_rows"] <= EVENT_DETAIL_BUDGET_V1.max_event_detail_rows
-    assert detail["total_bytes"] <= EVENT_DETAIL_BUDGET_V1.max_published_bytes
+    assert detail["total_rows"] <= EVENT_DETAIL_BUDGET_V2.max_event_detail_rows
+    assert detail["total_bytes"] <= EVENT_DETAIL_BUDGET_V2.max_published_bytes
     assert len(detail["partitions"]) == 5  # 1200 / 250 → blocks 0..4
     table = pd.concat(list(load_account_event_detail(root, simulation_id)), ignore_index=True)
     # the walk's emission order IS the total order (path_ordinal, event_ordinal)
@@ -407,8 +408,9 @@ def test_prop_event_detail_capacity_and_exact_order(tmp_path):
         event_detail_budget=EventDetailBudget(
             budget_id="tiny_rows",
             max_event_detail_rows=5,
-            max_published_bytes=EVENT_DETAIL_BUDGET_V1.max_published_bytes,
+            max_published_bytes=EVENT_DETAIL_BUDGET_V2.max_published_bytes,
             path_block_size=250,
+            max_rows_per_partition=EVENT_DETAIL_BUDGET_V2.max_rows_per_partition,
         ),
     )
     tiny_run = _run(tiny_rows)
@@ -420,9 +422,10 @@ def test_prop_event_detail_capacity_and_exact_order(tmp_path):
         16,
         event_detail_budget=EventDetailBudget(
             budget_id="tiny_bytes",
-            max_event_detail_rows=EVENT_DETAIL_BUDGET_V1.max_event_detail_rows,
+            max_event_detail_rows=EVENT_DETAIL_BUDGET_V2.max_event_detail_rows,
             max_published_bytes=64,
             path_block_size=4,
+            max_rows_per_partition=EVENT_DETAIL_BUDGET_V2.max_rows_per_partition,
         ),
     )
     tiny_bytes_run = _run(tiny_bytes)
@@ -466,7 +469,7 @@ def test_historical_rows_carry_the_played_trading_day_and_match_the_audit_json(t
 
 def test_uniqueness_and_order_violations_are_refused(tmp_path):
     run = _run(_bootstrap_payload(3))
-    budget = EVENT_DETAIL_BUDGET_V1
+    budget = EVENT_DETAIL_BUDGET_V2
     # a duplicated path record (same draw ordinal twice)
     records = run.path_records
     with pytest.raises(EventDetailIntegrityError, match="repeat a draw ordinal"):
@@ -511,6 +514,7 @@ def test_uniqueness_and_order_violations_are_refused(tmp_path):
         max_event_detail_rows=budget.max_event_detail_rows,
         max_published_bytes=budget.max_published_bytes,
         path_block_size=1,
+        max_rows_per_partition=budget.max_rows_per_partition,
     )
     with pytest.raises(EventDetailIntegrityError, match="duplicate event id across path blocks"):
         build_account_event_detail(
@@ -555,7 +559,7 @@ def test_none_v0_artifacts_are_never_widened(tmp_path):
         run.walk_results,
         run.path_records,
         clock_policy_id=HISTORICAL_CLOCK_POLICY.policy_id,
-        budget=EVENT_DETAIL_BUDGET_V1,
+        budget=EVENT_DETAIL_BUDGET_V2,
         event_order_policy_id="prop_account_event_order_v1",
     )
     with pytest.raises(SearchStoreError, match="DIFFERENT sidecar content"):
@@ -731,15 +735,17 @@ def test_writer_streams_one_path_block_at_a_time_and_refuses_early(tmp_path, mon
     written.clear()
     small = EventDetailBudget(
         budget_id="stop_at_block_1",
-        max_event_detail_rows=EVENT_DETAIL_BUDGET_V1.max_event_detail_rows,
+        max_event_detail_rows=EVENT_DETAIL_BUDGET_V2.max_event_detail_rows,
         max_published_bytes=bundle.manifest["partitions"][0]["bytes"] + 1,
         path_block_size=250,
+        max_rows_per_partition=EVENT_DETAIL_BUDGET_V2.max_rows_per_partition,
     )
     directory = _fresh_dir(tmp_path, "overrun")
     with pytest.raises(EventDetailBudgetError, match="at path block 1"):
         _build(run, directory, budget=small)
     assert [block for block, _rows in written] == [0, 1]
-    assert sorted(os.listdir(directory)) == [partition_sidecar_name(0), partition_sidecar_name(1)]
+    # HARDENING-BACKEND-FIX §9: a refused build leaves no partition behind
+    assert sorted(os.listdir(directory)) == []
     assert not (directory / EVENT_DETAIL_MANIFEST_SIDECAR).exists()
 
 

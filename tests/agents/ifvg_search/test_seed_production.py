@@ -63,8 +63,13 @@ _SC_COMMIT = "c" * 40
 _SC_IDENTITY = "2" * 64
 
 
+# the historical (pre-MBP-1) physical files of the accepted inventory carry the
+# opaque PUBLIC provenance literal (HARDENING-BACKEND-FIX §5)
+_LEGACY = "legacy_verified_replay_source"
+
+
 def _inventory(days) -> dict[str, tuple[str, str]]:
-    return {day: ("mbp10", hashlib.sha256(day.encode()).hexdigest()) for day in days}
+    return {day: (_LEGACY, hashlib.sha256(day.encode()).hexdigest()) for day in days}
 
 
 # ── the access policy ────────────────────────────────────────────────────────
@@ -443,7 +448,7 @@ def test_seed_production_refuses_before_any_path_on_divergence(seed_lane, monkey
     with pytest.raises(SeedProductionAuthorizationError) as excinfo:
         _run(
             seed_lane,
-            source_inventory={"2026-01-13": ("mbp10", "0" * 64), "2026-01-14": ("mbp10", "0" * 64)},
+            source_inventory={"2026-01-13": (_LEGACY, "0" * 64), "2026-01-14": (_LEGACY, "0" * 64)},
         )
     assert excinfo.value.reason == "source_inventory_mismatch"
     other = resolve_profile_config(
@@ -614,3 +619,69 @@ def test_script_imports_launch_nothing_and_packet_subcommand_writes_files(tmp_pa
         ]
     )
     assert code == 2
+
+
+# ── HARDENING-BACKEND-FIX §5 — the seed contracts carry only public kinds ────
+
+
+def test_seed_inventory_hash_refuses_the_physical_stem_and_binds_the_legacy_kind() -> None:
+    days = ("2026-01-13", "2026-01-14")
+    legacy = _inventory(days)
+    digest = seed_chain_source_inventory_hash(days, legacy)
+    assert len(digest) == 64
+    # the public legacy kind is what the hash commits to: an inventory that
+    # smuggles the physical stem is refused before any hashing
+    smuggled = {day: ("mbp10", sha) for day, (_kind, sha) in legacy.items()}
+    with pytest.raises(ValueError, match="not a public source kind"):
+        seed_chain_source_inventory_hash(days, smuggled)
+    # the same physical bytes under the public kind are a stable identity
+    assert seed_chain_source_inventory_hash(days, dict(legacy)) == digest
+    # ...and distinct from an MBP-1-era inventory of the same bytes
+    mbp1 = {day: ("mbp1", sha) for day, (_kind, sha) in legacy.items()}
+    assert seed_chain_source_inventory_hash(days, mbp1) != digest
+
+
+# ── HARDENING-BACKEND-FIX §8 — the runner canonicalizes through the ONE seam ──
+
+
+def test_seed_production_runner_canonicalizes_non_utc_seed_datetimes(seed_lane, monkeypatch):
+    """HB-FIX-10: a chain whose end seed arrives under a non-UTC fixed offset
+    (or pytz) is persisted as the SAME snapshot (same id, same seed hash,
+    byte-identical canonical bytes) as the UTC reference run."""
+
+    from datetime import UTC, timedelta, timezone
+
+    import pytz
+
+    from alpha_lab.agents.data_infra.ifvg.search.store import load_sidecar_bytes
+    from tests.agents.ifvg_search.conftest import aware_seed_datetimes, rezone_seed_datetimes
+
+    reference = _run(seed_lane)
+    root = seed_lane["root"]
+    reference_bytes = load_sidecar_bytes(
+        root, "seed_snapshots", reference.snapshot.seed_snapshot_id, "seed.pickle"
+    )
+    assert all(stamp.tzinfo is UTC for stamp in aware_seed_datetimes(reference.seed))
+    real_capture = module.build_ifvg_v2_capture
+    for zone in (timezone(timedelta(hours=-5)), pytz.timezone("America/New_York")):
+
+        def _rezoned_capture(*args, zone=zone, **kwargs):
+            capture = real_capture(*args, **kwargs)
+            capture.end_seed = rezone_seed_datetimes(capture.end_seed, zone)
+            assert any(
+                stamp.tzinfo is not UTC for stamp in aware_seed_datetimes(capture.end_seed)
+            )
+            return capture
+
+        monkeypatch.setattr(module, "build_ifvg_v2_capture", _rezoned_capture)
+        again = _run(seed_lane)
+        assert again.snapshot.seed_snapshot_id == reference.snapshot.seed_snapshot_id
+        assert seed_hash(again.seed) == seed_hash(reference.seed)
+        assert all(stamp.tzinfo is UTC for stamp in aware_seed_datetimes(again.seed))
+        assert (
+            load_sidecar_bytes(
+                root, "seed_snapshots", again.snapshot.seed_snapshot_id, "seed.pickle"
+            )
+            == reference_bytes
+        )
+    monkeypatch.setattr(module, "build_ifvg_v2_capture", real_capture)

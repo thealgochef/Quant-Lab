@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from datetime import datetime
 from enum import StrEnum
 from types import MappingProxyType
@@ -91,6 +91,12 @@ __all__ = [
     "ASSIGNMENT_ROW_KINDS",
     "AssignmentRowKind",
     "FitAssignmentRef",
+    "REGIME_ASSIGNMENT_EVIDENCE_FAILURE_REASONS",
+    "RegimeAssignmentEvidenceError",
+    "SENTINEL_STRINGS",
+    "NativeFieldSpec",
+    "FIT_ASSIGNMENT_NATIVE_SPEC",
+    "validate_native_values",
     "fit_assignment_table_bytes",
     "fit_assignment_frame_from_bytes",
     "validate_assignment_rows",
@@ -445,10 +451,215 @@ class FitAssignmentRef(FrozenContract):
     assignment_schema_hash: str = Field(pattern=SHA256_PATTERN)
 
 
+# ── HARDENING-BACKEND-FIX §6.2 — strict NATIVE validation before conversion ──
+
+#: Every typed refusal of the assignment / fold-feature evidence seams.
+REGIME_ASSIGNMENT_EVIDENCE_FAILURE_REASONS: tuple[str, ...] = (
+    "native_value_refused",
+    "sentinel_identifier_refused",
+    "fractional_integral_refused",
+    "candidate_set_mismatch",
+    "duplicate_candidate_id",
+    "assignment_schema_hash_mismatch",
+    "assignment_row_invariant_violated",
+    "assignment_provenance_incomplete",
+)
+
+
+class RegimeAssignmentEvidenceError(ValueError):
+    """Assignment / fold-feature evidence refused for a TYPED ``reason`` (a
+    ``ValueError`` so every existing refusal contract is preserved)."""
+
+    def __init__(self, reason: str, message: str) -> None:
+        if reason not in REGIME_ASSIGNMENT_EVIDENCE_FAILURE_REASONS:
+            raise ValueError(f"unregistered assignment evidence failure reason {reason!r}")
+        super().__init__(f"{reason}: {message}")
+        self.reason = reason
+
+
+#: The strings a MISSING object turns into under ``str()`` / pandas formatting
+#: — never an identifier, a partition, or a reason.
+SENTINEL_STRINGS: frozenset[str] = frozenset(
+    {"", "None", "none", "NONE", "null", "Null", "NULL", "nan", "NaN", "NAN", "<NA>", "NaT", "nat"}
+)
+NativeFieldKind = Literal["bool", "int", "float", "id", "str", "distances"]
+#: ``column → (native kind, nullable)``
+NativeFieldSpec = Mapping[str, tuple[NativeFieldKind, bool]]
+
+#: The native spec of the per-fit assignment sidecar (every column of
+#: ``RegimeAssignmentColumns``): the linkage columns are never null; the
+#: outputs are nullable (an invalid row carries none of them).
+FIT_ASSIGNMENT_NATIVE_SPEC: NativeFieldSpec = MappingProxyType(
+    {
+        "resolved_regime_protocol_id": ("id", False),
+        "regime_fit_id": ("id", False),
+        "row_id": ("id", False),
+        "fold_index": ("int", False),
+        "partition": ("str", False),
+        "observation_ts_utc": ("str", True),
+        "fold_local_cluster_id": ("int", True),
+        "canonical_reporting_cluster_id": ("int", True),
+        "distances": ("distances", True),
+        "assigned_distance": ("float", True),
+        "assignment_margin": ("float", True),
+        "assignment_entropy": ("float", True),
+        "log_density": ("float", True),
+        "outlier_score": ("float", True),
+        "valid": ("bool", False),
+        "missing_reason": ("str", True),
+    }
+)
+
+
+def _native_is_null(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str | bytes | list | tuple | np.ndarray):
+        return False
+    if isinstance(value, float | np.floating):
+        return bool(np.isnan(value))
+    try:
+        verdict = pd.isna(value)
+    except (TypeError, ValueError):
+        return False
+    return bool(verdict) if isinstance(verdict, bool | np.bool_) else False
+
+
+def _native_refusal(
+    context: str, column: str, position: int, reason: str, detail: str
+) -> RegimeAssignmentEvidenceError:
+    return RegimeAssignmentEvidenceError(
+        reason, f"{context}: row {position} column {column!r} {detail}"
+    )
+
+
+def _check_native_scalar(
+    kind: str, value: Any, *, context: str, column: str, position: int
+) -> None:
+    if kind == "bool":
+        if not isinstance(value, bool | np.bool_):
+            raise _native_refusal(
+                context,
+                column,
+                position,
+                "native_value_refused",
+                f"must be an actual boolean; got {type(value).__name__} {value!r}",
+            )
+        return
+    if kind == "int":
+        if isinstance(value, bool | np.bool_):
+            raise _native_refusal(
+                context, column, position, "native_value_refused", "a boolean is not an integer"
+            )
+        if isinstance(value, int | np.integer):
+            return
+        if isinstance(value, float | np.floating):
+            if not np.isfinite(value):
+                raise _native_refusal(
+                    context, column, position, "native_value_refused",
+                    "must be a finite integral value",
+                )
+            if not float(value).is_integer():
+                raise _native_refusal(
+                    context, column, position, "fractional_integral_refused",
+                    f"fractional value {value!r} is refused, never truncated",
+                )
+            return
+        raise _native_refusal(
+            context, column, position, "native_value_refused",
+            f"must be an integral value; got {type(value).__name__} {value!r} (numeric "
+            "strings are refused)",
+        )
+    if kind == "float":
+        if isinstance(value, bool | np.bool_):
+            raise _native_refusal(
+                context, column, position, "native_value_refused", "a boolean is not a number"
+            )
+        if isinstance(value, int | np.integer | float | np.floating):
+            if np.isinf(value):
+                raise _native_refusal(
+                    context, column, position, "native_value_refused", "infinity is refused"
+                )
+            return
+        raise _native_refusal(
+            context, column, position, "native_value_refused",
+            f"must be a real number; got {type(value).__name__} {value!r} (numeric strings "
+            "are refused)",
+        )
+    if kind in ("id", "str"):
+        if not isinstance(value, str | np.str_):
+            raise _native_refusal(
+                context, column, position, "native_value_refused",
+                f"must be a string; got {type(value).__name__} {value!r}",
+            )
+        if str(value).strip() in SENTINEL_STRINGS:
+            raise _native_refusal(
+                context, column, position, "sentinel_identifier_refused",
+                f"sentinel string {value!r} is not a lawful "
+                f"{'identifier' if kind == 'id' else 'value'} (a missing object never "
+                "serializes as text)",
+            )
+        return
+    if kind == "distances":
+        if not isinstance(value, list | tuple | np.ndarray):
+            raise _native_refusal(
+                context, column, position, "native_value_refused",
+                "must be a sequence of finite distances",
+            )
+        for item in value:
+            if isinstance(item, bool | np.bool_) or not isinstance(
+                item, int | np.integer | float | np.floating
+            ):
+                raise _native_refusal(
+                    context, column, position, "native_value_refused",
+                    "distance vector entries must be real numbers",
+                )
+            if not np.isfinite(item):
+                raise _native_refusal(
+                    context, column, position, "native_value_refused",
+                    "distance vector entries must be finite",
+                )
+        return
+    raise ValueError(f"unknown native field kind {kind!r}")
+
+
+def validate_native_values(frame: pd.DataFrame, spec: NativeFieldSpec, *, context: str) -> None:
+    """HARDENING-BACKEND-FIX §6.2: validate NATIVE values BEFORE any pandas /
+    Arrow canonicalization. Booleans must be actual booleans (``"False"``
+    never serializes as true); integral fields accept only integral values
+    (``bool`` is not an integer; ``1.5`` is refused, never truncated; numeric
+    strings are refused; an integral float from a nullable upcast is lawful);
+    float fields refuse infinity and non-numbers; identifiers are non-null,
+    non-sentinel strings (``"None"`` / ``"nan"`` / ``"<NA>"`` are never
+    identifiers); ``errors="coerce"`` is never used to launder malformed
+    evidence into lawful missingness."""
+
+    missing = sorted(set(spec) - set(frame.columns))
+    if missing:
+        raise RegimeAssignmentEvidenceError(
+            "native_value_refused", f"{context}: lacks the columns {missing}"
+        )
+    for column, (kind, nullable) in spec.items():
+        for position, value in enumerate(frame[column].tolist()):
+            if _native_is_null(value):
+                if not nullable:
+                    raise _native_refusal(
+                        context,
+                        column,
+                        position,
+                        "sentinel_identifier_refused" if kind == "id" else "native_value_refused",
+                        "must not be null",
+                    )
+                continue
+            _check_native_scalar(kind, value, context=context, column=column, position=position)
+
+
 def _fit_assignment_frame_for_schema(frame: pd.DataFrame) -> pd.DataFrame:
     missing = sorted(set(RegimeAssignmentColumns) - set(frame.columns))
     if missing:
         raise ValueError(f"assignment frame lacks the enforced schema columns: {missing}")
+    # §6.2: native values are proven BEFORE the canonical conversions below
+    validate_native_values(frame, FIT_ASSIGNMENT_NATIVE_SPEC, context="fit assignment table")
     out = frame.loc[:, list(RegimeAssignmentColumns)].copy().reset_index(drop=True)
     for column in ("fold_index",):
         out[column] = pd.to_numeric(out[column], errors="raise").astype("int64")
@@ -716,6 +927,28 @@ def validate_assignment_rows(
             raise ValueError(
                 f"assignment row {position}: an invalid row requires one registered missing "
                 f"reason; got {reason!r}"
+            )
+        # HARDENING-BACKEND-FIX §6.3: provenance is retained completely or not at
+        # all — fold index and partition together; a fit id only with its fold
+        # and partition; the no-coverage reason never fabricates a fit / fold
+        fit_present = not _is_null(fit_id)
+        fold_present = not _is_null(fold_index)
+        partition_present = not _is_null(partition)
+        if fold_present != partition_present or (fit_present and not fold_present):
+            raise RegimeAssignmentEvidenceError(
+                "assignment_provenance_incomplete",
+                f"assignment row {position}: an invalid row carries PARTIAL provenance "
+                "(fold index and partition are retained together; a fit id requires "
+                "its fold and partition)",
+            )
+        if kind == "descriptive" and str(reason) == "no_oos_assignment" and (
+            fit_present or fold_present
+        ):
+            raise RegimeAssignmentEvidenceError(
+                "assignment_provenance_incomplete",
+                f"assignment row {position}: no_oos_assignment is reserved for a "
+                "candidate with NO OOS test row (case C); a row that names a fit / fold "
+                "carries that fit's own typed reason",
             )
 
 

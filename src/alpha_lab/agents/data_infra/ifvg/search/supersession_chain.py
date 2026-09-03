@@ -48,6 +48,7 @@ from .identities import SHA256_PATTERN, EnvelopeBase, FrozenContract, register_i
 from .owner_decision_lock import OwnerDecisionLock
 from .store import SearchStoreError, load_verified_envelope, save_or_reuse_envelope
 from .store_namespace import (
+    OWNER_DECISION_SUPERSESSION_STORE,
     StoreNamespaceEnvelope,
     StoreNamespaceError,
     SupersessionHeadWitness,
@@ -68,9 +69,6 @@ __all__ = [
     "assert_head_witness_current",
     "publish_supersession",
 ]
-
-OWNER_DECISION_SUPERSESSION_STORE = "owner_decision_supersessions"
-
 
 def _parse_instant(value: str, *, field: str) -> datetime:
     try:

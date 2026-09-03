@@ -57,6 +57,8 @@ from ..search.store import (
 )
 from .comparison_rows import (
     COMPARISON_ROW_IDENTITY_KEY,
+    assert_exact_label_artifact,
+    assert_persistable_label_proof,
     default_fold_schedule_id,
     label_artifact_content_id,
 )
@@ -160,6 +162,9 @@ class ControlledFeatureStudyRun:
     baseline: SupervisedLadderRun
     challenger: SupervisedLadderRun
     detail_bytes: bytes
+    #: review RB-01 (§7.2): ``"exact"`` ONLY when the label artifact id was proven to
+    #: derive from the registered policy and these labels — the one persistable state
+    label_identity_proof: str = "content_hash_unpersisted"
 
 
 def _summary(run: SupervisedLadderRun, protocol_id: str = LOGISTIC_PROTOCOL_ID) -> dict[str, Any]:
@@ -285,6 +290,7 @@ def run_controlled_mbp1_study(
     headline_protocol_id: str = LOGISTIC_PROTOCOL_ID,
     fold_schedule_id: str | None = None,
     label_artifact_id: str | None = None,
+    label_policy_id: str | None = None,
 ) -> ControlledFeatureStudyRun:
     """``mbp1_feature_artifact`` is the ``Mbp1FeatureArtifactEnvelope`` whose
     table the supplied frame must BE — the binding is verified by rehash at
@@ -340,11 +346,23 @@ def run_controlled_mbp1_study(
     # a helper run without one carries the FULL consumed-column content hash
     # and is stamped unpersistable
     if label_artifact_id is not None:
-        label_id = str(label_artifact_id)
+        # HARDENING-BACKEND-FIX §7.2: a persisting seam that knows the registered
+        # label policy proves the id derives EXACTLY from these labels
+        if label_policy_id is not None:
+            label_id = assert_exact_label_artifact(
+                label_artifact_id, label_policy_id, labeled_candidates
+            )
+            label_identity_proof = "exact"
+        else:
+            # review RB-01: a caller-supplied id WITHOUT the registered policy is
+            # trusted in memory only — the run can never be persisted
+            label_id = str(label_artifact_id)
+            label_identity_proof = "caller_supplied_unproven"
         label_identity_source = "label_artifact"
     else:
         label_id = label_artifact_content_id(None, labeled_candidates)
         label_identity_source = "content_hash_unpersisted"
+        label_identity_proof = "content_hash_unpersisted"
     baseline_run = run_supervised_ladder(
         baseline_arm_view,
         labeled_candidates,
@@ -457,6 +475,7 @@ def run_controlled_mbp1_study(
         baseline=baseline_run,
         challenger=challenger_run,
         detail_bytes=detail_bytes,
+        label_identity_proof=label_identity_proof,
     )
 
 
@@ -470,6 +489,8 @@ def save_controlled_feature_study(root: Path, run: ControlledFeatureStudyRun) ->
             "cannot be saved, compared as an immutable study, or promoted; pass the exact "
             "persisted label artifact id (S07) to run_controlled_mbp1_study"
         )
+    # review RB-01: a caller-supplied id that was never proven exact is unpersistable
+    assert_persistable_label_proof(run.label_identity_proof, runner="run_controlled_mbp1_study")
     return save_or_reuse_envelope(
         Path(root),
         CONTROLLED_STUDY_STORE,

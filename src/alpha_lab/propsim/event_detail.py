@@ -58,6 +58,7 @@ their source trade — the synthetic clock is descriptive, never a join key).
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import io
 import json
@@ -72,7 +73,7 @@ from typing import Any, Literal
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
-from pydantic import Field
+from pydantic import Field, model_serializer
 
 from alpha_lab.agents.data_infra.ifvg.manifest import canonical_sha256, file_sha256
 from alpha_lab.agents.data_infra.ifvg.search.identities import FrozenContract
@@ -98,6 +99,8 @@ __all__ = [
     "EVENT_AMOUNT_FIELD",
     "EventDetailBudget",
     "EVENT_DETAIL_BUDGET_V1",
+    "EVENT_DETAIL_BUDGET_V2",
+    "EVENT_DETAIL_PARTITION_BOUND_POLICY_V2",
     "EventDetailBudgetError",
     "EventDetailIntegrityError",
     "EventDetailUnavailableError",
@@ -143,21 +146,55 @@ _PARTITION_SUFFIX = ".parquet"
 _STORE = "account_simulations"
 
 
+#: HARDENING-BACKEND-FIX §9: the versioned, identity-bearing resident-row
+#: bound of the writer — every partition holds at most
+#: ``max_rows_per_partition`` rows and the writer never holds more rows than
+#: that in memory, whatever the events-per-path shape (a path block, even a
+#: single path, is split across partitions at the bound).
+EVENT_DETAIL_PARTITION_BOUND_POLICY_V2 = "event_detail_partition_row_bound_v2"
+
+
 class EventDetailBudget(FrozenContract):
-    """Registered storage budget — part of the simulation identity."""
+    """Registered storage budget — part of the simulation identity.
+
+    ``max_rows_per_partition`` (HARDENING-BACKEND-FIX §9) is the hard
+    per-partition / resident-row bound of the writer. A pre-bound budget
+    (``event_detail_budget_v1``) carries none: it stays LOADABLE (its
+    serialization is unchanged — the absent bound is omitted, so every
+    identity minted under it is preserved) but the row-bounded writer
+    refuses to write under it.
+    """
 
     budget_id: str = Field(min_length=1)
     max_event_detail_rows: int = Field(ge=1)
     max_published_bytes: int = Field(ge=1)
     path_block_size: int = Field(ge=1)
+    max_rows_per_partition: int | None = Field(default=None, ge=1)
+
+    @model_serializer(mode="wrap")
+    def _omit_absent_bound(self, handler):
+        data = handler(self)
+        if isinstance(data, dict) and data.get("max_rows_per_partition") is None:
+            data.pop("max_rows_per_partition", None)
+        return data
 
 
-#: The registered V1 limits (plan §6.G / D15).
+#: The registered V1 limits (plan §6.G / D15) — pre-bound; loadable, not writable.
 EVENT_DETAIL_BUDGET_V1 = EventDetailBudget(
     budget_id="event_detail_budget_v1",
     max_event_detail_rows=10_000_000,
     max_published_bytes=2_147_483_648,
     path_block_size=250,
+)
+#: The registered V2 limits (HARDENING-BACKEND-FIX §9): V1 plus the hard
+#: per-partition row bound — the benchmark's measured row-group size (250
+#: paths × 200 events). No ceiling was lowered.
+EVENT_DETAIL_BUDGET_V2 = EventDetailBudget(
+    budget_id="event_detail_budget_v2",
+    max_event_detail_rows=10_000_000,
+    max_published_bytes=2_147_483_648,
+    path_block_size=250,
+    max_rows_per_partition=50_000,
 )
 
 
@@ -277,7 +314,7 @@ def assert_event_detail_policy_coherent(
 
 
 def event_detail_identity_fields(
-    persistence_policy_id: str, *, budget: EventDetailBudget = EVENT_DETAIL_BUDGET_V1
+    persistence_policy_id: str, *, budget: EventDetailBudget = EVENT_DETAIL_BUDGET_V2
 ) -> dict[str, Any]:
     """The coherent identity tuple for one persistence policy (payload kwargs)."""
 
@@ -301,8 +338,16 @@ def event_detail_identity_fields(
     )
 
 
-def partition_sidecar_name(path_block_id: int) -> str:
-    return f"{EVENT_DETAIL_PARTITION_PREFIX}{int(path_block_id):06d}{_PARTITION_SUFFIX}"
+def partition_sidecar_name(path_block_id: int, partition_ordinal: int | None = 0) -> str:
+    """The deterministic partition file name keyed by ``(path_block_id,
+    partition_ordinal_within_path_block)`` (HARDENING-BACKEND-FIX §9);
+    ``partition_ordinal=None`` is the pre-bound single-partition-per-block
+    form kept only to READ artifacts persisted under it."""
+
+    stem = f"{EVENT_DETAIL_PARTITION_PREFIX}{int(path_block_id):06d}"
+    if partition_ordinal is None:
+        return f"{stem}{_PARTITION_SUFFIX}"
+    return f"{stem}_{int(partition_ordinal):03d}{_PARTITION_SUFFIX}"
 
 
 @dataclass(frozen=True)
@@ -319,6 +364,9 @@ class EventDetailBundle:
     total_rows: int
     total_bytes: int
     partition_count: int
+    #: HARDENING-BACKEND-FIX §9: the largest partition written — the proof of the
+    #: resident-row bound (never above ``budget.max_rows_per_partition``)
+    max_partition_rows: int = 0
 
     def produced(self) -> tuple[ProducedSidecar, ...]:
         """Every sidecar record the store must list (partitions + manifest)."""
@@ -345,53 +393,53 @@ def _empty_columns() -> dict[str, list[Any]]:
     return {field.name: [] for field in EVENT_DETAIL_SCHEMA}
 
 
-def _append_path(
-    columns: dict[str, list[Any]], record, result, *, clock_policy_id: str, block_size: int
+def _append_event(
+    columns: dict[str, list[Any]],
+    event,
+    *,
+    record,
+    path_id: str,
+    path_ordinal: int,
+    block_id: int,
+    previous_ordinal: int,
+    clock_policy_id: str,
 ) -> int:
-    """Append one walk's events to the current block's COLUMNS (no per-row
-    dict is ever built); ordinals must be strictly increasing on the path.
-    Returns the number of rows appended."""
+    """Append ONE event of one walk to the current partition's COLUMNS (no
+    per-row dict is ever built); ordinals must be strictly increasing on the
+    path. Returns the event ordinal (the next call's ``previous_ordinal``)."""
 
-    path_id = str(record.path_instance_id)
-    path_ordinal = int(record.draw_ordinal)
-    block_id = path_ordinal // int(block_size)
-    previous_ordinal = -1
-    appended = 0
-    for event in result.events:
-        if event.path_instance_id != record.path_instance_id:
-            raise EventDetailIntegrityError(
-                "an account event names a different path than its walk record"
-            )
-        ordinal = int(event.event_ordinal)
-        if ordinal <= previous_ordinal:
-            raise EventDetailIntegrityError(
-                f"event ordinals are not strictly increasing on path "
-                f"{record.path_instance_id} ({event.event_ordinal} after {previous_ordinal})"
-            )
-        previous_ordinal = ordinal
-        precedence = EVENT_TYPE_PRECEDENCE.get(event.event_type)
-        if precedence is None:
-            raise EventDetailIntegrityError(f"unregistered event type {event.event_type!r}")
-        stamp = str(event.event_ts_utc)
-        columns["path_instance_id"].append(path_id)
-        columns["path_ordinal"].append(path_ordinal)
-        columns["path_block_id"].append(block_id)
-        columns["account_id"].append(str(event.account_id))
-        columns["account_ordinal"].append(int(event.account_ordinal))
-        columns["event_id"].append(str(event.event_id))
-        columns["event_ts_utc"].append(stamp)
-        columns["event_ts_ns"].append(_event_ts_ns(stamp))
-        columns["trading_day"].append(getattr(event, "trading_day", None))
-        columns["clock_policy_id"].append(str(clock_policy_id))
-        columns["event_precedence"].append(int(precedence))
-        columns["event_ordinal"].append(ordinal)
-        columns["event_type"].append(str(event.event_type))
-        columns["account_phase"].append(str(event.account_phase.value))
-        columns["source_trade_id"].append(event.source_trade_id)
-        columns["source_candidate_id"].append(event.source_candidate_id)
-        columns["amount"].append(_amount(event))
-        appended += 1
-    return appended
+    if event.path_instance_id != record.path_instance_id:
+        raise EventDetailIntegrityError(
+            "an account event names a different path than its walk record"
+        )
+    ordinal = int(event.event_ordinal)
+    if ordinal <= previous_ordinal:
+        raise EventDetailIntegrityError(
+            f"event ordinals are not strictly increasing on path "
+            f"{record.path_instance_id} ({event.event_ordinal} after {previous_ordinal})"
+        )
+    precedence = EVENT_TYPE_PRECEDENCE.get(event.event_type)
+    if precedence is None:
+        raise EventDetailIntegrityError(f"unregistered event type {event.event_type!r}")
+    stamp = str(event.event_ts_utc)
+    columns["path_instance_id"].append(path_id)
+    columns["path_ordinal"].append(int(path_ordinal))
+    columns["path_block_id"].append(int(block_id))
+    columns["account_id"].append(str(event.account_id))
+    columns["account_ordinal"].append(int(event.account_ordinal))
+    columns["event_id"].append(str(event.event_id))
+    columns["event_ts_utc"].append(stamp)
+    columns["event_ts_ns"].append(_event_ts_ns(stamp))
+    columns["trading_day"].append(getattr(event, "trading_day", None))
+    columns["clock_policy_id"].append(str(clock_policy_id))
+    columns["event_precedence"].append(int(precedence))
+    columns["event_ordinal"].append(ordinal)
+    columns["event_type"].append(str(event.event_type))
+    columns["account_phase"].append(str(event.account_phase.value))
+    columns["source_trade_id"].append(event.source_trade_id)
+    columns["source_candidate_id"].append(event.source_candidate_id)
+    columns["amount"].append(_amount(event))
+    return ordinal
 
 
 def _first_duplicate(event_ids: Sequence[str]) -> str | None:
@@ -586,43 +634,74 @@ def build_account_event_detail(
             f"event detail preflight: {declared_rows} rows exceed the registered budget of "
             f"{budget.max_event_detail_rows} ({budget.budget_id}); refusing before publication"
         )
+    if budget.max_rows_per_partition is None:
+        raise EventDetailBudgetError(
+            "the row-bounded event-detail writer requires a budget that registers "
+            f"max_rows_per_partition; {budget.budget_id} carries none (a pre-bound budget is "
+            f"loadable, never writable — register {EVENT_DETAIL_BUDGET_V2.budget_id})"
+        )
     block_size = int(budget.path_block_size)
+    rows_per_partition = int(budget.max_rows_per_partition)
     partitions: list[dict[str, Any]] = []
     records: list[ProducedSidecar] = []
     columns = _empty_columns()
-    cumulative = 0
-    rows_seen = 0
-    paths_seen = 0
-    last_ordinal: int | None = None
-    current_block: int | None = None
+    written: list[Path] = []
+    state: dict[str, Any] = {
+        "cumulative": 0,
+        "partition_ordinal": 0,
+        "max_partition_rows": 0,
+        "block": None,
+    }
 
-    def _flush(block_id: int) -> None:
-        nonlocal cumulative
+    def _flush() -> None:
+        """Write the resident rows as ONE partition keyed by (path block,
+        partition ordinal within the block) — at most ``rows_per_partition``
+        rows, whatever the events-per-path shape."""
+
+        rows = len(columns["event_id"])
+        block_id = state["block"]
+        if rows == 0 or block_id is None:
+            return
+        if rows > rows_per_partition:  # pragma: no cover - the loop flushes AT the bound
+            raise EventDetailIntegrityError(
+                "resident rows exceeded the registered per-partition bound"
+            )
         duplicate = _first_duplicate(columns["event_id"])
         if duplicate is not None:
             raise EventDetailIntegrityError(f"duplicate event id {duplicate[:12]}…")
         table = pa.Table.from_pydict(columns, schema=EVENT_DETAIL_SCHEMA)
-        name = partition_sidecar_name(block_id)
+        ordinal = int(state["partition_ordinal"])
+        name = partition_sidecar_name(block_id, ordinal)
         path = directory / name
         if path.exists():
             raise EventDetailIntegrityError(f"partition {name} already exists in the directory")
+        # review RB-03: registered BEFORE the write — a partial file is cleaned too
+        written.append(path)
         _write_parquet(table, path)
         size = int(path.stat().st_size)
-        cumulative += size
-        if cumulative > budget.max_published_bytes:
+        state["cumulative"] = int(state["cumulative"]) + size
+        if state["cumulative"] > budget.max_published_bytes:
             raise EventDetailBudgetError(
-                f"event detail streaming overrun: {cumulative} bytes exceed the registered "
-                f"budget of {budget.max_published_bytes} ({budget.budget_id}) at path block "
-                f"{block_id}; refusing before publication"
+                f"event detail streaming overrun: {state['cumulative']} bytes exceed the "
+                f"registered budget of {budget.max_published_bytes} ({budget.budget_id}) at "
+                f"path block {block_id}; refusing before publication"
             )
         digest = file_sha256(path)
-        rows = len(columns["event_id"])
         partitions.append(
             {
                 "name": name,
                 "path_block_id": int(block_id),
+                "partition_ordinal": ordinal,
                 "path_ordinal_min": int(min(columns["path_ordinal"])),
                 "path_ordinal_max": int(max(columns["path_ordinal"])),
+                "first_event_key": [
+                    int(columns["path_ordinal"][0]),
+                    int(columns["event_ordinal"][0]),
+                ],
+                "last_event_key": [
+                    int(columns["path_ordinal"][-1]),
+                    int(columns["event_ordinal"][-1]),
+                ],
                 "rows": int(rows),
                 "bytes": size,
                 "sha256": digest,
@@ -630,76 +709,112 @@ def build_account_event_detail(
             }
         )
         records.append(ProducedSidecar(name=name, sha256=digest, bytes=size))
+        state["max_partition_rows"] = max(int(state["max_partition_rows"]), rows)
+        state["partition_ordinal"] = ordinal + 1
         for values in columns.values():
             values.clear()
 
-    for record, result in stream:
-        ordinal = int(record.draw_ordinal)
-        if last_ordinal is not None and ordinal <= last_ordinal:
+    rows_seen = 0
+    paths_seen = 0
+    last_ordinal: int | None = None
+    try:
+        for record, result in stream:
+            ordinal = int(record.draw_ordinal)
+            if last_ordinal is not None and ordinal <= last_ordinal:
+                raise EventDetailIntegrityError(
+                    "walk pairs are not in strictly increasing draw-ordinal order "
+                    f"({ordinal} after {last_ordinal})"
+                )
+            last_ordinal = ordinal
+            paths_seen += 1
+            if paths_seen > declared_paths:
+                raise EventDetailIntegrityError(
+                    f"declared path_count {declared_paths} exceeded while streaming"
+                )
+            block_id = ordinal // block_size
+            if state["block"] is not None and block_id != state["block"]:
+                _flush()  # the remainder of the previous path block
+                state["partition_ordinal"] = 0
+            state["block"] = block_id
+            path_id = str(record.path_instance_id)
+            previous_event_ordinal = -1
+            for event in result.events:
+                previous_event_ordinal = _append_event(
+                    columns,
+                    event,
+                    record=record,
+                    path_id=path_id,
+                    path_ordinal=ordinal,
+                    block_id=block_id,
+                    previous_ordinal=previous_event_ordinal,
+                    clock_policy_id=clock_policy_id,
+                )
+                rows_seen += 1
+                if rows_seen > budget.max_event_detail_rows:
+                    raise EventDetailBudgetError(
+                        f"event detail streaming row overrun: {rows_seen} rows exceed the "
+                        f"registered budget of {budget.max_event_detail_rows} "
+                        f"({budget.budget_id}) at path block {block_id}; refusing before "
+                        "publication"
+                    )
+                if len(columns["event_id"]) >= rows_per_partition:
+                    _flush()  # §9: flush AT the bound — even inside one path
+        _flush()
+        if rows_seen != declared_rows:
             raise EventDetailIntegrityError(
-                "walk pairs are not in strictly increasing draw-ordinal order "
-                f"({ordinal} after {last_ordinal})"
+                f"declared total_rows {declared_rows} disagrees with the streamed rows "
+                f"({rows_seen})"
             )
-        last_ordinal = ordinal
-        paths_seen += 1
-        if paths_seen > declared_paths:
+        if paths_seen != declared_paths:
             raise EventDetailIntegrityError(
-                f"declared path_count {declared_paths} exceeded while streaming"
+                f"declared path_count {declared_paths} disagrees with the streamed paths "
+                f"({paths_seen})"
             )
-        block_id = ordinal // block_size
-        if current_block is not None and block_id != current_block and columns["event_id"]:
-            _flush(current_block)
-        current_block = block_id
-        rows_seen += _append_path(
-            columns, record, result, clock_policy_id=clock_policy_id, block_size=block_size
+        uniqueness = _external_uniqueness_check(
+            directory,
+            [entry["name"] for entry in partitions],
+            expected_rows=rows_seen,
+            expected_paths=paths_seen,
         )
-        if rows_seen > budget.max_event_detail_rows:
-            raise EventDetailBudgetError(
-                f"event detail streaming row overrun: {rows_seen} rows exceed the registered "
-                f"budget of {budget.max_event_detail_rows} ({budget.budget_id}) at path block "
-                f"{block_id}; refusing before publication"
-            )
-    if current_block is not None and columns["event_id"]:
-        _flush(current_block)
-    if rows_seen != declared_rows:
-        raise EventDetailIntegrityError(
-            f"declared total_rows {declared_rows} disagrees with the streamed rows ({rows_seen})"
-        )
-    if paths_seen != declared_paths:
-        raise EventDetailIntegrityError(
-            f"declared path_count {declared_paths} disagrees with the streamed paths "
-            f"({paths_seen})"
-        )
-    uniqueness = _external_uniqueness_check(
-        directory,
-        [entry["name"] for entry in partitions],
-        expected_rows=rows_seen,
-        expected_paths=paths_seen,
-    )
-    manifest = {
-        "event_detail_persistence_policy_id": EVENT_DETAIL_POLICY_PARQUET_V2,
-        "event_detail_storage_policy_id": EVENT_DETAIL_STORAGE_ZSTD_PARQUET_V2,
-        "event_detail_schema_version": EVENT_DETAIL_SCHEMA_VERSION_V2,
-        "schema_hash": EVENT_DETAIL_SCHEMA_HASH,
-        "compression": "zstd",
-        "row_group_size": EVENT_DETAIL_ROW_GROUP_SIZE,
-        "budget": budget.model_dump(mode="json"),
-        "clock_policy_id": clock_policy_id,
-        "event_order_policy_id": event_order_policy_id,
-        "total_order": ["path_ordinal", "event_ordinal"],
-        "event_type_precedence": dict(EVENT_TYPE_PRECEDENCE),
-        "amount_field_by_event_type": dict(EVENT_AMOUNT_FIELD),
-        "event_id_uniqueness": uniqueness,
-        "path_count": int(paths_seen),
-        "total_rows": int(rows_seen),
-        "total_bytes": int(cumulative),
-        "partitions": partitions,
-    }
-    manifest_bytes = (json.dumps(manifest, sort_keys=True) + "\n").encode("utf-8")
-    manifest_path = directory / EVENT_DETAIL_MANIFEST_SIDECAR
-    if manifest_path.exists():
-        raise EventDetailIntegrityError("the detail manifest already exists in the directory")
-    manifest_path.write_bytes(manifest_bytes)
+        cumulative = int(state["cumulative"])
+        manifest = {
+            "event_detail_persistence_policy_id": EVENT_DETAIL_POLICY_PARQUET_V2,
+            "event_detail_storage_policy_id": EVENT_DETAIL_STORAGE_ZSTD_PARQUET_V2,
+            "event_detail_schema_version": EVENT_DETAIL_SCHEMA_VERSION_V2,
+            "schema_hash": EVENT_DETAIL_SCHEMA_HASH,
+            "compression": "zstd",
+            "row_group_size": EVENT_DETAIL_ROW_GROUP_SIZE,
+            "budget": budget.model_dump(mode="json"),
+            "partition_bound_policy_id": EVENT_DETAIL_PARTITION_BOUND_POLICY_V2,
+            "partition_key": ["path_block_id", "partition_ordinal"],
+            "max_rows_per_partition": rows_per_partition,
+            "max_partition_rows_written": int(state["max_partition_rows"]),
+            "clock_policy_id": clock_policy_id,
+            "event_order_policy_id": event_order_policy_id,
+            "total_order": ["path_ordinal", "event_ordinal"],
+            "event_type_precedence": dict(EVENT_TYPE_PRECEDENCE),
+            "amount_field_by_event_type": dict(EVENT_AMOUNT_FIELD),
+            "event_id_uniqueness": uniqueness,
+            "path_count": int(paths_seen),
+            "total_rows": int(rows_seen),
+            "total_bytes": cumulative,
+            "partitions": partitions,
+        }
+        manifest_bytes = (json.dumps(manifest, sort_keys=True) + "\n").encode("utf-8")
+        manifest_path = directory / EVENT_DETAIL_MANIFEST_SIDECAR
+        if manifest_path.exists():
+            raise EventDetailIntegrityError("the detail manifest already exists in the directory")
+        written.append(manifest_path)  # a partial manifest is cleaned too (review RB-03)
+        manifest_path.write_bytes(manifest_bytes)
+    except BaseException:
+        # §9: a refused build leaves no partition (and no manifest) behind —
+        # review RB-03: the manifest stage runs INSIDE this guard and a partially
+        # written file is registered before its write — the store discards
+        # its temporary directory as well; a caller-owned directory is clean
+        for path in written:
+            with contextlib.suppress(OSError):
+                path.unlink()
+        raise
     manifest_sidecar = ProducedSidecar(
         name=EVENT_DETAIL_MANIFEST_SIDECAR,
         sha256=hashlib.sha256(manifest_bytes).hexdigest(),
@@ -711,8 +826,9 @@ def build_account_event_detail(
         manifest_sidecar=manifest_sidecar,
         manifest=manifest,
         total_rows=int(rows_seen),
-        total_bytes=int(cumulative),
+        total_bytes=cumulative,
         partition_count=len(partitions),
+        max_partition_rows=int(state["max_partition_rows"]),
     )
 
 
@@ -807,15 +923,32 @@ def load_account_event_detail(
 
     root = Path(root)
     manifest = load_account_event_detail_manifest(root, account_simulation_id)
-    partitions = sorted(
-        manifest.get("partitions", ()), key=lambda entry: int(entry["path_block_id"])
-    )
-    if len({int(entry["path_block_id"]) for entry in partitions}) != len(partitions):
-        raise EventDetailIntegrityError("the event detail manifest repeats a path block")
+    def _key(entry: dict) -> tuple[int, int]:
+        ordinal = entry.get("partition_ordinal")
+        return int(entry["path_block_id"]), (0 if ordinal is None else int(ordinal))
+
+    partitions = sorted(manifest.get("partitions", ()), key=_key)
+    if len({_key(entry) for entry in partitions}) != len(partitions):
+        raise EventDetailIntegrityError("the event detail manifest repeats a partition key")
+    # review RB-04: the bound the reader proves is the IDENTITY-bound budget's (the
+    # manifest budget was proven equal to the simulation payload's); the manifest's
+    # loose top-level field must agree with it
+    budget_bound = (manifest.get("budget") or {}).get("max_rows_per_partition")
+    bound = manifest.get("max_rows_per_partition")
+    if bound != budget_bound:
+        raise EventDetailIntegrityError(
+            "the detail manifest's per-partition row bound disagrees with the identity-bound "
+            "event-detail budget"
+        )
+    previous_last: tuple[int, int] | None = None
     rows_seen = 0
     for entry in partitions:
         name = str(entry["name"])
-        if name != partition_sidecar_name(int(entry["path_block_id"])):
+        ordinal = entry.get("partition_ordinal")
+        expected_name = partition_sidecar_name(
+            int(entry["path_block_id"]), None if ordinal is None else int(ordinal)
+        )
+        if name != expected_name:
             raise EventDetailIntegrityError(f"partition name {name!r} is not the registered form")
         data = load_sidecar_bytes(root, _STORE, account_simulation_id, name)
         if hashlib.sha256(data).hexdigest() != entry["sha256"] or len(data) != int(entry["bytes"]):
@@ -829,12 +962,31 @@ def load_account_event_detail(
             raise EventDetailIntegrityError(
                 f"partition {name} row count disagrees with the manifest"
             )
+        if bound is not None and table.num_rows > int(bound):
+            raise EventDetailIntegrityError(
+                f"partition {name} exceeds the registered per-partition row bound"
+            )
         frame = table.to_pandas()
         if (frame["path_block_id"] != int(entry["path_block_id"])).any():
             raise EventDetailIntegrityError(f"partition {name} carries rows of another path block")
         ordered = frame.sort_values(["path_ordinal", "event_ordinal"], kind="mergesort")
         if not ordered.index.equals(frame.index):
             raise EventDetailIntegrityError(f"partition {name} is not in total order")
+        if len(frame):
+            first = (int(frame["path_ordinal"].iloc[0]), int(frame["event_ordinal"].iloc[0]))
+            last = (int(frame["path_ordinal"].iloc[-1]), int(frame["event_ordinal"].iloc[-1]))
+            if "first_event_key" in entry and (
+                list(first) != list(entry["first_event_key"])
+                or list(last) != list(entry.get("last_event_key", ()))
+            ):
+                raise EventDetailIntegrityError(
+                    f"partition {name} boundary keys disagree with the detail manifest"
+                )
+            if previous_last is not None and first <= previous_last:
+                raise EventDetailIntegrityError(
+                    f"partition {name} breaks the total order across partitions"
+                )
+            previous_last = last
         rows_seen += table.num_rows
         yield frame.reset_index(drop=True)
     if rows_seen != int(manifest.get("total_rows", -1)):
