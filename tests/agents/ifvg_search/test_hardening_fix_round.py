@@ -363,7 +363,7 @@ def test_mbp1_diagnostic_seam_binds_namespace_and_current_head_before_any_path(t
     # (b) a research-class namespace at that path
     research = tmp_path / "research" / "search_test" / "v1"
     research.mkdir(parents=True)
-    initialize_store_namespace(research, namespace_class="research")
+    initialize_store_namespace(research, namespace_class="research", store_instance_id="a2" * 16)
     with pytest.raises(PermissionError, match="store_namespace_class_mismatch"):
         assert_diagnostic_authorized(
             store_root=research, run_envelope=run, access_policy=VerificationReplayPolicy(days),

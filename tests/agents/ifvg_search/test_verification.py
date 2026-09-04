@@ -150,11 +150,11 @@ def test_verification_run_is_bound_to_the_store_namespace_and_head(tmp_path) -> 
     with pytest.raises(VerificationRunValidationError, match="store_namespace_missing"):
         validate_verification_run(envelope, store_root=tmp_path / "unmarked", **kwargs)
     other = tmp_path / "other"
-    initialize_store_namespace(other, namespace_class="test")
+    initialize_store_namespace(other, namespace_class="test", store_instance_id="a5" * 16)
     with pytest.raises(VerificationRunValidationError, match="identity_mismatch"):
         validate_verification_run(envelope, store_root=other, **kwargs)
     research = tmp_path / "research"
-    initialize_store_namespace(research, namespace_class="research")
+    initialize_store_namespace(research, namespace_class="research", store_instance_id="a6" * 16)
     with pytest.raises(VerificationRunValidationError, match="class_mismatch"):
         validate_verification_run(envelope, store_root=research, **kwargs)
     publish_supersession(

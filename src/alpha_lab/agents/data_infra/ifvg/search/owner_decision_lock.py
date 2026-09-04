@@ -35,7 +35,26 @@ it), a random lock token, host, creation time and a heartbeat:
   ``lock_release_failed`` when it cannot read or verify its own lock.
 * **Partial creation**: when ``O_EXCL`` creation succeeds but the body
   write / fsync fails, the partial file is removed (or quarantined) before
-  the typed ``lock_create_failed`` is raised.
+  the typed ``lock_create_failed`` is raised — but ONLY when ownership of the
+  file is proven (below); otherwise it is left in place, typed.
+* **Strict body validation (HARDENING-BACKEND-FIX.1 §1).** :meth:`LockBody.parse`
+  accepts exactly the seven fields of the supported schema version, with
+  their native types: ``lock_schema_version`` the exact supported integer,
+  ``pid`` a native positive ``int`` (never ``bool``, never a string / float)
+  within the supported range, ``lock_token`` exactly 32 lowercase hex
+  characters, ``host`` / ``process_start_token`` strings or ``null``,
+  ``created_at`` / ``heartbeat_at`` timezone-aware ISO-8601 timestamps.
+  Nothing is coerced: any other body is ``malformed`` — and a malformed body
+  is NEVER reclaimed (operator intervention).
+* **Post-create ownership proof (HARDENING-BACKEND-FIX.1 §1).** After
+  ``O_EXCL`` creation, acquisition succeeds only when the persisted readback
+  is byte-for-byte the body this writer wrote and parses to this writer's
+  token. A missing (``lock_lost``), malformed (``lock_body_malformed``),
+  unreadable (``lock_read_failed``) or foreign-token / altered
+  (``lock_lost``) readback fails typed and acquires nothing. Cleanup of a
+  file this writer created is allowed only when ownership is proven — the
+  persisted bytes are exactly (a prefix of) the bytes this writer wrote; an
+  unproven file is left untouched for the operator.
 
 No new dependency: the Win32 liveness reader uses ``ctypes`` (``OpenProcess``
 / ``GetExitCodeProcess`` / ``GetProcessTimes``); POSIX uses ``os.kill(pid, 0)``
@@ -48,6 +67,7 @@ import contextlib
 import json
 import os
 import platform
+import re
 import sys
 import time
 import uuid
@@ -63,6 +83,10 @@ __all__ = [
     "OWNER_DECISION_LOCK_FILE",
     "OWNER_DECISION_RECLAIM_MUTEX_FILE",
     "LOCK_FAILURE_REASONS",
+    "LOCK_SCHEMA_VERSION",
+    "LOCK_BODY_FIELDS",
+    "LOCK_PID_MAX",
+    "LOCK_TOKEN_PATTERN",
     "OwnerDecisionLockError",
     "LockBody",
     "current_process_start_token",
@@ -75,6 +99,25 @@ OWNER_DECISION_LOCK_FILE = "SUPERSESSIONS.lock"
 #: and is never unlinked (see ``file_mutex``).
 OWNER_DECISION_RECLAIM_MUTEX_FILE = "SUPERSESSIONS.reclaim.mutex"
 LOCK_SCHEMA_VERSION = 1
+#: HARDENING-BACKEND-FIX.1 §1: the exact field set of the supported schema —
+#: a body with a missing or an extra field is malformed.
+LOCK_BODY_FIELDS: frozenset[str] = frozenset(
+    {
+        "lock_schema_version",
+        "pid",
+        "process_start_token",
+        "lock_token",
+        "host",
+        "created_at",
+        "heartbeat_at",
+    }
+)
+#: The supported pid range: ``1 ≤ pid ≤ 2**31 − 1`` — the largest value every
+#: supported platform's native pid type carries (POSIX ``pid_t`` is a signed
+#: 32-bit integer; no real Windows DWORD pid approaches it).
+LOCK_PID_MAX = 2**31 - 1
+#: ``uuid.uuid4().hex`` — exactly 32 lowercase hexadecimal characters.
+LOCK_TOKEN_PATTERN = re.compile(r"[0-9a-f]{32}")
 LOCK_FAILURE_REASONS: tuple[str, ...] = (
     "lock_held_by_live_holder",
     "lock_holder_liveness_unknown",
@@ -140,12 +183,27 @@ def _retry_fs(operation, *, attempts: int | None = None, delay: float | None = N
     return None
 
 
-def _parse_iso(value: str) -> datetime | None:
-    try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except (TypeError, ValueError):
+def _parse_iso(value: object) -> datetime | None:
+    """A timezone-aware ISO-8601 timestamp from a NATIVE string, else
+    ``None``. Nothing is coerced (HARDENING-BACKEND-FIX.1 §1): a non-string,
+    a naive timestamp or an unparseable string is refused."""
+
+    if type(value) is not str:
         return None
-    return parsed if parsed.tzinfo is not None else None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed
+
+
+def _is_native_int(value: object) -> bool:
+    """A native ``int`` — never ``bool`` (a subclass), never a float or a
+    numeric string."""
+
+    return type(value) is int
 
 
 # ── process liveness ────────────────────────────────────────────────────────
@@ -271,7 +329,7 @@ def process_liveness(pid: int | None, start_token: str | None, host: str | None)
 @dataclass(frozen=True)
 class LockBody:
     lock_schema_version: int
-    pid: int | None
+    pid: int
     process_start_token: str | None
     lock_token: str
     host: str | None
@@ -283,24 +341,50 @@ class LockBody:
 
     @classmethod
     def parse(cls, raw: str) -> LockBody | None:
+        """The strictly validated body, or ``None`` for ANY malformed body
+        (HARDENING-BACKEND-FIX.1 §1): the exact supported schema version, a
+        native positive in-range ``pid`` (never ``bool``), a 32-lowercase-hex
+        ``lock_token``, string-or-null ``host`` / ``process_start_token``,
+        timezone-aware ISO-8601 ``created_at`` / ``heartbeat_at``, exactly
+        the seven fields. Strings, floats, nulls and malformed values are
+        never coerced into valid fields."""
+
         try:
             document = json.loads(raw)
-        except ValueError:
+        except (ValueError, RecursionError):
+            # review FIX.1-R1: a pathologically nested body is malformed (typed),
+            # never an untyped RecursionError escaping the lock
             return None
-        if not isinstance(document, dict):
+        if not isinstance(document, dict) or set(document) != LOCK_BODY_FIELDS:
             return None
-        try:
-            return cls(
-                lock_schema_version=int(document["lock_schema_version"]),
-                pid=None if document.get("pid") is None else int(document["pid"]),
-                process_start_token=document.get("process_start_token"),
-                lock_token=str(document["lock_token"]),
-                host=document.get("host"),
-                created_at=str(document["created_at"]),
-                heartbeat_at=str(document["heartbeat_at"]),
-            )
-        except (KeyError, TypeError, ValueError):
+        version = document["lock_schema_version"]
+        if not _is_native_int(version) or version != LOCK_SCHEMA_VERSION:
             return None
+        pid = document["pid"]
+        if not _is_native_int(pid) or not (1 <= pid <= LOCK_PID_MAX):
+            return None
+        token = document["lock_token"]
+        if type(token) is not str or LOCK_TOKEN_PATTERN.fullmatch(token) is None:
+            return None
+        start_token = document["process_start_token"]
+        host = document["host"]
+        if start_token is not None and type(start_token) is not str:
+            return None
+        if host is not None and type(host) is not str:
+            return None
+        created_at = document["created_at"]
+        heartbeat_at = document["heartbeat_at"]
+        if _parse_iso(created_at) is None or _parse_iso(heartbeat_at) is None:
+            return None
+        return cls(
+            lock_schema_version=version,
+            pid=pid,
+            process_start_token=start_token,
+            lock_token=token,
+            host=host,
+            created_at=created_at,
+            heartbeat_at=heartbeat_at,
+        )
 
 
 class OwnerDecisionLock:
@@ -322,6 +406,9 @@ class OwnerDecisionLock:
         self.token = uuid.uuid4().hex
         self._held = False
         self._reclaimed: LockBody | None = None
+        #: the exact bytes this writer persisted at its last exclusive
+        #: creation — the post-create readback must reproduce them
+        self._created_bytes: bytes | None = None
 
     # -- body helpers ------------------------------------------------------
 
@@ -337,34 +424,46 @@ class OwnerDecisionLock:
             heartbeat_at=now,
         )
 
-    def _read_raw(self) -> str:
-        """One raw read of the lock file (the seam every retry goes through)."""
+    def _read_raw(self) -> bytes:
+        """One raw read of the lock file's BYTES (the seam every retry goes
+        through; the post-create proof compares these bytes exactly)."""
 
-        return self.path.read_text(encoding="utf-8")
+        return self.path.read_bytes()
 
-    def _read_state(self) -> tuple[ReadState, LockBody | None]:
-        """``absent`` / ``malformed`` / ``present`` (with the parsed body). A
-        transient ``OSError`` (RA-02 sharing violation) is retried; a
-        PERSISTENT read failure is the typed ``lock_read_failed`` — never
-        absence, never a malformed body."""
+    def _read_state_raw(self) -> tuple[ReadState, LockBody | None, bytes | None]:
+        """``absent`` / ``malformed`` / ``present`` with the strictly parsed
+        body and the exact persisted bytes. A transient ``OSError`` (RA-02
+        sharing violation) is retried; a PERSISTENT read failure is the typed
+        ``lock_read_failed`` — never absence, never a malformed body. Bytes
+        that are not UTF-8 are a malformed body (never reclaimed)."""
 
         last: OSError | None = None
         for _ in range(max(1, int(_FS_RETRY_ATTEMPTS))):
             try:
                 raw = self._read_raw()
             except FileNotFoundError:
-                return "absent", None
+                return "absent", None, None
             except OSError as error:
                 last = error
                 time.sleep(_FS_RETRY_DELAY_SECONDS)
                 continue
-            body = LockBody.parse(raw)
-            return ("present", body) if body is not None else ("malformed", None)
+            try:
+                text = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                return "malformed", None, raw
+            body = LockBody.parse(text)
+            return ("present", body, raw) if body is not None else ("malformed", None, raw)
         raise OwnerDecisionLockError(
             "lock_read_failed",
             f"the owner-decision lock body could not be read after retries ({last}); a "
             "persistent read failure is never treated as an absent lock",
         )
+
+    def _read_state(self) -> tuple[ReadState, LockBody | None]:
+        """``absent`` / ``malformed`` / ``present`` (with the parsed body)."""
+
+        state, body, _raw = self._read_state_raw()
+        return state, body
 
     def _read(self) -> LockBody | None:
         """The parsed body, or ``None`` for an absent / malformed lock (a
@@ -388,15 +487,21 @@ class OwnerDecisionLock:
         """Ordinary ``O_CREAT | O_EXCL`` acquisition. When creation succeeds
         but the body cannot be written / fsynced, the partial file is removed
         (or quarantined) BEFORE the typed ``lock_create_failed`` is raised —
-        a token-less lock file never survives."""
+        but only when ownership of the file is proven (the persisted bytes
+        are exactly a prefix of the bytes this writer wrote); an unproven
+        file is left in place for the operator (HARDENING-BACKEND-FIX.1 §1)."""
 
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._created_bytes = None
+        # binary mode: the persisted bytes must be EXACTLY the body bytes (the
+        # Windows CRT would otherwise translate the trailing newline)
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0)
         try:
-            handle = os.open(str(self.path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            handle = os.open(str(self.path), flags)
         except FileExistsError:
             return False
+        data = self._body().to_json().encode("utf-8")
         try:
-            data = self._body().to_json().encode("utf-8")
             written = 0
             while written < len(data):
                 written += os.write(handle, data[written:])
@@ -404,16 +509,37 @@ class OwnerDecisionLock:
         except OSError as error:
             with contextlib.suppress(OSError):
                 os.close(handle)
-            disposition = self._discard_partial_lock()
+            disposition = self._discard_partial_lock(data)
             raise OwnerDecisionLockError(
                 "lock_create_failed",
                 f"the owner-decision lock body could not be written after exclusive creation "
                 f"({error}); the partial lock file was {disposition}",
             ) from error
         os.close(handle)
+        self._created_bytes = data
         return True
 
-    def _discard_partial_lock(self) -> str:
+    def _discard_partial_lock(self, attempted: bytes) -> str:
+        """Remove (or quarantine) the file this writer created exclusively —
+        ONLY when ownership is proven: the persisted readback is exactly a
+        prefix of ``attempted`` (the bytes this writer wrote; an interrupted
+        write persists a prefix, possibly empty). Any other readback, or a
+        readback failure, proves nothing and the file is left in place."""
+
+        try:
+            persisted = _retry_fs(self._read_raw)
+        except FileNotFoundError:
+            return "absent on readback (nothing to remove)"
+        except OSError as error:
+            return (
+                f"left in place — ownership could not be proven (readback failed: {error}); "
+                "operator intervention required"
+            )
+        if not attempted.startswith(persisted):
+            return (
+                "left in place — the persisted bytes are not this writer's partial body "
+                "(ownership unproven); operator intervention required"
+            )
         try:
             _retry_fs(lambda: os.unlink(self.path))
             return "removed"
@@ -427,6 +553,46 @@ class OwnerDecisionLock:
             return f"quarantined as {quarantine.name}"
         except OSError:
             return "NOT removed (operator intervention required)"
+
+    def _prove_created(self) -> LockBody:
+        """The post-create ownership proof (HARDENING-BACKEND-FIX.1 §1): the
+        persisted readback must be byte-for-byte the body this writer wrote
+        and parse to this writer's token. Missing, malformed, unreadable and
+        foreign-token / altered readbacks fail typed; NOTHING is removed on
+        failure (ownership of the file is not proven) — the file is left
+        untouched for the operator (a lock carrying this writer's live body
+        becomes reclaimable by liveness once this process exits)."""
+
+        try:
+            state, body, raw = self._read_state_raw()
+        except OwnerDecisionLockError as error:
+            raise OwnerDecisionLockError(
+                error.reason,
+                f"{error}; the freshly created lock could not be read back, so this writer's "
+                "ownership is unproven: nothing was acquired and the file was left in place "
+                "(never removed blindly) — operator intervention required",
+            ) from error
+        if state == "absent":
+            raise OwnerDecisionLockError(
+                "lock_lost",
+                "the freshly created owner-decision lock is absent on readback: another party "
+                "removed it before this writer's ownership was proven; nothing was acquired",
+            )
+        if state == "malformed" or body is None:
+            raise OwnerDecisionLockError(
+                "lock_body_malformed",
+                "the freshly created owner-decision lock reads back malformed: this writer's "
+                "ownership is unproven, nothing was acquired and the file was left untouched "
+                "(a malformed body is never reclaimed) — operator intervention required",
+            )
+        if body.lock_token != self.token or raw != self._created_bytes:
+            raise OwnerDecisionLockError(
+                "lock_lost",
+                "the freshly created owner-decision lock does not read back as exactly this "
+                "writer's persisted body (a foreign token or altered bytes): nothing was "
+                "acquired and the file was left untouched — operator intervention required",
+            )
+        return body
 
     def _evaluate(self, state: ReadState, body: LockBody | None) -> tuple[bool, str]:
         """Whether the present lock may be reclaimed, with the reason it may
@@ -505,20 +671,13 @@ class OwnerDecisionLock:
         last_reason = "lock_held_by_live_holder"
         while True:
             if self._try_create():
-                try:
-                    body = self._read()
-                except OwnerDecisionLockError as error:
-                    # review RA-04: the file was created by THIS writer microseconds
-                    # ago — a persistent read failure must not leave a live,
-                    # non-reclaimable orphan behind for the life of this process
-                    disposition = self._discard_partial_lock()
-                    raise OwnerDecisionLockError(
-                        error.reason,
-                        f"{error}; the freshly created lock was {disposition} so that the "
-                        "store is not denied for the life of this process",
-                    ) from error
+                # HARDENING-BACKEND-FIX.1 §1: acquisition is proven by the exact
+                # persisted readback — never assumed from the creation alone
+                # (the former RA-04 discard of an unreadable fresh lock removed a
+                # file whose ownership was NOT proven; it is now left in place)
+                body = self._prove_created()
                 self._held = True
-                return body if body is not None and body.lock_token == self.token else self._body()
+                return body
             observed, last_reason = self._observe_stale()
             if observed is not None:
                 reclaimed, last_reason = self._reclaim(observed, deadline=deadline)
@@ -548,9 +707,7 @@ class OwnerDecisionLock:
 
         current = self.verify_held()
         temporary = self.path.with_name(f".{self.path.name}.hb-{uuid.uuid4().hex}")
-        temporary.write_text(
-            self._body(created_at=current.created_at).to_json(), encoding="utf-8"
-        )
+        temporary.write_bytes(self._body(created_at=current.created_at).to_json().encode("utf-8"))
         try:
             _retry_fs(lambda: os.replace(temporary, self.path))
         except OSError as error:

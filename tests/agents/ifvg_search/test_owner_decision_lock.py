@@ -617,12 +617,16 @@ def test_mutex_persistent_io_error_is_not_reported_as_contention(root: Path, mon
     _lock_path(root).unlink()
 
 
-def test_read_failure_after_exclusive_creation_leaves_no_orphan_lock(
+def test_read_failure_after_exclusive_creation_is_typed_and_removes_nothing(
     root: Path, monkeypatch
 ) -> None:
-    """Review RA-04: a persistent read failure right after this writer's own
-    exclusive creation discards the fresh lock before the typed error — no
-    live, non-reclaimable orphan denies the store for the life of the process."""
+    """HARDENING-BACKEND-FIX.1 §1 (supersedes review RA-04's discard): a
+    persistent read failure right after this writer's own exclusive creation
+    is the typed ``lock_read_failed`` and acquires nothing — and because the
+    readback failed, ownership of the file is NOT proven, so the fresh lock
+    is left in place (never removed blindly). It carries this writer's live
+    body: another writer waits on it as a live holder (fail closed) and it
+    becomes reclaimable by liveness once this process exits."""
 
     from alpha_lab.agents.data_infra.ifvg.search import owner_decision_lock as lock_module
 
@@ -637,11 +641,15 @@ def test_read_failure_after_exclusive_creation_leaves_no_orphan_lock(
     with pytest.raises(OwnerDecisionLockError) as failed:
         lock.acquire()
     assert failed.value.reason == "lock_read_failed"
-    assert "removed" in str(failed.value)
+    assert "left in place" in str(failed.value)
     assert lock._held is False
-    assert not _lock_path(root).exists()
-    assert not list((root / OWNER_DECISION_STORE).glob(".SUPERSESSIONS.lock.partial-*"))
     monkeypatch.undo()
-    with OwnerDecisionLock(root, wait_seconds=0.3) as again:  # the store is not denied
-        assert json.loads(_lock_path(root).read_text(encoding="utf-8"))["lock_token"] == again.token
-    assert not _lock_path(root).exists()
+    # the fresh lock survives untouched, carrying this writer's token
+    assert json.loads(_lock_path(root).read_text(encoding="utf-8"))["lock_token"] == lock.token
+    assert not list((root / OWNER_DECISION_STORE).glob(".SUPERSESSIONS.lock.partial-*"))
+    # fail closed: another writer sees a live holder (this process, fresh heartbeat)
+    with pytest.raises(OwnerDecisionLockError) as held:
+        OwnerDecisionLock(root, wait_seconds=0.3, heartbeat_timeout_seconds=1.0).acquire()
+    assert held.value.reason == "lock_held_by_live_holder"
+    assert json.loads(_lock_path(root).read_text(encoding="utf-8"))["lock_token"] == lock.token
+    _lock_path(root).unlink()  # operator intervention

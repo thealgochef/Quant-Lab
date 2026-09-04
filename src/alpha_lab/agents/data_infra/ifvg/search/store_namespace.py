@@ -9,10 +9,10 @@ contract every authority-bearing artifact references by content id:
 
 * :class:`StoreNamespacePayload` / :class:`StoreNamespaceEnvelope` —
   ``namespace_class ∈ {research, test}``, a stable ``store_instance_id``
-  (a UUID generated or explicitly supplied ONCE — never an absolute-path
-  hash, so relocation preserves the semantic identity) and the
-  ``authority_genesis_id`` that anchors the supersession chain
-  (``store_namespace_id = hash(payload)``).
+  (a 32-hex id the operator chooses and records BEFORE the first
+  initialization — never an absolute-path hash, so relocation preserves the
+  semantic identity) and the ``authority_genesis_id`` that anchors the
+  supersession chain (``store_namespace_id = hash(payload)``).
 * The envelope lives at ``<root>/STORE_NAMESPACE.json``; its bytes are
   immutable (a second initialization must reproduce the identical payload)
   and re-verified on EVERY authorization load (the envelope id must hash
@@ -47,6 +47,17 @@ supersession record exists, else ``incomplete_store_namespace_initialization``
 (conflicting bytes are never overwritten); both present but inconsistent →
 fail closed (no object is ever selected as authoritative by pathname or
 modification time).
+
+**Recoverable first initialization (HARDENING-BACKEND-FIX.1 §2).** The real
+initializer NEVER generates a store instance id: the FIRST initialization of
+every real persistent store requires an explicit ``store_instance_id`` (typed
+``store_instance_id_required`` otherwise, before any file is published) — a
+random id minted inside the initializer would be lost with a crash between
+the two publications and could never recover the half-initialized store.
+Disposable test-only temporary stores use the clearly separate
+:func:`initialize_test_namespace`, which generates its id BEFORE calling the
+real initializer. Idempotent reuse of a marked store (class-only replay or
+the identical explicit request) and explicit-id crash recovery are unchanged.
 """
 
 from __future__ import annotations
@@ -54,6 +65,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import time
 import uuid
 from pathlib import Path
@@ -135,6 +147,9 @@ STORE_NAMESPACE_FAILURE_REASONS: tuple[str, ...] = (
     "store_namespace_initialization_busy",
     # review RA-02: a persistent non-contention failure of the init mutex file
     "store_namespace_initialization_failed",
+    # HARDENING-BACKEND-FIX.1 §2: the first initialization of a real store
+    # without an explicit instance id (the initializer never generates one)
+    "store_instance_id_required",
     # HARDENING-BACKEND-FIX §10: the complete owner-authority chain proof
     "supersession_decision_unverifiable",
     "supersession_transition_unlawful",
@@ -471,8 +486,20 @@ def _initialize_under_mutex(
 
     if existing is None and head_state == "absent":
         # ── both absent: publish the precomputed deterministic pair ───────
-        instance = store_instance_id if store_instance_id is not None else uuid.uuid4().hex
-        envelope = _envelope_for(namespace_class, instance)
+        if store_instance_id is None:
+            # HARDENING-BACKEND-FIX.1 §2: never mint a random id here — a crash
+            # between the two publications would lose it and the half-initialized
+            # store could never be recovered (recovery needs the explicit id)
+            raise StoreNamespaceError(
+                "store_instance_id_required",
+                "the first initialization of an unmarked store requires an explicit "
+                "store_instance_id (32 lowercase hex characters) chosen and recorded by the "
+                "operator BEFORE initialization — the initializer never generates one, so an "
+                "interrupted initialization stays recoverable by the identical request; "
+                "nothing was published (disposable test stores use "
+                "initialize_test_namespace)",
+            )
+        envelope = _envelope_for(namespace_class, store_instance_id)
         genesis_text = _head_text(_genesis_head_document(envelope))
         namespace_text = _namespace_text(envelope)
         _atomic_write_text(supersession_head_path(root), genesis_text)
@@ -550,13 +577,18 @@ def initialize_store_namespace(
     """The ONE-TIME explicit migration: mark ``root`` with its semantic class.
 
     The class is an argument the operator states (the CLI shows it before
-    acting); it is never inferred from the path. Idempotent on an identical
-    payload; a different class or instance for an already-marked store is a
-    typed ``store_namespace_divergent`` refusal (namespace bytes are
-    immutable). The envelope and the genesis head are published as one
-    coherent pair under a one-time initialization mutex (HARDENING-BACKEND-FIX
-    §4.2): a crash between the two writes is recovered EXACTLY by the same
-    request (class + explicit instance id) and refused otherwise
+    acting); it is never inferred from the path. The FIRST initialization of
+    an unmarked store requires an explicit ``store_instance_id`` (32 lowercase
+    hex characters; HARDENING-BACKEND-FIX.1 §2: the initializer never
+    generates one — typed ``store_instance_id_required`` before any file is
+    published). Idempotent on an identical payload (the identical explicit
+    request, or a class-only replay of an already-marked store); a different
+    class or instance for an already-marked store is a typed
+    ``store_namespace_divergent`` refusal (namespace bytes are immutable). The
+    envelope and the genesis head are published as one coherent pair under a
+    one-time initialization mutex (HARDENING-BACKEND-FIX §4.2): a crash
+    between the two writes is recovered EXACTLY by the same request (class +
+    explicit instance id) and refused otherwise
     (``incomplete_store_namespace_initialization``); an inconsistent pair
     fails closed.
     """
@@ -565,6 +597,14 @@ def initialize_store_namespace(
     if namespace_class not in NAMESPACE_CLASSES:
         raise ValueError(
             f"namespace_class must be one of {NAMESPACE_CLASSES}, got {namespace_class!r}"
+        )
+    if store_instance_id is not None and (
+        type(store_instance_id) is not str
+        or re.fullmatch(_INSTANCE_PATTERN, store_instance_id) is None
+    ):
+        raise ValueError(
+            "store_instance_id must be a native string of exactly 32 lowercase hexadecimal "
+            f"characters, got {store_instance_id!r}"
         )
     mutex = ExclusiveFileMutex(_init_mutex_path(root), wait_seconds=_INIT_MUTEX_WAIT_SECONDS)
     try:
@@ -587,9 +627,26 @@ def initialize_store_namespace(
 
 
 def initialize_test_namespace(root: Path) -> StoreNamespaceEnvelope:
-    """Fixture helper: mark a temporary root as an explicit ``test`` namespace."""
+    """DISPOSABLE TEST-ONLY helper (HARDENING-BACKEND-FIX.1 §2): mark a
+    temporary root as an explicit ``test`` namespace.
 
-    return initialize_store_namespace(root, namespace_class="test")
+    This is the clearly separate seam that GENERATES an instance id — a
+    fresh ``uuid4().hex`` minted BEFORE the real initializer runs (the real
+    initializer never generates one). A disposable store needs no recovery
+    key: a crash between the two publications leaves a half-initialized
+    temporary store that is simply discarded. An already-marked root is
+    replayed class-only (idempotent reuse of a ``test`` store; a marked
+    ``research`` root or a half-initialized store is refused by the real
+    initializer exactly as any class-only request). Never use this helper
+    for a real persistent store.
+    """
+
+    root = Path(root)
+    if namespace_class_of(root) is not None:
+        return initialize_store_namespace(root, namespace_class="test")
+    return initialize_store_namespace(
+        root, namespace_class="test", store_instance_id=uuid.uuid4().hex
+    )
 
 
 def load_store_namespace(root: Path) -> StoreNamespaceEnvelope:

@@ -281,7 +281,7 @@ def test_synthetic_provenance_is_confined_to_test_namespaces(tmp_path) -> None:
         synthetic_seed_production_authorization(unmarked, **kwargs)
     assert excinfo.value.reason == "store_namespace_missing"
     research = tmp_path / "research_store"
-    initialize_store_namespace(research, namespace_class="research")
+    initialize_store_namespace(research, namespace_class="research", store_instance_id="a4" * 16)
     with pytest.raises(SeedProductionAuthorizationError) as excinfo:
         synthetic_seed_production_authorization(research, **kwargs)
     assert excinfo.value.reason == "synthetic_provenance_confined_to_test_namespaces"
@@ -464,7 +464,7 @@ def test_seed_production_refuses_before_any_path_on_divergence(seed_lane, monkey
     # a research-namespace destination refuses the synthetic authorization at verify
     root = seed_lane["root"]
     research = root.parent / "research" / "search" / "v1"
-    initialize_store_namespace(research, namespace_class="research")
+    initialize_store_namespace(research, namespace_class="research", store_instance_id="a4" * 16)
     with pytest.raises(SeedProductionAuthorizationError) as excinfo:
         _run(seed_lane, root=research)
     assert excinfo.value.reason == "authorization_not_found"

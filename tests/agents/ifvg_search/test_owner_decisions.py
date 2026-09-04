@@ -874,7 +874,7 @@ def test_synthetic_scope_and_provenance_are_confined_to_test_namespaces(lane, tm
     run = lane["run"]
     # (a) a marked RESEARCH namespace at a plain path (the path grants nothing)
     research = tmp_path / "plain_research_store"
-    initialize_store_namespace(research, namespace_class="research")
+    initialize_store_namespace(research, namespace_class="research", store_instance_id="a3" * 16)
     persist_regime_protocol(research, run.protocol)
     persist_regime_assessment(research, run.assessment)
     first = _decision(run)

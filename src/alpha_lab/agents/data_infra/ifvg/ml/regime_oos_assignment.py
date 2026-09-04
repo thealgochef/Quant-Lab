@@ -103,6 +103,7 @@ __all__ = [
     "PanelAssignmentContext",
     "RegimeOosAssignmentPayload",
     "RegimeOosAssignmentEnvelope",
+    "assert_native_candidate_ids",
     "candidate_as_of_frame",
     "assign_panel_regimes_to_candidates",
     "candidate_fold_oos_assignment",
@@ -279,16 +280,38 @@ class RegimeOosAssignmentEnvelope(EnvelopeBase):
 # ── candidate as-of instants ─────────────────────────────────────────────────
 
 
+def assert_native_candidate_ids(values: pd.Series) -> None:
+    """HARDENING-BACKEND-FIX.1 §3: every candidate id must be a NATIVE,
+    non-blank ``str`` — validated BEFORE ``astype(str)`` or any other
+    conversion, so a numeric, boolean, null / NaN / NA, blank, bytes or
+    object-shaped identifier (and a NumPy string scalar) is refused instead
+    of being coerced into a string that could collide with a real id."""
+
+    for position, value in enumerate(values.tolist()):
+        if type(value) is not str:
+            raise ValueError(
+                "candidate_id must be a native string before any conversion; row "
+                f"{position} carries {type(value).__name__} {value!r}"
+            )
+        if not value.strip():
+            raise ValueError(
+                f"candidate_id must be a non-blank string; row {position} is blank ({value!r})"
+            )
+
+
 def candidate_as_of_frame(frame: pd.DataFrame, *, stage: AvailabilityStage) -> pd.DataFrame:
     """``(candidate_id, as_of_ts_utc)`` for one availability stage's anchor
     column; a candidate without that anchor keeps a null as-of (typed
-    downstream), duplicates refuse."""
+    downstream), duplicates refuse. Candidate ids are validated natively
+    (:func:`assert_native_candidate_ids`) before the canonical ``astype(str)``,
+    whose output for valid ids is unchanged."""
 
     column = STAGE_AS_OF_COLUMNS[AvailabilityStage(stage)]
     if "candidate_id" not in frame.columns:
         raise ValueError("candidate frame lacks candidate_id")
     if column not in frame.columns:
         raise ValueError(f"candidate frame lacks the {stage.value} anchor column {column!r}")
+    assert_native_candidate_ids(frame["candidate_id"])
     ids = frame["candidate_id"].astype(str)
     if ids.duplicated().any():
         raise ValueError("candidate frame repeats a candidate_id")

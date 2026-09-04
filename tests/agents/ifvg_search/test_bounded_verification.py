@@ -180,7 +180,9 @@ def test_preflight_refuses_before_any_path_in_the_registered_order(bounded_env, 
     research_repo = tmp_path / "research_repo"
     research_store = research_repo / SEARCH_TEST_STORE_ROOT
     research_store.mkdir(parents=True)
-    initialize_store_namespace(research_store, namespace_class="research")
+    initialize_store_namespace(
+        research_store, namespace_class="research", store_instance_id="a1" * 16
+    )
     assert _reason(
         env, run, authorization, store_root=research_store, repo_root=research_repo
     ) == "store_namespace_refused"

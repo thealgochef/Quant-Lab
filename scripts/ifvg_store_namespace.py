@@ -10,8 +10,14 @@ existing store cannot authorize a write or a real launch.
 ``init`` shows the operator the intended class and target root, then
 initializes the namespace ONCE (idempotent on an identical replay; a
 different class or instance for an already-marked store is refused). The
-class is an explicit argument — it is never inferred from the path. A
-``test`` namespace under a research-looking path is refused as an
+class is an explicit argument — it is never inferred from the path. The
+FIRST initialization of an unmarked store requires an explicit
+``--store-instance-id`` (32 lowercase hex characters) that the operator
+chooses and RECORDS before running (HARDENING-BACKEND-FIX.1 §2): the
+initializer never generates one, so an initialization interrupted between
+its two publications stays recoverable by replaying the identical request;
+without it the store is refused untouched (``store_instance_id_required``).
+A ``test`` namespace under a research-looking path is refused as an
 incoherent deployment (defense in depth). ``show`` prints the verified
 namespace and the current supersession-head witness. Importing this module
 launches nothing.
@@ -21,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -63,7 +70,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--store-instance-id",
         default=None,
-        help="optional explicit 32-hex instance id (generated once when omitted)",
+        help=(
+            "explicit 32-lowercase-hex instance id; REQUIRED for the first initialization "
+            "of an unmarked store (choose it, record it, then pass it — it is the only key "
+            "that recovers an interrupted initialization; never generated for you); "
+            "optional for an idempotent replay of an already-marked store"
+        ),
     )
     parser.add_argument(
         "--confirm",
@@ -92,20 +104,47 @@ def main(argv: list[str] | None = None) -> int:
     if args.namespace_class is None:
         print(json.dumps({"status": "refused", "reason": "namespace_class_required"}))
         return 2
+    if args.store_instance_id is not None and (
+        re.fullmatch(r"[0-9a-f]{32}", args.store_instance_id) is None
+    ):
+        # review FIX.1-R2: a malformed explicit id is a typed CLI refusal before
+        # anything is read or published, never a traceback
+        print(
+            json.dumps(
+                {
+                    "status": "refused",
+                    "reason": "store_instance_id_malformed",
+                    "detail": "--store-instance-id must be exactly 32 lowercase hexadecimal "
+                    "characters",
+                }
+            )
+        )
+        return 2
     try:
         existing = namespace_class_of(root)
     except StoreNamespaceError as error:
         print(json.dumps({"status": "refused", "reason": error.reason, "detail": str(error)}))
         return 2
+    instance_id_required = existing is None and args.store_instance_id is None
     intent = {
         "status": "intent",
         "store_root": str(root.resolve()),
         "intended_namespace_class": args.namespace_class,
+        "store_instance_id": args.store_instance_id,
+        "store_instance_id_required": instance_id_required,
         "path_looks_like_research_store": path_looks_like_research_store(root),
         "currently_marked_as": existing,
         "note": (
             "the class is an explicit operator statement, never inferred from the path; "
             "re-run with --confirm to initialize (idempotent on an identical replay)"
+            + (
+                "; this store is unmarked: its FIRST initialization requires an explicit "
+                "--store-instance-id (32 lowercase hex characters) that you choose and record "
+                "before running — the initializer never generates one, so an interrupted "
+                "initialization stays recoverable by the identical request"
+                if instance_id_required
+                else ""
+            )
         ),
     }
     if not args.confirm:
@@ -131,6 +170,9 @@ def main(argv: list[str] | None = None) -> int:
         assert_namespace_deployment_coherent(root, namespace)
     except StoreNamespaceError as error:
         print(json.dumps({"status": "refused", "reason": error.reason, "detail": str(error)}))
+        return 2
+    except ValueError as error:  # an argument the initializer refuses (backstop; typed)
+        print(json.dumps({"status": "refused", "reason": "invalid_argument", "detail": str(error)}))
         return 2
     print(json.dumps({"status": "initialized", **_show(root)}, sort_keys=True, indent=2))
     return 0

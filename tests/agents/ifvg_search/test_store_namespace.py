@@ -45,14 +45,27 @@ def test_initialization_is_explicit_idempotent_and_immutable(tmp_path: Path) -> 
     with pytest.raises(StoreNamespaceError) as missing:
         require_store_namespace(root)
     assert missing.value.reason == "store_namespace_missing"
-    first = initialize_store_namespace(root, namespace_class="test")
+    # HARDENING-BACKEND-FIX.1 §2: the FIRST initialization of a real store
+    # requires an explicit instance id — the initializer never generates one
+    with pytest.raises(StoreNamespaceError) as no_instance:
+        initialize_store_namespace(root, namespace_class="test")
+    assert no_instance.value.reason == "store_instance_id_required"
+    assert namespace_class_of(root) is None
+    assert not (root / STORE_NAMESPACE_FILE).exists()
+    assert not supersession_head_path(root).exists()
+    instance = "0f" * 16
+    first = initialize_store_namespace(root, namespace_class="test", store_instance_id=instance)
     assert first.payload.namespace_class == "test"
+    assert first.payload.store_instance_id == instance
     assert first.payload.authority_genesis_id == genesis_id_for(
         first.payload.store_instance_id, "test"
     )
-    # identical replay reuses; a different class is a typed divergence
-    again = initialize_store_namespace(root, namespace_class="test")
+    # identical replay reuses (explicit or class-only); a different class is a
+    # typed divergence
+    again = initialize_store_namespace(root, namespace_class="test", store_instance_id=instance)
     assert again.store_namespace_id == first.store_namespace_id
+    class_only = initialize_store_namespace(root, namespace_class="test")
+    assert class_only.store_namespace_id == first.store_namespace_id
     with pytest.raises(StoreNamespaceError) as divergent:
         initialize_store_namespace(root, namespace_class="research")
     assert divergent.value.reason == "store_namespace_divergent"
@@ -124,7 +137,9 @@ def test_path_heuristic_is_defense_in_depth_never_authority(tmp_path: Path) -> N
     assert incoherent.value.reason == "store_namespace_deployment_incoherent"
     # ...and a research namespace under a plain path is coherent (the path
     # never defines the class)
-    research = initialize_store_namespace(plain, namespace_class="research")
+    research = initialize_store_namespace(
+        plain, namespace_class="research", store_instance_id="a7" * 16
+    )
     assert_namespace_deployment_coherent(plain, research)
     assert namespace_class_of(plain) == "research"
 
@@ -137,7 +152,7 @@ def test_synthetic_scope_follows_the_namespace_class(tmp_path: Path) -> None:
     # can exist there) and is not refused for structural writes
     assert_run_scope_lawful_for_root(unmarked, "synthetic_fixture")
     research = tmp_path / "research"
-    initialize_store_namespace(research, namespace_class="research")
+    initialize_store_namespace(research, namespace_class="research", store_instance_id="a8" * 16)
     with pytest.raises(OwnerDecisionRefusalError, match="research namespace refuses"):
         assert_run_scope_lawful_for_root(research, "synthetic_fixture")
     assert_run_scope_lawful_for_root(research, "full_authorized_development")
@@ -230,11 +245,24 @@ def test_cli_shows_intent_then_initializes_and_refuses_divergence(tmp_path: Path
     assert module.main(["init", "--store-root", str(root), "--namespace-class", "test"]) == 0
     intent = json.loads(capsys.readouterr().out)
     assert intent["status"] == "intent" and intent["currently_marked_as"] is None
+    assert intent["store_instance_id_required"] is True  # HARDENING-BACKEND-FIX.1 §2
     assert namespace_class_of(root) is None  # nothing happened without --confirm
+    # the first initialization without an explicit instance id is refused untouched
     assert module.main(["init", "--store-root", str(root), "--namespace-class", "test",
-                        "--confirm"]) == 0
+                        "--confirm"]) == 2
+    assert json.loads(capsys.readouterr().out)["reason"] == "store_instance_id_required"
+    assert namespace_class_of(root) is None
+    instance = "c1" * 16
+    assert module.main(["init", "--store-root", str(root), "--namespace-class", "test",
+                        "--store-instance-id", instance, "--confirm"]) == 0
     initialized = json.loads(capsys.readouterr().out)
     assert initialized["status"] == "initialized" and initialized["namespace_class"] == "test"
+    assert initialized["store_instance_id"] == instance
+    # an identical replay (class-only, or the explicit id) is idempotent
+    assert module.main(["init", "--store-root", str(root), "--namespace-class", "test",
+                        "--confirm"]) == 0
+    replayed = json.loads(capsys.readouterr().out)
+    assert replayed["store_namespace_id"] == initialized["store_namespace_id"]
     assert module.main(["init", "--store-root", str(root), "--namespace-class", "research",
                         "--confirm"]) == 2
     refused = json.loads(capsys.readouterr().out)
@@ -245,7 +273,7 @@ def test_cli_shows_intent_then_initializes_and_refuses_divergence(tmp_path: Path
     # a test namespace under a research-looking path is refused by the CLI
     looks = tmp_path / "data" / "ifvg_datasets" / "search" / "v1"
     assert module.main(["init", "--store-root", str(looks), "--namespace-class", "test",
-                        "--confirm"]) == 2
+                        "--store-instance-id", "c2" * 16, "--confirm"]) == 2
     assert json.loads(capsys.readouterr().out)["reason"] == (
         "store_namespace_deployment_incoherent"
     )
@@ -299,16 +327,19 @@ def test_concurrent_identical_initializers_publish_one_coherent_pair(tmp_path: P
     assert errors == []
     assert len(results) == 6 and len(set(results)) == 1
     _genesis_pair_is_coherent(root, results[0])
-    # class-only identical requests (no explicit instance) converge on the
-    # single instance the first initializer generated
+    # HARDENING-BACKEND-FIX.1 §2: class-only requests (no explicit instance)
+    # against an UNMARKED store are ALL refused — the initializer never mints
+    # an instance id — and nothing is published
     other = tmp_path / "class_only"
     start2 = threading.Barrier(4, timeout=10)
-    ids: list[str] = []
+    reasons: list[str] = []
 
     def _init_class_only() -> None:
         start2.wait()
         try:
-            ids.append(initialize_store_namespace(other, namespace_class="test").store_namespace_id)
+            initialize_store_namespace(other, namespace_class="test")
+        except StoreNamespaceError as error:
+            reasons.append(error.reason)
         except BaseException as error:  # noqa: BLE001
             errors.append(repr(error))
 
@@ -318,8 +349,11 @@ def test_concurrent_identical_initializers_publish_one_coherent_pair(tmp_path: P
     for thread in threads:
         thread.join(30)
     assert errors == []
-    assert len(ids) == 4 and len(set(ids)) == 1
-    _genesis_pair_is_coherent(other, ids[0])
+    assert reasons == ["store_instance_id_required"] * 4
+    assert namespace_class_of(other) is None
+    assert not (other / STORE_NAMESPACE_FILE).exists()
+    assert not supersession_head_path(other).exists()
+    assert not list(other.glob(".STORE_NAMESPACE.json.tmp-*"))
 
 
 def test_concurrent_divergent_initializers_one_wins_other_refuses(tmp_path: Path) -> None:
