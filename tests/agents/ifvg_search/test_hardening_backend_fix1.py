@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import sys
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
@@ -41,6 +42,8 @@ from alpha_lab.agents.data_infra.ifvg.search.owner_decision_lock import (
     LockBody,
     OwnerDecisionLock,
     OwnerDecisionLockError,
+    current_process_start_token,
+    process_liveness,
 )
 from alpha_lab.agents.data_infra.ifvg.search.store_namespace import (
     OWNER_DECISION_STORE,
@@ -187,6 +190,119 @@ def test_host_and_start_token_must_be_strings_or_null(root: Path, field, value) 
     _assert_malformed_and_non_reclaimable(root, _valid_body(**{field: value}))
     assert LockBody.parse(json.dumps(_valid_body(**{field: None}))) is not None
     assert LockBody.parse(json.dumps(_valid_body(**{field: "text"}))) is not None
+
+
+# ── 1b. Win32 liveness: a FAILED exit-code query is unknown, never dead ──────
+
+_WIN32 = sys.platform == "win32"
+
+
+def _patch_kernel32_exit_query(monkeypatch, query) -> None:
+    """Route the lock module's ``ctypes.WinDLL("kernel32", …)`` through a proxy
+    whose ``GetExitCodeProcess`` is ``query``; every other export
+    (``OpenProcess``, ``GetProcessTimes``, ``CloseHandle`` …) is the REAL
+    kernel32, so the probe reaches the real live process and only the
+    exit-code query is controlled."""
+
+    import ctypes
+
+    real_windll = ctypes.WinDLL
+    real_kernel32 = real_windll("kernel32", use_last_error=True)
+
+    class _Kernel32Proxy:
+        GetExitCodeProcess = staticmethod(query)
+
+        def __getattr__(self, name):
+            return getattr(real_kernel32, name)
+
+    proxy = _Kernel32Proxy()
+
+    def _windll(name, *args, **kwargs):
+        if str(name).lower().split(".")[0] == "kernel32":
+            return proxy
+        return real_windll(name, *args, **kwargs)
+
+    monkeypatch.setattr(ctypes, "WinDLL", _windll)
+
+
+@pytest.mark.skipif(not _WIN32, reason="the Win32 liveness reader")
+def test_win32_exit_code_query_failure_is_unknown(monkeypatch) -> None:
+    """``GetExitCodeProcess`` returning FALSE means the process state was NOT
+    determined: ``unknown`` (never reclaimable) — not ``dead``. A query that
+    SUCCEEDS with an exit code other than STILL_ACTIVE is the demonstrable
+    death that remains ``dead``: the two conditions are distinguished."""
+
+    from alpha_lab.agents.data_infra.ifvg.search.owner_decision_lock import (
+        _win32_process_times,
+    )
+
+    pid = os.getpid()
+    # control: the real query on this live process
+    liveness, token = _win32_process_times(pid)
+    assert liveness == "alive" and token is not None
+    calls = {"n": 0}
+
+    def _query_fails(_handle, _exit_code_pointer):
+        calls["n"] += 1
+        return 0  # FALSE: the query itself failed; nothing was determined
+
+    _patch_kernel32_exit_query(monkeypatch, _query_fails)
+    assert _win32_process_times(pid) == ("unknown", None)
+    assert calls["n"] == 1
+    assert process_liveness(pid, token, platform.node()) == "unknown"
+    # the recorded start token is not consulted: nothing was determined, so
+    # even a "different process" token cannot turn the verdict into dead
+    assert process_liveness(pid, "not-this-process", platform.node()) == "unknown"
+    # the writer's OWN start token never goes through the exit-code query
+    assert current_process_start_token() == token
+    monkeypatch.undo()
+
+    def _query_succeeds_exited(_handle, exit_code_pointer):
+        exit_code_pointer._obj.value = 0  # the query SUCCEEDED: exit code 0
+        return 1
+
+    _patch_kernel32_exit_query(monkeypatch, _query_succeeds_exited)
+    assert _win32_process_times(pid) == ("dead", None)
+    assert process_liveness(pid, token, platform.node()) == "dead"
+
+
+@pytest.mark.skipif(not _WIN32, reason="the Win32 liveness reader")
+def test_stale_lock_is_not_reclaimed_when_win32_exit_query_fails(root: Path, monkeypatch) -> None:
+    """The failure scenario: an OLD heartbeat, a holder that is still ALIVE
+    (this process), ``OpenProcess`` succeeds and ``GetExitCodeProcess`` fails.
+    Before the correction the reader answered ``dead`` and the stale-lock
+    evaluator authorized reclamation of a LIVE writer's lock. Now the lock
+    file remains present, acquisition does not succeed, and the typed result
+    is ``lock_holder_liveness_unknown``."""
+
+    _write_stale(
+        root,
+        _valid_body(
+            pid=os.getpid(),
+            process_start_token=current_process_start_token(),
+            lock_token="b" * 32,
+        ),
+    )
+    before = _lock_path(root).read_bytes()
+    _patch_kernel32_exit_query(monkeypatch, lambda _handle, _exit_code_pointer: 0)
+    lock = OwnerDecisionLock(
+        root, wait_seconds=0.4, heartbeat_timeout_seconds=1.0, poll_seconds=0.01
+    )
+    with pytest.raises(OwnerDecisionLockError) as refused:
+        lock.acquire()
+    assert refused.value.reason == "lock_holder_liveness_unknown"
+    assert lock.reclaimed_from is None and lock._held is False
+    assert _lock_path(root).exists()
+    assert _lock_path(root).read_bytes() == before
+    assert json.loads(before)["lock_token"] == "b" * 32
+    monkeypatch.undo()
+    # control: with the real query the same stale body is a LIVE holder (this
+    # process is alive) — still never reclaimed, still typed
+    with pytest.raises(OwnerDecisionLockError) as live:
+        OwnerDecisionLock(root, wait_seconds=0.3, heartbeat_timeout_seconds=1.0).acquire()
+    assert live.value.reason == "lock_held_by_live_holder"
+    assert _lock_path(root).read_bytes() == before
+    _lock_path(root).unlink()
 
 
 # ── 1. the post-create ownership proof ───────────────────────────────────────

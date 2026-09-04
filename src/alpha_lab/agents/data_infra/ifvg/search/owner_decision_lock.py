@@ -9,9 +9,10 @@ it), a random lock token, host, creation time and a heartbeat:
   process is demonstrably not alive on THIS host — ``dead`` from
   :func:`process_liveness`: no such pid, an exited pid, or a live pid whose
   start token differs from the recorded one (PID reuse). A holder on another
-  host, a malformed body, or a platform that cannot assess liveness is
-  ``unknown`` and is NEVER reclaimed — the waiter times out with a typed
-  reason for operator intervention.
+  host, a malformed body, a platform that cannot assess liveness, or a
+  liveness query that itself FAILS (Win32 ``GetExitCodeProcess`` returning
+  FALSE: the state was not determined) is ``unknown`` and is NEVER reclaimed
+  — the waiter times out with a typed reason for operator intervention.
 * **Token-safe reclamation** (HARDENING-BACKEND-FIX §4.1). A stale verdict
   reached OUTSIDE the reclaim mutex grants no authority to unlink: two
   reclaimers that both inspected stale body ``S`` could otherwise race —
@@ -243,12 +244,16 @@ def _win32_process_times(pid: int | None) -> tuple[Liveness, str | None]:
                 return "alive", None  # exists; token unavailable
             return "unknown", None
     try:
-        exit_code = wintypes.DWORD()
-        if not own and (
-            not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
-            or exit_code.value != _STILL_ACTIVE
-        ):
-            return "dead", None
+        if not own:
+            exit_code = wintypes.DWORD()
+            query_succeeded = kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
+            if not query_succeeded:
+                # HARDENING-BACKEND-FIX.1 R3: the query itself failed, so the
+                # process state was NOT determined — unknown, never dead (a
+                # stale lock is reclaimed only on DEMONSTRABLE death)
+                return "unknown", None
+            if exit_code.value != _STILL_ACTIVE:
+                return "dead", None  # the query succeeded: demonstrably exited
         creation, exit_, kernel, user = (wintypes.FILETIME() for _ in range(4))
         if not kernel32.GetProcessTimes(
             handle, ctypes.byref(creation), ctypes.byref(exit_), ctypes.byref(kernel),
