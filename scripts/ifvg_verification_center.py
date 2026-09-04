@@ -45,6 +45,7 @@ from alpha_lab.agents.data_infra.ifvg.config import (
     V2_DATASET_DIR,
 )
 from alpha_lab.agents.data_infra.ifvg.data_access import allowlist_sha256
+from alpha_lab.agents.data_infra.ifvg.presentation.help_registry import help_text
 from alpha_lab.agents.data_infra.ifvg.presentation.run_purpose import (
     PURPOSE_DESCRIPTIONS,
     RunPurpose,
@@ -451,7 +452,11 @@ def _render_readiness(st_module, ctx: CenterContext) -> None:
         "owner authorization; it never becomes verification evidence. The real ≤5-day "
         "slice is prepared in the steps below and never uses a synthetic marker."
     )
-    if st_module.button("Start a verification draft", key=f"{_START}verify_draft"):
+    if st_module.button(
+        "Start a verification draft",
+        key=f"{_START}verify_draft",
+        help=help_text("center.start_verification_draft"),
+    ):
         from ifvg_study_tab import (  # noqa: PLC0415
             TASK_CARDS,
             request_route,
@@ -789,7 +794,11 @@ def _render_seed(st_module, ctx: CenterContext) -> None:
             "seed_production_not_authorized",
             detail=f"{authorization.status}: {authorization.detail}",
         )
-    if st_module.button("Refresh", key=f"{_VC}refresh_seed"):
+    if st_module.button(
+        "Refresh",
+        key=f"{_VC}refresh_seed",
+        help=help_text("center.refresh_seed"),
+    ):
         st_module.rerun()
 
     st_module.markdown("**D · The verified seed**")
@@ -930,7 +939,11 @@ def _render_final_authorization(st_module, ctx: CenterContext) -> None:
         render_empty_state(
             st_module, "authorization_not_ready", detail=f"{signed.status}: {signed.detail}"
         )
-    if st_module.button("Validate the completed reference", key=f"{_VC}validate_ref"):
+    if st_module.button(
+        "Validate the completed reference",
+        key=f"{_VC}validate_ref",
+        help=help_text("center.validate_reference"),
+    ):
         st_module.rerun()
 
 
@@ -1227,7 +1240,11 @@ def _render_review_run(st_module, ctx: CenterContext) -> None:
             "preflight_refused",
             detail=f"{preflight.reason or preflight.status}: {preflight.detail}",
         )
-    if st_module.button("Run the preflight again", key=f"{_VC}preflight_again"):
+    if st_module.button(
+        "Run the preflight again",
+        key=f"{_VC}preflight_again",
+        help=help_text("center.preflight_again"),
+    ):
         st_module.rerun()
 
 

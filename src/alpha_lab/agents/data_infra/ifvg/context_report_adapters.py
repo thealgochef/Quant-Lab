@@ -57,6 +57,32 @@ def adapt_candidate_research_report(report: dict[str, Any]) -> dict[str, Any]:
         )
     uncertainty_rows = _flatten_intervals(report.get("uncertainty", {}))
     uncertainty_rows.extend(_flatten_intervals(model.get("uncertainty", {}), "model"))
+    raw_calibration = metrics.get("calibration")
+    calibration = (
+        {
+            "available": bool(raw_calibration.get("available", False)),
+            "slope": raw_calibration.get("slope"),
+            "intercept": raw_calibration.get("intercept"),
+            "reason": raw_calibration.get("reason"),
+        }
+        if isinstance(raw_calibration, dict)
+        else {"available": False, "slope": None, "intercept": None, "reason": None}
+    )
+    fold_rows = [
+        row
+        for row in (report.get("fold_definitions") or model.get("folds") or ())
+        if isinstance(row, dict)
+    ]
+    invalid_reasons: dict[str, int] = {}
+    for row in fold_rows:
+        if not row.get("valid", False):
+            reason = str(row.get("invalid_reason") or "invalid")
+            invalid_reasons[reason] = invalid_reasons.get(reason, 0) + 1
+    fold_summary = {
+        "total": len(fold_rows),
+        "valid": sum(1 for row in fold_rows if row.get("valid", False)),
+        "invalid_reasons": invalid_reasons,
+    }
     return {
         "status": report.get(
             "experiment_status",
@@ -93,8 +119,15 @@ def adapt_candidate_research_report(report: dict[str, Any]) -> dict[str, Any]:
                 "auc_reason",
                 "prevalence",
                 "mean_probability",
+                "reference_brier_score",
+                "count",
             )
         },
+        # UI-3: the reference / calibration / fold fields the frozen statistics
+        # already persist (absent on older runs → unavailable, never invented)
+        "calibration": calibration,
+        "oos_count": int(metrics.get("count", 0) or 0),
+        "fold_summary": fold_summary,
         "reliability": _records(metrics.get("reliability_bins")),
         "thresholds": pd.DataFrame(threshold_rows),
         "folds": _records(report.get("fold_definitions") or model.get("folds")),
@@ -114,6 +147,8 @@ def adapt_actual_execution_report(report: dict[str, Any]) -> dict[str, Any]:
             "max_drawdown_r": report.get("max_drawdown_r"),
             "total_realized_dollars": report.get("total_realized_dollars"),
             "max_drawdown_dollars": report.get("max_drawdown_dollars"),
+            "mean_realized_r": report.get("mean_realized_r"),
+            "winning_trade_count": report.get("winning_trade_count"),
         },
         "equity": _records(report.get("equity")),
         "r_distribution": pd.DataFrame(
@@ -264,5 +299,7 @@ def adapt_reconciliation_report(report: dict[str, Any]) -> dict[str, Any]:
         "gates": pd.DataFrame(gates),
         "access_counters": pd.DataFrame(access_rows),
         "performance": reports.get("performance_report.json", {}),
+        # UI-3: the raw access audit (the measured denied_dates live here)
+        "access": access if isinstance(access, dict) else {},
         "capacity": reports.get("capacity_report.json", {}),
     }

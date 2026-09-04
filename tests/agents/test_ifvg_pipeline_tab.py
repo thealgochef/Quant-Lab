@@ -428,11 +428,13 @@ def test_ladder_frame_is_arrow_safe_with_nullable_dtypes() -> None:
     assert str(frame["Brier"].dtype) == "Float64"
     assert str(frame["Brier skill"].dtype) == "Float64"
     assert str(frame["Rung"].dtype) == "string"
-    assert str(frame["AUC"].dtype) == "string"
+    assert str(frame["AUC"].dtype) == "Float64"  # UI-3 (F-09): AUC stays numeric
+    assert str(frame["AUC reason"].dtype) == "string"  # the reason token has its own column
     assert str(frame["Status"].dtype) == "string"
     # the planned GAM row is NA in numeric columns, never a string
     planned = frame[frame["Rung"] == "ifvg_context_gam_v1"].iloc[0]
-    assert pd.isna(planned["OOS rows"]) and pd.isna(planned["Brier"])
+    assert pd.isna(planned["OOS rows"]) and pd.isna(planned["Brier"]) and pd.isna(planned["AUC"])
+    assert planned["AUC reason"] == "planned rung — no predictions"
     # the exact regression: Arrow conversion succeeds directly
     pa.Table.from_pandas(frame)
 
@@ -1359,3 +1361,94 @@ def test_launch_and_preview_verify_the_frozen_regime_authority_before_persisting
     assert not list(tmp_path.rglob("pipeline_specs"))
     assert not list(tmp_path.rglob("charters"))
     assert "launched detached" not in " ".join(str(s.value) for s in at.success)
+
+
+# ── UI-3 — summary-first MBP-1 / regime panels; the ladder frame (plan §7) ──
+
+
+def _advanced_input_keys(at, label_prefix: str) -> set[str]:
+    expander = next(e for e in at.expander if str(e.label).startswith(label_prefix))
+    return {box.key for box in expander.text_input}
+
+
+def test_mbp1_panel_leads_with_a_summary_resolved_from_the_selected_run(
+    monkeypatch, mbp1_pipeline
+) -> None:
+    import ifvg_mbp1_panels as mbp1_panels
+
+    at = _run_over_completed(monkeypatch, mbp1_pipeline, phase="Monitor")
+    markdown = _markdown(at)
+    assert "MBP-1 readiness (summary)" in markdown
+    assert markdown.index("MBP-1 readiness (summary)") < markdown.index(
+        "Coverage and missingness evidence"
+    )
+    assert "Implemented (V1)" in markdown  # the activated block, from the registry status
+    assert "Research-only offline" in markdown
+    assert "Proposed default — owner ratification required" in markdown
+    assert "evidenced_complete" in markdown  # source / coverage readiness from the run
+    assert "parity" in markdown  # the controlled study resolved from S09
+    # the manual exact-id inputs live under Advanced diagnostics only
+    keys = _advanced_input_keys(at, "Advanced diagnostics — MBP-1")
+    assert {
+        f"{mbp1_panels._MBP1}coverage_id",
+        f"{mbp1_panels._MBP1}feature_artifact_id",
+        f"{mbp1_panels._MBP1}candidate_id",
+        f"{mbp1_panels._MBP1}study_id",
+    } <= keys
+
+
+def test_mbp1_summary_without_evidence_is_unavailable_never_pass(monkeypatch, tmp_path) -> None:
+    at, _roots, _draft = _run(monkeypatch, tmp_path, phase="Configure")
+    markdown = _markdown(at)
+    summary = markdown[markdown.index("MBP-1 readiness (summary)") :]
+    if "Coverage and missingness evidence" in summary:
+        summary = summary[: summary.index("Coverage and missingness evidence")]
+    assert "∅ Unavailable" in summary
+    assert "✓ Pass" not in summary
+    assert "no coverage evidence resolved" in summary
+
+
+def test_regime_panel_leads_with_a_summary_resolved_from_the_selected_run(
+    monkeypatch, regime_pipeline
+) -> None:
+    import ifvg_regime_panels as regime_panels
+
+    at = _run_over_completed(monkeypatch, regime_pipeline, phase="Monitor")
+    markdown = _markdown(at)
+    assert "Regime lane readiness (summary)" in markdown
+    assert markdown.index("Regime lane readiness (summary)") < markdown.index(
+        "Regime model card"
+    )
+    assert "K-means" in markdown and "Implemented (V1)" in markdown
+    assert "Planned post-V1 — visible, disabled" in markdown
+    assert "Proposed default — owner ratification required" in markdown
+    assert any(
+        label in markdown
+        for label in ("Descriptive only", "Stratification-ready", "Stratification only")
+    )  # the role / status resolved from the run's own decision
+    assert "requires the owner-ratified" in markdown  # why the model-bearing path is blocked
+    assert "assignment coverage" in markdown.lower()
+    keys = _advanced_input_keys(at, "Advanced diagnostics — regime")
+    assert {
+        f"{regime_panels._REG}{name}"
+        for name in ("protocol_id", "assessment_id", "fit_id", "decision_id", "report_id")
+    } <= keys
+
+
+def test_regime_summary_without_run_is_unavailable_never_pass(monkeypatch, tmp_path) -> None:
+    at, _roots, _draft = _run(monkeypatch, tmp_path, phase="Configure")
+    markdown = _markdown(at)
+    summary = markdown[markdown.index("Regime lane readiness (summary)") :]
+    if "Regime model card" in summary:
+        summary = summary[: summary.index("Regime model card")]
+    assert "∅ Unavailable" in summary
+    assert "✓ Pass" not in summary
+    assert "K-means" in summary  # the executable algorithm is still named from the registry
+
+
+def test_ladder_panel_carries_registry_definitions(monkeypatch, completed_pipeline) -> None:
+    at = _run_over_completed(monkeypatch, completed_pipeline, phase="Monitor")
+    captions = _caption_text(at)
+    assert "Brier score" in captions and "chance line" in captions
+    dump = _dataframe_dump(at)
+    assert "AUC reason" in dump

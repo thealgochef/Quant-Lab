@@ -1,18 +1,38 @@
-"""Shared widget helpers for the FSM/prop study workspace (R4; FUX §4).
+"""Shared widget helpers for the FSM/prop study workspace (R4; FUX §4; UI-3 §6.6).
 
 Thin, reusable Streamlit fragments over the pure presentation contracts in
-``study_status.py`` / ``study_presentation.py``. Every helper is
+``study_status.py`` / ``study_presentation.py`` and the UI-3 presentation
+package (metric registry, roll-ups, helper text, labels). Every helper is
 AppTest-friendly (plain functions over an injected ``st_module``), every
 error string passes :func:`sanitize_error`, and no helper launches work —
 rendering is always side-effect-free (FUX §34).
+
+UI-3 adds the three detail levels (Summary → Research details → Technical
+identity & audit) over the persisted ``DisclosureLevel`` vocabulary, the
+identity reveal, the metric and roll-up cards built from typed readings,
+and the glossary expander.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
+from alpha_lab.agents.data_infra.ifvg.presentation.help_registry import (
+    glossary_markdown,
+    help_for_metric,
+    help_text,
+)
+from alpha_lab.agents.data_infra.ifvg.presentation.metric_registry import MetricReading
+from alpha_lab.agents.data_infra.ifvg.presentation.rollups import (
+    SECTION_LABELS,
+    SectionRollup,
+)
+from alpha_lab.agents.data_infra.ifvg.presentation.status_vocabulary import (
+    UiStatus,
+    status_chip,
+)
 from alpha_lab.agents.data_infra.ifvg.study_status import (
     DEV_BADGE_TEXT,
     EMPTY_STATE_PRESENTATIONS,
@@ -28,6 +48,7 @@ __all__ = [
     "STATE_PREFIX",
     "PIPELINE_STATE_PREFIX",
     "SESSION_DRAFT_KEY",
+    "DETAIL_LEVEL_LABELS",
     "sanitize_error",
     "sanitize_select",
     "display_metric",
@@ -35,7 +56,13 @@ __all__ = [
     "dev_only_badge",
     "verification_badge",
     "disclosure_level",
+    "detail_levels",
     "identity_block",
+    "identity_reveal",
+    "status_chip_line",
+    "metric_card",
+    "rollup_card",
+    "glossary_expander",
     "cli_escape_hatch",
     "render_empty_state",
     "paginate_controls",
@@ -55,6 +82,15 @@ PIPELINE_STATE_PREFIX = "ifvg_pipeline_v1_"
 #: card or "Start new draft" creates — no file exists until the first Save
 #: Draft or the first valid Next persists it.
 SESSION_DRAFT_KEY = f"{STATE_PREFIX}session_draft"
+
+#: UI-3 (plan §6.6): the three detail levels every major screen renders,
+#: keyed by the PERSISTED disclosure vocabulary (unchanged session values).
+DETAIL_LEVEL_LABELS: Mapping[str, str] = {
+    DisclosureLevel.SUMMARY.value: "Summary",
+    DisclosureLevel.ANALYST.value: "Research details",
+    DisclosureLevel.AUDIT.value: "Technical identity & audit",
+}
+_LEVEL_BY_LABEL = {label: level for level, label in DETAIL_LEVEL_LABELS.items()}
 
 #: Quoted paths first (spaces inside quotes survive a bare-token pass),
 #: then bare drive-letter / UNC / rooted tokens.
@@ -126,23 +162,30 @@ def verification_badge(st_module) -> None:
     st_module.error(f"**{VERIFICATION_BADGE_TEXT}**", icon="🔒")
 
 
-def disclosure_level(st_module, *, key: str = f"{STATE_PREFIX}disclosure") -> str:
-    """Summary | Analyst | Audit selector; persists in the session (FUX §5.1)."""
+def detail_levels(st_module, *, key: str = f"{STATE_PREFIX}disclosure") -> str:
+    """Summary | Research details | Technical identity & audit (UI-3 §6.6).
 
-    levels = [level.value.title() for level in DisclosureLevel]
-    sanitize_select(st_module, key, levels)
+    Returns the PERSISTED level value (``summary`` / ``analyst`` / ``audit``)
+    so every caller's level logic is unchanged; the labels are the UI-3
+    tiers. The selection persists in the session under ``key``.
+    """
+
+    labels = list(DETAIL_LEVEL_LABELS.values())
+    sanitize_select(st_module, key, labels)
     selected = st_module.radio(
-        "Disclosure level",
-        levels,
+        "Detail level",
+        labels,
         horizontal=True,
         key=key,
-        help=(
-            "Summary: plain-language answers. Analyst: charts and "
-            "distributions. Audit: complete identities, manifests, and "
-            "evidence references."
-        ),
+        help=help_text("common.detail_level"),
     )
-    return str(selected).lower()
+    return _LEVEL_BY_LABEL[str(selected)]
+
+
+def disclosure_level(st_module, *, key: str = f"{STATE_PREFIX}disclosure") -> str:
+    """The R4 seam (FUX §5.1) — delegates to :func:`detail_levels`."""
+
+    return detail_levels(st_module, key=key)
 
 
 def identity_block(st_module, label: str, value: str) -> None:
@@ -150,6 +193,56 @@ def identity_block(st_module, label: str, value: str) -> None:
 
     st_module.caption(label)
     st_module.code(value or "—", language=None)
+
+
+def identity_reveal(st_module, label: str, value: str, *, human: str | None = None) -> None:
+    """UI-3 §6.6: the human label first, the full copyable id beneath."""
+
+    caption = f"{human} — {label}" if human else label
+    identity_block(st_module, caption, value)
+
+
+def status_chip_line(st_module, status: UiStatus | str, text: str) -> None:
+    """One ``glyph + word — text`` line; color never carries meaning alone."""
+
+    st_module.markdown(f"{status_chip(status)} — {text}")
+
+
+def metric_card(st_module, reading: MetricReading, *, caption: bool = True) -> None:
+    """A registry-described metric: human name, value, status chip, the
+    interpretation (reference, sample, caveat) and the 'why' help."""
+
+    st_module.metric(
+        reading.human_name,
+        reading.display,
+        help=help_for_metric(reading.technical_key),
+    )
+    if caption:
+        text = f"{reading.chip} · {reading.interpretation}"
+        if reading.caveat:
+            text += f" · caveat: {reading.caveat}"
+        st_module.caption(text)
+
+
+def rollup_card(st_module, rollup: SectionRollup) -> None:
+    """One section roll-up: status chip + section, the main reason, and the
+    next thing to inspect (plan §6.3)."""
+
+    with st_module.container(border=True):
+        st_module.markdown(
+            f"**{rollup.chip} · {SECTION_LABELS[rollup.section]}** — {rollup.main_reason}"
+        )
+        st_module.caption(
+            f"Inspect next: {rollup.inspect_next} · {rollup.reading_count} reading(s), "
+            f"{rollup.passed_count} gated pass(es)"
+        )
+
+
+def glossary_expander(st_module, *, expanded: bool = False) -> None:
+    """The searchable-by-browser glossary of the plan's sixteen terms."""
+
+    with st_module.expander("Glossary", expanded=expanded):
+        st_module.markdown(glossary_markdown())
 
 
 def cli_escape_hatch(st_module, command: str, *, reason: str) -> None:
@@ -190,7 +283,10 @@ def paginate_controls(
     size_key, page_key = f"{key}_page_size", f"{key}_page"
     size = int(
         st_module.selectbox(
-            "Rows per page", page_size_options, key=size_key
+            "Rows per page",
+            page_size_options,
+            key=size_key,
+            help=help_text("common.rows_per_page"),
         )
     )
     n_pages = max(1, -(-total // size))
@@ -201,6 +297,7 @@ def paginate_controls(
             max_value=n_pages,
             step=1,
             key=page_key,
+            help=help_text("common.page"),
         )
     )
     start, end, _ = page_slice(total, page - 1, size)

@@ -86,7 +86,7 @@ def test_common_frame_picker_disclosure_badge_scopes(
     disclosure = next(
         w for w in at.radio if w.key == f"{results._RES}disclosure"
     )
-    assert disclosure.options == ["Summary", "Analyst", "Audit"]
+    assert disclosure.options == ["Summary", "Research details", "Technical identity & audit"]
     text = _text(at)
     assert "Result scope:" in text
     # the caption DERIVES from the persisted simulation_mode — the fixture
@@ -141,7 +141,7 @@ def test_frontier_has_the_accessible_selectbox_twin(
     at = _run(
         monkeypatch,
         completed_search,
-        **{f"{results._RES}disclosure": "Analyst"},
+        **{f"{results._RES}disclosure": "Research details"},
     )
     twin = next(
         w for w in at.selectbox if w.key == f"{results._RES}frontier_twin"
@@ -159,7 +159,7 @@ def test_heatmap_controls_glyphs_and_table_twin(
     at = _run(
         monkeypatch,
         completed_search,
-        **{f"{results._RES}disclosure": "Analyst"},
+        **{f"{results._RES}disclosure": "Research details"},
     )
     metric = next(w for w in at.selectbox if w.key == f"{results._RES}heat_metric")
     assert set(metric.options) == {
@@ -182,7 +182,7 @@ def test_firm_survival_and_payout_views(monkeypatch, completed_search) -> None:
     at = _run(
         monkeypatch,
         completed_search,
-        **{f"{results._RES}disclosure": "Analyst"},
+        **{f"{results._RES}disclosure": "Research details"},
     )
     matrix_metric = next(
         w for w in at.selectbox if w.key == f"{results._RES}firm_metric"
@@ -261,7 +261,7 @@ def test_missing_simulations_render_artifact_unavailable_not_gate_skip(
     at = _run(
         monkeypatch,
         fixture,
-        **{f"{results._RES}disclosure": "Analyst"},
+        **{f"{results._RES}disclosure": "Research details"},
     )
     headings = " ".join(str(h.value) for h in at.subheader)
     assert "Artifact unavailable" in headings
@@ -306,7 +306,7 @@ def test_heatmap_single_axis_view_aggregates_honestly(
     at = _run(
         monkeypatch,
         completed_search,
-        **{f"{results._RES}disclosure": "Analyst"},
+        **{f"{results._RES}disclosure": "Research details"},
     )
     captions = " ".join(str(c.value) for c in at.caption)
     assert "configurations aggregated (mean)" in captions
@@ -572,3 +572,56 @@ def test_history_filters_are_read_only_and_runs_carry_the_archive_flag(
     assert "Superseded Studies" in headings
     _history_button(at, "Restore run").click().run()
     assert not catalog_annotations(fixture["store_root"])[completed_search["search_id"]]["archived"]
+
+
+# ── UI-3 Results presentation (plan §7 Results; F-09 / F-11) ────────────────
+
+
+def test_selected_configuration_rollups_and_registry_metric_cards(
+    monkeypatch, completed_search
+) -> None:
+    """Every block leads with a roll-up; the selected configuration's metrics
+    render through the registry (human name, value, status chip, reference)
+    at the Summary level — no technical key is required to read them."""
+
+    at = _run(monkeypatch, completed_search)
+    text = _text(at)
+    assert "Selected configuration" in text
+    assert "Strategy quality" in text and "Prop feasibility" in text
+    labels = [metric.label for metric in at.metric]
+    for name in ("Executed trades", "Net expectancy", "Profit factor", "Maximum drawdown"):
+        assert name in labels, name
+    assert "90-day breach probability" in labels
+    profit = next(metric for metric in at.metric if metric.label == "Profit factor")
+    assert profit.help and "profit_factor" in profit.help
+    captions = " ".join(str(c.value) for c in at.caption)
+    assert "selected gate requires" in captions  # the reference is named, never implied
+    assert "proposed_protocol_default" in captions  # the caveat rides every gated reading
+    twin = next(w for w in at.selectbox if w.key == f"{results._RES}selected_twin")
+    assert twin.options  # the accessible selector exists at the Summary level
+
+
+def test_prop_rollup_is_unavailable_without_simulations_never_pass(
+    monkeypatch, tmp_path
+) -> None:
+    fixture = build_completed_search(tmp_path, with_prop=False, with_contract=False)
+    at = _run(monkeypatch, fixture)
+    markdown = chr(10).join(str(b.value) for b in at.markdown)
+    prop_line = next(line for line in markdown.splitlines() if "Prop feasibility" in line)
+    assert "Pass" not in prop_line
+    assert "Inconclusive" in prop_line or "Unavailable" in prop_line
+
+
+def test_explorer_column_guide_and_metric_captions(monkeypatch, completed_search) -> None:
+    at = _run(
+        monkeypatch,
+        completed_search,
+        **{f"{results._RES}disclosure": "Research details"},
+    )
+    guide = next(e for e in at.expander if e.label == "Column guide")
+    frames = [frame.value for frame in guide.dataframe]
+    assert frames and "definition" in frames[0].columns
+    assert "net E[R]" in set(frames[0]["column"])
+    captions = " ".join(str(c.value) for c in at.caption)
+    assert "Net expectancy:" in captions  # the heatmap metric's registry definition
+    assert "higher is better" in captions

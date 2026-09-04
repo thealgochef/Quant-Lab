@@ -33,6 +33,7 @@ from ifvg_ui_common import (
     sanitize_select,
 )
 
+from alpha_lab.agents.data_infra.ifvg.presentation.help_registry import help_text
 from alpha_lab.agents.data_infra.ifvg.search.insights import (
     InsightCategory,
     InsightPanel,
@@ -81,7 +82,12 @@ def _pick_child(
     if not options:
         return None
     sanitize_select(st_module, key, list(options))
-    chosen = st_module.selectbox(label, list(options), key=key)
+    chosen = st_module.selectbox(
+        label,
+        list(options),
+        key=key,
+        help=help_text("compare.pick_child"),
+    )
     return options[chosen]
 
 
@@ -500,7 +506,8 @@ def render_account_timeline(st_module=st, *, roots: Mapping[str, Any]) -> None:
     }
     sanitize_select(st_module, f"{_CMP}timeline_pick", list(options))
     chosen = st_module.selectbox(
-        "Account simulation", list(options), key=f"{_CMP}timeline_pick"
+        "Account simulation", list(options), key=f"{_CMP}timeline_pick",
+        help=help_text("compare.account_simulation"),
     )
     simulation_id = options[chosen]
     typed = st_module.text_input(
@@ -581,6 +588,7 @@ def render_account_timeline(st_module=st, *, roots: Mapping[str, Any]) -> None:
         "Open linked evidence for event ordinal",
         ordinals,
         key=f"{_CMP}timeline_row",
+        help=help_text("compare.event_ordinal"),
     )
     event = next(
         event

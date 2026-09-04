@@ -144,7 +144,13 @@ final authorization, review / run, monitor — with no spawn seam, the
 goal-derived conditional flows, session-only drafts with archive /
 restore / typed delete, the explicit reviewer verdicts and the seed CLI
 receipt seams — `ifvg/presentation/{flows,review_vocabulary}.py`,
-`scripts/ifvg_verification_center.py`)
+`scripts/ifvg_verification_center.py`),
+and UI-3 (Phase 3: the metric metadata registry, the deterministic
+section roll-ups, the helper-text registry with the glossary and explicit
+exemptions, the human-label registry, the three detail levels, the
+decision-summary-first Context Research and Results presentation and the
+summary-first MBP-1 / regime panels —
+`ifvg/presentation/{metric_registry,rollups,help_registry,labels,context_research,results_presentation}.py`)
 implementations are complete;
 **R1 acceptance is blocked pending the owner-approved verification fixture**
 (`VerificationAuthorizationRef`; owner decisions 21/R-5) — no real five-day

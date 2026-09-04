@@ -1262,3 +1262,47 @@ acceptance still transitively blocked by R1):
   the seven additive §31 states.
 - **Unchanged**: Strategy-Core, the fixed M0–M3 lane, every immutable artifact identity, the
   exact-ID loading rule, S11, MBP-1's `research_only_offline` boundary, the backend contracts.
+
+UI-3 additions (Phase 3 of the UI/UX redesign over the UI-2 release head; UI-4 … UI-6 follow;
+acceptance still transitively blocked by R1):
+
+- **Presentation package** (`ifvg/presentation/`): `metric_registry` — one `MetricSpec` per
+  displayed technical key (human name, definition, persisted source, unit, directionality from
+  `OBJECTIVE_DIRECTIONS` where registered, and the reference the value is read against — the
+  selected resolved gate, the prevalence-reference Brier, the 0 skill boundary, the 0.5 chance
+  line as a direction only, the calibration targets as a distance only, the stamped
+  sample-adequacy minimums, the persisted report limits, the measured access counters versus
+  the policy-enforced `protected_*` zeros, and intervals that cross zero) with
+  `evaluate_metric` / `evaluate_interval` / `evaluate_gate_flag` — missing or unevaluated
+  evidence is UNAVAILABLE, never PASS; `rollups` — the deterministic FAIL → BLOCKED →
+  INCONCLUSIVE → WARNING → PASS → INFORMATIONAL section roll-ups (one sentence, main reason,
+  inspect-next); `help_registry` — a `HelpEntry` per control id rendered by `help_text`, the
+  glossary of the plan's sixteen terms and the explicit live `HELP_EXEMPTIONS`; `labels` — the
+  human-label registry (profiles, bundles, blocks, objectives, model protocols, regime
+  algorithms, stamps, statuses, roles, classes, tiers, verdicts) and the distinct availability
+  chips; `context_research` and `results_presentation` — the pure reading assemblies of the
+  Context Research and Results screens.
+- **Shared primitives** (`scripts/ifvg_ui_common.py`): `detail_levels` (Summary / Research
+  details / Technical identity & audit over the unchanged persisted vocabulary; `disclosure_level`
+  delegates), `identity_reveal`, `status_chip_line`, `metric_card`, `rollup_card`,
+  `glossary_expander`.
+- **Context Research** (`scripts/ifvg_lab_tab.py`): the decision summary first (Data integrity,
+  Probability skill, Calibration, Stability), the sample-adequacy card, registry metric cards
+  with their references, the named reliability diagonal, coverage and net R on separate axes
+  (`ifvg_lab_charts.build_coverage_figure` over the adapter's threshold rows;
+  `build_reliability_figure`), fold validity chips, intervals, the top-N importance with fold
+  stability, run-compatibility reasons in words, raw JSON only under Technical identity & audit;
+  the adapters expose the reference / calibration / fold / access fields the frozen statistics
+  already persist — `context_reporting.py` and the M0–M3 computation are untouched.
+- **Results** (`scripts/ifvg_results_tab.py`): the Selected configuration block (Strategy
+  quality and Prop feasibility roll-ups; registry metric cards against the charter's resolved
+  gates; the prop vector as the worst firm), registry captions on the metric pickers, the
+  explorer column guide.
+- **Pipeline surface**: the ladder frame keeps AUC numeric with a separate `AUC reason` column;
+  the MBP-1 (`ifvg_mbp1_panels.py`) and regime (`ifvg_regime_panels.py`) panels are summary-first
+  — readiness resolved from the selected run, then Research details, then Advanced diagnostics
+  holding the manual exact-id inputs, registries and stamps.
+- **Help everywhere**: every widget of every UI script carries registry help or is a registered
+  navigation exemption; the source scan (`tests/agents/test_ifvg_help_scans.py`) enforces it.
+- **Unchanged**: Strategy-Core, the fixed M0–M3 lane, every immutable artifact identity, the
+  exact-ID loading rule, S11, MBP-1's `research_only_offline` boundary, the backend contracts.

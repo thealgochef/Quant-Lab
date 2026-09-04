@@ -82,6 +82,13 @@ from alpha_lab.agents.data_infra.ifvg.presentation.flows import (
     prop_objective_selected,
     restore_step_index,
 )
+from alpha_lab.agents.data_infra.ifvg.presentation.help_registry import (
+    help_for_metric,
+    help_text,
+)
+from alpha_lab.agents.data_infra.ifvg.presentation.metric_registry import (
+    gate_metric_key,
+)
 from alpha_lab.agents.data_infra.ifvg.presentation.run_purpose import (
     PURPOSE_DESCRIPTIONS,
     PURPOSE_LABELS,
@@ -418,7 +425,8 @@ def _draft_header(st_module, roots: Mapping[str, Any]) -> StudyDraft | None:
         options = ["—", *open_labels]
         sanitize_select(st_module, f"{_W}open_draft", options)
         opened = st_module.selectbox(
-            "Open a saved draft", options, key=f"{_W}open_draft"
+            "Open a saved draft", options, key=f"{_W}open_draft",
+            help=help_text("wizard.open_draft"),
         )
         if opened != "—" and st_module.button("Open", key=f"{_W}open_btn"):
             st_module.session_state.pop(SESSION_DRAFT_KEY, None)
@@ -457,7 +465,11 @@ def _draft_header(st_module, roots: Mapping[str, Any]) -> StudyDraft | None:
     if draft.status == "frozen":
         status_badge(st_module, StudyStatusKey.FROZEN)
         identity_block(st_module, "Frozen search charter id", draft.frozen_search_id or "")
-        if st_module.button("Clone as New Search", key=f"{_W}clone_frozen"):
+        if st_module.button(
+            "Clone as New Search",
+            key=f"{_W}clone_frozen",
+            help=help_text("wizard.clone_frozen"),
+        ):
             clone = clone_draft(draft)
             save_draft(draft_root, clone)
             st_module.session_state[_DRAFT_KEY] = clone.draft_id
@@ -640,7 +652,11 @@ def _purpose_card(
                 "namespace and authorization are still validated by the backend."
             ),
         )
-        if st_module.button("Confirm purpose", key=f"{_W}confirm_purpose_btn"):
+        if st_module.button(
+            "Confirm purpose",
+            key=f"{_W}confirm_purpose_btn",
+            help=help_text("wizard.confirm_purpose"),
+        ):
             purpose = next(p for p in RunPurpose if PURPOSE_LABELS[p] == chosen)
             draft.purpose_annotation = RunPurposeAnnotation(
                 purpose=purpose,
@@ -804,6 +820,7 @@ def _step_objective(st_module, draft: StudyDraft) -> dict[str, Any]:
         if stored_question in question_labels
         else 0,
         key=f"{_W}question",
+        help=help_text("wizard.research_question"),
     )
     question_id = next(
         key for key, label in RESEARCH_QUESTIONS.items() if label == question_label
@@ -822,6 +839,7 @@ def _step_objective(st_module, draft: StudyDraft) -> dict[str, Any]:
             0,
         ),
         key=f"{_W}template",
+        help=help_text("wizard.objective_template"),
     )
     template = next(t for t in OBJECTIVE_TEMPLATES if t.label == template_label)
     st_module.markdown("**Resolved objective (nothing hidden behind the template):**")
@@ -849,6 +867,7 @@ def _step_objective(st_module, draft: StudyDraft) -> dict[str, Any]:
                 sorted(OBJECTIVE_DIRECTIONS),
                 default=list(custom_objectives),
                 key=f"{_W}custom_objectives",
+                help=help_text("wizard.custom_objectives"),
             )
         )
     incompatibility = mode_compatibility_error(
@@ -1175,6 +1194,7 @@ def _step_prop(st_module, draft: StudyDraft, roots: Mapping[str, Any]) -> dict[s
                     "Select this contract",
                     value=contract_id in stored,
                     key=f"{_W}contract_{contract_id[:16]}",
+                    help=help_text("wizard.select_contract"),
                 )
                 if checked:
                     selected.append(contract_id)
@@ -1221,6 +1241,7 @@ def _step_risk(st_module, draft: StudyDraft) -> dict[str, Any]:
                 if stored.get("risk_template") in RISK_POLICY_TEMPLATES
                 else 0,
                 key=f"{_W}risk_{contract[:16]}",
+                help=help_text("wizard.risk_template"),
             )
             risk_value = st_module.number_input(
                 "Risk parameter (USD or % per the template)",
@@ -1254,6 +1275,7 @@ def _step_risk(st_module, draft: StudyDraft) -> dict[str, Any]:
                     "accumulate_no_withdrawal_v1",
                 ).index(stored.get("withdrawal_policy")),
                 key=f"{_W}wd_{contract[:16]}",
+                help=help_text("wizard.withdrawal_behavior"),
             )
             replacement = st_module.selectbox(
                 "Replacement policy (separate scenario; owner decision 12)",
@@ -1262,6 +1284,7 @@ def _step_risk(st_module, draft: StudyDraft) -> dict[str, Any]:
                     stored.get("replacement_policy", "none")
                 ),
                 key=f"{_W}rep_{contract[:16]}",
+                help=help_text("wizard.replacement_policy"),
             )
             n_accounts = st_module.number_input(
                 f"Accounts per firm (max {MAX_ACCOUNTS_PER_FIRM}, owner decision 13)",
@@ -1269,6 +1292,7 @@ def _step_risk(st_module, draft: StudyDraft) -> dict[str, Any]:
                 max_value=MAX_ACCOUNTS_PER_FIRM,
                 value=int(stored.get("n_accounts", 1)),
                 key=f"{_W}acct_{contract[:16]}",
+                help=help_text("wizard.accounts_per_firm"),
             )
             if int(n_accounts) > 1:
                 st_module.info(
@@ -1390,16 +1414,18 @@ def _gate_group(
                     value=bool(default),
                     key=f"{key_prefix}{name}",
                     label_visibility="visible",
+                    help=help_text("wizard.gate_required"),
                 )
             elif default is None:
                 st_module.caption("not required (no threshold)")
                 value = None
             else:
                 value = st_module.number_input(
-                    "resolved value",
+                    f"Resolved value for {human}",
                     value=float(default),
                     key=f"{key_prefix}{name}",
                     label_visibility="collapsed",
+                    help=help_for_metric(gate_metric_key(name)),
                 )
         with columns[2]:
             st_module.caption(
@@ -1549,6 +1575,7 @@ def _step_validation(
             data=json.dumps({"allowlist": allowlist}, indent=2),
             file_name="verification_allowlist_v1.json",
             key=f"{_W}dl_allowlist",
+            help=help_text("wizard.download_allowlist"),
         )
         st_module.caption(
             "Research interpretation and catalog activation are prohibited "
@@ -1640,6 +1667,7 @@ def _step_validation(
             ),
             file_name="authorized_development_dates.json",
             key=f"{_W}dl_dates",
+            help=help_text("wizard.download_dates"),
         )
         st_module.caption(
             f"Warmup: {len(warmup_dates)} frozen days · evidence: {len(real_dates)}"
@@ -1670,6 +1698,7 @@ def _step_validation(
             value=seed_default,
             step=1,
             key=f"{_W}seed",
+            help=help_text("wizard.seed"),
         )
     )
     from alpha_lab.agents.data_infra.ifvg.search.pipeline import (  # noqa: PLC0415
@@ -1880,6 +1909,7 @@ def _step_review(
             f"Type '{FULL_SCOPE_ACKNOWLEDGEMENT}' to enable the launch control",
             value="",
             key=f"{_W}ack",
+            help=help_text("wizard.full_scope_acknowledgement"),
         )
     return {
         "run_scope": resolved.run_scope if resolved is not None else validation.get("run_scope"),

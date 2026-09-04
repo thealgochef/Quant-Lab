@@ -33,7 +33,18 @@ from ifvg_ui_common import (
     identity_block,
     render_empty_state,
     sanitize_error,
+    status_chip_line,
 )
+
+from alpha_lab.agents.data_infra.ifvg.presentation.help_registry import help_text
+from alpha_lab.agents.data_infra.ifvg.presentation.labels import (
+    AvailabilityKind,
+    availability_chip,
+    availability_for_algorithm,
+    label_for,
+)
+from alpha_lab.agents.data_infra.ifvg.presentation.metric_registry import evaluate_metric
+from alpha_lab.agents.data_infra.ifvg.presentation.status_vocabulary import UiStatus
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT / "src") not in sys.path:
@@ -132,58 +143,90 @@ def _render_proposal_stamps(st_module) -> None:
     )
 
 
-def _render_model_card(st_module, store_root: Path, defaults: Mapping[str, str]) -> None:
-    from alpha_lab.agents.data_infra.ifvg.ml.regime_store import (  # noqa: PLC0415
-        load_regime_assessment,
-        load_regime_protocol,
-    )
+def _advanced_inputs(st_module, defaults: Mapping[str, str]) -> dict[str, str]:
+    """The manual exact-id inputs (Advanced diagnostics only): auto-filled from
+    the selected run's persisted evidence; editing addresses another artifact."""
 
-    st_module.markdown("**Regime model card** (exact-ID loads — stores are never listed)")
     if defaults:
         st_module.caption(
             "Exact ids auto-filled from the selected pipeline run's persisted "
             "stage evidence (manifest-verified); edit any input to address "
             "another artifact."
         )
-    protocol_id = st_module.text_input(
-        "Resolved regime protocol id (64-hex)",
-        value=defaults.get("protocol_id", ""),
-        key=f"{_REG}protocol_id",
-    ).strip()
-    assessment_id = st_module.text_input(
-        "Capability assessment id (64-hex)",
-        value=defaults.get("assessment_id", ""),
-        key=f"{_REG}assessment_id",
-    ).strip()
-    fit_id = st_module.text_input(
-        "Regime fit id (64-hex) — assignment / stratification view",
-        value=defaults.get("fit_id", ""),
-        key=f"{_REG}fit_id",
-    ).strip()
-    decision_id = st_module.text_input(
-        "Promotion decision id (64-hex) — role / status view",
-        value=defaults.get("decision_id", ""),
-        key=f"{_REG}decision_id",
-    ).strip()
-    report_id = st_module.text_input(
-        "Stratified report id (64-hex) — stratified RESULT view (ML §5.5 classes)",
-        value=defaults.get("report_id", ""),
-        key=f"{_REG}report_id",
-    ).strip()
-    if not protocol_id:
+    ids = {
+        "protocol_id": st_module.text_input(
+            "Resolved regime protocol id (64-hex)",
+            value=defaults.get("protocol_id", ""),
+            key=f"{_REG}protocol_id",
+            help=help_text("regime.protocol_id"),
+        ).strip(),
+        "assessment_id": st_module.text_input(
+            "Capability assessment id (64-hex)",
+            value=defaults.get("assessment_id", ""),
+            key=f"{_REG}assessment_id",
+            help=help_text("regime.assessment_id"),
+        ).strip(),
+        "fit_id": st_module.text_input(
+            "Regime fit id (64-hex) — assignment / stratification view",
+            value=defaults.get("fit_id", ""),
+            key=f"{_REG}fit_id",
+            help=help_text("regime.fit_id"),
+        ).strip(),
+        "decision_id": st_module.text_input(
+            "Promotion decision id (64-hex) — role / status view",
+            value=defaults.get("decision_id", ""),
+            key=f"{_REG}decision_id",
+            help=help_text("regime.decision_id"),
+        ).strip(),
+        "report_id": st_module.text_input(
+            "Stratified report id (64-hex) — stratified RESULT view (ML §5.5 classes)",
+            value=defaults.get("report_id", ""),
+            key=f"{_REG}report_id",
+            help=help_text("regime.report_id"),
+        ).strip(),
+    }
+    if not ids["protocol_id"]:
         st_module.caption(
             "Paste the exact `resolved_regime_protocol_id` (and optionally "
             "the `regime_capability_assessment_id`, a `regime_fit_id`, a "
             "`regime_promotion_decision_id`, and a `regime_stratified_report_id`) "
             "from a persisted regime run — stores are never listed."
         )
-        return
+    return ids
+
+
+def _render_model_card(
+    st_module, store_root: Path, ids: Mapping[str, str]
+) -> dict[str, Any]:
+    """The model card and its exact-id views; returns the loaded facts the
+    summary reads (protocol payload, assessment, decision) — never a second
+    empty state for a failure the card itself reports."""
+
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_store import (  # noqa: PLC0415
+        load_regime_assessment,
+        load_regime_protocol,
+    )
+
+    facts: dict[str, Any] = {}
+    st_module.markdown("**Regime model card** (exact-ID loads — stores are never listed)")
+    protocol_id = ids.get("protocol_id", "")
+    assessment_id = ids.get("assessment_id", "")
+    fit_id = ids.get("fit_id", "")
+    decision_id = ids.get("decision_id", "")
+    report_id = ids.get("report_id", "")
+    if not protocol_id:
+        st_module.caption(
+            "No protocol id — nothing is loaded; enter the exact ids under Advanced "
+            "diagnostics."
+        )
+        return facts
     try:
         protocol = load_regime_protocol(store_root, protocol_id)
     except Exception as error:  # noqa: BLE001 — sanitized surface only
         render_empty_state(st_module, "artifact_unavailable", detail=sanitize_error(error))
-        return
+        return facts
     payload = protocol.payload
+    facts["protocol"] = payload
     grain = payload.observation_granularity.value
     if payload.panel_interval_seconds is not None:
         grain += (
@@ -244,13 +287,17 @@ def _render_model_card(st_module, store_root: Path, defaults: Mapping[str, str])
                     detail="the assessment references a different regime protocol id",
                 )
             else:
+                facts["assessment"] = result
                 _render_assessment(st_module, result, assessment_id)
     if fit_id:
         _render_assignment_view(st_module, store_root, fit_id, protocol_id)
     if decision_id:
-        _render_promotion_view(st_module, store_root, decision_id, protocol_id)
+        facts["decision"] = _render_promotion_view(
+            st_module, store_root, decision_id, protocol_id
+        )
     if report_id:
         _render_stratified_report_view(st_module, store_root, report_id, protocol_id)
+    return facts
 
 
 def _render_assessment(st_module, result, assessment_id: str) -> None:
@@ -633,7 +680,7 @@ def _render_assignment_view(
 
 def _render_promotion_view(
     st_module, store_root: Path, decision_id: str, protocol_id: str
-) -> None:
+) -> Any:
     from alpha_lab.agents.data_infra.ifvg.ml.regime_store import (  # noqa: PLC0415
         load_regime_promotion,
     )
@@ -643,7 +690,7 @@ def _render_promotion_view(
         decision = load_regime_promotion(store_root, decision_id)
     except Exception as error:  # noqa: BLE001 — sanitized surface only
         render_empty_state(st_module, "artifact_unavailable", detail=sanitize_error(error))
-        return
+        return None
     payload = decision.payload
     if payload.resolved_regime_protocol_id != protocol_id:
         render_empty_state(
@@ -651,7 +698,7 @@ def _render_promotion_view(
             "artifact_unavailable",
             detail="the decision references a different regime protocol id",
         )
-        return
+        return None
     st_module.dataframe(
         [
             {"Field": "Role", "Value": payload.role.value},
@@ -682,6 +729,7 @@ def _render_promotion_view(
     )
     if payload.owner_ratification_ref:
         _render_owner_decision(st_module, store_root, payload.owner_ratification_ref)
+    return payload
 
 
 def _render_owner_decision(st_module, store_root: Path, owner_id: str) -> None:
@@ -1054,6 +1102,161 @@ def _render_modeled_body(st_module, body, comparison_class: str) -> None:
         )
 
 
+def _render_summary(
+    st_module, facts: Mapping[str, Any], ids: Mapping[str, str], defaults: Mapping[str, str]
+) -> None:
+    """UI-3 (plan §7): the readiness summary — the active algorithm, the grain,
+    panel / fit / assignment coverage, the role and promotion status, whether a
+    model-bearing path is eligible and why, the planned post-V1 algorithms and
+    the stamped defaults; every fact from the registries or the selected run's
+    persisted evidence, never a second empty state."""
+
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_algorithms import (  # noqa: PLC0415
+        KMEANS_ALGORITHM_KEY,
+        POST_V1_REGIME_EXPANSION_KEYS,
+        REGIME_ALGORITHM_REGISTRY,
+    )
+    from alpha_lab.agents.data_infra.ifvg.ml.regime_contracts import (  # noqa: PLC0415
+        REGIME_PROPOSED_DEFAULTS,
+        RegimeStatus,
+    )
+
+    st_module.markdown(
+        "**Regime lane readiness (summary)** — resolved from the algorithm registry and the "
+        "selected run's persisted evidence; exact ids, the full registries and the stamps "
+        "are under Advanced diagnostics."
+    )
+    protocol = facts.get("protocol")
+    assessment = facts.get("assessment")
+    decision = facts.get("decision")
+    algorithm_key = str(protocol.algorithm_key) if protocol is not None else KMEANS_ALGORITHM_KEY
+    entry = REGIME_ALGORITHM_REGISTRY.get(algorithm_key)
+    chip = (
+        availability_chip(availability_for_algorithm(entry))
+        if entry is not None
+        else availability_chip(AvailabilityKind.PLANNED)
+    )
+    oos = "yes" if entry is not None and entry.oos_capable else "no"
+    source = (
+        "resolved from the selected run's protocol"
+        if protocol is not None
+        else "the registry's executable algorithm (no protocol resolved from the selected run)"
+    )
+    st_module.markdown(
+        f"- Active algorithm: **{label_for('algorithm', algorithm_key)}** (`{algorithm_key}`)"
+        f" — {chip} · OOS-capable: {oos} · {source}"
+    )
+    if protocol is not None:
+        grain = protocol.observation_granularity.value
+        if protocol.panel_interval_seconds is not None:
+            grain += f" · interval {protocol.panel_interval_seconds}s"
+        st_module.markdown(
+            f"- Observation grain: `{grain}` · stage `{protocol.observation_stage.value}` · "
+            f"k = {protocol.resolved_cluster_count} ({protocol.cluster_count_policy})"
+        )
+    if assessment is None:
+        status_chip_line(
+            st_module,
+            UiStatus.UNAVAILABLE,
+            "Panel / fit / assignment coverage — no capability assessment resolved from the "
+            "selected run",
+        )
+    else:
+        coverage = assessment.coverage
+        assignment = evaluate_metric("oos_assignment_coverage", coverage.oos_assignment_coverage)
+        adequacy = evaluate_metric(
+            "minimum_training_observations_observed",
+            coverage.minimum_training_observations_observed,
+            reference=float(coverage.minimum_training_observations_gate),
+            proposed=True,
+        )
+        occupancy_values = [float(v) for v in dict(assessment.occupancy).values()]
+        occupancy = evaluate_metric(
+            "regime_occupancy",
+            min(occupancy_values) if occupancy_values else None,
+            gate=float(REGIME_PROPOSED_DEFAULTS["minimum_cluster_occupancy_fraction"]["value"]),
+            proposed=True,
+        )
+        status_chip_line(
+            st_module,
+            assignment.status,
+            f"Out-of-sample assignment coverage {assignment.display} over "
+            f"{coverage.rows_assigned} of {coverage.rows_total} rows · {assignment.interpretation}",
+        )
+        status_chip_line(st_module, adequacy.status, f"Sample adequacy — {adequacy.interpretation}")
+        status_chip_line(
+            st_module, occupancy.status, f"Lowest regime occupancy — {occupancy.interpretation}"
+        )
+        gates_status = UiStatus.PASS if assessment.gates_passed else UiStatus.FAIL
+        status_chip_line(
+            st_module,
+            gates_status,
+            "Capability gates "
+            + (
+                "passed"
+                if assessment.gates_passed
+                else "failed: " + ", ".join(assessment.gate_failures)
+            )
+            + " (proposed_protocol_default thresholds; promotion additionally requires the "
+            "owner's ratification)",
+        )
+    if decision is None:
+        status_chip_line(
+            st_module,
+            UiStatus.UNAVAILABLE,
+            "Role / promotion status — no promotion decision resolved from the selected run",
+        )
+        current_status = None
+        ratified = False
+    else:
+        current_status = decision.status
+        ratified = bool(decision.owner_ratification_ref)
+        status_chip_line(
+            st_module,
+            UiStatus.INFORMATIONAL,
+            f"Role **{label_for('regime_role', decision.role.value)}** · status "
+            f"**{label_for('regime_status', decision.status.value)}** · owner ratification "
+            + ("present (verified owner-decision artifact)" if ratified else "absent"),
+        )
+    eligible = current_status in (RegimeStatus.FEATURE_ELIGIBLE, RegimeStatus.MODEL_FEATURE)
+    if eligible and ratified:
+        status_chip_line(
+            st_module,
+            UiStatus.PASS,
+            "Model-bearing path (supervised classes) — eligible: the frozen FEATURE_ELIGIBLE "
+            "decision is owner-ratified",
+        )
+    else:
+        current = (
+            label_for("regime_status", current_status.value)
+            if current_status is not None
+            else "no decision resolved"
+        )
+        status_chip_line(
+            st_module,
+            UiStatus.BLOCKED,
+            "Model-bearing path (supervised classes) — blocked: requires the owner-ratified "
+            f"FEATURE_ELIGIBLE decision (current status: {current}); descriptive classes "
+            "stay available",
+        )
+    planned = ", ".join(
+        f"{label_for('algorithm', key)} (`{key}`)" for key in POST_V1_REGIME_EXPANSION_KEYS
+    )
+    st_module.markdown(
+        f"- Post-V1 algorithms: {availability_chip(AvailabilityKind.PLANNED)} — {planned}"
+    )
+    st_module.markdown(
+        f"- Scientific defaults: {availability_chip(AvailabilityKind.PROPOSED)} — "
+        f"{len(REGIME_PROPOSED_DEFAULTS)} `proposed_protocol_default` values (owner decisions "
+        "25 / 28 / 29 / 30); nothing is promoted because fitting succeeded"
+    )
+    if not defaults and not ids.get("protocol_id"):
+        st_module.caption(
+            "No pipeline run is selected, so nothing was auto-resolved; the summary shows "
+            "the registries only."
+        )
+
+
 def render_regime_lane(
     st_module=st, *, roots: Mapping[str, Any], default_ids: Mapping[str, str] | None = None
 ) -> None:
@@ -1066,6 +1269,19 @@ def render_regime_lane(
         "feature eligibility, execution role, or promotion without the "
         "owner's ratified decision evidence."
     )
-    _render_algorithm_registry(st_module)
-    _render_proposal_stamps(st_module)
-    _render_model_card(st_module, Path(roots["store_root"]), dict(default_ids or {}))
+    store_root = Path(roots["store_root"])
+    defaults = dict(default_ids or {})
+    summary_slot = st_module.container()
+    details = st_module.expander(
+        "Research details — model card, assessment, assignment, promotion, stratified "
+        "results",
+        expanded=True,
+    )
+    with st_module.expander("Advanced diagnostics — regime exact ids, registries and stamps"):
+        ids = _advanced_inputs(st_module, defaults)
+        _render_algorithm_registry(st_module)
+        _render_proposal_stamps(st_module)
+    with details:
+        facts = _render_model_card(st_module, store_root, ids)
+    with summary_slot:
+        _render_summary(st_module, facts, ids, defaults)

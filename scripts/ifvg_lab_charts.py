@@ -60,6 +60,7 @@ __all__ = [
     "build_r_histogram_figure",
     "build_calibration_figure",
     "build_coverage_figure",
+    "build_reliability_figure",
     "flatten_config",
     "config_diff_frame",
 ]
@@ -1084,11 +1085,46 @@ def build_calibration_figure(model_section: dict) -> go.Figure:
     return fig
 
 
-def build_coverage_figure(model_section: dict) -> go.Figure:
-    rows = model_section.get("coverage") or []
-    thr = [f"{r['thr']:g}" for r in rows]
+def _coverage_rows(payload) -> list[dict]:
+    """Normalise the legacy model-section shape and the UI-3 threshold rows
+    (``context_report_adapters`` records) onto one row shape."""
+
+    if isinstance(payload, dict):
+        return [
+            {
+                "thr": row["thr"],
+                "coverage": row.get("coverage"),
+                "n": row.get("n"),
+                "net": row.get("mean_net_r"),
+                "net_label": "mean net R",
+                "win_rate": row.get("win_rate"),
+            }
+            for row in (payload.get("coverage") or [])
+        ]
+    return [
+        {
+            "thr": row.get("threshold"),
+            "coverage": row.get("coverage_fraction"),
+            "n": row.get("coverage_count"),
+            "net": row.get("net_r_sum"),
+            "net_label": "net R",
+            "win_rate": None,
+        }
+        for row in (payload or [])
+        if isinstance(row, dict)
+    ]
+
+
+def build_coverage_figure(payload) -> go.Figure:
+    """Coverage and net R on SEPARATE axes (UI-3 F-09): row 1 the coverage
+    fraction (0–1), row 2 the net R at the threshold — never one shared axis.
+    Accepts the legacy ``model_section`` dict or the adapter's threshold rows."""
+
+    rows = _coverage_rows(payload)
+    thr = [f"{r['thr']:g}" if r["thr"] is not None else "—" for r in rows]
+    net_label = rows[0]["net_label"] if rows else "net R"
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08,
-                        subplot_titles=("coverage", "mean net R"))
+                        subplot_titles=("coverage (share of predictions)", net_label))
     fig.add_trace(
         go.Bar(x=thr, y=[r["coverage"] for r in rows], marker_color="#4C78A8",
                hovertext=[f"n={r['n']}" for r in rows], name="coverage"),
@@ -1097,20 +1133,54 @@ def build_coverage_figure(model_section: dict) -> go.Figure:
     fig.add_trace(
         go.Bar(
             x=thr,
-            y=[r["mean_net_r"] for r in rows],
+            y=[r["net"] for r in rows],
             marker_color="#2E9990",
             hovertext=[
                 f"n={r['n']} · win {r['win_rate']:.2f}" if r["win_rate"] is not None
                 else f"n={r['n']}"
                 for r in rows
             ],
-            name="mean net R",
+            name=net_label,
         ),
         row=2, col=1,
     )
     fig.update_layout(height=420, showlegend=False,
                       margin={"l": 40, "r": 20, "t": 40, "b": 30},
                       xaxis2_title="p(win) threshold")
+    fig.update_yaxes(title_text="coverage", range=[0, 1.02], row=1, col=1)
+    fig.update_yaxes(title_text=net_label, row=2, col=1)
+    return fig
+
+
+def build_reliability_figure(bins: pd.DataFrame) -> go.Figure:
+    """The reliability diagram of the out-of-sample bins with the diagonal
+    NAMED (UI-3): observed rate against the mean predicted probability."""
+
+    frame = bins.dropna(subset=["mean_probability", "observed_rate"], how="any")
+    mean_p = frame["mean_probability"].astype(float).tolist()
+    observed = frame["observed_rate"].astype(float).tolist()
+    counts = frame["count"].tolist() if "count" in frame else [None] * len(frame)
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(x=[0.0, 1.0], y=[0.0, 1.0], mode="lines",
+                   name="perfect calibration (diagonal)",
+                   line={"color": "#8C8C8C", "dash": "dot", "width": 1})
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=mean_p, y=observed, mode="lines+markers", name="observed rate",
+            marker={"size": 9, "color": "#4C78A8"},
+            line={"color": "#4C78A8", "width": 2},
+            hovertext=[f"n={n}" if n is not None else "" for n in counts],
+            hoverinfo="text+x+y",
+        )
+    )
+    fig.update_layout(
+        height=340, xaxis_title="mean predicted probability",
+        yaxis_title="observed rate", xaxis={"range": [0, 1]}, yaxis={"range": [0, 1]},
+        margin={"l": 40, "r": 20, "t": 30, "b": 40},
+        legend={"orientation": "h", "y": 1.08},
+    )
     return fig
 
 

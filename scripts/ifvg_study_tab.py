@@ -43,6 +43,7 @@ from ifvg_ui_common import (
     sanitize_select,
 )
 
+from alpha_lab.agents.data_infra.ifvg.presentation.help_registry import help_text
 from alpha_lab.agents.data_infra.ifvg.presentation.run_purpose import (
     PURPOSE_LABELS,
     PURPOSE_NAMESPACE_CLASS,
@@ -431,7 +432,11 @@ def _render_start(st_module, roots: Mapping[str, Any]) -> None:
             st_module.write(f"Owner approvals needed: {card.approvals}.")
             st_module.write(f"Availability: {_AVAILABILITY_CHIPS[availability]} — {reason}.")
             if card.route is StudyWorkspaceRoute.VERIFY_IMPLEMENTATION:
-                if st_module.button("Open the Verification Center", key=f"{_START}{card.card_id}"):
+                if st_module.button(
+                    "Open the Verification Center",
+                    key=f"{_START}{card.card_id}",
+                    help=help_text("start.open_verification_center"),
+                ):
                     request_route(st_module, StudyWorkspaceRoute.VERIFY_IMPLEMENTATION)
                     st_module.rerun()
             elif card.route is StudyWorkspaceRoute.NEW_STUDY and st_module.button(

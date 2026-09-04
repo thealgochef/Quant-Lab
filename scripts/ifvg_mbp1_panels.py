@@ -1,9 +1,14 @@
-"""MBP-1 order-flow dashboard panels (R5B; FUX §35 R5B rows).
+"""MBP-1 order-flow dashboard panels (R5B; FUX §35 R5B rows; UI-3 summary-first).
 
-Availability, coverage, missingness, exact stage-window drill-down, and the
-Baseline vs Baseline+MBP-1 comparison — all under the persistent
-``research_only_offline`` label (owner decision R-6). Thin widget layer:
-registry state comes from the feature registries, every artifact read is an
+A readiness SUMMARY first (the activated offline feature block, the
+order-flow bundles, the source / coverage readiness, the owner-ratification
+state, the controlled-study state and the fixed ``research_only_offline``
+boundary — every fact resolved from the SELECTED run's persisted evidence
+whenever possible), then the Research details (coverage, missingness, the
+exact stage-window drill-down, the Baseline vs Baseline+MBP-1 comparison),
+then Advanced diagnostics (the manual exact-id inputs, the registries, the
+stamped defaults and the registry hashes). Thin widget layer: registry
+state comes from the feature registries, every artifact read is an
 exact-ID verified store load (stores are never listed), and every error
 surface is sanitized. No control here can launch work, promote a feature,
 or reach a live/serving surface.
@@ -23,7 +28,21 @@ from ifvg_ui_common import (
     identity_block,
     render_empty_state,
     sanitize_error,
+    status_chip_line,
 )
+
+from alpha_lab.agents.data_infra.ifvg.presentation.help_registry import help_text
+from alpha_lab.agents.data_infra.ifvg.presentation.labels import (
+    AvailabilityKind,
+    availability_chip,
+    availability_for_block_status,
+    label_for,
+)
+from alpha_lab.agents.data_infra.ifvg.presentation.metric_registry import (
+    evaluate_interval,
+    evaluate_metric,
+)
+from alpha_lab.agents.data_infra.ifvg.presentation.status_vocabulary import UiStatus
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT / "src") not in sys.path:
@@ -32,6 +51,7 @@ if str(_REPO_ROOT / "src") not in sys.path:
 __all__ = ["render_mbp1_order_flow", "research_only_offline_badge"]
 
 _MBP1 = f"{PIPELINE_STATE_PREFIX}mbp1_"
+_BLOCK_KEY = "IFVG_ORDER_FLOW_MBP1_V1"
 
 RESEARCH_ONLY_OFFLINE_TEXT = (
     "research_only_offline — the activated MBP-1 block cannot become a live "
@@ -54,14 +74,18 @@ def _availability_rows() -> list[dict[str, str]]:
     )
 
     rows: list[dict[str, str]] = []
-    for key in ("IFVG_ORDER_FLOW_MBP1_V1", "IFVG_EXECUTION_LIQUIDITY_V1"):
+    for key in (_BLOCK_KEY, "IFVG_EXECUTION_LIQUIDITY_V1"):
         definition = FEATURE_BLOCK_REGISTRY[key]
         resolution = FEATURE_BLOCK_RESOLUTION_REGISTRY.get(key)
         rows.append(
             {
                 "Block": key,
+                "Name": label_for("block", key),
                 "Version": str(definition.block_version),
                 "Status": definition.status.value,
+                "Availability": availability_chip(
+                    availability_for_block_status(definition.status)
+                ),
                 "Resolved id": (
                     resolution.resolved_feature_block_id
                     if resolution is not None
@@ -92,6 +116,7 @@ def _bundle_rows() -> list[dict[str, str]]:
             rows.append(
                 {
                     "Bundle": key,
+                    "Name": label_for("bundle", key),
                     "Base": definition.base_bundle_key or "—",
                     "State": "blocked",
                     "Resolved id / reason": sanitize_error(error),
@@ -101,6 +126,7 @@ def _bundle_rows() -> list[dict[str, str]]:
             rows.append(
                 {
                     "Bundle": key,
+                    "Name": label_for("bundle", key),
                     "Base": definition.base_bundle_key or "—",
                     "State": "available (research-only offline)",
                     "Resolved id / reason": envelope.resolved_feature_bundle_id,
@@ -149,6 +175,7 @@ def _render_coverage_policy_stamps(st_module) -> None:
                 "Default": name,
                 "Proposed value": str(entry["value"]),
                 "Stamp": entry["stamp"],
+                "Status": availability_chip(AvailabilityKind.PROPOSED),
                 "Owner decision": entry["owner_decision"],
                 "Ratification required": "yes — before research use",
             }
@@ -186,28 +213,66 @@ def _render_window_registry(st_module) -> None:
     )
 
 
-def _render_coverage(st_module, store_root: Path, default_id: str | None) -> None:
+def _advanced_inputs(st_module, defaults: Mapping[str, str]) -> dict[str, str]:
+    """The manual exact-id inputs (Advanced diagnostics only): auto-resolved
+    from the selected run whenever possible; editing addresses another artifact."""
+
+    st_module.caption(
+        "Exact ids auto-resolved from the selected run's persisted stage evidence "
+        "(manifest-verified) when present; edit any input to address another "
+        "artifact — stores are never listed and there is no fuzzy lookup."
+    )
+    coverage_id = st_module.text_input(
+        "Coverage report id (64-hex)",
+        value=defaults.get("coverage_report_id", ""),
+        key=f"{_MBP1}coverage_id",
+        help=help_text("mbp1.coverage_report_id"),
+    ).strip()
+    artifact_id = st_module.text_input(
+        "MBP-1 feature artifact id (64-hex)",
+        value=defaults.get("feature_artifact_id", ""),
+        key=f"{_MBP1}feature_artifact_id",
+        help=help_text("mbp1.feature_artifact_id"),
+    ).strip()
+    candidate_id = st_module.text_input(
+        "Exact candidate id",
+        value="",
+        key=f"{_MBP1}candidate_id",
+        help=help_text("mbp1.candidate_id"),
+    ).strip()
+    study_id = st_module.text_input(
+        "Controlled study id (64-hex)",
+        value=defaults.get("controlled_study_id", ""),
+        key=f"{_MBP1}study_id",
+        help=help_text("mbp1.controlled_study_id"),
+    ).strip()
+    return {
+        "coverage_report_id": coverage_id,
+        "feature_artifact_id": artifact_id,
+        "candidate_id": candidate_id,
+        "controlled_study_id": study_id,
+    }
+
+
+def _render_coverage(st_module, store_root: Path, report_id: str) -> Any:
+    """Coverage / missingness evidence by exact id; returns the loaded payload."""
+
     from alpha_lab.agents.data_infra.ifvg.features.mbp1_coverage import (  # noqa: PLC0415
         load_mbp1_coverage_report,
     )
 
     st_module.markdown("**Coverage and missingness evidence** (exact-ID load)")
-    report_id = st_module.text_input(
-        "Coverage report id (64-hex)",
-        value=default_id or "",
-        key=f"{_MBP1}coverage_id",
-    ).strip()
     if not report_id:
         st_module.caption(
             "Paste the exact `mbp1_coverage_report_id` (S05 lists it among its "
-            "output artifact ids)."
+            "output artifact ids) under Advanced diagnostics."
         )
-        return
+        return None
     try:
         envelope = load_mbp1_coverage_report(store_root, report_id)
     except Exception as error:  # noqa: BLE001 — sanitized surface only
         render_empty_state(st_module, "artifact_unavailable", detail=sanitize_error(error))
-        return
+        return None
     payload = envelope.payload
     st_module.caption(
         f"Boundary: **{payload.research_boundary}** · candidates: "
@@ -281,9 +346,10 @@ def _render_coverage(st_module, store_root: Path, default_id: str | None) -> Non
             width="stretch",
             hide_index=True,
         )
+    return payload
 
 
-def _render_drilldown(st_module, store_root: Path, default_id: str | None) -> None:
+def _render_drilldown(st_module, store_root: Path, artifact_id: str, candidate_id: str) -> None:
     from alpha_lab.agents.data_infra.ifvg.features.mbp1_feature_materializer import (  # noqa: PLC0415
         load_mbp1_feature_artifact,
         load_stage_evidence_frame,
@@ -293,18 +359,11 @@ def _render_drilldown(st_module, store_root: Path, default_id: str | None) -> No
         "**Exact stage-window drill-down** — one candidate's cutoffs, "
         "admitted counts, and typed reasons"
     )
-    artifact_id = st_module.text_input(
-        "MBP-1 feature artifact id (64-hex)",
-        value=default_id or "",
-        key=f"{_MBP1}feature_artifact_id",
-    ).strip()
-    candidate_id = st_module.text_input(
-        "Exact candidate id", value="", key=f"{_MBP1}candidate_id"
-    ).strip()
     if not artifact_id or not candidate_id:
         st_module.caption(
             "Both the exact feature artifact id and the exact candidate id "
-            "are required — there is no fuzzy or nearest-match lookup."
+            "are required (Advanced diagnostics) — there is no fuzzy or "
+            "nearest-match lookup."
         )
         return
     try:
@@ -368,28 +427,26 @@ def _delta_line(delta: Mapping[str, Any] | None) -> str:
     )
 
 
-def _render_comparison(st_module, store_root: Path, default_id: str | None) -> None:
+def _render_comparison(st_module, store_root: Path, study_id: str) -> Any:
+    """The controlled comparison by exact id; returns the loaded payload."""
+
     from alpha_lab.agents.data_infra.ifvg.ml.controlled_feature_study import (  # noqa: PLC0415
         load_controlled_feature_study,
     )
 
     st_module.markdown("**Baseline vs Baseline+MBP-1 controlled comparison**")
-    study_id = st_module.text_input(
-        "Controlled study id (64-hex)",
-        value=default_id or "",
-        key=f"{_MBP1}study_id",
-    ).strip()
     if not study_id:
         st_module.caption(
             "Paste the exact `controlled_feature_study_id` (S09 lists it "
-            "among its output artifact ids when an MBP-1 bundle is trained)."
+            "among its output artifact ids when an MBP-1 bundle is trained) "
+            "under Advanced diagnostics."
         )
-        return
+        return None
     try:
         envelope = load_controlled_feature_study(store_root, study_id)
     except Exception as error:  # noqa: BLE001 — sanitized surface only
         render_empty_state(st_module, "artifact_unavailable", detail=sanitize_error(error))
-        return
+        return None
     payload = envelope.payload
     st_module.caption(
         f"Identical rows/labels/folds/model protocol on both arms — "
@@ -433,6 +490,112 @@ def _render_comparison(st_module, store_root: Path, default_id: str | None) -> N
     identity_block(st_module, "MBP-1 feature artifact", payload.mbp1_feature_artifact_id)
     identity_block(st_module, "Label content hash", payload.label_content_hash)
     identity_block(st_module, "Fold set hash", payload.fold_set_hash)
+    return payload
+
+
+def _render_summary(st_module, facts: Mapping[str, Any], defaults: Mapping[str, str]) -> None:
+    """UI-3 (plan §7): the readiness summary — every fact from the registries
+    or the selected run's persisted evidence; nothing unresolved reads as passing."""
+
+    from alpha_lab.agents.data_infra.ifvg.features.feature_blocks import (  # noqa: PLC0415
+        FEATURE_BLOCK_REGISTRY,
+        FEATURE_BLOCK_RESOLUTION_REGISTRY,
+    )
+    from alpha_lab.agents.data_infra.ifvg.features.mbp1_source_contract import (  # noqa: PLC0415
+        MBP1_PROPOSED_DEFAULTS,
+    )
+
+    st_module.markdown(
+        "**MBP-1 readiness (summary)** — resolved from the feature registries and the "
+        "selected run's persisted evidence; exact ids, registries and stamps are under "
+        "Advanced diagnostics."
+    )
+    block = FEATURE_BLOCK_REGISTRY[_BLOCK_KEY]
+    resolution = FEATURE_BLOCK_RESOLUTION_REGISTRY.get(_BLOCK_KEY)
+    resolved = (
+        f" · resolved id `{resolution.resolved_feature_block_id[:12]}…`"
+        if resolution is not None
+        else ""
+    )
+    st_module.markdown(
+        f"- Offline feature block: **{label_for('block', _BLOCK_KEY)}** (`{_BLOCK_KEY}` "
+        f"v{block.block_version}) — "
+        f"{availability_chip(availability_for_block_status(block.status))}{resolved}"
+    )
+    bundles = _bundle_rows()
+    available = [row["Name"] for row in bundles if row["State"].startswith("available")]
+    blocked = [row["Name"] for row in bundles if row["State"] == "blocked"]
+    st_module.markdown(
+        f"- Order-flow bundles: {len(available)} resolvable ({', '.join(available) or 'none'})"
+        f" · {len(blocked)} blocked ({', '.join(blocked) or 'none'})"
+    )
+    coverage = facts.get("coverage")
+    if coverage is None:
+        status_chip_line(
+            st_module,
+            UiStatus.UNAVAILABLE,
+            "Source / coverage readiness — no coverage evidence resolved from the "
+            "selected run (paste an exact id under Advanced diagnostics)",
+        )
+    else:
+        rows = list(coverage.day_rows)
+        complete = [row for row in rows if row.completeness_status.value == "evidenced_complete"]
+        unknown = [
+            row for row in rows if row.completeness_status.value == "completeness_unknown"
+        ]
+        evidenced = [row.coverage_fraction for row in rows if row not in unknown]
+        reading = evaluate_metric(
+            "mbp1_day_coverage_fraction",
+            min(evidenced) if evidenced else None,
+            proposed=True,
+        )
+        status_chip_line(
+            st_module,
+            reading.status,
+            f"Source / coverage readiness — {len(complete)} of {len(rows)} day(s) "
+            f"evidenced_complete, {len(unknown)} completeness_unknown; lowest evidenced "
+            f"day coverage {reading.display} — {reading.interpretation}",
+        )
+    st_module.markdown(
+        f"- Owner ratification: {availability_chip(AvailabilityKind.PROPOSED)} — "
+        f"{len(MBP1_PROPOSED_DEFAULTS)} coverage-policy defaults are "
+        "`proposed_protocol_default` (owner decision R-6); none carries research weight"
+    )
+    study = facts.get("study")
+    if study is None:
+        status_chip_line(
+            st_module,
+            UiStatus.UNAVAILABLE,
+            "Controlled study — no Baseline vs Baseline+MBP-1 study resolved from the "
+            "selected run",
+        )
+    else:
+        delta = dict(study.paired_brier_delta) if study.paired_brier_delta is not None else {}
+        reading = evaluate_interval(
+            "paired_brier_delta",
+            lower=delta.get("lower"),
+            upper=delta.get("upper"),
+            available=bool(delta.get("available")),
+            reason=str(delta.get("reason") or "not evaluable (0 OOS rows)"),
+            estimate=delta.get("estimate"),
+        )
+        status_chip_line(
+            st_module,
+            reading.status,
+            f"Controlled study — bundle `{study.challenger_bundle_key}` vs "
+            f"`{study.baseline_bundle_key}`; parity {study.parity_status} over "
+            f"{study.oos_row_count} OOS rows; {reading.interpretation} (a descriptive "
+            "research diagnostic, never a promotion claim)",
+        )
+    st_module.markdown(
+        f"- Boundary: {availability_chip(AvailabilityKind.RESEARCH_ONLY_OFFLINE)} — "
+        "`research_only_offline` (owner decision R-6); no serving or execution role"
+    )
+    if not defaults:
+        st_module.caption(
+            "No pipeline run is selected, so nothing was auto-resolved; the summary "
+            "shows the registries only."
+        )
 
 
 def render_mbp1_order_flow(
@@ -441,17 +604,31 @@ def render_mbp1_order_flow(
     roots: Mapping[str, Any],
     default_ids: Mapping[str, str] | None = None,
 ) -> None:
-    """The complete R5B MBP-1 surface (FUX §35: availability, coverage,
-    bundle selection is on Configure, comparison, missingness, drill-down,
-    persistent research_only_offline labeling)."""
+    """The complete R5B MBP-1 surface (FUX §35): summary first, then the
+    Research details (coverage, drill-down, comparison), then Advanced
+    diagnostics (manual ids, registries, stamps); persistent
+    research_only_offline labeling throughout."""
 
     dev_only_badge(st_module)
     research_only_offline_badge(st_module)
     store_root = Path(roots["store_root"])
     defaults = dict(default_ids or {})
-    _render_availability(st_module)
-    _render_coverage_policy_stamps(st_module)
-    _render_window_registry(st_module)
-    _render_coverage(st_module, store_root, defaults.get("coverage_report_id"))
-    _render_drilldown(st_module, store_root, defaults.get("feature_artifact_id"))
-    _render_comparison(st_module, store_root, defaults.get("controlled_study_id"))
+    summary_slot = st_module.container()
+    details = st_module.expander(
+        "Research details — coverage, stage-window drill-down, controlled comparison",
+        expanded=True,
+    )
+    with st_module.expander("Advanced diagnostics — MBP-1 exact ids, registries and stamps"):
+        ids = _advanced_inputs(st_module, defaults)
+        _render_availability(st_module)
+        _render_coverage_policy_stamps(st_module)
+        _render_window_registry(st_module)
+    facts: dict[str, Any] = {}
+    with details:
+        facts["coverage"] = _render_coverage(st_module, store_root, ids["coverage_report_id"])
+        _render_drilldown(
+            st_module, store_root, ids["feature_artifact_id"], ids["candidate_id"]
+        )
+        facts["study"] = _render_comparison(st_module, store_root, ids["controlled_study_id"])
+    with summary_slot:
+        _render_summary(st_module, facts, defaults)

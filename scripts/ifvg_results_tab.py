@@ -32,8 +32,10 @@ from ifvg_ui_common import (
     disclosure_level,
     display_metric,
     identity_block,
+    metric_card,
     paginate_controls,
     render_empty_state,
+    rollup_card,
     sanitize_error,
     sanitize_select,
     status_badge,
@@ -41,6 +43,18 @@ from ifvg_ui_common import (
 )
 
 from alpha_lab.agents.data_infra.ifvg.presentation.flows import FLOW_STEP_TITLES
+from alpha_lab.agents.data_infra.ifvg.presentation.help_registry import help_text
+from alpha_lab.agents.data_infra.ifvg.presentation.metric_registry import describe
+from alpha_lab.agents.data_infra.ifvg.presentation.results_presentation import (
+    column_guide,
+    prop_readings,
+    strategy_readings,
+    worst_vector_value,
+)
+from alpha_lab.agents.data_infra.ifvg.presentation.rollups import (
+    RollupSection,
+    rollup_section,
+)
 from alpha_lab.agents.data_infra.ifvg.presentation.run_purpose import (
     PURPOSE_LABELS,
     PURPOSE_NAMESPACE_CLASS,
@@ -184,21 +198,7 @@ def _vector_value(
 ) -> float | None:
     """Worst-across-simulations value for one vector attribute (D-#18)."""
 
-    from alpha_lab.agents.data_infra.ifvg.search.charter import (  # noqa: PLC0415
-        OBJECTIVE_DIRECTIONS,
-    )
-
-    values = [
-        summary.get("payout_reliability_vector", {}).get(attribute)
-        for summary in summaries.values()
-    ]
-    values = [value for value in values if value is not None]
-    if not values:
-        return None
-    if not worst:
-        return float(values[0])
-    direction = OBJECTIVE_DIRECTIONS.get(attribute, "maximize")
-    return float(min(values) if direction == "maximize" else max(values))
+    return worst_vector_value(summaries, attribute, worst=worst)
 
 
 def _config_selector(
@@ -224,7 +224,8 @@ def _config_selector(
         0,
     )
     chosen = st_module.selectbox(
-        "Selected configuration", list(options), index=index, key=key
+        "Selected configuration", list(options), index=index, key=key,
+        help=help_text("results.selected_configuration"),
     )
     selected = options[chosen]
     st_module.session_state[_SELECTED_CONFIG_KEY] = selected
@@ -263,7 +264,8 @@ def render_results(st_module=st, *, roots: Mapping[str, Any]) -> None:
     )
     sanitize_select(st_module, f"{_RES}run", list(labels))
     chosen = st_module.selectbox(
-        "Search / run", list(labels), index=index, key=f"{_RES}run"
+        "Search / run", list(labels), index=index, key=f"{_RES}run",
+        help=help_text("results.run"),
     )
     run = labels[chosen]
     identity_block(st_module, "Full search identity", run.search_id)
@@ -279,6 +281,7 @@ def render_results(st_module=st, *, roots: Mapping[str, Any]) -> None:
     roots = {**roots, "store_root": run_store}
 
     _render_overview(st_module, bundle)
+    _render_selected_configuration(st_module, bundle)
     if level in ("analyst", "audit"):
         _render_frontier(st_module, bundle)
         _render_heatmap(st_module, bundle)
@@ -402,6 +405,95 @@ def _render_overview(st_module, bundle: Mapping[str, Any]) -> None:
     )
 
 
+def _metric_rows(st_module, readings, *, per_row: int = 4) -> None:
+    """Registry metric cards, ``per_row`` per line (human name · value · chip)."""
+
+    ordered = list(readings)
+    for start in range(0, len(ordered), per_row):
+        chunk = ordered[start : start + per_row]
+        columns = st_module.columns(per_row)
+        for column, reading in zip(columns, chunk, strict=False):
+            with column:
+                metric_card(st_module, reading)
+
+
+def _metric_caption(st_module, technical_key: str) -> None:
+    """The registry definition and direction of a picked metric (plan §7)."""
+
+    spec = describe(technical_key)
+    direction = {
+        "higher_better": "higher is better",
+        "lower_better": "lower is better",
+        "target": "closer to the target is better",
+        "descriptive": "descriptive — no direction",
+    }[spec.directionality]
+    st_module.caption(f"{spec.human_name}: {spec.definition} — {direction}.")
+
+
+def _render_selected_configuration(st_module, bundle: Mapping[str, Any]) -> None:
+    """UI-3 (plan §7 Results): the selected configuration's Strategy quality
+    and Prop feasibility roll-ups and its registry metric cards — the charter's
+    RESOLVED gates are the references; nothing here invents a threshold."""
+
+    from alpha_lab.agents.data_infra.ifvg.study_status import (  # noqa: PLC0415
+        RESULT_SCOPE_LABELS,
+    )
+
+    st_module.subheader("Selected configuration")
+    children = bundle["children"]
+    eligible = [
+        str(child.get("core_replay_id") or "")
+        for child in children
+        if child.get("core_replay_id")
+    ]
+    selected = _config_selector(
+        st_module, bundle, key=f"{_RES}selected_twin", eligible=eligible
+    )
+    if selected is None:
+        render_empty_state(
+            st_module, "not_selected", detail="no configuration exists to evaluate yet"
+        )
+        return
+    charter = bundle["charter"]
+    policy = charter.payload.objective_policy if charter is not None else None
+    strategy = strategy_readings(
+        bundle["metrics_by_child"].get(selected),
+        policy.feasibility_gates if policy is not None else None,
+    )
+    prop = prop_readings(
+        bundle["prop_vectors"].get(selected, {}),
+        policy.prop_feasibility_gates if policy is not None else None,
+    )
+    rollups = (
+        rollup_section(
+            RollupSection.STRATEGY_QUALITY,
+            strategy,
+            inspect_next="the strategy metric cards below",
+        ),
+        rollup_section(
+            RollupSection.PROP_FEASIBILITY,
+            prop,
+            inspect_next="the prop metric cards below and the firm compatibility matrix",
+        ),
+    )
+    columns = st_module.columns(2)
+    for column, rollup in zip(columns, rollups, strict=True):
+        with column:
+            rollup_card(st_module, rollup)
+    st_module.caption(
+        f"Result scope: **{RESULT_SCOPE_LABELS[ResultScope.ACTUAL_EXECUTED_STRATEGY]}** "
+        f"(strategy metrics) · **{_prop_scope_caption(bundle['prop_vectors'])}** (prop "
+        "metrics, the worst value across the simulated firms) · the references are the "
+        "charter's resolved gates (proposed_protocol_default unless owner-ratified)."
+    )
+    st_module.markdown("**Strategy metrics** — against the charter's strategy gates")
+    _metric_rows(st_module, strategy)
+    st_module.markdown(
+        "**Prop metrics** — worst across the simulated firms, against the prop gates"
+    )
+    _metric_rows(st_module, prop)
+
+
 def _render_frontier(st_module, bundle: Mapping[str, Any]) -> None:
     st_module.subheader("Payout-reliability frontier")
     st_module.caption(
@@ -509,16 +601,20 @@ def _render_heatmap(st_module, bundle: Mapping[str, Any]) -> None:
         st_module.caption("No searched axes — the heatmap needs at least one.")
         return
     row_axis = st_module.selectbox(
-        "Row axis", axes, key=f"{_RES}heat_row"
+        "Row axis", axes, key=f"{_RES}heat_row",
+        help=help_text("results.heat_row"),
     )
     col_options = ["(single axis)"] + [axis for axis in axes if axis != row_axis]
     col_axis = st_module.selectbox(
-        "Column axis", col_options, key=f"{_RES}heat_col"
+        "Column axis", col_options, key=f"{_RES}heat_col",
+        help=help_text("results.heat_col"),
     )
     metric_label = st_module.selectbox(
-        "Metric", list(HEATMAP_METRICS), key=f"{_RES}heat_metric"
+        "Metric", list(HEATMAP_METRICS), key=f"{_RES}heat_metric",
+        help=help_text("results.heat_metric"),
     )
     attribute = HEATMAP_METRICS[metric_label]
+    _metric_caption(st_module, attribute)
     from alpha_lab.agents.data_infra.ifvg.study_status import (  # noqa: PLC0415
         RESULT_SCOPE_LABELS,
     )
@@ -665,9 +761,11 @@ def _render_firm_views(st_module, bundle: Mapping[str, Any]) -> None:
         )
         return
     metric_label = st_module.selectbox(
-        "Matrix metric", list(FIRM_MATRIX_METRICS), key=f"{_RES}firm_metric"
+        "Matrix metric", list(FIRM_MATRIX_METRICS), key=f"{_RES}firm_metric",
+        help=help_text("results.firm_metric"),
     )
     attribute = FIRM_MATRIX_METRICS[metric_label]
+    _metric_caption(st_module, attribute)
     cells = []
     for core_id, summaries in relevant.items():
         for firm_label, summary in summaries.items():
@@ -752,7 +850,8 @@ def _render_firm_views(st_module, bundle: Mapping[str, Any]) -> None:
 
     st_module.subheader("Payout distributions")
     horizon = st_module.selectbox(
-        "Horizon", PAYOUT_HORIZONS, key=f"{_RES}payout_horizon"
+        "Horizon", PAYOUT_HORIZONS, key=f"{_RES}payout_horizon",
+        help=help_text("results.payout_horizon"),
     )
     samples: list[float] = []
     if selected:
@@ -799,6 +898,34 @@ def _render_firm_views(st_module, bundle: Mapping[str, Any]) -> None:
         )
 
 
+_ROBUSTNESS_COLUMNS: Mapping[str, str | None] = {
+    "outer folds passed": None,
+    "stress tests passed": None,
+    "neighbor stability": None,
+    "worst-firm result": "expected_net_payout_90d",
+    "concentration warning": "top_day_pnl_share",
+}
+
+
+def _render_column_guide(st_module, preset: str) -> None:
+    """UI-3: every explorer column described from the registry (plan §7)."""
+
+    if preset == "Strategy":
+        columns: Mapping[str, str | None] = dict(_STRATEGY_COLUMNS)
+    elif preset == "Prop":
+        columns = {
+            "firm": None,
+            "risk policy": None,
+            **_PROP_COLUMNS,
+            "90-day survival": "survival_probability_90d",
+            "fees": "total_fees",
+        }
+    else:
+        columns = _ROBUSTNESS_COLUMNS
+    with st_module.expander("Column guide"):
+        st_module.dataframe(column_guide(columns), hide_index=True, width="stretch")
+
+
 def _render_explorer(st_module, bundle: Mapping[str, Any], level: str) -> None:
     st_module.subheader("Configuration explorer")
     st_module.caption(
@@ -821,7 +948,9 @@ def _render_explorer(st_module, bundle: Mapping[str, Any], level: str) -> None:
         list(EXPLORER_PRESETS),
         horizontal=True,
         key=f"{_RES}preset",
+        help=help_text("results.preset"),
     )
+    _render_column_guide(st_module, str(preset))
     rows = []
     for child in children:
         core_id = str(child.get("core_replay_id") or "")
@@ -931,6 +1060,7 @@ def _render_explorer(st_module, bundle: Mapping[str, Any], level: str) -> None:
             "Row detail (repeated above the table)",
             list(detail_labels),
             key=f"{_RES}exp_detail",
+            help=help_text("results.row_detail"),
         )
         selected_row = detail_labels[chosen]
         identity_block(
@@ -1115,7 +1245,11 @@ def _render_draft_row(st_module, draft, draft_root: Path) -> None:
             request_route(st_module, "new_study")
             st_module.rerun()
     with columns[2]:
-        if st_module.button("Clone", key=f"{_RES}clone_{draft.draft_id[:8]}"):
+        if st_module.button(
+            "Clone",
+            key=f"{_RES}clone_{draft.draft_id[:8]}",
+            help=help_text("history.clone_draft"),
+        ):
             clone = clone_draft(draft)
             save_draft(draft_root, clone)
             st_module.success(f"Cloned to {clone.display_name}")
@@ -1164,6 +1298,7 @@ def _render_archived_row(st_module, draft, draft_root: Path) -> None:
             "Delete draft permanently",
             key=f"{_RES}del_{draft.draft_id[:8]}",
             disabled=str(typed or "") != draft.display_name,
+            help=help_text("history.delete_permanently"),
         ):
             try:
                 delete_draft_permanently(draft_root, draft.draft_id, confirm_name=str(typed))
@@ -1290,7 +1425,8 @@ def render_history(st_module=st, *, roots: Mapping[str, Any]) -> None:
             draft = frozen_drafts.get(run.search_id)
             if draft is not None:
                 if st_module.button(
-                    "Clone as New Search", key=f"{_RES}hist_clone_{run.search_id[:8]}"
+                    "Clone as New Search", key=f"{_RES}hist_clone_{run.search_id[:8]}",
+                    help=help_text("history.clone_run"),
                 ):
                     clone = clone_draft(draft)
                     save_draft(draft_root, clone)
@@ -1307,10 +1443,11 @@ def render_history(st_module=st, *, roots: Mapping[str, Any]) -> None:
                 )
         with columns[3]:
             new_name = st_module.text_input(
-                "display name",
+                "New display name",
                 value=run.display_name,
                 key=f"{_RES}hist_name_{run.search_id[:8]}",
                 label_visibility="collapsed",
+                help=help_text("history.display_name"),
             )
             run_store = Path(run.store_root) if run.store_root else store_root
             if new_name != run.display_name and st_module.button(

@@ -31,6 +31,7 @@ from ifvg_verifier_charts import (  # noqa: E402
     to_display_timezone,
 )
 
+from alpha_lab.agents.data_infra.ifvg.presentation.help_registry import help_text  # noqa: E402
 from alpha_lab.agents.data_infra.ifvg.presentation.review_vocabulary import (  # noqa: E402
     VERDICT_DEFINITIONS,
     label_for_verdict,
@@ -211,10 +212,12 @@ def _filtered_candidates(st_module, frame: pd.DataFrame) -> pd.DataFrame:
             ("executed", "blocked", "censored", "win", "loss"),
             default=(),
             key=f"{_STATE_PREFIX}verifier_outcome",
+            help=help_text("verifier.outcome_filter"),
         )
         m3_only = st_module.checkbox(
             "M3 qualifying cases only",
             key=f"{_STATE_PREFIX}verifier_m3",
+            help=help_text("verifier.m3_only"),
         )
     with middle:
         sessions = st_module.multiselect(
@@ -222,11 +225,13 @@ def _filtered_candidates(st_module, frame: pd.DataFrame) -> pd.DataFrame:
             tuple(sorted(frame["entry_session"].dropna().unique())),
             default=(),
             key=f"{_STATE_PREFIX}verifier_session",
+            help=help_text("verifier.session_filter"),
         )
         include_warmup = st_module.checkbox(
             "Include warmup evidence",
             value=False,
             key=f"{_STATE_PREFIX}verifier_warmup",
+            help=help_text("verifier.include_warmup"),
         )
     with right:
         days = sorted(frame["trading_day"].unique())
@@ -235,6 +240,7 @@ def _filtered_candidates(st_module, frame: pd.DataFrame) -> pd.DataFrame:
             options=days,
             value=(days[0], days[-1]),
             key=f"{_STATE_PREFIX}verifier_days",
+            help=help_text("verifier.day_range"),
         )
 
     filtered = frame[
@@ -523,12 +529,22 @@ def _review_form(
                 verdict_options(),
                 index=0,
                 key=f"{_STATE_PREFIX}{prefix}_{name}_{key}",
+                help=help_text("verifier.detail_verdict"),
             )
             value = verdict_for_label(str(label))
             if value is not None:
                 detail_verdicts[name] = value
-    tags = st_module.multiselect("Tags", REVIEW_TAGS, key=f"{_STATE_PREFIX}{prefix}_tags_{key}")
-    notes = st_module.text_area("Notes", key=f"{_STATE_PREFIX}{prefix}_notes_{key}")
+    tags = st_module.multiselect(
+        "Tags",
+        REVIEW_TAGS,
+        key=f"{_STATE_PREFIX}{prefix}_tags_{key}",
+        help=help_text("verifier.review_tags"),
+    )
+    notes = st_module.text_area(
+        "Notes",
+        key=f"{_STATE_PREFIX}{prefix}_notes_{key}",
+        help=help_text("verifier.review_notes"),
+    )
     signature = (
         str(reviewer).strip(),
         tuple(sorted(detail_verdicts.items())),
@@ -610,6 +626,7 @@ def _render_review_section(st_module, ctx: ReplayContext, evidence, row: pd.Seri
                 file_name="ifvg_visual_review_v1.csv",
                 mime="text/csv",
                 key=f"{_STATE_PREFIX}review_csv",
+                help=help_text("verifier.download_ledger"),
             )
 
 
@@ -739,18 +756,21 @@ def _filtered_setups(st_module, frame: pd.DataFrame) -> pd.DataFrame:
             "Candidate-less",
             _TRI_CANDIDATE_LESS,
             key=f"{_STATE_PREFIX}setup_candidate_less",
+            help=help_text("verifier.setup_candidate_less"),
         )
         reasons = st_module.multiselect(
             "Terminal reason",
             tuple(sorted(frame["terminal_reason"].dropna().astype(str).unique())),
             default=(),
             key=f"{_STATE_PREFIX}setup_terminal_reason",
+            help=help_text("verifier.setup_terminal_reason"),
         )
         phases = st_module.multiselect(
             "Phase at death",
             tuple(sorted(frame["phase_at_death"].dropna().astype(str).unique())),
             default=(),
             key=f"{_STATE_PREFIX}setup_phase",
+            help=help_text("verifier.setup_phase"),
         )
         # These two flag filters are PRESENT-BUT-EMPTY on current data —
         # rendered always, with an honest zero-count caption, never hidden.
@@ -758,6 +778,7 @@ def _filtered_setups(st_module, frame: pd.DataFrame) -> pd.DataFrame:
         conflict_only = st_module.checkbox(
             f"Conflict-flagged only ({conflict_count})",
             key=f"{_STATE_PREFIX}setup_conflict",
+            help=help_text("verifier.setup_conflict"),
         )
         if conflict_count == 0:
             st_module.caption(f"Conflict flag: {_PRESENT_BUT_EMPTY}")
@@ -765,6 +786,7 @@ def _filtered_setups(st_module, frame: pd.DataFrame) -> pd.DataFrame:
         suppression_only = st_module.checkbox(
             f"Structural-suppression only ({suppression_count})",
             key=f"{_STATE_PREFIX}setup_suppression",
+            help=help_text("verifier.setup_suppression"),
         )
         if suppression_count == 0:
             st_module.caption(f"Structural suppression: {_PRESENT_BUT_EMPTY}")
@@ -777,6 +799,7 @@ def _filtered_setups(st_module, frame: pd.DataFrame) -> pd.DataFrame:
             ),
             default=(),
             key=f"{_STATE_PREFIX}setup_htf_tf",
+            help=help_text("verifier.setup_htf_tf"),
         )
         parent_tfs = st_module.multiselect(
             "Parent timeframe (s)",
@@ -786,6 +809,7 @@ def _filtered_setups(st_module, frame: pd.DataFrame) -> pd.DataFrame:
             ),
             default=(),
             key=f"{_STATE_PREFIX}setup_parent_tf",
+            help=help_text("verifier.setup_parent_tf"),
         )
         sessions = st_module.multiselect(
             "Session (doc, at activation)",
@@ -796,14 +820,17 @@ def _filtered_setups(st_module, frame: pd.DataFrame) -> pd.DataFrame:
             ),
             default=(),
             key=f"{_STATE_PREFIX}setup_session",
+            help=help_text("verifier.setup_session"),
         )
         q40 = st_module.selectbox(
-            "Q-40 exposure", _TRI_Q40, key=f"{_STATE_PREFIX}setup_q40"
+            "Q-40 exposure", _TRI_Q40, key=f"{_STATE_PREFIX}setup_q40",
+            help=help_text("verifier.setup_q40"),
         )
         parentless = st_module.selectbox(
             "Parentless (had ≥1 interval)",
             _TRI_PARENTLESS,
             key=f"{_STATE_PREFIX}setup_parentless",
+            help=help_text("verifier.setup_parentless"),
         )
         include_warmup = False
         if "is_warmup" in frame.columns:
@@ -811,6 +838,7 @@ def _filtered_setups(st_module, frame: pd.DataFrame) -> pd.DataFrame:
                 "Include warmup setups",
                 value=False,
                 key=f"{_STATE_PREFIX}setup_warmup",
+                help=help_text("verifier.setup_warmup"),
             )
     with right:
         activation_start = _parse_ts_bound(
@@ -818,6 +846,7 @@ def _filtered_setups(st_module, frame: pd.DataFrame) -> pd.DataFrame:
             st_module.text_input(
                 "Activation from (UTC ISO)",
                 key=f"{_STATE_PREFIX}setup_activation_start",
+                help=help_text("verifier.setup_activation_from"),
             ),
             "Activation start",
         )
@@ -826,6 +855,7 @@ def _filtered_setups(st_module, frame: pd.DataFrame) -> pd.DataFrame:
             st_module.text_input(
                 "Activation to (UTC ISO)",
                 key=f"{_STATE_PREFIX}setup_activation_end",
+                help=help_text("verifier.setup_activation_to"),
             ),
             "Activation end",
         )
@@ -834,6 +864,7 @@ def _filtered_setups(st_module, frame: pd.DataFrame) -> pd.DataFrame:
             st_module.text_input(
                 "Display-end from (UTC ISO)",
                 key=f"{_STATE_PREFIX}setup_display_end_start",
+                help=help_text("verifier.setup_display_end_from"),
             ),
             "Display-end start",
         )
@@ -842,6 +873,7 @@ def _filtered_setups(st_module, frame: pd.DataFrame) -> pd.DataFrame:
             st_module.text_input(
                 "Display-end to (UTC ISO)",
                 key=f"{_STATE_PREFIX}setup_display_end_end",
+                help=help_text("verifier.setup_display_end_to"),
             ),
             "Display-end end",
         )
@@ -1108,6 +1140,7 @@ def _render_setup_section(st_module, pair_ref: ArtifactPairRef) -> None:
         query = st_module.text_input(
             "Jump to setup (exact ID or unique prefix)",
             key=f"{_STATE_PREFIX}setup_jump",
+            help=help_text("verifier.setup_jump"),
         )
         if query:
             try:
@@ -1128,6 +1161,7 @@ def _render_setup_section(st_module, pair_ref: ArtifactPairRef) -> None:
             options,
             format_func=lambda value: labels.get(value, value),
             key=_SETUP_KEY,
+            help=help_text("verifier.exact_setup_id"),
         )
     row = filtered[filtered["setup_id"].astype(str) == setup_id].iloc[0]
 
@@ -1138,6 +1172,7 @@ def _render_setup_section(st_module, pair_ref: ArtifactPairRef) -> None:
             SETUP_STAGE_ORDER,
             index=len(SETUP_STAGE_ORDER) - 1,
             key=f"{_STATE_PREFIX}setup_stage",
+            help=help_text("verifier.setup_stage"),
         )
     with info_col:
         if stage == "terminal":
@@ -1356,6 +1391,7 @@ def render_verifier_section(st_module, pair, entry: dict) -> str | None:
             options,
             format_func=lambda value: labels.get(value, value),
             key=_CANDIDATE_KEY,
+            help=help_text("verifier.exact_candidate_id"),
         )
     row = filtered[filtered["candidate_id"] == candidate_id].iloc[0]
 
@@ -1365,6 +1401,7 @@ def render_verifier_section(st_module, pair, entry: dict) -> str | None:
             "Mode",
             ("Full audit", "Point-in-time"),
             key=f"{_STATE_PREFIX}verifier_mode",
+            help=help_text("verifier.mode"),
         )
     point_in_time = mode_label == "Point-in-time"
     try:
@@ -1381,6 +1418,7 @@ def render_verifier_section(st_module, pair, entry: dict) -> str | None:
                 options=gateable,
                 value=gateable[-1] if gateable else None,
                 key=f"{_STATE_PREFIX}verifier_stage",
+                help=help_text("verifier.stage_scrubber"),
             )
         else:
             st_module.caption("Full audit shows all persisted evidence, outcome included.")
@@ -1389,25 +1427,31 @@ def render_verifier_section(st_module, pair, entry: dict) -> str | None:
             "Range",
             ("Setup", "Trade", "Formation", "Custom"),
             key=f"{_STATE_PREFIX}verifier_range",
+            help=help_text("verifier.range"),
         ).lower()
     with layer_col:
         layers = VerifierLayers(
             structure=st_module.checkbox(
-                "Structure", key=f"{_STATE_PREFIX}verifier_layer_structure"
+                "Structure", key=f"{_STATE_PREFIX}verifier_layer_structure",
+                help=help_text("verifier.layer_structure"),
             ),
             displacement=st_module.checkbox(
-                "Displacement", key=f"{_STATE_PREFIX}verifier_layer_displacement"
+                "Displacement", key=f"{_STATE_PREFIX}verifier_layer_displacement",
+                help=help_text("verifier.layer_displacement"),
             ),
             pools=st_module.checkbox(
-                "EQH/EQL pools", key=f"{_STATE_PREFIX}verifier_layer_pools"
+                "EQH/EQL pools", key=f"{_STATE_PREFIX}verifier_layer_pools",
+                help=help_text("verifier.layer_pools"),
             ),
             sessions=st_module.checkbox(
-                "Sessions", value=True, key=f"{_STATE_PREFIX}verifier_layer_sessions"
+                "Sessions", value=True, key=f"{_STATE_PREFIX}verifier_layer_sessions",
+                help=help_text("verifier.layer_sessions"),
             ),
             zone_projection=st_module.checkbox(
                 "Project zones onto 1m",
                 value=True,
                 key=f"{_STATE_PREFIX}verifier_layer_projection",
+                help=help_text("verifier.layer_projection"),
             ),
         )
         execution_pane_only = st_module.checkbox(
@@ -1424,10 +1468,12 @@ def render_verifier_section(st_module, pair, entry: dict) -> str | None:
     if range_kind == "custom":
         first, second = st_module.columns(2)
         raw_start = first.text_input(
-            "Custom start (UTC ISO)", key=f"{_STATE_PREFIX}verifier_custom_start"
+            "Custom start (UTC ISO)", key=f"{_STATE_PREFIX}verifier_custom_start",
+            help=help_text("verifier.custom_start"),
         )
         raw_end = second.text_input(
-            "Custom end (UTC ISO)", key=f"{_STATE_PREFIX}verifier_custom_end"
+            "Custom end (UTC ISO)", key=f"{_STATE_PREFIX}verifier_custom_end",
+            help=help_text("verifier.custom_end"),
         )
         if not raw_start or not raw_end:
             st_module.info("Enter both custom bounds (e.g. 2026-01-13T03:00:00Z).")

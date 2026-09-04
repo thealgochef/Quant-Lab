@@ -32,6 +32,10 @@ from ifvg_ui_common import (
     verification_badge,
 )
 
+from alpha_lab.agents.data_infra.ifvg.presentation.help_registry import help_text
+from alpha_lab.agents.data_infra.ifvg.presentation.labels import label_for
+from alpha_lab.agents.data_infra.ifvg.presentation.metric_registry import describe
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT / "src"))
@@ -485,6 +489,7 @@ def _regime_configure_fields(
         "Regime algorithm (the single executable V1 algorithm)",
         executable,
         key=f"{_PIPE}regime_algorithm",
+        help=help_text("pipeline.regime_algorithm"),
     )
     planned = [
         {
@@ -536,6 +541,7 @@ def _regime_configure_fields(
                 options,
                 default=default,
                 key=f"{_PIPE}regime_inputs",
+                help=help_text("pipeline.regime_inputs"),
             )
         )
         st_module.caption(
@@ -551,11 +557,13 @@ def _regime_configure_fields(
         max_value=int(REGIME_PROPOSED_DEFAULTS["bootstrap_refits_per_fold"]["value"]),
         value=int(REGIME_PROPOSED_DEFAULTS["bootstrap_refits_per_fold"]["value"]),
         key=f"{_PIPE}regime_refits",
+        help=help_text("pipeline.regime_refits"),
     )
     stratified = st_module.checkbox(
         "Request stratified reporting (ML §5.5 comparison classes; S14, zero fitting)",
         value=True,
         key=f"{_PIPE}regime_stratified",
+        help=help_text("pipeline.regime_stratified"),
     )
     classes: tuple[str, ...] = ()
     authority: dict[str, str] = {}
@@ -566,6 +574,7 @@ def _regime_configure_fields(
                 list(COMPARISON_CLASSES),
                 default=list(DESCRIPTIVE_CLASSES),
                 key=f"{_PIPE}regime_classes",
+                help=help_text("pipeline.regime_classes"),
             )
         )
         supervised = [name for name in classes if name in SUPERVISED_CLASSES]
@@ -587,16 +596,19 @@ def _regime_configure_fields(
                     "Frozen FEATURE_ELIGIBLE promotion decision id (64-hex)",
                     value="",
                     key=f"{_PIPE}regime_decision_id",
+                    help=help_text("pipeline.regime_decision_id"),
                 ).strip(),
                 "owner_decision_artifact_id": st_module.text_input(
                     "Frozen owner-decision artifact id (64-hex)",
                     value="",
                     key=f"{_PIPE}regime_owner_id",
+                    help=help_text("pipeline.regime_owner_id"),
                 ).strip(),
                 "required_capability_assessment_id": st_module.text_input(
                     "Frozen capability assessment id (64-hex)",
                     value="",
                     key=f"{_PIPE}regime_assessment_id",
+                    help=help_text("pipeline.regime_assessment_id"),
                 ).strip(),
             }
     return {
@@ -637,6 +649,7 @@ def _configure_fields(st_module) -> dict[str, Any]:
             "Feature bundle (available blocks only)",
             list(available_bundles),
             key=f"{_PIPE}bundle",
+            help=help_text("pipeline.bundle"),
         )
         mbp1_selected = bool(bundle) and _bundle_is_mbp1_bearing(str(bundle))
         if mbp1_selected:
@@ -663,6 +676,7 @@ def _configure_fields(st_module) -> dict[str, Any]:
             "Model protocol (the ladder always includes the prevalence reference)",
             model_options,
             key=f"{_PIPE}model",
+            help=help_text("pipeline.model_protocol"),
         )
         label_policy = st_module.selectbox(
             "Label policy",
@@ -968,6 +982,7 @@ def _render_launch(st_module, roots: Mapping[str, Any], draft, fields) -> None:
             f"Type '{FULL_SCOPE_ACKNOWLEDGEMENT}' to enable the launch control",
             value="",
             key=f"{_PIPE}ack",
+            help=help_text("pipeline.full_scope_acknowledgement"),
         )
         acknowledged = typed.strip() == FULL_SCOPE_ACKNOWLEDGEMENT
     blocked = False
@@ -993,6 +1008,7 @@ def _render_launch(st_module, roots: Mapping[str, Any], draft, fields) -> None:
         key=f"{_PIPE}launch",
         type="primary",
         disabled=(not acknowledged) or blocked,
+        help=help_text("pipeline.launch"),
     ):
         _freeze_and_launch_pipeline(st_module, roots, draft, fields)
 
@@ -1248,6 +1264,7 @@ def _selected_run(st_module, runs):
         index=index,
         format_func=lambda value: labels.get(value, value[:12]),
         key=f"{_PIPE}selected",
+        help=help_text("pipeline.run"),
     )
 
 
@@ -1385,9 +1402,11 @@ def _render_monitor_body(st_module, *, roots: Mapping[str, Any], pipeline_id: st
             "I understand the run stops at the NEXT stage boundary and "
             "completed semantic results stay immutable/reusable",
             key=f"{_PIPE}cancel_confirm",
+            help=help_text("pipeline.cancel_confirm"),
         )
         if st_module.button(
-            "Request Safe Cancel", key=f"{_PIPE}cancel", disabled=not confirm
+            "Request Safe Cancel", key=f"{_PIPE}cancel", disabled=not confirm,
+            help=help_text("pipeline.request_safe_cancel"),
         ):
             try:
                 request_pipeline_cancel(PIPELINE_STATE_ROOT, pipeline_id)
@@ -1401,12 +1420,13 @@ def _render_monitor_body(st_module, *, roots: Mapping[str, Any], pipeline_id: st
 
 
 def _ladder_frame(diagnostics: Mapping[str, Any]) -> pd.DataFrame:
-    """The ladder table as an Arrow-safe frame (R5-FIX gate finding 1).
+    """The ladder table as an Arrow-safe frame (R5-FIX gate finding 1; UI-3 F-09).
 
     Every column carries an explicit nullable dtype — the planned GAM row's
     missing numbers are ``pd.NA`` inside Int64/Float64 columns, never a
-    placeholder string mixed into a numeric column (the exact shape that
-    produced the smoke run's 17 Arrow serialization tracebacks)."""
+    placeholder string mixed into a numeric column. UI-3 keeps AUC numeric
+    (Float64) and moves the ``auc_reason`` token into its own string column
+    so an undefined AUC is never read as a value."""
 
     rows: list[dict[str, Any]] = []
     for protocol_id, rung in sorted(dict(diagnostics.get("rungs") or {}).items()):
@@ -1415,13 +1435,13 @@ def _ladder_frame(diagnostics: Mapping[str, Any]) -> pd.DataFrame:
         rows.append(
             {
                 "Rung": protocol_id,
+                "Model": label_for("model_protocol", protocol_id),
                 "OOS rows": report.get("count", 0),
                 "Brier": report.get("brier_score"),
                 "Brier skill": report.get("brier_skill_score"),
-                "AUC": (
-                    f"{auc:.4f}"
-                    if isinstance(auc, (int, float))
-                    else report.get("auc_reason", "—")
+                "AUC": float(auc) if isinstance(auc, (int, float)) else None,
+                "AUC reason": (
+                    "—" if isinstance(auc, (int, float)) else str(report.get("auc_reason") or "—")
                 ),
                 "Status": report.get("status", "—"),
             }
@@ -1429,25 +1449,40 @@ def _ladder_frame(diagnostics: Mapping[str, Any]) -> pd.DataFrame:
     rows.append(
         {
             "Rung": "ifvg_context_gam_v1",
+            "Model": label_for("model_protocol", "ifvg_context_gam_v1"),
             "OOS rows": None,
             "Brier": None,
             "Brier skill": None,
-            "AUC": "—",
+            "AUC": None,
+            "AUC reason": "planned rung — no predictions",
             "Status": "planned: preregistered_basis_penalty_protocol_not_ratified",
         }
     )
     return pd.DataFrame(
         {
             "Rung": pd.array([row["Rung"] for row in rows], dtype="string"),
+            "Model": pd.array([row["Model"] for row in rows], dtype="string"),
             "OOS rows": pd.array([row["OOS rows"] for row in rows], dtype="Int64"),
             "Brier": pd.array([row["Brier"] for row in rows], dtype="Float64"),
             "Brier skill": pd.array(
                 [row["Brier skill"] for row in rows], dtype="Float64"
             ),
-            "AUC": pd.array([row["AUC"] for row in rows], dtype="string"),
+            "AUC": pd.array([row["AUC"] for row in rows], dtype="Float64"),
+            "AUC reason": pd.array([row["AUC reason"] for row in rows], dtype="string"),
             "Status": pd.array([row["Status"] for row in rows], dtype="string"),
         }
     )
+
+
+def _ladder_definitions() -> str:
+    """The registry definitions of the ladder columns (UI-3 §6.2)."""
+
+    parts = []
+    for key in ("brier_score", "brier_skill_score", "auc", "oos_row_count"):
+        spec = describe(key)
+        reference = f" — reference: {spec.reference.source}" if spec.reference else ""
+        parts.append(f"{spec.human_name}: {spec.definition}{reference}")
+    return " · ".join(parts)
 
 
 def _parity_caption(parity: Mapping[str, Any]) -> str:
@@ -1493,6 +1528,7 @@ def _render_ladder_panel(st_module, roots: Mapping[str, Any], state: Mapping[str
             )
             return
         st_module.dataframe(_ladder_frame(diagnostics), width="stretch", hide_index=True)
+        st_module.caption(_ladder_definitions())
         st_module.caption(_parity_caption(dict(diagnostics.get("parity") or {})))
         st_module.caption(f"S11 (model-gated replays): BLOCKED — {S11_BLOCKED_REASON}.")
 
@@ -1848,9 +1884,14 @@ def _render_resume(st_module, roots: Mapping[str, Any]) -> None:
     )
     max_workers = SUPPORTED_CHILD_WORKERS
     reason = st_module.text_input(
-        "Operational retry reason", value="", key=f"{_PIPE}retry_reason"
+        "Operational retry reason", value="", key=f"{_PIPE}retry_reason",
+        help=help_text("pipeline.retry_reason"),
     )
-    if st_module.button("Resume / Retry (new attempt)", key=f"{_PIPE}retry"):
+    if st_module.button(
+        "Resume / Retry (new attempt)",
+        key=f"{_PIPE}retry",
+        help=help_text("pipeline.retry"),
+    ):
         try:
             semantic_charter_id = str(state.get("search_charter_id"))
             charter = load_verified_envelope(
@@ -1932,7 +1973,11 @@ def _render_publish(st_module, roots: Mapping[str, Any]) -> None:
     gate_cache_key = (
         f"{_PIPE}gate_results_{pipeline_id}_{namespace_id or 'unmarked'}_{state_digest[:16]}"
     )
-    if st_module.button("Run Publication Gates", key=f"{_PIPE}gates"):
+    if st_module.button(
+        "Run Publication Gates",
+        key=f"{_PIPE}gates",
+        help=help_text("pipeline.run_gates"),
+    ):
         try:
             gates = run_publication_gates(PIPELINE_STATE_ROOT, pipeline_id, store_root=store_root)
         except Exception as error:  # noqa: BLE001 — sanitized surface only
@@ -1966,6 +2011,7 @@ def _render_publish(st_module, roots: Mapping[str, Any]) -> None:
         "Publish and Activate Catalog Entry",
         key=f"{_PIPE}activate",
         disabled=activate_disabled,
+        help=help_text("pipeline.activate"),
     ):
         try:
             result_id = activate_pipeline_result(
@@ -1998,6 +2044,7 @@ def render_pipeline_run(st_module=st, *, roots: Mapping[str, Any], draft=None) -
         horizontal=True,
         key=f"{_PIPE}phase_radio",
         label_visibility="collapsed",
+        help=help_text("pipeline.phase"),
     )
     fields = None
     if phase in ("Configure", "Preview", "Launch"):

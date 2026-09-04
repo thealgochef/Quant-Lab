@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+from collections.abc import Mapping
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,19 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
+
+from ifvg_lab_charts import (  # noqa: E402
+    build_coverage_figure,
+    build_reliability_figure,
+)
+from ifvg_ui_common import (  # noqa: E402
+    detail_levels,
+    glossary_expander,
+    metric_card,
+    result_scope_caption,
+    rollup_card,
+    status_chip_line,
+)
 
 from alpha_lab.agents.data_infra.ifvg.artifact_io import (  # noqa: E402
     ArtifactVerificationError,
@@ -74,6 +88,26 @@ from alpha_lab.agents.data_infra.ifvg.preparation import (  # noqa: E402
     PREPARATION_JOB_ROOT,
     read_preparation_state,
 )
+from alpha_lab.agents.data_infra.ifvg.presentation.context_research import (  # noqa: E402
+    candidate_readings,
+    compatibility_reasons,
+    coverage_readings,
+    decision_summary,
+    execution_readings,
+    fold_chips,
+    importance_top,
+    reconciliation_readings,
+    sample_adequacy_readings,
+)
+from alpha_lab.agents.data_infra.ifvg.presentation.help_registry import help_text  # noqa: E402
+from alpha_lab.agents.data_infra.ifvg.presentation.rollups import (  # noqa: E402
+    RollupSection,
+    rollup_section,
+)
+from alpha_lab.agents.data_infra.ifvg.presentation.status_vocabulary import (  # noqa: E402
+    UiStatus,
+)
+from alpha_lab.agents.data_infra.ifvg.study_status import ResultScope  # noqa: E402
 
 # Compatibility alias for the pre-restoration AppTest seam. It is used only
 # by the caveated read-only legacy panel.
@@ -174,7 +208,12 @@ def _load_selected_pair(st_module, *, key: str) -> tuple[VerifiedIfvgPair, dict]
             language="powershell",
         )
         return None
-    selected = st_module.selectbox("Verified artifact pair", tuple(options), key=key)
+    selected = st_module.selectbox(
+        "Verified artifact pair",
+        tuple(options),
+        key=key,
+        help=help_text("context.artifact_pair"),
+    )
     entry = options[selected]
     try:
         pair = _cached_pair(
@@ -381,26 +420,71 @@ def _display_metric(value: Any, *, percent: bool = False) -> str:
     return str(value)
 
 
-def _render_candidate_report(st_module, report: dict[str, Any]) -> None:
+# ── UI-3: decision summary first; registry readings; detail levels ──────────
+
+_RESEARCH_DETAILS_NOTE = (
+    "Charts, tables and their twins render at the Research details level; exact "
+    "identities and raw reports at Technical identity & audit."
+)
+
+
+def _render_decision_summary(st_module, result: dict[str, Any]) -> None:
+    st_module.markdown(
+        "**Decision summary** — four roll-ups derived from the persisted reports; unknown "
+        "or unevaluated evidence never reads as passing."
+    )
+    rollups = decision_summary(result)
+    columns = st_module.columns(2)
+    for index, rollup in enumerate(rollups):
+        with columns[index % 2]:
+            rollup_card(st_module, rollup)
+
+
+def _render_sample_adequacy(st_module, adapted: dict[str, Any]) -> None:
+    st_module.markdown(
+        "**Sample adequacy** — every count is read against its registered minimum (the "
+        "walk-forward protocol, the two-cluster bootstrap rule); nothing here is an "
+        "invented threshold."
+    )
+    readings = sample_adequacy_readings(adapted)
+    columns = st_module.columns(len(readings))
+    for column, reading in zip(columns, readings, strict=True):
+        with column:
+            metric_card(st_module, reading)
+
+
+def _metric_row(st_module, readings: Mapping[str, Any], keys: tuple[str, ...]) -> None:
+    columns = st_module.columns(len(keys))
+    for column, key in zip(columns, keys, strict=True):
+        with column:
+            metric_card(st_module, readings[key])
+
+
+def _render_candidate_report(
+    st_module, report: dict[str, Any], *, level: str = "analyst", suffix: str = "result"
+) -> None:
     adapted = adapt_candidate_research_report(report)
+    result_scope_caption(st_module, ResultScope.CANDIDATE_RESEARCH)
     st_module.info("Counterfactual candidate labels; actual trade outcomes are excluded.")
-    kpis = adapted["kpis"]
+    counts = sample_adequacy_readings(adapted)[:3]
     columns = st_module.columns(3)
-    columns[0].metric("Candidates", kpis["candidate_count"])
-    columns[1].metric("Resolved", kpis["resolved_candidate_count"])
-    columns[2].metric("Censored", kpis["censored_candidate_count"])
+    for column, reading in zip(columns, counts, strict=True):
+        with column:
+            metric_card(st_module, reading, caption=False)
     if adapted["status"] != "complete":
         st_module.warning(f"Model status: {adapted['status']}")
-    metrics = adapted["metrics"]
-    metric_columns = st_module.columns(4)
-    metric_columns[0].metric("Brier", _display_metric(metrics["brier_score"]))
-    metric_columns[1].metric(
-        "Brier skill", _display_metric(metrics["brier_skill_score"])
+    readings = candidate_readings(adapted)
+    st_module.markdown("**Probability skill** (each against its registered reference)")
+    _metric_row(st_module, readings, ("brier_score", "brier_skill_score", "log_loss", "auc"))
+    st_module.markdown("**References and calibration** (targets — the distance only)")
+    _metric_row(
+        st_module,
+        readings,
+        ("prevalence", "reference_brier_score", "mean_probability", "calibration_slope"),
     )
-    metric_columns[2].metric("Log loss", _display_metric(metrics["log_loss"]))
-    metric_columns[3].metric(
-        "AUC", _display_metric(metrics["auc"]), help=metrics.get("auc_reason")
-    )
+    if level == "summary":
+        st_module.caption(_RESEARCH_DETAILS_NOTE)
+        return
     label_col, censor_col = st_module.columns(2)
     if not adapted["labels"].empty:
         label_col.markdown("**Candidate resolutions**")
@@ -414,50 +498,82 @@ def _render_candidate_report(st_module, report: dict[str, Any]) -> None:
             subset=["mean_probability", "observed_rate"], how="any"
         )
     if not reliability.empty:
-        st_module.markdown("**Reliability**")
-        reliability = reliability.copy()
-        reliability["ideal"] = reliability["mean_probability"]
-        st_module.line_chart(
-            reliability.set_index("mean_probability")[["observed_rate", "ideal"]],
-            height=280,
+        st_module.markdown(
+            "**Reliability** — observed rate against the mean predicted probability; the "
+            "diagonal is perfect calibration"
         )
+        st_module.plotly_chart(build_reliability_figure(reliability), width="stretch")
+        st_module.dataframe(reliability, hide_index=True, width="stretch", height=220)
     if not adapted["thresholds"].empty:
-        st_module.markdown("**Threshold coverage and net R**")
-        st_module.bar_chart(
-            adapted["thresholds"].set_index("threshold")[
-                ["coverage_fraction", "net_r_sum"]
-            ],
-            height=280,
+        st_module.markdown(
+            "**Threshold coverage and net R** — coverage (share of predictions) and net R "
+            "on separate axes"
+        )
+        st_module.plotly_chart(
+            build_coverage_figure(adapted["thresholds"].to_dict("records")), width="stretch"
         )
         st_module.dataframe(
             adapted["thresholds"], hide_index=True, width="stretch", height=220
         )
-    st_module.markdown("**Walk-forward folds**")
-    if adapted["folds"].empty:
-        st_module.caption("No valid model folds were produced.")
+    st_module.markdown(
+        "**Walk-forward folds** (validity chips; a fold's training candidates against "
+        "the protocol minimum)"
+    )
+    chips = fold_chips(adapted)
+    if not chips:
+        st_module.caption("No walk-forward folds were produced.")
     else:
         st_module.dataframe(
-            adapted["folds"], hide_index=True, width="stretch", height=300
+            [
+                {
+                    "fold": chip["fold"],
+                    "status": chip["chip"],
+                    "reason": chip["reason"],
+                    "training candidates": chip["train_candidates"].display,
+                    "adequacy": chip["train_candidates"].chip,
+                }
+                for chip in chips
+            ],
+            hide_index=True,
+            width="stretch",
         )
     if not adapted["uncertainty"].empty:
-        st_module.markdown("**Uncertainty intervals**")
+        st_module.markdown(
+            "**Uncertainty intervals** (a 95% interval that crosses zero is inconclusive)"
+        )
+        for reading in _candidate_intervals(adapted):
+            status_chip_line(st_module, reading.status, reading.interpretation)
         st_module.dataframe(
             adapted["uncertainty"], hide_index=True, width="stretch"
         )
-    if not adapted["feature_importance"].empty:
-        st_module.markdown("**Feature importance (descriptive only)**")
-        importance = adapted["feature_importance"].sort_values(
-            "permutation_importance_mean", ascending=False
+    importance = importance_top(adapted, n=10)
+    if not importance.empty:
+        st_module.markdown(
+            "**Feature importance — top 10 (descriptive only)** with fold coverage and "
+            "between-fold variance"
         )
         st_module.bar_chart(
             importance.set_index("feature")[["permutation_importance_mean"]],
             height=320,
         )
-        st_module.dataframe(
-            importance, hide_index=True, width="stretch", height=300
-        )
-    with st_module.expander("Raw candidate report — audit", expanded=False):
-        st_module.json(report, expanded=False)
+        st_module.dataframe(importance, hide_index=True, width="stretch", height=300)
+    if level == "audit":
+        if not adapted["feature_importance"].empty:
+            with st_module.expander("Complete feature importance — audit", expanded=False):
+                st_module.dataframe(
+                    adapted["feature_importance"], hide_index=True, width="stretch"
+                )
+        with st_module.expander("Raw candidate report — audit", expanded=False):
+            st_module.json(report, expanded=False)
+
+
+def _candidate_intervals(adapted: dict[str, Any]) -> list[Any]:
+    from alpha_lab.agents.data_infra.ifvg.presentation.context_research import (  # noqa: PLC0415
+        _CANDIDATE_INTERVALS,
+        _interval_readings,
+    )
+
+    return _interval_readings(adapted.get("uncertainty"), keys=_CANDIDATE_INTERVALS)
 
 
 def _queue_verifier_jump(st_module, kind: str, value: str) -> None:
@@ -475,28 +591,35 @@ def _queue_verifier_jump(st_module, kind: str, value: str) -> None:
 
 
 def _render_execution_report(
-    st_module, report: dict[str, Any], *, key_suffix: str = ""
+    st_module,
+    report: dict[str, Any],
+    *,
+    key_suffix: str = "",
+    level: str = "analyst",
 ) -> None:
     adapted = adapt_actual_execution_report(report)
+    result_scope_caption(st_module, ResultScope.ACTUAL_EXECUTED_STRATEGY)
     st_module.info(
         "Only source-v2 decisions and executed trades appear here; candidate "
         "counterfactual outcomes are excluded."
     )
-    kpis = adapted["kpis"]
-    first = st_module.columns(4)
-    first[0].metric("Eligible decisions", kpis["eligible_decision_count"])
-    first[1].metric("Executed trades", kpis["executed_trade_count"])
-    first[2].metric("Resolved trades", kpis["resolved_trade_count"])
-    first[3].metric("Win rate", _display_metric(kpis["win_rate"], percent=True))
-    second = st_module.columns(4)
-    second[0].metric("Total R", _display_metric(kpis["total_realized_r"]))
-    second[1].metric("Max drawdown R", _display_metric(kpis["max_drawdown_r"]))
-    second[2].metric(
-        "Total $ (1 NQ)", _display_metric(kpis["total_realized_dollars"])
+    readings = execution_readings(adapted)
+    _metric_row(
+        st_module,
+        readings,
+        ("eligible_decision_count", "executed_trade_count", "resolved_trade_count", "win_rate"),
     )
-    second[3].metric(
-        "Max drawdown $", _display_metric(kpis["max_drawdown_dollars"])
+    _metric_row(
+        st_module,
+        readings,
+        ("total_realized_r", "max_drawdown_r", "total_realized_dollars", "max_drawdown_dollars"),
     )
+    interval = readings.get("trading_day_block_realized_r_mean")
+    if interval is not None:
+        status_chip_line(st_module, interval.status, interval.interpretation)
+    if level == "summary":
+        st_module.caption(_RESEARCH_DETAILS_NOTE)
+        return
     equity = adapted["equity"]
     if equity.empty:
         st_module.caption("No resolved source-v2 trades are available for an equity curve.")
@@ -541,18 +664,33 @@ def _render_execution_report(
         st_module.dataframe(
             adapted["uncertainty"], hide_index=True, width="stretch"
         )
-    with st_module.expander("Raw actual-execution report — audit", expanded=False):
-        st_module.json(report, expanded=False)
+    if level == "audit":
+        with st_module.expander("Raw actual-execution report — audit", expanded=False):
+            st_module.json(report, expanded=False)
 
 
-def _render_coverage_report(st_module, report: dict[str, Any]) -> None:
+def _render_coverage_report(
+    st_module, report: dict[str, Any], *, level: str = "analyst"
+) -> None:
     adapted = adapt_feature_coverage_report(report)
+    readings = coverage_readings(adapted)
     kpis = adapted["kpis"]
-    columns = st_module.columns(4)
-    columns[0].metric("Candidates", kpis["candidate_count"])
-    columns[1].metric("Features", kpis["feature_count"])
-    columns[2].metric("M3 status", kpis["m3_status"] or "—")
-    columns[3].metric("240m status", kpis["anchor_240m_status"] or "—")
+    columns = st_module.columns(2)
+    with columns[0]:
+        metric_card(st_module, readings["candidate_count"], caption=False)
+    with columns[1]:
+        metric_card(st_module, readings["feature_count"], caption=False)
+    m3_status, m3_text = readings["m3"]
+    status_chip_line(st_module, m3_status, f"M3 qualification — {m3_text}")
+    status_chip_line(
+        st_module,
+        UiStatus.WARNING,
+        "240m anchor — experimental (the open Q-40 question); "
+        f"status `{kpis['anchor_240m_status'] or '—'}`; excluded from every primary tier",
+    )
+    if level == "summary":
+        st_module.caption(_RESEARCH_DETAILS_NOTE)
+        return
     features = adapted["features"]
     if features.empty:
         st_module.info("This tier has no reportable features.")
@@ -563,7 +701,24 @@ def _render_coverage_report(st_module, report: dict[str, Any]) -> None:
         st_module.markdown("**Feature coverage and missingness**")
         st_module.bar_chart(chart, horizontal=True, height=420)
         st_module.dataframe(
-            features, hide_index=True, width="stretch", height=360
+            [
+                {
+                    "feature": row["feature"],
+                    "coverage": row["coverage"].display,
+                    "status": row["chip"],
+                    "missing": (
+                        "—"
+                        if row["missing_fraction"] is None
+                        else f"{row['missing_fraction'] * 100.0:.1f}%"
+                    ),
+                    "constant": "yes" if row["constant"] else "no",
+                    "low coverage (< 10%)": "yes" if row["low_coverage"] else "no",
+                }
+                for row in readings["features"]
+            ],
+            hide_index=True,
+            width="stretch",
+            height=360,
         )
     if not adapted["flags"].empty:
         st_module.warning("Constant or low-coverage features require interpretation caution.")
@@ -579,15 +734,26 @@ def _render_coverage_report(st_module, report: dict[str, Any]) -> None:
     leg_col.dataframe(
         adapted["opposing_leg_coverage"], hide_index=True, width="stretch"
     )
-    with st_module.expander("Raw feature-coverage report — audit", expanded=False):
-        st_module.json(report, expanded=False)
+    if level == "audit":
+        with st_module.expander("Raw feature-coverage report — audit", expanded=False):
+            st_module.json(report, expanded=False)
 
 
-def _render_reconciliation_report(st_module, report: dict[str, Any]) -> None:
+def _render_reconciliation_report(
+    st_module, report: dict[str, Any], *, level: str = "analyst"
+) -> None:
     adapted = adapt_reconciliation_report(report)
-    # UI-1 (plan F-07): green ONLY for evaluated passing gates; a report that
-    # carries no evaluated gate is UNAVAILABLE, never a success banner
-    if adapted["passed"] is True:
+    readings = reconciliation_readings(adapted)
+    rollup = rollup_section(
+        RollupSection.DATA_INTEGRITY,
+        readings,
+        inspect_next="the gate cards and access counters below",
+    )
+    # UI-1 (plan F-07): the banner keys on the PERSISTED derived flag — green only
+    # for an EVALUATED pass (a legacy `passed: True` without evaluated gates is
+    # UNAVAILABLE, never a success banner); the roll-up card beneath reads the
+    # gate flags, the measured counters and the observed-vs-limit figures
+    if adapted["passed"] is True and adapted["evaluated"]:
         st_module.success(
             "Pair, schemas, hashes, rows, and access evidence reconcile "
             f"({adapted['evaluated_gate_count']} evaluated gate(s) passed)."
@@ -599,66 +765,112 @@ def _render_reconciliation_report(st_module, report: dict[str, Any]) -> None:
             "Reconciliation not evaluated: no persisted report carries an evaluated "
             "pass flag, so this evidence is UNAVAILABLE — it is not shown as passing."
         )
+    rollup_card(st_module, rollup)
     if adapted["unevaluated_reports"]:
         st_module.caption(
             "Not evaluated (no pass flag): "
             + ", ".join(str(name) for name in adapted["unevaluated_reports"])
         )
+    if level == "summary":
+        st_module.caption(_RESEARCH_DETAILS_NOTE)
+        return
     st_module.markdown("**Exact immutable identities**")
     st_module.dataframe(
         adapted["identities"], hide_index=True, width="stretch"
     )
     gate_col, access_col = st_module.columns(2)
-    gate_col.markdown("**Gate cards**")
-    gate_col.dataframe(adapted["gates"], hide_index=True, width="stretch")
-    access_col.markdown("**Access counters**")
+    gate_col.markdown("**Gate cards** (evaluated flags only)")
+    gate_readings = [r for r in readings if r.technical_key.endswith(("_report", "_audit"))]
+    gate_col.dataframe(
+        [
+            {"gate": r.human_name, "status": r.chip, "meaning": r.interpretation}
+            for r in gate_readings
+        ]
+        or [{"gate": "—", "status": "∅ Unavailable", "meaning": "no evaluated gate"}],
+        hide_index=True,
+        width="stretch",
+    )
+    access_col.markdown("**Access counters** (measured denials vs policy-enforced zeros)")
+    access_readings = [
+        r
+        for r in readings
+        if r.technical_key == "denied_attempt_count"
+        or r.technical_key.startswith("protected_")
+        or r.technical_key in ("path_constructions", "metadata_accesses", "file_opens", "rows_read")
+    ]
     access_col.dataframe(
-        adapted["access_counters"], hide_index=True, width="stretch"
+        [
+            {
+                "counter": r.human_name,
+                "value": r.display,
+                "status": r.chip,
+                "note": r.caveat or "measured",
+            }
+            for r in access_readings
+        ]
+        or [{"counter": "—", "value": "—", "status": "∅ Unavailable", "note": "no access audit"}],
+        hide_index=True,
+        width="stretch",
     )
     st_module.markdown("**Context table rows**")
     st_module.dataframe(
         adapted["table_rows"], hide_index=True, width="stretch", height=320
     )
-    evidence = st_module.columns(2)
-    performance = adapted["performance"]
-    capacity = adapted["capacity"]
-    evidence[0].metric(
-        "Replay slowdown",
-        _display_metric(performance.get("replay_slowdown_fraction"), percent=True),
-    )
-    evidence[0].caption(
-        "paired p95 "
-        + _display_metric(
-            performance.get("repeated_run_p95_slowdown_fraction"), percent=True
+    limit_readings = [
+        r
+        for r in readings
+        if r.technical_key
+        in (
+            "replay_slowdown_fraction",
+            "repeated_run_p95_slowdown_fraction",
+            "completed_1m_step_p99_ms",
+            "multi_timeframe_callback_p99_ms",
+            "terminal_state_bytes",
+            "terminal_seed_bytes",
+            "max_transition_bytes",
+            "max_members_per_pool",
         )
-    )
-    evidence[1].metric(
-        "Terminal seed bytes", capacity.get("terminal_seed_bytes", "—")
-    )
-    evidence[1].caption(
-        f"largest transition {capacity.get('max_transition_bytes', '—')} bytes"
-    )
-    with st_module.expander("Raw reconciliation report — audit", expanded=False):
-        st_module.json(report, expanded=False)
+    ]
+    if limit_readings:
+        st_module.markdown("**Capacity and performance** (observed against the registered limit)")
+        columns = st_module.columns(min(4, len(limit_readings)))
+        for index, reading in enumerate(limit_readings):
+            with columns[index % len(columns)]:
+                metric_card(st_module, reading)
+    if level == "audit":
+        with st_module.expander("Raw reconciliation report — audit", expanded=False):
+            st_module.json(report, expanded=False)
 
 
-def _render_result(st_module, result: dict[str, Any]) -> None:
-    st_module.caption(f"Immutable run `{result['run_id']}` · {result['status']}")
+def _render_result(st_module, result: dict[str, Any], *, tag: str = "latest") -> None:
+    run_id = str(result["run_id"])
+    suffix = f"{tag}_{run_id[:12]}"
+    st_module.caption(f"Immutable run `{run_id}` · {result['status']}")
+    level = detail_levels(st_module, key=f"{_STATE_PREFIX}detail_{suffix}")
+    _render_decision_summary(st_module, result)
+    _render_sample_adequacy(
+        st_module, adapt_candidate_research_report(result["candidate_research_report"])
+    )
     candidate_tab, execution_tab, coverage_tab, audit_tab = st_module.tabs(
         ["Candidate research", "Actual execution", "Feature coverage", "Reconciliation"]
     )
     with candidate_tab:
-        _render_candidate_report(st_module, result["candidate_research_report"])
+        _render_candidate_report(
+            st_module, result["candidate_research_report"], level=level, suffix=suffix
+        )
     with execution_tab:
         _render_execution_report(
             st_module,
             result["actual_execution_report"],
-            key_suffix=str(result["run_id"])[:12],
+            key_suffix=suffix,
+            level=level,
         )
     with coverage_tab:
-        _render_coverage_report(st_module, result["feature_coverage_report"])
+        _render_coverage_report(st_module, result["feature_coverage_report"], level=level)
     with audit_tab:
-        _render_reconciliation_report(st_module, result["reconciliation_audit_report"])
+        _render_reconciliation_report(
+            st_module, result["reconciliation_audit_report"], level=level
+        )
 
 
 def _run_history(st_module) -> None:
@@ -674,7 +886,12 @@ def _run_history(st_module) -> None:
         st_module.caption("No context-v1 runs have been cataloged.")
         return
     labels = _history_labels(entries)
-    selected = st_module.selectbox("Saved run", tuple(labels), key=f"{_STATE_PREFIX}history")
+    selected = st_module.selectbox(
+        "Saved run",
+        tuple(labels),
+        key=f"{_STATE_PREFIX}history",
+        help=help_text("context.saved_run"),
+    )
     try:
         stored = load_context_experiment_run(
             labels[selected],
@@ -683,7 +900,7 @@ def _run_history(st_module) -> None:
     except Exception as error:
         st_module.error(f"Run verification failed: {_sanitize_error(error)}")
         return
-    _render_result(st_module, stored.result.model_dump(mode="json"))
+    _render_result(st_module, stored.result.model_dump(mode="json"), tag="history")
     if not stored.predictions.empty and "candidate_id" in stored.predictions.columns:
         with st_module.expander("OOS predictions — select a row to load its candidate"):
             displayed = stored.predictions.reset_index(drop=True)
@@ -694,7 +911,7 @@ def _run_history(st_module) -> None:
                 height=260,
                 on_select="rerun",
                 selection_mode="single-row",
-                key=f"{_STATE_PREFIX}oos_rows_{stored.result.run_id[:12]}",
+                key=f"{_STATE_PREFIX}oos_rows_history_{stored.result.run_id[:12]}",
             )
             selected_rows = getattr(
                 getattr(selection, "selection", None), "rows", []
@@ -707,6 +924,7 @@ def _run_history(st_module) -> None:
             "Compare with",
             tuple(label for label in labels if label != selected),
             key=f"{_STATE_PREFIX}compare",
+            help=help_text("context.compare_with"),
         )
         try:
             other = load_context_experiment_run(
@@ -717,8 +935,14 @@ def _run_history(st_module) -> None:
             st_module.error(f"Comparison run verification failed: {_sanitize_error(error)}")
             return
         reconciliation = reconcile_context_runs(stored, other)
+        reasons = compatibility_reasons(reconciliation)
+        reasons_text = "; ".join(reasons)
         if reconciliation.compatible_for_metric_delta:
-            st_module.success("Runs are compatible for registered metric deltas.")
+            st_module.success(
+                "Runs are compatible for registered metric deltas"
+                + (f" ({reasons_text})" if reasons else "")
+                + "."
+            )
             st_module.dataframe(
                 _metric_delta_frame(stored, other),
                 hide_index=True,
@@ -731,7 +955,11 @@ def _run_history(st_module) -> None:
                 with st_module.expander("Paired daily delta details", expanded=False):
                     st_module.json(paired, expanded=False)
         else:
-            st_module.warning("Runs are incompatible; quantitative deltas are suppressed.")
+            st_module.warning(
+                "Runs are incompatible; quantitative deltas are suppressed — "
+                + (reasons_text if reasons else "the runs differ in unregistered ways")
+                + "."
+            )
         with st_module.expander("Comparison reconciliation audit", expanded=False):
             st_module.json(reconciliation.model_dump(mode="json"), expanded=False)
         st_module.markdown("**Configuration difference**")
@@ -752,6 +980,7 @@ def render_ifvg_experiments_tab(st_module=st) -> None:
     )
     with st_module.expander("Profile capabilities", expanded=False):
         _render_capability_registry(st_module)
+    glossary_expander(st_module)
     selected = _load_selected_pair(st_module, key=f"{_STATE_PREFIX}experiment_pair")
     if selected is not None:
         pair, entry = selected
@@ -775,17 +1004,20 @@ def render_ifvg_experiments_tab(st_module=st) -> None:
                     ContextFeatureTier.M1_PLUS_240_EXPERIMENTAL.value,
                 ),
                 key=f"{_STATE_PREFIX}tier",
+                help=help_text("context.feature_tier"),
             )
             target = col2.selectbox(
                 "Counterfactual target",
                 ("R1.0", "R1.5", "R2.0", "Fixed SL / TP"),
                 key=f"{_STATE_PREFIX}target",
+                help=help_text("context.target"),
             )
             cohort = col3.selectbox(
                 "Observation cohort",
                 ("prior_research", "all_development", "exposed_development"),
                 format_func=context_cohort_label,
                 key=f"{_STATE_PREFIX}cohort",
+                help=help_text("context.cohort"),
             )
             fixed_stop_ticks = fixed_target_ticks = None
             if target == "Fixed SL / TP":
@@ -797,6 +1029,7 @@ def render_ifvg_experiments_tab(st_module=st) -> None:
                         value=16,
                         step=1,
                         key=f"{_STATE_PREFIX}fixed_stop",
+                        help=help_text("context.fixed_stop"),
                     )
                 )
                 fixed_target_ticks = int(
@@ -806,6 +1039,7 @@ def render_ifvg_experiments_tab(st_module=st) -> None:
                         value=16,
                         step=1,
                         key=f"{_STATE_PREFIX}fixed_target",
+                        help=help_text("context.fixed_target"),
                     )
                 )
             cohort_filters = context_cohort_filters(view, cohort)
@@ -818,7 +1052,11 @@ def render_ifvg_experiments_tab(st_module=st) -> None:
                 and selected_m3_status != "model_eligible"
             ):
                 st_module.warning(selected_m3_status)
-            if st_module.button("Run deterministic experiment", key=f"{_STATE_PREFIX}run"):
+            if st_module.button(
+                "Run deterministic experiment",
+                key=f"{_STATE_PREFIX}run",
+                help=help_text("context.run_experiment"),
+            ):
                 try:
                     if target == "Fixed SL / TP":
                         label_config = IfvgContextLabelConfig(
@@ -917,6 +1155,7 @@ def render_ifvg_replay_tab(st_module=st) -> None:
             "Exact candidate ID",
             tuple(sorted(links["candidate_id"].astype(str))),
             key=f"{_STATE_PREFIX}candidate",
+            help=help_text("replay.exact_candidate_id"),
         )
     st_module.markdown("**Exact evidence inspectors**")
     link = _exact_rows(links, "candidate_id", candidate_id)

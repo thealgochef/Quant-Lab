@@ -33,6 +33,7 @@ from ifvg_ui_common import (
     verification_badge,
 )
 
+from alpha_lab.agents.data_infra.ifvg.presentation.help_registry import help_text
 from alpha_lab.agents.data_infra.ifvg.search.orchestrator import (
     SEARCH_PHASES,
     request_safe_cancel,
@@ -106,7 +107,8 @@ def render_active_runs(st_module=st, *, roots: Mapping[str, Any]) -> None:
     )
     sanitize_select(st_module, f"{_MON}run", options)
     chosen = st_module.selectbox(
-        "Active search", options, index=index, key=f"{_MON}run"
+        "Active search", options, index=index, key=f"{_MON}run",
+        help=help_text("active_runs.search"),
     )
     selected_run = labels[chosen]
     search_id = selected_run.search_id
@@ -220,7 +222,11 @@ def _render_monitor_body(
         button_columns, FUNNEL_STAGE_LABELS, counts.as_button_labels(), strict=True
     ):
         with column:
-            if st_module.button(button_label, key=f"{_MON}funnel_{label}"):
+            if st_module.button(
+                button_label,
+                key=f"{_MON}funnel_{label}",
+                help=help_text("active_runs.funnel_button"),
+            ):
                 st_module.session_state[stage_key] = label
     selected_stage = st_module.session_state.get(stage_key, "Generated")
     st_module.caption(f"Filter: {selected_stage}")
@@ -278,7 +284,8 @@ def _render_monitor_body(
     }
     sanitize_select(st_module, f"{_MON}detail", list(detail_labels))
     detail_choice = st_module.selectbox(
-        "Child detail", list(detail_labels), key=f"{_MON}detail"
+        "Child detail", list(detail_labels), key=f"{_MON}detail",
+        help=help_text("active_runs.child_detail"),
     )
     row = detail_labels[detail_choice]
     status_badge(st_module, row.status_key)
@@ -345,7 +352,11 @@ def _render_monitor_body(
     )
     action_columns = st_module.columns([1, 1, 2])
     with action_columns[0]:
-        if st_module.button("Open in Results", key=f"{_MON}open_results"):
+        if st_module.button(
+            "Open in Results",
+            key=f"{_MON}open_results",
+            help=help_text("active_runs.open_results"),
+        ):
             from ifvg_study_tab import request_route  # noqa: PLC0415
 
             st_module.session_state[f"{STATE_PREFIX}results_search_id"] = search_id
@@ -359,11 +370,17 @@ def _render_monitor_body(
             "Id kind",
             ("candidate_id", "decision_id", "trade_id", "setup_id"),
             key=f"{_MON}jump_kind",
+            help=help_text("active_runs.jump_kind"),
         )
         value = st_module.text_input(
-            "Exact identifier", key=f"{_MON}jump_value"
+            "Exact identifier", key=f"{_MON}jump_value",
+            help=help_text("active_runs.jump_value"),
         )
-        if st_module.button("Queue exact jump", key=f"{_MON}jump_btn"):
+        if st_module.button(
+            "Queue exact jump",
+            key=f"{_MON}jump_btn",
+            help=help_text("active_runs.queue_jump"),
+        ):
             if value.strip():
                 queue_replay_drilldown(st_module, kind, value.strip())
             else:
@@ -387,9 +404,11 @@ def _safe_cancel_controls(
         "I understand the run stops at the NEXT safe child boundary and "
         "completed children stay immutable/reusable",
         key=f"{_MON}cancel_confirm",
+        help=help_text("active_runs.cancel_confirm"),
     )
     if st_module.button(
-        "Request Safe Cancel", key=f"{_MON}cancel", disabled=not confirm
+        "Request Safe Cancel", key=f"{_MON}cancel", disabled=not confirm,
+        help=help_text("active_runs.request_safe_cancel"),
     ):
         try:
             request_safe_cancel(state_root, search_id)
