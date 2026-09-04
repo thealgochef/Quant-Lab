@@ -11,6 +11,16 @@ Subcommands:
   signed authorization id; synthetic provenance is refused outside test
   namespaces; the only outputs are the seed snapshot, the access audit and
   the run receipt.
+* ``register-authorization`` (UI-2) — persist a COMPLETED packet (the owner
+  filled ``approved_by`` / ``approved_at`` / ``effective_from`` /
+  ``owner_decision_refs`` outside this workspace) through the backend's
+  ``persist_seed_production_authorization`` seam: a packet that still carries
+  a placeholder is the typed refusal ``packet_not_signed``; every backend
+  refusal (namespace, witness, provenance confinement) keeps its reason.
+
+``--receipt-out PATH`` (UI-2; ``register-authorization`` and ``run``) writes
+the printed result JSON to a file as well — the Verification Center's refresh
+picks the exact ids up from there (a refusal writes nothing).
 
 Importing this module launches nothing. Exit codes: 0 ok, 2 typed refusal,
 1 unexpected error.
@@ -51,6 +61,75 @@ def _load_inventory(path: Path) -> dict[str, tuple[str, str]]:
 def _refused(reason: str, detail: str) -> int:
     print(json.dumps({"status": "refused", "reason": reason, "detail": detail}, sort_keys=True))
     return 2
+
+
+def _emit(payload: dict, receipt_out: str | None) -> None:
+    """Print the result JSON and, when asked, write it as the receipt file
+    (atomically; the Verification Center's refresh reads it)."""
+
+    text = json.dumps(payload, sort_keys=True)
+    print(text)
+    if receipt_out:
+        path = Path(receipt_out)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f".{path.name}.tmp")
+        tmp.write_text(text + "\n", encoding="utf-8")
+        tmp.replace(path)
+
+
+def _register(args) -> int:
+    from alpha_lab.agents.data_infra.ifvg.search.seed_production import (  # noqa: PLC0415
+        OWNER_PLACEHOLDER,
+        SeedProductionAuthorizationError,
+        SeedProductionAuthorizationPayload,
+        persist_seed_production_authorization,
+    )
+    from alpha_lab.agents.data_infra.ifvg.search.store import has_envelope  # noqa: PLC0415
+
+    document = json.loads(Path(args.packet_json).read_text(encoding="utf-8"))
+    payload_document = document.get("payload") if isinstance(document, dict) else None
+    if not isinstance(payload_document, dict):
+        payload_document = document if isinstance(document, dict) else None
+    if not isinstance(payload_document, dict):
+        return _refused("packet_malformed", "the packet JSON carries no payload object")
+    if any(
+        isinstance(value, str) and OWNER_PLACEHOLDER in value
+        for value in payload_document.values()
+    ) or any(
+        OWNER_PLACEHOLDER in str(ref) for ref in payload_document.get("owner_decision_refs", ())
+    ):
+        return _refused(
+            "packet_not_signed",
+            "the packet still carries owner placeholders (approved_by / approved_at / "
+            "effective_from / owner_decision_refs); only the owner completes them",
+        )
+    try:
+        payload = SeedProductionAuthorizationPayload.model_validate(payload_document)
+    except ValueError as error:
+        return _refused("packet_invalid", str(error))
+    root = Path(args.store_root)
+    try:
+        from alpha_lab.agents.data_infra.ifvg.search.identities import (  # noqa: PLC0415
+            canonical_contract_sha256,
+        )
+
+        expected_id = canonical_contract_sha256(payload)
+        reused = has_envelope(root, "seed_production_authorizations", expected_id)
+        envelope = persist_seed_production_authorization(root, payload)
+    except SeedProductionAuthorizationError as error:
+        return _refused(error.reason, str(error))
+    _emit(
+        {
+            "status": "authorization_registered",
+            "seed_production_authorization_id": envelope.seed_production_authorization_id,
+            "provenance": envelope.payload.provenance,
+            "seed_chain_replay_day_count": len(envelope.payload.ordered_seed_chain_replay_days),
+            "first_intended_verification_day": envelope.payload.first_intended_verification_day,
+            "reused": bool(reused),
+        },
+        args.receipt_out,
+    )
+    return 0
 
 
 def _packet(args) -> int:
@@ -184,23 +263,21 @@ def _run(args) -> int:
     except PermissionError as error:
         return _refused("access_refused", str(error))
     payload = result.receipt.payload
-    print(
-        json.dumps(
-            {
-                "status": "seed_production_completed"
-                if not result.reused
-                else "seed_production_reused",
-                "seed_snapshot_id": result.snapshot.seed_snapshot_id,
-                "seed_production_run_id": result.receipt.seed_production_run_id,
-                "seed_chain_replay_day_count": payload.chain_replay_day_count,
-                "logical_trading_day_count": payload.logical_trading_day_count,
-                "first_intended_verification_day": payload.first_intended_verification_day,
-                "separately_authorized_preparation": True,
-                "verification_evidence_footprint_days": 0,
-                "stores_written": list(payload.stores_written),
-            },
-            sort_keys=True,
-        )
+    _emit(
+        {
+            "status": "seed_production_completed"
+            if not result.reused
+            else "seed_production_reused",
+            "seed_snapshot_id": result.snapshot.seed_snapshot_id,
+            "seed_production_run_id": result.receipt.seed_production_run_id,
+            "seed_chain_replay_day_count": payload.chain_replay_day_count,
+            "logical_trading_day_count": payload.logical_trading_day_count,
+            "first_intended_verification_day": payload.first_intended_verification_day,
+            "separately_authorized_preparation": True,
+            "verification_evidence_footprint_days": 0,
+            "stores_written": list(payload.stores_written),
+        },
+        args.receipt_out,
     )
     return 0
 
@@ -242,12 +319,28 @@ def main(argv: list[str] | None = None) -> int:
         help="build missing day artifacts from the authorized source partitions "
         "(default: cached artifacts only)",
     )
+    run.add_argument(
+        "--receipt-out",
+        default=None,
+        help="also write the result JSON to this file (the Verification Center's "
+        "refresh pickup); nothing is written on a refusal",
+    )
+
+    register = sub.add_parser(
+        "register-authorization",
+        help="persist a COMPLETED seed-production packet (owner fields filled)",
+    )
+    register.add_argument("--store-root", required=True)
+    register.add_argument("--packet-json", required=True)
+    register.add_argument("--receipt-out", default=None)
 
     args = parser.parse_args(argv)
     if args.command == "packet":
         return _packet(args)
     if args.command == "verify-authorization":
         return _verify(args)
+    if args.command == "register-authorization":
+        return _register(args)
     return _run(args)
 
 

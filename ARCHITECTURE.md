@@ -1224,3 +1224,41 @@ still transitively blocked by R1):
   `authorization_not_ready`, …); the fifth research question `Evaluate one configuration`.
 - **Unchanged**: Strategy-Core, the fixed M0–M3 lane, every immutable artifact identity, the
   exact-ID loading rule, S11, MBP-1's `research_only_offline` boundary, the backend contracts.
+
+UI-2 additions (Phase 2 of the UI/UX redesign over the UI-1 release head; UI-3 … UI-6 follow;
+acceptance still transitively blocked by R1):
+
+- **Verification Center** (`scripts/ifvg_verification_center.py`): six state-driven sections —
+  purpose / readiness (every typed state on one sticky card), the logical trading-day fixture
+  (the shortlist re-validated through its contract; logical days and physical partitions as
+  separate tables; the owner's PROVISIONAL window recorded in the mutable center root — the
+  document keeps `owner_selection = NOT PERFORMED`), the seed lane (the unsigned packet prepared
+  in-app; the owner's registration and the seed job as exact external CLI commands whose
+  `--receipt-out` receipts are picked up by exact id; the authorization, the run receipt and the
+  seed snapshot verified through the backend's own loaders), the final authorization (the unsigned
+  packet after a verified seed; the owner's completed reference validated typed, never persisted
+  here), review / run (the exact-baseline charter frozen from the SIGNED reference — its content
+  hash is the 21/R-5 decision artifact, never a run id — the pipeline spec, the registered
+  `VerificationRunEnvelope`, the §6.1 preflight and, only when it passes, the exact bounded-run
+  command) and the monitor of the resolved seed / verification stages only. No spawn seam, no
+  Publish route; nothing signs, produces a seed, launches or registers the program allowlist.
+- **Presentation package**: `flows` — the goal-derived conditional flows (plan §5.4; skipped
+  steps carry a visible reason and contribute nothing; a selected prop objective keeps the
+  contract step and blocks there; the Validation step stays in every research flow; exact restore
+  by the stored step key); `review_vocabulary` — the owner-approved verdict labels over the
+  preserved `ifvg_visual_review_v1` keys plus the additive `not_applicable`; `Unreviewed` is a
+  UI state only.
+- **Drafts** (`study_drafts.py`, schema 2 — additive): session-only until the first Save Draft or
+  the first valid Next, then autosave with a visible chip; archive / restore; permanent delete
+  only for never-frozen archived drafts with the exact typed name; the one-time bulk archive of
+  the empty untitled drafts; duplicate detection; `discard_draft` retired.
+- **Providers** (`study_providers.py`): the shortlist / inventory / center-record / seed-state /
+  signed-reference / run-registration / preflight / monitor read models;
+  `verification_bundle_from_signed_ref` (run-independent).
+- **Seed CLI** (`scripts/ifvg_seed_production.py`): `register-authorization`, `--receipt-out`.
+- **UI**: History (archive / restore / typed delete, bulk archive, read-only purpose / store
+  filters, the run archive flag); the verifier review form (per-case keys, `Unreviewed`,
+  definitions, explicit Save Review, `Unsaved` / `Saved`); the wizard's goal-derived steps and
+  the seven additive §31 states.
+- **Unchanged**: Strategy-Core, the fixed M0–M3 lane, every immutable artifact identity, the
+  exact-ID loading rule, S11, MBP-1's `research_only_offline` boundary, the backend contracts.

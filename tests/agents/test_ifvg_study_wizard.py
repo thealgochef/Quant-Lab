@@ -1,8 +1,12 @@
-"""FUX-WIZ-001..012 AppTests as amended by UI-1: shell, drafts, modes /
+"""FUX-WIZ-001..012 AppTests as amended by UI-1 and UI-2: shell, drafts, modes /
 questions / templates, baseline, search space, prop cards, risk, benchmarks,
 validation, review, the purpose card, charter satisfiability, authorization
 by the actual path, honest launch and the sequential-V1 runtime truth
-(TEST_MATRIX §3.11; plan §10)."""
+(TEST_MATRIX §3.11; plan §10) — plus UI-2's goal-conditional flows (skipped
+steps carry visible reasons), the prop objective that blocks instead of
+disappearing, the session-only draft (no file until Save / the first valid
+Next), the Saved / Unsaved chip with autosave, the required draft name, the
+duplicate warning and the archived-draft state (owner Q2)."""
 
 from __future__ import annotations
 
@@ -34,6 +38,7 @@ from alpha_lab.agents.data_infra.ifvg.search.store import (  # noqa: E402
     has_envelope,
 )
 from alpha_lab.agents.data_infra.ifvg.study_drafts import (  # noqa: E402
+    archive_draft,
     load_draft,
     new_draft,
     save_draft,
@@ -97,6 +102,7 @@ def _seed_draft(
     mode: str = "fsm_config_search",
     purpose: str | None = "implementation_verification",
     run_scope: str | None = None,
+    template: str = "strategy_quality_only",
 ):
     spec = SEARCH_AXIS_REGISTRY_V1["parent_retest_timeout_1m_bars"]
     challenger = next(
@@ -119,7 +125,7 @@ def _seed_draft(
             "question_id": "find_robust_fsm"
             if mode in ("fsm_config_search", "full_pipeline_run")
             else "compare_one_with_baseline",
-            "template_id": "strategy_quality_only",
+            "template_id": template,
             "custom_objectives": (),
         },
         "baseline": {
@@ -226,23 +232,27 @@ def _state_writing_spawn(spawned: list[list[str]], *, pid: int = 4242):
 
 
 def test_wizard_shell_and_exact_step_restore(monkeypatch, tmp_path) -> None:
-    """FUX-WIZ-001/002: 8 steps, progress + breadcrumb, exact-step restore,
-    Save Draft always visible, autosave on Next."""
+    """FUX-WIZ-001/002 as amended by UI-2: the goal-derived flow (an FSM
+    search walks Goal → Baseline → Search axes → Strategy gates → Validation →
+    Review), progress + breadcrumb, exact-step restore by the stored step
+    key, Save Draft always visible, autosave on Next."""
 
     at, draft, roots = _run_at_step(monkeypatch, tmp_path, step=2)
     text = _caption_text(at)
-    assert "**Strategy Search Space**" in text  # breadcrumb bolds the step
+    assert "**Search axes**" in text  # breadcrumb bolds the flow step
+    assert "Prop Contracts" not in text  # skipped by the flow (no prop objective)
     assert _button(at, "Save Draft")
     assert _button(at, "Back")
     assert _button(at, "Next")
     _button(at, "Next").click().run()
     assert not at.exception
     restored = load_draft(roots["drafts"], draft.draft_id)
-    assert restored.step_index == 3  # autosaved on Next
+    assert restored.step_index == 3  # autosaved on Next (the flow position)
+    assert restored.current_step_key == "benchmarks"  # exact restore key
     at2 = apptest.AppTest.from_function(_app, default_timeout=120)
     at2.session_state[_DRAFT_KEY] = draft.draft_id
     at2.run()
-    assert "**Prop Contracts**" in _caption_text(at2)  # exact-step restore
+    assert "**Strategy gates**" in _caption_text(at2)  # exact-step restore
 
 
 def test_five_modes_five_questions_six_templates(monkeypatch, tmp_path) -> None:
@@ -411,24 +421,91 @@ def test_prop_step_renders_truthful_synthetic_cards(monkeypatch, tmp_path) -> No
 def test_prop_step_without_contracts_renders_the_exact_state(
     monkeypatch, tmp_path
 ) -> None:
-    at, _draft, _roots = _run_at_step(monkeypatch, tmp_path, step=3)
+    at, _draft, _roots = _run_at_step(monkeypatch, tmp_path, step=3, mode="prop_benchmark")
     assert "No verified firm contract" in _headings(at)
+    assert _button(at, "Next").disabled  # Prop Benchmark needs a contract
+
+
+def test_conditional_flow_skips_steps_with_visible_reasons(monkeypatch, tmp_path) -> None:
+    """Plan §5.4 / §7: Evaluate one configuration walks Goal → Configuration →
+    Strategy gates → Validation → Review; the skipped steps are LISTED with
+    their reason on the goal card, never rendered empty."""
+
+    roots = _patched_roots(monkeypatch, tmp_path)
+    draft = _seed_draft(
+        roots["drafts"], step=0, mode="single_configuration", purpose="development_research"
+    )
+    draft.steps["objective"]["question_id"] = "evaluate_one_configuration"
+    draft.steps["search_space"]["axis_selections"] = {}
+    save_draft(roots["drafts"], draft)
+    at = apptest.AppTest.from_function(_app, default_timeout=120)
+    at.session_state[_DRAFT_KEY] = draft.draft_id
+    at.run()
+    assert not at.exception
+    captions = _caption_text(at)
+    assert "Configuration" in captions and "Strategy gates" in captions
+    assert "Search axes" not in captions and "Challenger" not in captions
+    text = _markdown_text(at)
+    assert "Strategy Search Space — skipped:" in text
+    assert "no comparison" in text
+    assert "Prop Contracts — skipped: no prop objective" in text
+    assert "Risk Policies — skipped: no prop objective" in text
+    assert "Step 1 of 5" in captions
+    # walking the flow never lands on a skipped step
+    for _ in range(4):
+        if _button(at, "Next").disabled:
+            break
+        _button(at, "Next").click().run()
+        assert not at.exception
+        assert "**Prop Contracts**" not in _caption_text(at)
+        assert "**Strategy Search Space**" not in _caption_text(at)
+
+
+def test_prop_objective_blocks_instead_of_disappearing(monkeypatch, tmp_path) -> None:
+    """Plan §7 / F-04: a strategy goal with a SELECTED prop objective keeps the
+    contract step in its flow; with no verified contract that step blocks
+    Next with the contract-workflow action, and the objective is never
+    rewritten or hidden."""
+
+    at, _draft, _roots = _run_at_step(
+        monkeypatch, tmp_path, step=3, template="payout_reliability"
+    )
+    assert "No verified firm contract" in _headings(at)
+    assert "**Firm contracts**" in _caption_text(at)  # the step is IN the flow
+    errors = _errors(at)
+    assert "payout_probability_per_rolling_30d" in errors  # echoed unchanged
+    assert "first_party_verified" in errors
+    assert "never rewritten" in errors
+    assert _button(at, "Next").disabled
 
 
 # ── benchmarks / validation ─────────────────────────────────────────────────
 
 
-def test_benchmarks_render_three_ordered_gate_groups(monkeypatch, tmp_path) -> None:
+def test_benchmarks_render_the_gate_groups_of_the_flow(monkeypatch, tmp_path) -> None:
+    """FUX-WIZ-010 as amended by UI-2: the three groups keep their order; a
+    strategy-only goal lists the prop group as skipped with its reason
+    (never rendered empty); a prop objective brings it back."""
+
     at, _draft, _roots = _run_at_step(monkeypatch, tmp_path, step=5)
     text = _markdown_text(at)
     first = text.index("1 · Underlying Strategy Gate")
-    second = text.index("2 · Prop Feasibility Gate")
     third = text.index("3 · Robustness Gate")
-    assert first < second < third
+    assert first < third
+    assert "2 · Prop Feasibility Gate" not in text
+    assert "Prop Feasibility Gate — skipped: no prop objective" in _caption_text(at)
     assert "proposed_protocol_default" in _caption_text(at)
     info = " ".join(str(i.value) for i in at.info)
     assert "verification_control_flow_gates_v1" in info
     assert "no hidden weighted score" in info.lower()
+    at2, _draft2, _roots2 = _run_at_step(
+        monkeypatch, tmp_path / "prop", step=5, template="payout_reliability"
+    )
+    text = _markdown_text(at2)
+    first = text.index("1 · Underlying Strategy Gate")
+    second = text.index("2 · Prop Feasibility Gate")
+    third = text.index("3 · Robustness Gate")
+    assert first < second < third
 
 
 def test_validation_shows_readonly_allowlist_badge_and_checklist(
@@ -882,3 +959,118 @@ def test_clone_as_new_search_from_a_frozen_draft(monkeypatch, tmp_path) -> None:
     assert clone.purpose_annotation["derivation"] == "cloned"
     original = load_draft(roots["drafts"], draft.draft_id)
     assert original.status == "frozen"
+
+
+# ── UI-2 drafts (owner Q2): session-only, Saved / Unsaved chip, autosave ────
+
+
+def test_session_only_draft_writes_no_file_until_save_or_valid_next(
+    monkeypatch, tmp_path
+) -> None:
+    """Owner Q2: Start new draft creates a SESSION draft (no file); the goal
+    card and purpose annotation are live; the first Save Draft persists it
+    with the annotation; afterwards the chip reads Saved."""
+
+    roots = _patched_roots(monkeypatch, tmp_path)
+    at = apptest.AppTest.from_function(_app, default_timeout=120)
+    at.run()
+    assert not at.exception
+    mode_box = next(w for w in at.selectbox if w.key == f"{wizard._W}new_mode")
+    mode_box.set_value("Single Configuration").run()
+    _button(at, "Start new draft").click().run()
+    assert not at.exception
+    draft_id = at.session_state[_DRAFT_KEY]
+    assert not (roots["drafts"] / draft_id).exists()  # nothing written
+    text = _markdown_text(at)
+    assert "Not saved yet" in text and "no file" in text.lower()
+    assert "Implementation Verification" in _tables(at)  # the annotation lives in the session
+    name = next(w for w in at.text_input if w.key == f"{wizard._W}name")
+    assert "Single Configuration" in name.value  # the proposed default name (goal — date)
+    assert "2026-" in name.value
+    _button(at, "Save Draft").click().run()
+    assert not at.exception
+    stored = load_draft(roots["drafts"], draft_id)
+    assert stored.purpose_annotation["purpose"] == "implementation_verification"
+    assert stored.steps["objective"]["mode_id"] == "single_configuration"
+    assert stored.current_step_key == "objective"
+    assert "Saved" in _markdown_text(at)
+    assert "Not saved yet" not in _markdown_text(at)
+
+
+def test_first_valid_next_persists_a_session_draft(monkeypatch, tmp_path) -> None:
+    roots = _patched_roots(monkeypatch, tmp_path)
+    at = apptest.AppTest.from_function(_app, default_timeout=120)
+    at.run()
+    mode_box = next(w for w in at.selectbox if w.key == f"{wizard._W}new_mode")
+    mode_box.set_value("Single Configuration").run()
+    _button(at, "Start new draft").click().run()
+    draft_id = at.session_state[_DRAFT_KEY]
+    assert not (roots["drafts"] / draft_id).exists()
+    assert not _button(at, "Next").disabled
+    _button(at, "Next").click().run()
+    assert not at.exception
+    stored = load_draft(roots["drafts"], draft_id)
+    assert stored.step_index == 1 and stored.current_step_key == "baseline"
+    assert f"{wizard.STATE_PREFIX}session_draft" not in at.session_state
+
+
+def test_draft_name_is_required_before_the_first_persistence(monkeypatch, tmp_path) -> None:
+    roots = _patched_roots(monkeypatch, tmp_path)
+    at = apptest.AppTest.from_function(_app, default_timeout=120)
+    at.run()
+    _button(at, "Start new draft").click().run()
+    draft_id = at.session_state[_DRAFT_KEY]
+    name = next(w for w in at.text_input if w.key == f"{wizard._W}name")
+    name.set_value("").run()
+    _button(at, "Save Draft").click().run()
+    assert not at.exception
+    assert "Draft name required" in _errors(at)
+    assert not (roots["drafts"] / draft_id).exists()
+
+
+def test_identical_unsaved_draft_warns_about_the_persisted_duplicate(
+    monkeypatch, tmp_path
+) -> None:
+    roots = _patched_roots(monkeypatch, tmp_path)
+    existing = _seed_draft(
+        roots["drafts"], step=0, mode="single_configuration", purpose="implementation_verification"
+    )
+    existing.steps["objective"]["question_id"] = "evaluate_one_configuration"
+    existing.steps["baseline"] = {}
+    save_draft(roots["drafts"], existing)
+    at = apptest.AppTest.from_function(_app, default_timeout=120)
+    at.run()
+    mode_box = next(w for w in at.selectbox if w.key == f"{wizard._W}new_mode")
+    mode_box.set_value("Single Configuration").run()
+    _button(at, "Start new draft").click().run()
+    assert not at.exception
+    warnings = " ".join(str(w.value) for w in at.warning)
+    assert "identical" in warnings and existing.display_name in warnings
+    assert not (roots["drafts"] / at.session_state[_DRAFT_KEY]).exists()  # never a block
+
+
+def test_persisted_draft_autosaves_and_shows_the_saved_chip(monkeypatch, tmp_path) -> None:
+    at, draft, roots = _run_at_step(monkeypatch, tmp_path, step=2)
+    assert "Saved" in _markdown_text(at)
+    target = next(
+        w for w in at.multiselect if w.key == f"{wizard._W}axis_parent_retest_timeout_1m_bars"
+    )
+    target.set_value([]).run()  # a change on a PERSISTED draft autosaves
+    assert not at.exception
+    stored = load_draft(roots["drafts"], draft.draft_id)
+    assert not stored.steps["search_space"]["axis_selections"]
+    assert "Autosaved" in _markdown_text(at)
+
+
+def test_archived_draft_cannot_be_edited_from_the_wizard(monkeypatch, tmp_path) -> None:
+    roots = _patched_roots(monkeypatch, tmp_path)
+    draft = _seed_draft(roots["drafts"], step=2)
+    archive_draft(roots["drafts"], draft.draft_id)
+    at = apptest.AppTest.from_function(_app, default_timeout=120)
+    at.session_state[_DRAFT_KEY] = draft.draft_id
+    at.run()
+    assert not at.exception
+    assert "This draft is archived" in _headings(at)
+    labels = [b.label for b in at.button]
+    assert "Next" not in labels and _FREEZE not in labels
+    assert "restore" in " ".join(str(i.value) for i in at.info).lower()

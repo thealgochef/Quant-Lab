@@ -30,7 +30,17 @@ __all__ = [
 VISUAL_REVIEW_ROOT = Path("data/ifvg_visual_review")
 VISUAL_REVIEW_LEDGER = VISUAL_REVIEW_ROOT / "review_v1.jsonl"
 
-REVIEW_VERDICTS = ("correct", "incorrect", "questionable", "insufficient_evidence")
+#: UI-2 (owner Q3): ``not_applicable`` is the one ADDITIVE verdict key ("the
+#: review question does not apply to this case"); the four original keys and
+#: every persisted v1 row are unchanged. The UI-only "unreviewed" state is
+#: never a ledger value.
+REVIEW_VERDICTS = (
+    "correct",
+    "incorrect",
+    "questionable",
+    "insufficient_evidence",
+    "not_applicable",
+)
 REVIEW_TAGS = (
     "wrong_htf_fvg",
     "wrong_parent",

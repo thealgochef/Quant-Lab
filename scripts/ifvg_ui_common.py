@@ -27,6 +27,7 @@ from alpha_lab.agents.data_infra.ifvg.study_status import (
 __all__ = [
     "STATE_PREFIX",
     "PIPELINE_STATE_PREFIX",
+    "SESSION_DRAFT_KEY",
     "sanitize_error",
     "sanitize_select",
     "display_metric",
@@ -49,6 +50,11 @@ STATE_PREFIX = "ifvg_study_v1_"
 
 #: FUX §3.2 — the Full Pipeline Run surface's dedicated session namespace.
 PIPELINE_STATE_PREFIX = "ifvg_pipeline_v1_"
+
+#: UI-2 (owner Q2): the SESSION-ONLY draft (``asdict(StudyDraft)``) a Start
+#: card or "Start new draft" creates — no file exists until the first Save
+#: Draft or the first valid Next persists it.
+SESSION_DRAFT_KEY = f"{STATE_PREFIX}session_draft"
 
 #: Quoted paths first (spaces inside quotes survive a bare-token pass),
 #: then bare drive-letter / UNC / rooted tokens.

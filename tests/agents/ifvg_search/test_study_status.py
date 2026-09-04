@@ -174,6 +174,15 @@ def test_every_section31_state_is_registered() -> None:
         "authorization_not_ready",
         "store_namespace_unverified",
         "seed_production_not_authorized",
+        # UI-2 (plan §9 Phase 2): the Verification Center's typed states and
+        # the draft lifecycle states (owner Q2)
+        "shortlist_unavailable",
+        "window_not_selected",
+        "seed_missing",
+        "final_authorization_unsigned",
+        "preflight_refused",
+        "draft_archived",
+        "draft_session_only",
     }
     assert set(EMPTY_STATE_PRESENTATIONS) == expected
     # UI-1 contract: a no-runs situation never renders as artifact_unavailable

@@ -25,6 +25,7 @@ _UI_SCRIPTS = (
     "ifvg_pipeline_tab.py",
     "ifvg_mbp1_panels.py",  # R5B panel (coverage gap closed by R6 review S5)
     "ifvg_regime_panels.py",  # R6 Regime Lane panel
+    "ifvg_verification_center.py",  # UI-2 Verification Center (no spawn seam)
 )
 
 _SRC_MODULES = (
@@ -49,18 +50,46 @@ def _sources() -> dict[str, str]:
 _BUTTON_LABEL = re.compile(r"button\(\s*[\"']([^\"']+)[\"']")
 
 
+#: UI-2 (owner Q2): the ONE registered exception to the delete scan — the
+#: permanent deletion of a never-frozen ARCHIVED draft with its exact typed
+#: name, on History's archived view only. Its typed-name proof is asserted
+#: below; every other delete control stays forbidden.
+_OWNER_Q2_DELETE_CONTROL = ("ifvg_results_tab.py", "Delete draft permanently")
+
+
 def test_no_forbidden_control_labels_anywhere() -> None:
     """FUX-SAFE-001: no delete/sealed/recapture/promote/unlock control, no
-    allow_sealed, no order/live/serving control."""
+    allow_sealed, no order/live/serving control (the owner-Q2 typed draft
+    delete is the one registered exception, proven typed below)."""
 
     forbidden_words = ("delete", "sealed", "recapture", "promote", "unlock")
     for name, source in _sources().items():
         for label in _BUTTON_LABEL.findall(source):
+            if (name, label) == _OWNER_Q2_DELETE_CONTROL:
+                continue
             for word in forbidden_words:
                 assert word not in label.lower(), (name, label)
         assert "allow_sealed" not in source, name
         for control in ("place order", "go live", "activate serving"):
             assert control not in source.lower(), (name, control)
+
+
+def test_owner_q2_delete_control_is_typed_archived_and_never_frozen() -> None:
+    """The registered delete control is bound to the exact typed name, lives
+    in the archived view only, and the store refuses frozen drafts."""
+
+    source = _sources()["ifvg_results_tab.py"]
+    assert source.count('"Delete draft permanently"') == 1
+    block_start = source.index('"Delete draft permanently"')
+    block = source[block_start - 1200 : block_start + 600]
+    assert "disabled=str(typed or \"\") != draft.display_name" in block
+    assert "confirm_name=str(typed)" in block
+    assert "def _render_archived_row" in source
+    assert "if not draft.never_frozen:" in block
+    drafts_source = _sources()["study_drafts.py"]
+    assert "def delete_draft_permanently" in drafts_source
+    assert "never deletable" in drafts_source
+    assert "only from the Archived view" in drafts_source
 
 
 def test_forbidden_display_wording_absent_from_ui_sources() -> None:
@@ -195,6 +224,11 @@ def test_session_namespace_is_the_contracted_prefix() -> None:
         "page_key",
         "gate_cache_key",  # per-pipeline gate cache (adversarial m-6)
         "key",
+        # UI-2: the session-only draft stash (owner Q2) and the Verification
+        # Center's own prefix / record keys
+        "SESSION_DRAFT_KEY",
+        "_VC",
+        "_RECORD_KEY",
     }
     sources = _sources()
     assert 'STATE_PREFIX = "ifvg_study_v1_"' in sources["ifvg_ui_common.py"]

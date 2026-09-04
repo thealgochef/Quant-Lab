@@ -21,10 +21,14 @@ render.
 from __future__ import annotations
 
 import json
+import os
+import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from .search.catalog import read_catalog_events, rebuild_catalog_index
 from .search.charter import CostPolicy, SearchCharterEnvelope
@@ -74,7 +78,35 @@ __all__ = [
     "resolve_store_namespace",
     "verification_authorization_readiness",
     "verification_owner_bundle",
+    "verification_bundle_from_signed_ref",
     "owner_authorization_readiness",
+    # UI-2 — the Verification Center read models
+    "SEED_AUTHORIZATION_RECEIPT",
+    "SEED_RUN_RECEIPT",
+    "CENTER_RECORD_FILE",
+    "ShortlistState",
+    "load_window_shortlist",
+    "shortlist_window",
+    "coverage_matrix_from_shortlist_window",
+    "InventoryState",
+    "load_source_inventory",
+    "VerificationCenterRecord",
+    "load_verification_center_record",
+    "save_verification_center_record",
+    "pick_up_seed_receipts",
+    "SeedAuthorizationState",
+    "seed_authorization_state",
+    "SeedSnapshotState",
+    "seed_snapshot_state",
+    "SeedReceiptState",
+    "seed_receipt_state",
+    "SignedRefState",
+    "load_signed_verification_ref",
+    "register_verification_run",
+    "PreflightState",
+    "bounded_preflight_state",
+    "verification_stage_rows",
+    "verification_evidence_summary",
     "owner_authorization_bundle_from_store",
     "locate_charter_store",
     "load_comparison_results_for_search",
@@ -1170,32 +1202,24 @@ def verification_authorization_readiness(
     return first
 
 
-def verification_owner_bundle(
-    store_root: Path, readiness: AuthorizationReadiness, requirement_set
-):
-    """The computation-path-scoped ``OwnerAuthorizationBundle`` a REAL
-    verification charter carries, assembled ONLY from a ``ready`` readiness
-    over the persisted, verified ``VerificationAuthorizationRef`` (the
-    verification decision 21/R-5 references the persisted run and the ref's
-    own content hash). ``None`` unless ready."""
+def verification_bundle_from_signed_ref(ref, requirement_set):
+    """UI-2: the computation-path-scoped ``OwnerAuthorizationBundle`` of a REAL
+    verification charter, derived from the owner's SIGNED
+    ``VerificationAuthorizationRef`` ALONE. The 21/R-5 evidence ref names the
+    signed reference's own content hash as the decision artifact (the ref IS
+    the owner's artifact) — never a run-envelope id: the persisted run names
+    the frozen pipeline spec, which derives from the charter, which carries
+    this bundle, so a bundle bound to the run id would be circular."""
 
     from .search.authorization import (  # noqa: PLC0415
         VERIFICATION_FIXTURE_DECISION_KEY,
         OwnerAuthorizationBundle,
         OwnerDecisionEvidenceRef,
     )
-    from .search.verification import VerificationRunEnvelope  # noqa: PLC0415
 
-    if readiness.status != "ready" or not readiness.evidence_ids:
-        return None
-    run_id = readiness.evidence_ids[0]
-    envelope = load_verified_envelope(
-        Path(store_root), "verification_runs", run_id, VerificationRunEnvelope
-    )
-    ref = envelope.payload.verification_authorization
     evidence = OwnerDecisionEvidenceRef(
         decision_id=VERIFICATION_FIXTURE_DECISION_KEY,
-        decision_artifact_id=run_id,
+        decision_artifact_id=ref.content_hash,
         content_hash=ref.content_hash,
         author=ref.approved_by,
         approved_at=ref.approved_at,
@@ -1207,6 +1231,27 @@ def verification_owner_bundle(
         decision_refs={VERIFICATION_FIXTURE_DECISION_KEY: evidence},
         store_namespace_id=ref.store_namespace_id,
         supersession_head_witness=ref.supersession_head_witness,
+    )
+
+
+def verification_owner_bundle(
+    store_root: Path, readiness: AuthorizationReadiness, requirement_set
+):
+    """The bundle a REAL verification charter carries, assembled ONLY from a
+    ``ready`` readiness over the persisted, verified ``VerificationAuthorizationRef``
+    (UI-2: derived from the signed ref itself — run-independent). ``None``
+    unless ready."""
+
+    from .search.verification import VerificationRunEnvelope  # noqa: PLC0415
+
+    if readiness.status != "ready" or not readiness.evidence_ids:
+        return None
+    run_id = readiness.evidence_ids[0]
+    envelope = load_verified_envelope(
+        Path(store_root), "verification_runs", run_id, VerificationRunEnvelope
+    )
+    return verification_bundle_from_signed_ref(
+        envelope.payload.verification_authorization, requirement_set
     )
 
 
@@ -1322,3 +1367,920 @@ def owner_authorization_bundle_from_store(
         store_namespace_id=readiness.store_namespace_id,
         supersession_head_witness=witness,
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# UI-2 — Verification Center read models (plan §5.3 / §8 / §9 Phase 2)
+#
+# Every function here is a READ-ONLY adapter over the backend contracts of
+# HARDENING-BACKEND Phase 3 / 4 (the shortlist, seed production, the signed
+# verification authorization, the bounded-run preflight) or a mutable,
+# non-semantic center record. Immutable stores are never listed — every
+# artifact resolves by EXACT id; a local path never defines authority; nothing
+# here signs, produces a seed or launches a run.
+# ─────────────────────────────────────────────────────────────────────────────
+
+#: The receipt files the seed-production CLI writes with ``--receipt-out``
+#: under the center root — the refresh seam for the external seed steps.
+SEED_AUTHORIZATION_RECEIPT = "seed_production_authorization.receipt.json"
+SEED_RUN_RECEIPT = "seed_production_run.receipt.json"
+#: The mutable, non-semantic center record (provisional window + recorded ids).
+CENTER_RECORD_FILE = "verification_center.json"
+
+_HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def _is_hex64(value: Any) -> bool:
+    return isinstance(value, str) and bool(_HEX64_RE.fullmatch(value))
+
+
+def _write_json_atomic(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.tmp-{uuid4().hex}")
+    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _has_envelope_or_corrupt(root: Path, store_name: str, envelope_id: str) -> bool:
+    """``has_envelope`` that reports a corrupt entry (directory without its
+    manifest) as PRESENT — the caller's typed load then names the corruption."""
+
+    try:
+        return has_envelope(Path(root), store_name, envelope_id)
+    except Exception:  # noqa: BLE001 — an existing corrupt entry
+        return True
+
+
+# ── the shortlist ────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class ShortlistState:
+    status: str  # available | missing | corrupt
+    detail: str
+    source_path: str
+    shortlist_id: str | None = None
+    shortlist: Any = None
+    generated_at_utc: str | None = None
+
+
+def load_window_shortlist(path: Path) -> ShortlistState:
+    """The persisted shortlist document (``LOGICAL_WINDOW_COVERAGE_SCAN.json``)
+    re-validated through its typed contract; the recorded shortlist id must
+    hash the document. Missing and corrupt are typed states."""
+
+    from .search.verification_window import VerificationWindowShortlist  # noqa: PLC0415
+
+    source = Path(path)
+    if not source.exists():
+        return ShortlistState(
+            "missing",
+            "no shortlist document exists at the configured evidence location",
+            str(source),
+        )
+    try:
+        document = json.loads(source.read_text(encoding="utf-8"))
+        shortlist = VerificationWindowShortlist.model_validate(document["shortlist"])
+        recorded = document.get("shortlist_id")
+        if recorded is not None and recorded != shortlist.shortlist_id:
+            raise ValueError("the recorded shortlist id does not hash the document")
+    except Exception as error:  # noqa: BLE001 — typed, sanitized at render
+        return ShortlistState(
+            "corrupt",
+            f"the shortlist document failed verification ({type(error).__name__})",
+            str(source),
+        )
+    generated = document.get("generated_at_utc")
+    return ShortlistState(
+        "available",
+        f"{shortlist.candidate_window_count} candidate windows, "
+        f"{shortlist.eligible_window_count} eligible; owner selection "
+        f"{shortlist.owner_selection}",
+        str(source),
+        shortlist_id=shortlist.shortlist_id,
+        shortlist=shortlist,
+        generated_at_utc=str(generated) if generated else None,
+    )
+
+
+def shortlist_window(shortlist, days: Sequence[str]):
+    """The EXACT window (same logical days) of the shortlist, or ``None``."""
+
+    target = tuple(str(day) for day in days)
+    for score in shortlist.ranked_windows:
+        if tuple(score.days) == target:
+            return score
+    for entry in shortlist.entries:
+        if tuple(entry.window.days) == target:
+            return entry.window
+    return None
+
+
+def coverage_matrix_from_shortlist_window(shortlist, window):
+    """The coverage matrix of ONE shortlisted window, derived from the
+    shortlist's own per-day coverage rows (already-authorized evidence; no
+    table is re-read). Content-addressed like every envelope; nothing is
+    persisted here."""
+
+    from .data_access import allowlist_sha256  # noqa: PLC0415
+    from .search.verification import (  # noqa: PLC0415
+        CoverageMatrixEnvelope,
+        CoverageMatrixPayload,
+        DayCoverageRow,
+    )
+
+    rows = tuple(
+        DayCoverageRow(
+            trading_day=row.logical_trading_day,
+            source_partition_recorded=bool(row.source_partitions_present),
+            setup_lifecycle_rows=int(row.setup_lifecycle_rows),
+            entry_candidate_rows=int(row.entry_candidate_rows),
+            eligible_decision_rows=int(row.eligible_decision_rows),
+            executed_trade_rows=int(row.executed_trade_rows),
+            candidate_label_rows=int(row.candidate_label_rows),
+            audit_event_rows=None,  # the shortlist records coverage, not counts
+            replay_chart_available=None,
+        )
+        for row in window.coverage
+    )
+    lifecycle_paths = {
+        "setup_activation": any(row.setup_lifecycle_rows for row in rows),
+        "entry_candidate": any(row.entry_candidate_rows for row in rows),
+        "eligible_decision": any(row.eligible_decision_rows for row in rows),
+        "execution_resolution": any(row.executed_trade_rows for row in rows),
+        "candidate_labeling": any(row.candidate_label_rows for row in rows),
+        "audit_events": any(bool(row.audit_day_covered) for row in window.coverage),
+        "replay_chart": False,
+    }
+    uncovered = sorted(path for path, covered in lifecycle_paths.items() if not covered)
+    days = tuple(window.days)
+    payload = CoverageMatrixPayload(
+        evidence_source_dataset_id=shortlist.evidence_source_dataset_id,
+        evidence_source_manifest_sha256=shortlist.evidence_source_manifest_sha256,
+        candidate_allowlist=days,
+        candidate_allowlist_hash=allowlist_sha256(days),
+        rows=rows,
+        lifecycle_paths_covered=lifecycle_paths,
+        uncovered_paths_note=(
+            "all scored lifecycle paths are covered by the selected window"
+            if not uncovered
+            else "not covered by the selected window (derived from the shortlist rows): "
+            + ", ".join(uncovered)
+        ),
+    )
+    return CoverageMatrixEnvelope.from_payload(payload)
+
+
+# ── the source inventory (already-authorized manifest evidence) ──────────────
+
+
+@dataclass(frozen=True)
+class InventoryState:
+    status: str  # available | missing | corrupt
+    detail: str
+    source_path: str
+    inventory: dict[str, tuple[str, str]] | None = None
+    partition_count: int = 0
+
+
+def load_source_inventory(path: Path) -> InventoryState:
+    """``{physical_utc_date: (public kind, content sha256)}`` from an accepted
+    manifest's ``identity.permitted_source_hashes`` (or a permitted-hash list /
+    day map, the seed CLI's accepted forms). No raw source is discovered."""
+
+    from .search.trading_calendar import inventory_from_permitted_source_hashes  # noqa: PLC0415
+
+    source = Path(path)
+    if not source.exists():
+        return InventoryState(
+            "missing",
+            "no accepted-manifest inventory exists at the configured location",
+            str(source),
+        )
+    try:
+        document = json.loads(source.read_text(encoding="utf-8"))
+        if isinstance(document, dict) and "identity" in document:
+            document = document["identity"]["permitted_source_hashes"]
+        if isinstance(document, list):
+            inventory = inventory_from_permitted_source_hashes(document)
+        elif isinstance(document, dict):
+            inventory = {
+                str(day): (str(entry[0]), str(entry[1])) for day, entry in document.items()
+            }
+        else:
+            raise ValueError("unrecognized inventory document shape")
+    except Exception as error:  # noqa: BLE001
+        return InventoryState(
+            "corrupt",
+            f"the inventory document failed to load ({type(error).__name__})",
+            str(source),
+        )
+    return InventoryState(
+        "available",
+        f"{len(inventory)} physical partitions from the accepted inventory",
+        str(source),
+        inventory=inventory,
+        partition_count=len(inventory),
+    )
+
+
+# ── the mutable center record ────────────────────────────────────────────────
+
+
+@dataclass
+class VerificationCenterRecord:
+    """Mutable, non-semantic authoring state of the Verification Center: the
+    owner's PROVISIONAL window and the exact ids recorded from the external
+    seed steps. Never an authorization; never part of an identity."""
+
+    schema_version: int = 1
+    store_namespace_id: str | None = None
+    provisional_window: dict[str, Any] | None = None
+    seed_production_authorization_id: str | None = None
+    seed_production_run_id: str | None = None
+    seed_snapshot_id: str | None = None
+    updated_at_utc: str = ""
+
+
+def load_verification_center_record(center_root: Path) -> VerificationCenterRecord:
+    """The record, or an EMPTY one when the file is absent or unreadable
+    (an unreadable record is never trusted)."""
+
+    path = Path(center_root) / CENTER_RECORD_FILE
+    if not path.exists():
+        return VerificationCenterRecord()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        known = set(VerificationCenterRecord.__dataclass_fields__)
+        return VerificationCenterRecord(
+            **{key: value for key, value in dict(payload).items() if key in known}
+        )
+    except Exception:  # noqa: BLE001 — a corrupt record is an empty record
+        return VerificationCenterRecord()
+
+
+def save_verification_center_record(
+    center_root: Path, record: VerificationCenterRecord, *, now_fn=_utc_now_iso
+) -> Path:
+    record.updated_at_utc = now_fn()
+    path = Path(center_root) / CENTER_RECORD_FILE
+    _write_json_atomic(path, asdict(record))
+    return path
+
+
+def pick_up_seed_receipts(
+    center_root: Path, record: VerificationCenterRecord
+) -> tuple[VerificationCenterRecord, tuple[str, ...]]:
+    """Read the receipt files the external seed CLI wrote under the center
+    root and record their EXACT ids (64-hex only). Returns the updated record
+    (a copy) and one human note per receipt file seen; an unreadable receipt
+    is reported, never trusted, never fatal."""
+
+    notes: list[str] = []
+    updated = replace(record)
+    root = Path(center_root)
+    expectations = (
+        (
+            SEED_AUTHORIZATION_RECEIPT,
+            (("seed_production_authorization_id", "seed_production_authorization_id"),),
+        ),
+        (
+            SEED_RUN_RECEIPT,
+            (
+                ("seed_snapshot_id", "seed_snapshot_id"),
+                ("seed_production_run_id", "seed_production_run_id"),
+            ),
+        ),
+    )
+    for filename, fields in expectations:
+        path = root / filename
+        if not path.exists():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("receipt is not an object")
+        except Exception as error:  # noqa: BLE001
+            notes.append(f"{filename}: unreadable receipt ({type(error).__name__}); ignored")
+            continue
+        picked: list[str] = []
+        for receipt_key, record_field in fields:
+            value = payload.get(receipt_key)
+            if _is_hex64(value):
+                setattr(updated, record_field, value)
+                picked.append(f"{record_field} {value[:12]}…")
+            else:
+                notes.append(f"{filename}: no exact {receipt_key} in the receipt; ignored")
+        if picked:
+            notes.append(f"{filename}: picked up " + ", ".join(picked))
+    return updated, tuple(notes)
+
+
+# ── the seed lane by exact id ────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class SeedAuthorizationState:
+    status: str
+    detail: str
+    authorization_id: str | None = None
+    provenance: str | None = None
+    chain_first_day: str | None = None
+    chain_last_day: str | None = None
+    chain_day_count: int = 0
+    first_intended_verification_day: str | None = None
+    baseline_profile_name: str | None = None
+
+
+def seed_authorization_state(
+    store_root: Path,
+    authorization_id: str | None,
+    *,
+    baseline_profile_name: str,
+    section_hash: str,
+    first_intended_verification_day: str,
+    inventory: Mapping[str, tuple[str, str]] | None = None,
+    quant_lab_source_identity: str | None = None,
+    strategy_core: tuple[str, str] | None = None,
+    now: str | None = None,
+) -> SeedAuthorizationState:
+    """Typed state of the recorded seed-production authorization: exact-id
+    load, namespace, profile / section, the intended first verification day;
+    with the inventory (and the code identities) the COMPLETE backend
+    verification runs (``verify_seed_production_authorization``) and every
+    refusal keeps its typed reason. Without the inventory the state is
+    ``verified_envelope`` — explicitly not the full check."""
+
+    from .search.seed_production import (  # noqa: PLC0415
+        SEED_PRODUCTION_AUTHORIZATION_STORE,
+        SeedProductionAuthorizationEnvelope,
+        SeedProductionAuthorizationError,
+        seed_chain_source_inventory_hash,
+        verify_seed_production_authorization,
+    )
+
+    root = Path(store_root)
+    if not authorization_id:
+        return SeedAuthorizationState(
+            "not_recorded",
+            "no seed-production authorization id is recorded yet (register the completed "
+            "packet with the seed CLI, then refresh)",
+        )
+    if not _is_hex64(authorization_id) or not _has_envelope_or_corrupt(
+        root, SEED_PRODUCTION_AUTHORIZATION_STORE, authorization_id
+    ):
+        return SeedAuthorizationState(
+            "not_found",
+            f"no seed-production authorization {str(authorization_id)[:12]}… exists in this "
+            "store (exact-id load; the store is never listed)",
+            authorization_id=authorization_id,
+        )
+    try:
+        envelope = load_verified_envelope(
+            root,
+            SEED_PRODUCTION_AUTHORIZATION_STORE,
+            authorization_id,
+            SeedProductionAuthorizationEnvelope,
+        )
+    except Exception as error:  # noqa: BLE001
+        return SeedAuthorizationState(
+            "corrupt",
+            f"seed-production authorization {authorization_id[:12]}… failed verification "
+            f"({type(error).__name__})",
+            authorization_id=authorization_id,
+        )
+    payload = envelope.payload
+    chain = tuple(payload.ordered_seed_chain_replay_days)
+    facts = dict(
+        authorization_id=envelope.seed_production_authorization_id,
+        provenance=str(payload.provenance),
+        chain_first_day=chain[0],
+        chain_last_day=chain[-1],
+        chain_day_count=len(chain),
+        first_intended_verification_day=payload.first_intended_verification_day,
+        baseline_profile_name=payload.baseline_profile_name,
+    )
+    namespace = resolve_store_namespace(root, expected_class="test")
+    if (
+        namespace.status == "verified"
+        and payload.store_namespace_id != namespace.store_namespace_id
+    ):
+        return SeedAuthorizationState(
+            "wrong_namespace", "the authorization names another store namespace", **facts
+        )
+    if (
+        payload.baseline_profile_name != baseline_profile_name
+        or payload.resolved_section_config_hash != section_hash
+    ):
+        return SeedAuthorizationState(
+            "profile_mismatch",
+            "the authorization binds a different baseline profile / section hash",
+            **facts,
+        )
+    if payload.first_intended_verification_day != first_intended_verification_day:
+        return SeedAuthorizationState(
+            "window_mismatch",
+            f"the authorization's first intended verification day "
+            f"{payload.first_intended_verification_day} is not the selected window's first "
+            f"day {first_intended_verification_day}",
+            **facts,
+        )
+    if inventory is None:
+        return SeedAuthorizationState(
+            "verified_envelope",
+            "the persisted authorization verified (namespace, profile, window); the source "
+            "inventory hash and the code identities were NOT checked because the accepted "
+            "inventory is not available to this workspace",
+            **facts,
+        )
+    try:
+        inventory_hash = seed_chain_source_inventory_hash(chain, inventory)
+        verify_seed_production_authorization(
+            root,
+            envelope,
+            expected_profile_name=baseline_profile_name,
+            expected_section_config_hash=section_hash,
+            expected_chain_replay_days=chain,
+            expected_source_inventory_hash=inventory_hash,
+            expected_quant_lab_source_identity=quant_lab_source_identity,
+            expected_strategy_core=strategy_core,
+            now=now or _utc_now_iso(),
+        )
+    except SeedProductionAuthorizationError as error:
+        return SeedAuthorizationState(error.reason, str(error), **facts)
+    except ValueError as error:
+        return SeedAuthorizationState("source_inventory_mismatch", str(error), **facts)
+    return SeedAuthorizationState(
+        "verified",
+        "the persisted authorization passed the complete backend verification (namespace, "
+        "current head witness, profile, chain, inventory hash, code identities, schema, "
+        "effectivity)",
+        **facts,
+    )
+
+
+@dataclass(frozen=True)
+class SeedSnapshotState:
+    status: str
+    detail: str
+    seed_snapshot_id: str | None = None
+    seed_hash: str | None = None
+    first_replay_day: str | None = None
+    snapshot_through_day: str | None = None
+    chain_date_count: int = 0
+    profile_name: str | None = None
+
+
+def seed_snapshot_state(
+    store_root: Path,
+    seed_snapshot_id: str | None,
+    *,
+    section_hash: str,
+    first_replay_day: str,
+    profile_name: str,
+) -> SeedSnapshotState:
+    """Typed state of the recorded seed snapshot through the VERIFIED,
+    profile-bound loader the runner itself uses."""
+
+    from .search.child_replay import SeedSnapshotError, load_seed_snapshot  # noqa: PLC0415
+
+    root = Path(store_root)
+    if not seed_snapshot_id:
+        return SeedSnapshotState(
+            "not_recorded",
+            "no seed snapshot id is recorded yet (run the authorized seed job, then refresh)",
+        )
+    if not _is_hex64(seed_snapshot_id) or not _has_envelope_or_corrupt(
+        root, "seed_snapshots", seed_snapshot_id
+    ):
+        return SeedSnapshotState(
+            "missing",
+            f"no seed snapshot {str(seed_snapshot_id)[:12]}… exists in this store "
+            "(exact-id load)",
+            seed_snapshot_id=seed_snapshot_id,
+        )
+    try:
+        envelope, _chain_start = load_seed_snapshot(
+            root, seed_snapshot_id, expected_section_config_hash=section_hash
+        )
+    except SeedSnapshotError as error:
+        return SeedSnapshotState(
+            "profile_mismatch", str(error), seed_snapshot_id=seed_snapshot_id
+        )
+    except Exception as error:  # noqa: BLE001
+        return SeedSnapshotState(
+            "corrupt",
+            f"seed snapshot {seed_snapshot_id[:12]}… failed verification "
+            f"({type(error).__name__})",
+            seed_snapshot_id=seed_snapshot_id,
+        )
+    payload = envelope.payload
+    facts = dict(
+        seed_snapshot_id=envelope.seed_snapshot_id,
+        seed_hash=payload.seed_hash,
+        first_replay_day=payload.first_replay_day,
+        snapshot_through_day=payload.snapshot_through_day,
+        chain_date_count=int(payload.chain_date_count),
+        profile_name=payload.profile_name,
+    )
+    if payload.profile_name != profile_name:
+        return SeedSnapshotState(
+            "profile_mismatch",
+            f"the seed is bound to profile {payload.profile_name!r}, not {profile_name!r}",
+            **facts,
+        )
+    if payload.first_replay_day != first_replay_day:
+        return SeedSnapshotState(
+            "discontinuous",
+            f"the seed's first replay day {payload.first_replay_day} does not continue into "
+            f"the selected window starting {first_replay_day}",
+            **facts,
+        )
+    return SeedSnapshotState(
+        "verified",
+        "verified, profile-bound seed snapshot continuous with the selected window",
+        **facts,
+    )
+
+
+@dataclass(frozen=True)
+class SeedReceiptState:
+    status: str
+    detail: str
+    run_id: str | None = None
+    seed_snapshot_id: str | None = None
+    authorization_id: str | None = None
+    provenance: str | None = None
+    chain_replay_day_count: int = 0
+    logical_trading_day_count: int = 0
+    first_intended_verification_day: str | None = None
+    verification_evidence_footprint_days: int | None = None
+    access_audit_sha256: str | None = None
+
+
+def seed_receipt_state(
+    store_root: Path, run_id: str | None, *, expected_seed_snapshot_id: str | None = None
+) -> SeedReceiptState:
+    """Typed state of the recorded seed-production run receipt (exact id)."""
+
+    from .search.seed_production import (  # noqa: PLC0415
+        SEED_PRODUCTION_RUN_STORE,
+        SeedProductionRunEnvelope,
+    )
+
+    root = Path(store_root)
+    if not run_id:
+        return SeedReceiptState(
+            "not_recorded", "no seed-production run receipt id is recorded yet"
+        )
+    if not _is_hex64(run_id) or not _has_envelope_or_corrupt(
+        root, SEED_PRODUCTION_RUN_STORE, run_id
+    ):
+        return SeedReceiptState(
+            "missing",
+            f"no seed-production run receipt {str(run_id)[:12]}… exists in this store",
+            run_id=run_id,
+        )
+    try:
+        envelope = load_verified_envelope(
+            root, SEED_PRODUCTION_RUN_STORE, run_id, SeedProductionRunEnvelope
+        )
+    except Exception as error:  # noqa: BLE001
+        return SeedReceiptState(
+            "corrupt",
+            f"seed-production run receipt {run_id[:12]}… failed verification "
+            f"({type(error).__name__})",
+            run_id=run_id,
+        )
+    payload = envelope.payload
+    facts = dict(
+        run_id=envelope.seed_production_run_id,
+        seed_snapshot_id=payload.seed_snapshot_id,
+        authorization_id=payload.seed_production_authorization_id,
+        provenance=str(payload.provenance),
+        chain_replay_day_count=int(payload.chain_replay_day_count),
+        logical_trading_day_count=int(payload.logical_trading_day_count),
+        first_intended_verification_day=payload.first_intended_verification_day,
+        verification_evidence_footprint_days=int(payload.verification_evidence_footprint_days),
+        access_audit_sha256=payload.access_audit_sha256,
+    )
+    if (
+        expected_seed_snapshot_id is not None
+        and payload.seed_snapshot_id != expected_seed_snapshot_id
+    ):
+        return SeedReceiptState(
+            "mismatch", "the run receipt names another seed snapshot", **facts
+        )
+    return SeedReceiptState(
+        "verified",
+        f"verified receipt: {payload.chain_replay_day_count} chain days replayed, "
+        f"{payload.verification_evidence_footprint_days} verification-evidence days "
+        "(a separately authorized preparation action)",
+        **facts,
+    )
+
+
+# ── the owner's signed verification authorization ────────────────────────────
+
+
+@dataclass(frozen=True)
+class SignedRefState:
+    status: str
+    detail: str
+    source_path: str
+    ref: Any = None
+
+
+def load_signed_verification_ref(
+    path: Path,
+    *,
+    store_root: Path,
+    expected_seed_snapshot_id: str,
+    expected_allowlist_hash: str,
+) -> SignedRefState:
+    """The owner's COMPLETED ``VerificationAuthorizationRef`` read from the
+    named file (a bare ref, or a packet wrapping ``verification_authorization_ref``)
+    and validated TYPED against this store's verified namespace and current
+    head, the verified seed and the selected window. Never persisted here."""
+
+    from .search.authorization import (  # noqa: PLC0415
+        AuthorizationError,
+        VerificationAuthorizationRef,
+        assert_authorization_bound_to_store,
+    )
+    from .search.seed_production import OWNER_PLACEHOLDER  # noqa: PLC0415
+
+    source = Path(path)
+    if not source.exists():
+        return SignedRefState(
+            "file_missing",
+            "no completed verification authorization file exists at the named location",
+            str(source),
+        )
+    try:
+        document = json.loads(source.read_text(encoding="utf-8"))
+        if isinstance(document, dict) and "verification_authorization_ref" in document:
+            document = document["verification_authorization_ref"]
+        if not isinstance(document, dict):
+            raise ValueError("the file is not a reference object")
+    except Exception as error:  # noqa: BLE001
+        return SignedRefState(
+            "malformed",
+            f"the file could not be read as a reference ({type(error).__name__})",
+            str(source),
+        )
+    if any(
+        isinstance(value, str) and OWNER_PLACEHOLDER in value for value in document.values()
+    ):
+        return SignedRefState(
+            "unsigned",
+            "the reference still carries an owner placeholder (approved_by / approved_at / "
+            "content_hash) — only the owner completes it, outside this workspace",
+            str(source),
+        )
+    try:
+        ref = VerificationAuthorizationRef.model_validate(
+            {k: v for k, v in document.items() if k in VerificationAuthorizationRef.model_fields}
+        )
+    except Exception as error:  # noqa: BLE001
+        return SignedRefState(
+            "malformed",
+            f"the reference failed contract validation ({type(error).__name__})",
+            str(source),
+        )
+    namespace = resolve_store_namespace(Path(store_root), expected_class="test")
+    if namespace.status != "verified":
+        return SignedRefState(
+            "store_unmarked" if namespace.status == "unmarked" else "wrong_namespace",
+            namespace.detail,
+            str(source),
+            ref=ref,
+        )
+    if ref.store_namespace_id != namespace.store_namespace_id:
+        return SignedRefState(
+            "wrong_namespace",
+            "the reference authorizes another store namespace",
+            str(source),
+            ref=ref,
+        )
+    try:
+        assert_authorization_bound_to_store(
+            Path(store_root),
+            store_namespace_id=ref.store_namespace_id,
+            supersession_head_witness=ref.supersession_head_witness,
+            expected_namespace_class="test",
+        )
+    except AuthorizationError as error:
+        reason = str(getattr(error, "reason", "") or "")
+        return SignedRefState(
+            _HEAD_REASON_TO_STATUS.get(reason, "wrong_head"), str(error), str(source), ref=ref
+        )
+    if ref.seed_snapshot_id != expected_seed_snapshot_id:
+        return SignedRefState(
+            "seed_mismatch",
+            "the reference names a different seed snapshot than the verified seed",
+            str(source),
+            ref=ref,
+        )
+    if ref.approved_allowlist_hash != expected_allowlist_hash:
+        return SignedRefState(
+            "allowlist_mismatch",
+            "the reference's approved allowlist hash is not the selected window's hash "
+            "(one canonical allowlist; never rotated)",
+            str(source),
+            ref=ref,
+        )
+    return SignedRefState(
+        "valid",
+        f"completed reference by {ref.approved_by} at {ref.approved_at}, bound to this "
+        "store's verified namespace and current head, the verified seed and the selected "
+        "window",
+        str(source),
+        ref=ref,
+    )
+
+
+# ── run registration, preflight, monitor ─────────────────────────────────────
+
+
+def register_verification_run(
+    store_root: Path,
+    *,
+    ref,
+    pipeline_semantic_id: str,
+    allowlist: Sequence[str],
+    seed_snapshot_id: str,
+    baseline_profile_name: str,
+    baseline_section_config_hash: str,
+    coverage_matrix_artifact_id: str,
+    display_name: str,
+):
+    """Persist (save-or-reuse) the ``VerificationRunEnvelope`` binding the
+    owner's signed reference to the frozen pipeline spec — VALIDATED through
+    the backend's fail-before-path check first (a mismatch persists nothing).
+    Catalogued by a display-name event so the typed readiness discovers it.
+    Nothing here launches; ``register_program_allowlist`` is never called."""
+
+    from .data_access import allowlist_sha256  # noqa: PLC0415
+    from .search.catalog import append_catalog_event  # noqa: PLC0415
+    from .search.store import save_or_reuse_envelope  # noqa: PLC0415
+    from .search.verification import (  # noqa: PLC0415
+        VerificationRunEnvelope,
+        VerificationRunPayload,
+        validate_verification_run,
+    )
+
+    root = Path(store_root)
+    days = tuple(str(day) for day in allowlist)
+    envelope = VerificationRunEnvelope.from_payload(
+        VerificationRunPayload(
+            pipeline_semantic_id=pipeline_semantic_id,
+            verification_authorization=ref,
+            allowlist=days,
+            allowlist_hash=allowlist_sha256(days),
+            seed_snapshot_id=seed_snapshot_id,
+            baseline_profile_id=baseline_profile_name,
+            baseline_section_config_hash=baseline_section_config_hash,
+            coverage_matrix_artifact_id=coverage_matrix_artifact_id,
+        )
+    )
+    validate_verification_run(
+        envelope,
+        expected_pipeline_semantic_id=pipeline_semantic_id,
+        expected_baseline_profile_id=baseline_profile_name,
+        expected_baseline_section_config_hash=baseline_section_config_hash,
+        expected_seed_snapshot_id=ref.seed_snapshot_id,
+        authorization=ref,
+        store_root=root,
+    )
+    stored, _reused = save_or_reuse_envelope(root, "verification_runs", envelope)
+    if stored.verification_run_id not in catalog_annotations(root):
+        append_catalog_event(
+            root,
+            kind="display_name",
+            artifact_id=stored.verification_run_id,
+            payload={"display_name": display_name},
+        )
+    return stored
+
+
+@dataclass(frozen=True)
+class PreflightState:
+    status: str  # passed | refused | unavailable
+    reason: str | None
+    detail: str
+    record: Any = None
+
+
+def bounded_preflight_state(
+    store_root: Path,
+    repo_root: Path,
+    run_envelope,
+    *,
+    section_hash: str,
+    authorization=None,
+    logical_day_refs=None,
+) -> PreflightState:
+    """The §6.1 preflight as a typed read model: every check runs BEFORE any
+    source path exists; a refusal keeps the backend's reason."""
+
+    from .search.bounded_verification import (  # noqa: PLC0415
+        BoundedVerificationRefusalError,
+        preflight_bounded_verification,
+    )
+
+    payload = run_envelope.payload
+    try:
+        record = preflight_bounded_verification(
+            store_root=Path(store_root),
+            repo_root=Path(repo_root),
+            verification_run=run_envelope,
+            authorization=(
+                authorization
+                if authorization is not None
+                else payload.verification_authorization
+            ),
+            pipeline_semantic_id=payload.pipeline_semantic_id,
+            baseline_profile_id=payload.baseline_profile_id,
+            baseline_section_config_hash=section_hash,
+            logical_day_refs=logical_day_refs,
+        )
+    except BoundedVerificationRefusalError as error:
+        return PreflightState("refused", error.reason, str(error))
+    except PermissionError as error:
+        return PreflightState("refused", "fail_before_path", str(error))
+    except Exception as error:  # noqa: BLE001
+        return PreflightState(
+            "unavailable", None, f"the preflight could not run ({type(error).__name__})"
+        )
+    return PreflightState(
+        "passed",
+        None,
+        f"every §6.1 check passed ({len(record.checks)} checks); no source path was "
+        "constructed",
+        record=record,
+    )
+
+
+def verification_stage_rows(state: Mapping[str, Any] | None):
+    """The monitor rows of the resolved verification plan ONLY (stages outside
+    the plan are never listed)."""
+
+    from .study_presentation import derive_pipeline_stage_rows  # noqa: PLC0415
+
+    if not state:
+        return ()
+    return tuple(row for row in derive_pipeline_stage_rows(state) if row.in_plan)
+
+
+_EVIDENCE_REPORTS: tuple[str, ...] = (
+    "R1_BASELINE_GATES.json",
+    "BOUNDED_RELEASE_CONTROL_FLOW.json",
+)
+
+
+def verification_evidence_summary(evidence_dir: Path) -> dict[str, Any]:
+    """The ``passed`` flags and gate ids of the evidence reports the bounded
+    runner writes (``R1_BASELINE_GATES.json``, ``BOUNDED_RELEASE_CONTROL_FLOW.json``).
+    A missing folder is ``present = False``; an unreadable report is reported
+    as ``passed = None`` (never assumed)."""
+
+    root = Path(evidence_dir)
+    summary: dict[str, Any] = {"present": root.is_dir(), "reports": {}}
+    if not summary["present"]:
+        return summary
+    for name in _EVIDENCE_REPORTS:
+        path = root / name
+        if not path.exists():
+            continue
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+            payload = document.get("payload", document) if isinstance(document, dict) else {}
+            passed = payload.get("passed") if isinstance(payload, Mapping) else None
+            gate_ids: list[str] = []
+            for key in ("first_attempt_gates", "second_attempt_gates"):
+                gates = payload.get(key) if isinstance(payload, Mapping) else None
+                if isinstance(gates, Mapping):
+                    results = gates.get("results")
+                    if isinstance(results, Mapping):
+                        gate_ids.extend(str(gate) for gate in results)
+            components = payload.get("components") if isinstance(payload, Mapping) else None
+            if isinstance(components, list):
+                gate_ids.extend(
+                    str(item.get("component")) for item in components if isinstance(item, Mapping)
+                )
+            summary["reports"][name] = {
+                "passed": passed if isinstance(passed, bool) else None,
+                "gate_ids": tuple(dict.fromkeys(gate_ids)),
+            }
+        except Exception as error:  # noqa: BLE001 — reported, never assumed
+            summary["reports"][name] = {
+                "passed": None,
+                "error": type(error).__name__,
+                "gate_ids": (),
+            }
+    return summary

@@ -417,3 +417,158 @@ def test_history_separates_sections_and_keeps_frozen_immutable(
     assert "mutable annotations only" in text
     assert "verified reuse" in text  # duplicate semantics shown as reuse
     assert "Legacy" in text and "no rerun" in text.lower()
+
+
+# ── UI-2 History lifecycle (owner Q2; plan §7 History) ──────────────────────
+
+
+def _history_at(monkeypatch, completed_search, tmp_path, **session):
+
+    state_root = tmp_path / "hist_state"
+    source = completed_search["state_root"] / completed_search["search_id"]
+    target = state_root / completed_search["search_id"]
+    if not target.exists():
+        target.mkdir(parents=True)
+        (target / "search_state.json").write_text(
+            (source / "search_state.json").read_text(encoding="utf-8"), encoding="utf-8"
+        )
+    fixture = dict(completed_search, state_root=state_root, draft_root=tmp_path / "drafts")
+    return _run(monkeypatch, fixture, app=_history_app, **session), fixture
+
+
+def _history_button(at, label: str):
+    return next(b for b in at.button if b.label == label)
+
+
+def test_history_archive_restore_and_typed_delete(monkeypatch, completed_search, tmp_path) -> None:
+    """Owner Q2: Archive is the reversible action (hidden by default, restorable,
+    never a delete); permanent deletion exists only in the archived view, only
+    for never-frozen drafts, only with the exact typed name."""
+
+    from alpha_lab.agents.data_infra.ifvg.study_drafts import (
+        list_drafts,
+        load_draft,
+        mark_frozen,
+        new_draft,
+        save_draft,
+    )
+
+    draft_root = tmp_path / "drafts"
+    mutable = new_draft("fsm_config_search", display_name="Archive me")
+    mutable.steps["objective"] = {"question_id": "find_robust_fsm"}
+    save_draft(draft_root, mutable)
+    frozen = new_draft("fsm_config_search", display_name="History frozen")
+    save_draft(draft_root, frozen)
+    mark_frozen(draft_root, frozen, search_id=completed_search["search_id"])
+    at, _fixture = _history_at(monkeypatch, completed_search, tmp_path)
+    labels = [b.label for b in at.button]
+    assert "Archive" in labels and "Discard" not in labels
+    assert not any("delete" in label.lower() for label in labels)  # not in the default view
+    _history_button(at, "Archive").click().run()
+    assert not at.exception
+    stored = load_draft(draft_root, mutable.draft_id)
+    assert stored.archived is True and stored.steps["objective"]["question_id"] == "find_robust_fsm"
+    assert "Archive me" not in _text(at)  # hidden from the default listing
+    assert [d.draft_id for d in list_drafts(draft_root)] == [frozen.draft_id]  # provenance only
+    # the archived view: Restore, and the typed permanent delete for never-frozen drafts
+    at.checkbox(key=f"{results._RES}hist_show_archived").check().run()
+    assert not at.exception
+    assert "Archived drafts" in " ".join(str(h.value) for h in at.subheader)
+    assert "Archive me" in _text(at)
+    delete = _history_button(at, "Delete draft permanently")
+    assert delete.disabled  # nothing typed yet
+    typed = at.text_input(key=f"{results._RES}del_name_{mutable.draft_id[:8]}")
+    typed.set_value("archive me").run()  # not exact
+    assert _history_button(at, "Delete draft permanently").disabled
+    assert (draft_root / mutable.draft_id / "draft.json").exists()
+    _history_button(at, "Restore").click().run()
+    assert not at.exception
+    assert load_draft(draft_root, mutable.draft_id).archived is False
+    assert "Archive me" in _text(at)
+    # archive again and delete with the exact name
+    _history_button(at, "Archive").click().run()
+    typed = at.text_input(key=f"{results._RES}del_name_{mutable.draft_id[:8]}")
+    typed.set_value("Archive me").run()
+    delete = _history_button(at, "Delete draft permanently")
+    assert not delete.disabled
+    delete.click().run()
+    assert not at.exception
+    assert not (draft_root / mutable.draft_id).exists()
+    # frozen provenance is never offered for deletion anywhere
+    assert load_draft(draft_root, frozen.draft_id).status == "frozen"
+    text = _text(at)
+    assert "never deletable" in text.lower() or "no delete or overwrite control" in text
+
+
+def test_history_bulk_archives_empty_untitled_drafts_and_deletes_nothing(
+    monkeypatch, completed_search, tmp_path
+) -> None:
+    from alpha_lab.agents.data_infra.ifvg.study_drafts import list_drafts, new_draft, save_draft
+
+    draft_root = tmp_path / "drafts"
+    empties = [new_draft("fsm_config_search"), new_draft("prop_benchmark")]
+    for draft in empties:
+        save_draft(draft_root, draft)
+    named = new_draft("fsm_config_search", display_name="Keep me")
+    save_draft(draft_root, named)
+    at, _fixture = _history_at(monkeypatch, completed_search, tmp_path)
+    button = _history_button(at, "Archive empty untitled drafts (2)")
+    button.click().run()
+    assert not at.exception
+    live = {d.draft_id for d in list_drafts(draft_root)}
+    assert live == {named.draft_id}
+    everything = {d.draft_id for d in list_drafts(draft_root, include_archived=True)}
+    assert everything == live | {d.draft_id for d in empties}
+    assert all((draft_root / d.draft_id / "draft.json").exists() for d in empties)
+    assert not any(b.label.startswith("Archive empty untitled drafts") for b in at.button)
+
+
+def test_history_filters_are_read_only_and_runs_carry_the_archive_flag(
+    monkeypatch, completed_search, tmp_path
+) -> None:
+    """Plan §5.1 / §7: History's purpose / store filters are READ-ONLY (they
+    narrow the listing and never change where a charter freezes); immutable
+    runs gain the catalog archive flag (never a delete)."""
+
+    from alpha_lab.agents.data_infra.ifvg.study_drafts import new_draft, save_draft
+    from alpha_lab.agents.data_infra.ifvg.study_providers import catalog_annotations
+
+    draft_root = tmp_path / "drafts"
+    research = new_draft("single_configuration", display_name="Research draft")
+    research.purpose_annotation = {"purpose": "development_research"}
+    save_draft(draft_root, research)
+    verification = new_draft("single_configuration", display_name="Verification draft")
+    verification.purpose_annotation = {"purpose": "implementation_verification"}
+    save_draft(draft_root, verification)
+    at, fixture = _history_at(monkeypatch, completed_search, tmp_path)
+    text = _text(at)
+    assert "Research draft" in text and "Verification draft" in text
+    purpose_filter = at.selectbox(key=f"{results._RES}hist_purpose_filter")
+    assert "read-only" in (purpose_filter.help or "").lower()
+    assert not any("namespace" in (radio.label or "").lower() for radio in at.radio)
+    assert completed_search["search_id"] in " ".join(str(c.value) for c in at.code)
+    # a fresh listing under each read-only filter (the filters narrow; nothing else)
+    filtered, _fixture = _history_at(
+        monkeypatch,
+        completed_search,
+        tmp_path,
+        **{f"{results._RES}hist_purpose_filter": "Implementation Verification"},
+    )
+    text = _text(filtered)
+    assert "Verification draft" in text and "Research draft" not in text
+    by_store, _fixture = _history_at(
+        monkeypatch,
+        completed_search,
+        tmp_path,
+        **{f"{results._RES}hist_store_filter": "research"},
+    )
+    # the fixture store is unmarked: its run is not a `research` namespace run
+    assert completed_search["search_id"] not in " ".join(str(c.value) for c in by_store.code)
+    # the archive flag on an immutable run (a catalog annotation, never a delete)
+    _history_button(at, "Archive run (catalog flag)").click().run()
+    assert not at.exception
+    assert catalog_annotations(fixture["store_root"])[completed_search["search_id"]]["archived"]
+    headings = [str(h.value) for h in at.subheader]
+    assert "Superseded Studies" in headings
+    _history_button(at, "Restore run").click().run()
+    assert not catalog_annotations(fixture["store_root"])[completed_search["search_id"]]["archived"]

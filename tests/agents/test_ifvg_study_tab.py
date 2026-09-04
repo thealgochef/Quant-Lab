@@ -18,7 +18,10 @@ if str(_REPO / "scripts") not in sys.path:
 
 import ifvg_study_tab as study_tab  # noqa: E402
 
-from alpha_lab.agents.data_infra.ifvg.study_drafts import load_draft  # noqa: E402
+from alpha_lab.agents.data_infra.ifvg.study_drafts import (  # noqa: E402
+    DraftNotFoundError,
+    load_draft,
+)
 
 _ROUTES = [
     "Start",
@@ -228,14 +231,20 @@ def test_start_cards_derive_purpose_namespace_and_create_annotated_drafts(
     compare.click().run()
     assert not at.exception
     draft_id = at.session_state[f"{study_tab.STATE_PREFIX}draft_id"]
-    draft = load_draft(tmp_path / "drafts", draft_id)
-    assert draft.mode_id == "single_configuration"
-    assert draft.purpose_annotation["purpose"] == "development_research"
-    assert draft.purpose_annotation["derivation"] == "card_selected"
-    assert draft.steps["objective"]["question_id"] == "compare_one_with_baseline"
-    assert draft.steps["validation"]["run_scope"] == "full_authorized_development"
-    assert draft.steps["validation"]["evidence_class"] == "real"
-    assert draft.steps["validation"]["worker_limit"] == 1
+    # UI-2 (owner Q2): the card creates a SESSION draft — no file is written
+    assert not (tmp_path / "drafts" / draft_id).exists()
+    with pytest.raises(DraftNotFoundError):
+        load_draft(tmp_path / "drafts", draft_id)
+    draft = at.session_state[study_tab.SESSION_DRAFT_KEY]
+    assert draft["draft_id"] == draft_id
+    assert draft["mode_id"] == "single_configuration"
+    assert draft["purpose_annotation"]["purpose"] == "development_research"
+    assert draft["purpose_annotation"]["derivation"] == "card_selected"
+    assert draft["steps"]["objective"]["question_id"] == "compare_one_with_baseline"
+    assert draft["steps"]["validation"]["run_scope"] == "full_authorized_development"
+    assert draft["steps"]["validation"]["evidence_class"] == "real"
+    assert draft["steps"]["validation"]["worker_limit"] == 1
+    assert draft["display_name"].startswith("Compare one configuration with the baseline — 2026-")
     assert at.session_state[study_tab.ROUTE_KEY] == "New Study"
 
 
@@ -265,10 +274,12 @@ def test_verify_implementation_renders_typed_readiness(monkeypatch, tmp_path) ->
     )
     next(b for b in at.button if b.label == "Start a verification draft").click().run()
     assert not at.exception
-    draft = load_draft(tmp_path / "drafts", at.session_state[f"{study_tab.STATE_PREFIX}draft_id"])
-    assert draft.purpose_annotation["purpose"] == "implementation_verification"
-    assert draft.steps["validation"]["run_scope"] == "verification_5d"
-    assert draft.steps["validation"]["evidence_class"] == "synthetic_fixture"
+    draft_id = at.session_state[f"{study_tab.STATE_PREFIX}draft_id"]
+    assert not (tmp_path / "drafts" / draft_id).exists()  # session-only (owner Q2)
+    draft = at.session_state[study_tab.SESSION_DRAFT_KEY]
+    assert draft["purpose_annotation"]["purpose"] == "implementation_verification"
+    assert draft["steps"]["validation"]["run_scope"] == "verification_5d"
+    assert draft["steps"]["validation"]["evidence_class"] == "synthetic_fixture"
 
 
 def test_top_level_shell_order_is_unchanged(monkeypatch, tmp_path) -> None:

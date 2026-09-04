@@ -361,6 +361,14 @@ _EMPTY_STATE: Mapping[EmptyStateKey, UiStatus] = MappingProxyType(
         EmptyStateKey.AUTHORIZATION_NOT_READY: UiStatus.BLOCKED,
         EmptyStateKey.STORE_NAMESPACE_UNVERIFIED: UiStatus.BLOCKED,
         EmptyStateKey.SEED_PRODUCTION_NOT_AUTHORIZED: UiStatus.BLOCKED,
+        # UI-2 (plan §6.7 / §9 Phase 2): the Verification Center and draft states
+        EmptyStateKey.SHORTLIST_UNAVAILABLE: UiStatus.UNAVAILABLE,
+        EmptyStateKey.WINDOW_NOT_SELECTED: UiStatus.NOT_SELECTED,
+        EmptyStateKey.SEED_MISSING: UiStatus.BLOCKED,
+        EmptyStateKey.FINAL_AUTHORIZATION_UNSIGNED: UiStatus.BLOCKED,
+        EmptyStateKey.PREFLIGHT_REFUSED: UiStatus.BLOCKED,
+        EmptyStateKey.DRAFT_ARCHIVED: UiStatus.INFORMATIONAL,
+        EmptyStateKey.DRAFT_SESSION_ONLY: UiStatus.INFORMATIONAL,
     }
 )
 

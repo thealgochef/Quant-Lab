@@ -153,6 +153,17 @@ class EmptyStateKey(StrEnum):
     AUTHORIZATION_NOT_READY = "authorization_not_ready"
     STORE_NAMESPACE_UNVERIFIED = "store_namespace_unverified"
     SEED_PRODUCTION_NOT_AUTHORIZED = "seed_production_not_authorized"
+    #: UI-2 (plan §6.7 / §9 Phase 2): the Verification Center's typed states
+    #: (shortlist evidence, the owner's provisional window, the verified seed,
+    #: the signed final authorization, the bounded-run preflight) and the
+    #: draft lifecycle states (session-only, archived) — owner Q2.
+    SHORTLIST_UNAVAILABLE = "shortlist_unavailable"
+    WINDOW_NOT_SELECTED = "window_not_selected"
+    SEED_MISSING = "seed_missing"
+    FINAL_AUTHORIZATION_UNSIGNED = "final_authorization_unsigned"
+    PREFLIGHT_REFUSED = "preflight_refused"
+    DRAFT_ARCHIVED = "draft_archived"
+    DRAFT_SESSION_ONLY = "draft_session_only"
 
 
 class EmptyStatePresentation(FrozenContract):
@@ -783,6 +794,102 @@ EMPTY_STATE_PRESENTATIONS: Mapping[str, EmptyStatePresentation] = MappingProxyTy
                 "Prepare the seed-production packet, obtain the owner's "
                 "signature, and refresh."
             ),
+        ),
+        "shortlist_unavailable": EmptyStatePresentation(
+            key=EmptyStateKey.SHORTLIST_UNAVAILABLE,
+            heading="Verification window shortlist unavailable",
+            explanation=(
+                "The ranked logical trading-day shortlist (rebuilt from "
+                "already-authorized evidence only) is not present or failed "
+                "verification, so no window can be reviewed or selected. "
+                "Nothing here reads raw source data or registers an allowlist."
+            ),
+            owning_gate="logical_window_shortlist_v1 (HARDENING-BACKEND §5.1)",
+            next_action=(
+                "Rebuild the shortlist with scripts/ifvg_verification_window_shortlist.py "
+                "and refresh."
+            ),
+        ),
+        "window_not_selected": EmptyStatePresentation(
+            key=EmptyStateKey.WINDOW_NOT_SELECTED,
+            heading="No provisional verification window selected",
+            explanation=(
+                "The owner selects one eligible window of consecutive logical "
+                "trading days from the shortlist. Until then no seed-production "
+                "packet, seed job or final authorization packet can be prepared. "
+                "The selection is provisional and registers nothing."
+            ),
+            owning_gate="owner window selection (HARDENING-BACKEND §5.4 step A)",
+            next_action=(
+                "Select an eligible window in the Fixture step and record it as the "
+                "provisional window."
+            ),
+        ),
+        "seed_missing": EmptyStatePresentation(
+            key=EmptyStateKey.SEED_MISSING,
+            heading="No verified profile-matching seed",
+            explanation=(
+                "The real verification slice starts from a verified seed snapshot "
+                "produced by the separately authorized seed-production chain "
+                "(a preparation action with zero verification-evidence footprint). "
+                "No verified seed continuous with the selected window exists, so the "
+                "final verification packet cannot be built."
+            ),
+            owning_gate="seed snapshot store (exact-id, profile-bound load)",
+            next_action=(
+                "Run the authorized seed-production job from its exact command, then "
+                "refresh so the receipt is picked up and the seed verified."
+            ),
+        ),
+        "final_authorization_unsigned": EmptyStatePresentation(
+            key=EmptyStateKey.FINAL_AUTHORIZATION_UNSIGNED,
+            heading="Final verification authorization not signed",
+            explanation=(
+                "The unsigned packet carries owner placeholders that fail "
+                "validation; only the owner completes the VerificationAuthorizationRef "
+                "outside this workspace. Until a completed reference validates against "
+                "this store's namespace, current supersession head, seed and window, "
+                "the verification charter cannot freeze and no run can be registered."
+            ),
+            owning_gate="VerificationAuthorizationRef (owner decisions 21 / R-5)",
+            next_action=(
+                "Complete the packet's owner fields in the named file, then validate it "
+                "here."
+            ),
+        ),
+        "preflight_refused": EmptyStatePresentation(
+            key=EmptyStateKey.PREFLIGHT_REFUSED,
+            heading="Bounded-run preflight refused",
+            explanation=(
+                "One of the typed §6.1 checks refused before any source path was "
+                "constructed (namespace, head witness, real authorization, logical "
+                "window, partition mapping, canonical allowlist, seed). The exact "
+                "reason is shown; no run command is offered while it holds."
+            ),
+            owning_gate="bounded_verification_preflight_v1 (HARDENING-BACKEND §6.1)",
+            next_action="Resolve the named refusal reason, then run the preflight again.",
+        ),
+        "draft_archived": EmptyStatePresentation(
+            key=EmptyStateKey.DRAFT_ARCHIVED,
+            heading="This draft is archived",
+            explanation=(
+                "Archived drafts are hidden from the default History listing and "
+                "cannot be edited or frozen; nothing was deleted and every field is "
+                "kept."
+            ),
+            owning_gate="draft lifecycle (owner Q2)",
+            next_action="Restore it from History's archived view to continue editing.",
+        ),
+        "draft_session_only": EmptyStatePresentation(
+            key=EmptyStateKey.DRAFT_SESSION_ONLY,
+            heading="Draft not saved yet",
+            explanation=(
+                "This draft exists only in the current session — no file has been "
+                "written. It is persisted on the first explicit Save Draft or the "
+                "first valid Next, and autosaved afterwards."
+            ),
+            owning_gate="draft lifecycle (owner Q2)",
+            next_action="Name the draft and Save Draft (or complete the step and press Next).",
         ),
         "regime_algorithm_planned": EmptyStatePresentation(
             key=EmptyStateKey.CAPABILITY_PLANNED,

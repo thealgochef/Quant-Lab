@@ -613,6 +613,19 @@ def validate_prop_step(fields: Mapping[str, Any]) -> dict[str, str]:
             "unverified/blocked contract(s) cannot launch: "
             f"{sorted(blocked)}"
         )
+    # UI-2 (plan §7 / F-04): a SELECTED prop objective requires at least one
+    # verified (launchable) contract — the step blocks with the contract
+    # workflow action; the objective is never rewritten or hidden
+    verified_selected = [contract for contract in selected if contract in launchable]
+    if fields.get("prop_objective_selected") and not verified_selected:
+        objectives = ", ".join(fields.get("prop_objectives") or ()) or "the selected prop objective"
+        errors.setdefault(
+            "selected_contract_ids",
+            f"{objectives} require(s) at least one first_party_verified firm contract — "
+            "the objective is never rewritten; compile first-party contract evidence and "
+            "complete the owner review (owner decisions 5/6), or choose a strategy-only "
+            "objective on the Goal step",
+        )
     return errors
 
 

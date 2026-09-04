@@ -85,3 +85,35 @@ def test_export_csv(tmp_path: Path) -> None:
     payload = export_csv(repo_root=tmp_path)
     assert "candidate_id" in payload.splitlines()[0]
     assert "cand-1" in payload
+
+
+# ── UI-2 (owner Q3): the additive ``not_applicable`` key; v1 rows stay valid ──
+
+
+def test_not_applicable_is_accepted_additively_and_v1_rows_stay_valid(tmp_path: Path) -> None:
+    from alpha_lab.agents.data_infra.ifvg.visual_review_store import REVIEW_VERDICTS
+
+    assert REVIEW_VERDICTS == (
+        "correct",
+        "incorrect",
+        "questionable",
+        "insufficient_evidence",
+        "not_applicable",
+    )
+    # existing v1 rows (the four original keys) append and list unchanged
+    for verdict in ("correct", "incorrect", "questionable", "insufficient_evidence"):
+        _append(tmp_path, candidate_id=f"cand-{verdict}", verdicts={"overall_verdict": verdict})
+    record = _append(
+        tmp_path,
+        candidate_id="cand-na",
+        verdicts={"overall_verdict": "not_applicable", "entry_verdict": "not_applicable"},
+    )
+    assert record["overall_verdict"] == "not_applicable"
+    assert record["entry_verdict"] == "not_applicable"
+    assert record["schema"] == "ifvg_visual_review_v1"  # no v2 schema
+    frame = list_reviews(repo_root=tmp_path)
+    assert len(frame) == 5
+    assert set(frame["overall_verdict"]) == set(REVIEW_VERDICTS)
+    # the UI-only "unreviewed" sentinel is never a ledger value
+    with pytest.raises(VisualReviewError, match="unknown verdict value"):
+        _append(tmp_path, verdicts={"overall_verdict": "unreviewed"})

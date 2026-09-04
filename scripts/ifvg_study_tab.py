@@ -29,24 +29,21 @@ temporary directories.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import streamlit as st
 from ifvg_ui_common import (
+    SESSION_DRAFT_KEY,
     STATE_PREFIX,
     dev_only_badge,
-    identity_block,
-    render_empty_state,
     sanitize_error,
     sanitize_select,
-    verification_badge,
 )
 
 from alpha_lab.agents.data_infra.ifvg.presentation.run_purpose import (
-    PURPOSE_DESCRIPTIONS,
     PURPOSE_LABELS,
     PURPOSE_NAMESPACE_CLASS,
     PURPOSE_RUN_SCOPE,
@@ -60,7 +57,7 @@ from alpha_lab.agents.data_infra.ifvg.search.store import (
 from alpha_lab.agents.data_infra.ifvg.study_drafts import (
     STUDY_DRAFT_ROOT,
     new_draft,
-    save_draft,
+    proposed_draft_name,
 )
 from alpha_lab.agents.data_infra.ifvg.study_status import (
     ROUTE_LABELS,
@@ -77,6 +74,7 @@ __all__ = [
     "TASK_CARDS",
     "TaskCard",
     "start_draft_from_card",
+    "stash_session_draft",
 ]
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -88,6 +86,11 @@ STORE_ROOT_RESEARCH = _REPO_ROOT / SEARCH_STORE_ROOT
 STORE_ROOT_VERIFICATION = _REPO_ROOT / SEARCH_TEST_STORE_ROOT
 STATE_ROOT = _REPO_ROOT / "data/ifvg_search_jobs"
 DRAFT_ROOT = _REPO_ROOT / STUDY_DRAFT_ROOT
+#: UI-2: the repository root the bounded preflight locks the verification
+#: output to, and the Verification Center's mutable root (packets, the
+#: owner's completed reference, receipts, the provisional window record).
+REPO_ROOT = _REPO_ROOT
+VERIFICATION_CENTER_ROOT = _REPO_ROOT / "data/ifvg_verification_center"
 
 ROUTE_KEY = f"{STATE_PREFIX}route"
 _PENDING_ROUTE_KEY = f"{STATE_PREFIX}pending_route"
@@ -130,6 +133,8 @@ def workspace_roots(st_module=None, *, namespace_class: str | None = None) -> di
         "state_root": STATE_ROOT,
         "draft_root": DRAFT_ROOT,
         "namespace_class": default_class,
+        "repo_root": REPO_ROOT,
+        "verification_center_root": VERIFICATION_CENTER_ROOT,
     }
 
 
@@ -308,14 +313,19 @@ _AVAILABILITY_CHIPS: Mapping[str, str] = {
 
 
 def start_draft_from_card(card: TaskCard, roots: Mapping[str, Any], *, now: str | None = None):
-    """Create the draft a Start card describes: the card-selected purpose is
-    recorded immediately as the presentation annotation (owner Q1 / §5.6)
-    and the objective step is preset from the card."""
+    """Create the SESSION draft a Start card describes: the card-selected
+    purpose is recorded immediately as the presentation annotation (owner Q1 /
+    §5.6) and the objective step is preset from the card. UI-2 (owner Q2):
+    nothing is written — the wizard persists it on the first Save Draft or
+    the first valid Next; the caller stashes it under ``SESSION_DRAFT_KEY``."""
 
     if card.purpose is None or card.mode_id is None:
         raise ValueError(f"task card {card.card_id!r} does not create a draft")
     stamp = now or datetime.now(UTC).isoformat(timespec="seconds")
-    draft = new_draft(card.mode_id, display_name=f"{card.title} ({stamp[:10]})")
+    draft = new_draft(
+        card.mode_id,
+        display_name=proposed_draft_name(card.title, baseline_profile_name=None, day=stamp[:10]),
+    )
     draft.purpose_annotation = RunPurposeAnnotation(
         purpose=card.purpose,
         derivation="card_selected",
@@ -337,8 +347,15 @@ def start_draft_from_card(card: TaskCard, roots: Mapping[str, Any], *, now: str 
         ),
         "worker_limit": 1,
     }
-    save_draft(Path(roots["draft_root"]), draft)
+    draft.current_step_key = "objective"
     return draft
+
+
+def stash_session_draft(st_module, draft) -> None:
+    """Hand a session-only draft to the wizard (no file is written)."""
+
+    st_module.session_state[SESSION_DRAFT_KEY] = asdict(draft)
+    st_module.session_state[_DRAFT_KEY] = draft.draft_id
 
 
 def _card_availability(card: TaskCard, roots: Mapping[str, Any]) -> tuple[str, str]:
@@ -431,7 +448,7 @@ def _render_start(st_module, roots: Mapping[str, Any]) -> None:
                 except Exception as error:  # noqa: BLE001 — sanitized surface only
                     st_module.error(f"Draft could not be created: {sanitize_error(error)}")
                 else:
-                    st_module.session_state[_DRAFT_KEY] = draft.draft_id
+                    stash_session_draft(st_module, draft)
                     request_route(st_module, StudyWorkspaceRoute.NEW_STUDY)
                     st_module.rerun()
 
@@ -459,85 +476,16 @@ def _namespace_line(st_module, store_root: Path, purpose: RunPurpose) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Verify Implementation — the Verification Center readiness surface (UI-1
-# lands the purpose / namespace / typed-authorization readiness; the complete
-# fixture → seed → final-authorization → run flow lands with UI-2)
+# Verify Implementation — the Verification Center (UI-2: the complete
+# fixture → seed → final-authorization → review / run → monitor flow lives in
+# ``ifvg_verification_center``; this route delegates to it)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 def _render_verify_implementation(st_module, roots: Mapping[str, Any]) -> None:
-    from alpha_lab.agents.data_infra.ifvg.search.authorization import (  # noqa: PLC0415
-        derive_authorization_requirements,
-    )
-    from alpha_lab.agents.data_infra.ifvg.study_providers import (  # noqa: PLC0415
-        resolve_store_namespace,
-        verification_authorization_readiness,
-    )
+    from ifvg_verification_center import render_verification_center  # noqa: PLC0415
 
-    purpose = RunPurpose.IMPLEMENTATION_VERIFICATION
-    purpose_roots = roots_for_purpose(roots, purpose)
-    store_root = Path(purpose_roots["store_root"])
-    st_module.subheader("Verification Center")
-    verification_badge(st_module)
-    st_module.caption(PURPOSE_DESCRIPTIONS[purpose])
-    st_module.markdown("**Readiness**")
-    try:
-        namespace = resolve_store_namespace(store_root, expected_class="test")
-    except Exception as error:  # noqa: BLE001
-        st_module.error(f"Namespace lookup failed: {sanitize_error(error)}")
-        return
-    st_module.write(
-        f"1. Semantic store namespace: **{namespace.status}** — "
-        f"{sanitize_error(namespace.detail)}"
-    )
-    if namespace.store_namespace_id:
-        identity_block(st_module, "store_namespace_id", namespace.store_namespace_id)
-    try:
-        readiness = verification_authorization_readiness(store_root)
-    except Exception as error:  # noqa: BLE001
-        st_module.error(f"Readiness lookup failed: {sanitize_error(error)}")
-        return
-    st_module.write(
-        f"2. Final verification authorization (VerificationAuthorizationRef): "
-        f"**{readiness.status}** — {sanitize_error(readiness.detail)}"
-    )
-    for run_id in readiness.evidence_ids:
-        identity_block(st_module, "verification_run_id", run_id)
-    st_module.write(
-        "3. Logical trading-day fixture, seed-production authorization, seed job and "
-        "verified seed: the complete state-driven flow lands with UI-2; until then the "
-        "owner steps run through `scripts/ifvg_verification_window_shortlist.py`, "
-        "`scripts/ifvg_seed_production.py` and `scripts/ifvg_bounded_verification.py` "
-        "(exact commands and packets; nothing here signs or produces a seed)."
-    )
-    requirement_set = derive_authorization_requirements("verification_5d", (), None, (), ())
-    st_module.markdown("**Authorization requirement (real slice)**")
-    for requirement in requirement_set.payload.requirements:
-        st_module.write(f"- `{requirement.decision_key}` — {requirement.reason}")
-    if readiness.status in ("missing", "store_unmarked"):
-        render_empty_state(
-            st_module,
-            "verification_authorization_missing",
-            detail=f"{readiness.status}: {readiness.detail}",
-        )
-    elif readiness.status != "ready":
-        render_empty_state(st_module, "authorization_not_ready", detail=readiness.detail)
-    st_module.markdown("**Start a verification draft**")
-    st_module.caption(
-        "A synthetic fixture proves the machinery in the test namespace and needs "
-        "no owner authorization; the real ≤5-day slice is selectable on the draft's "
-        "Validation step only when the readiness above is ready."
-    )
-    card = next(card for card in TASK_CARDS if card.card_id == "verify_implementation")
-    if st_module.button("Start a verification draft", key=f"{_START}verify_draft"):
-        try:
-            draft = start_draft_from_card(card, roots)
-        except Exception as error:  # noqa: BLE001
-            st_module.error(f"Draft could not be created: {sanitize_error(error)}")
-        else:
-            st_module.session_state[_DRAFT_KEY] = draft.draft_id
-            request_route(st_module, StudyWorkspaceRoute.NEW_STUDY)
-            st_module.rerun()
+    render_verification_center(st_module, roots=roots)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

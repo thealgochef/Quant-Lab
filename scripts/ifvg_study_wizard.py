@@ -22,6 +22,18 @@ never rewritten; the launch resolves the registered runner BEFORE spawning
 and reports success ONLY after the worker's state file exists; the V1
 executor is sequential (no worker control); development dates follow the
 backend logical-day contract with the frozen warmup prefix.
+
+UI-2 (plan Phase 2; owner Q2): a new draft lives in the SESSION until the
+first explicit Save Draft or the first valid Next (no file is written); a
+persisted draft autosaves on every change with a visible Saved / Autosaved /
+Not-saved chip; the draft name is required before the first persistence
+(default proposal ``<goal> — <baseline> — <date>``) and an identical persisted
+draft raises a warning; the eight fixed steps are replaced by the
+GOAL-DERIVED flow (``presentation/flows.py``) — skipped steps are listed with
+their reason on the goal card and contribute nothing to satisfiability or
+charter assembly; a selected prop objective keeps the contract step in the
+flow and blocks there instead of disappearing; an archived draft cannot be
+edited until restored from History.
 """
 
 from __future__ import annotations
@@ -31,13 +43,14 @@ import subprocess
 import sys
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import streamlit as st
 from ifvg_ui_common import (
+    SESSION_DRAFT_KEY,
     STATE_PREFIX,
     cli_escape_hatch,
     dev_only_badge,
@@ -59,7 +72,15 @@ from alpha_lab.agents.data_infra.ifvg.presentation.charter_satisfiability import
     StudyGoal,
     evaluate_charter_satisfiability,
     goal_for_draft,
+    is_prop_metric,
     summarize_challenger_differences,
+)
+from alpha_lab.agents.data_infra.ifvg.presentation.flows import (
+    FLOW_STEP_TITLES,
+    StudyFlow,
+    flow_for_draft_fields,
+    prop_objective_selected,
+    restore_step_index,
 )
 from alpha_lab.agents.data_infra.ifvg.presentation.run_purpose import (
     PURPOSE_DESCRIPTIONS,
@@ -113,13 +134,16 @@ from alpha_lab.agents.data_infra.ifvg.search.verification import (
     PROPOSED_VERIFICATION_ALLOWLIST,
 )
 from alpha_lab.agents.data_infra.ifvg.study_drafts import (
+    STEP_KEYS,
     DraftError,
     StudyDraft,
     clone_draft,
+    find_duplicate_drafts,
     list_drafts,
     load_draft,
     mark_frozen,
     new_draft,
+    proposed_draft_name,
     save_draft,
 )
 from alpha_lab.agents.data_infra.ifvg.study_presentation import (
@@ -245,6 +269,90 @@ def _utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
+def _session_draft(st_module) -> StudyDraft | None:
+    """The session-only draft (owner Q2), or ``None``."""
+
+    payload = st_module.session_state.get(SESSION_DRAFT_KEY)
+    if not isinstance(payload, dict):
+        return None
+    known = set(StudyDraft.__dataclass_fields__)
+    try:
+        return StudyDraft(**{key: value for key, value in payload.items() if key in known})
+    except TypeError:
+        return None
+
+
+def _stash_session_draft(st_module, draft: StudyDraft) -> None:
+    st_module.session_state[SESSION_DRAFT_KEY] = asdict(draft)
+
+
+def _draft_is_persisted(draft_root: Path, draft: StudyDraft) -> bool:
+    return (Path(draft_root) / draft.draft_id / "draft.json").exists()
+
+
+def _persist_now(st_module, draft_root: Path, draft: StudyDraft) -> bool:
+    """The ONE persistence seam of the wizard: the draft name is required
+    before the first save; a saved draft leaves the session stash."""
+
+    if not (draft.display_name or "").strip():
+        st_module.error(
+            "Draft name required — name the draft above before it is saved (the "
+            "proposed default is '<goal> — <baseline> — <date>')."
+        )
+        return False
+    save_draft(draft_root, draft)
+    st_module.session_state.pop(SESSION_DRAFT_KEY, None)
+    return True
+
+
+def _saved_chip(st_module, state: str, draft: StudyDraft) -> None:
+    """The visible persistence state (owner Q2): Not saved yet (session only)
+    · Saved · Autosaved."""
+
+    if state == "session":
+        st_module.markdown(
+            "**● Not saved yet** — session only, no file written; Save Draft or the "
+            "first valid Next persists it, then every change autosaves."
+        )
+    elif state == "autosaved":
+        st_module.markdown(f"**✓ Autosaved** {draft.updated_at_utc}")
+    else:
+        st_module.markdown(f"**✓ Saved** {draft.updated_at_utc}")
+
+
+def _duplicate_warning(
+    st_module,
+    draft: StudyDraft,
+    draft_root: Path,
+    *,
+    step_key: str,
+    fields: Mapping[str, Any],
+) -> None:
+    """Owner Q2: an identical persisted goal / baseline draft is a warning
+    on the unsaved draft — never a block. The visible fields of the current
+    step count (the Goal step's question before it is ever saved)."""
+
+    objective = dict(fields) if step_key == "objective" else draft.step_payload("objective")
+    baseline = dict(fields) if step_key == "baseline" else draft.step_payload("baseline")
+    try:
+        duplicates = find_duplicate_drafts(
+            list_drafts(draft_root),
+            mode_id=draft.mode_id,
+            question_id=objective.get("question_id"),
+            purpose=(draft.purpose_annotation or {}).get("purpose"),
+            baseline_profile_name=baseline.get("baseline_profile_name"),
+            exclude_draft_id=draft.draft_id,
+        )
+    except Exception:  # noqa: BLE001 — a listing failure never blocks authoring
+        return
+    if duplicates:
+        names = ", ".join(f"'{other.display_name}'" for other in duplicates[:3])
+        st_module.warning(
+            f"An identical unsaved goal / baseline draft already exists: {names}. "
+            "Open it from History or keep this one — saving twice creates two drafts."
+        )
+
+
 def _draft_header(st_module, roots: Mapping[str, Any]) -> StudyDraft | None:
     draft_root = Path(roots["draft_root"])
     drafts = list_drafts(draft_root)
@@ -271,15 +379,28 @@ def _draft_header(st_module, roots: Mapping[str, Any]) -> StudyDraft | None:
             key=f"{_W}new_mode",
             help="The five study modes (FUX §6).",
         )
-        if st_module.button("Start new draft", key=f"{_W}new_draft"):
+        if st_module.button(
+            "Start new draft",
+            key=f"{_W}new_draft",
+            help=(
+                "Creates a SESSION draft — nothing is written until the first Save "
+                "Draft or the first valid Next (owner Q2)."
+            ),
+        ):
             mode = next(m for m in STUDY_MODES if m.label == mode_label)
             purpose = next(p for p in RunPurpose if PURPOSE_LABELS[p] == purpose_label)
-            draft = new_draft(mode.mode_id)
+            now = _utc_now()
+            draft = new_draft(
+                mode.mode_id,
+                display_name=proposed_draft_name(
+                    mode.label, baseline_profile_name=None, day=now[:10]
+                ),
+            )
             draft.purpose_annotation = RunPurposeAnnotation(
                 purpose=purpose,
                 derivation="card_selected",
                 owner_confirmed=True,
-                updated_at=_utc_now(),
+                updated_at=now,
             ).to_dict()
             draft.steps["validation"] = {
                 "run_scope": PURPOSE_RUN_SCOPE[purpose],
@@ -290,7 +411,8 @@ def _draft_header(st_module, roots: Mapping[str, Any]) -> StudyDraft | None:
                 ),
                 "worker_limit": 1,
             }
-            save_draft(draft_root, draft)
+            draft.current_step_key = "objective"
+            _stash_session_draft(st_module, draft)
             st_module.session_state[_DRAFT_KEY] = draft.draft_id
     with columns[1]:
         options = ["—", *open_labels]
@@ -299,6 +421,7 @@ def _draft_header(st_module, roots: Mapping[str, Any]) -> StudyDraft | None:
             "Open a saved draft", options, key=f"{_W}open_draft"
         )
         if opened != "—" and st_module.button("Open", key=f"{_W}open_btn"):
+            st_module.session_state.pop(SESSION_DRAFT_KEY, None)
             st_module.session_state[_DRAFT_KEY] = open_labels[opened].draft_id
     with columns[2]:
         st_module.caption(f"{len(drafts)} saved draft(s)")
@@ -307,15 +430,29 @@ def _draft_header(st_module, roots: Mapping[str, Any]) -> StudyDraft | None:
     if not draft_id:
         st_module.info(
             "Start a new draft (or one from Start's task cards) or open a saved "
-            "one. Drafts autosave on every successful Next and can always be "
-            "saved explicitly."
+            "one. A new draft is session-only until its first Save Draft or first "
+            "valid Next; afterwards it autosaves on every change."
         )
         return None
+    session = _session_draft(st_module)
+    if (
+        session is not None
+        and session.draft_id == draft_id
+        and not _draft_is_persisted(draft_root, session)
+    ):
+        return session
     try:
         draft = load_draft(draft_root, str(draft_id))
     except DraftError as error:
         st_module.warning(sanitize_error(error))
         st_module.session_state.pop(_DRAFT_KEY, None)
+        return None
+    if draft.archived:
+        render_empty_state(
+            st_module,
+            "draft_archived",
+            detail=f"'{draft.display_name}' archived {draft.archived_at_utc or ''}",
+        )
         return None
     if draft.status == "frozen":
         status_badge(st_module, StudyStatusKey.FROZEN)
@@ -347,6 +484,20 @@ class DraftResolution:
     roots: dict[str, Any]
     readiness: AuthorizationReadiness | None
     requirement_set: Any | None
+    #: UI-2: the goal-derived flow (``None`` while the purpose is unresolved —
+    #: every step then renders until the owner confirms the purpose)
+    flow: StudyFlow | None = None
+
+
+def _effective_payload(
+    draft: StudyDraft, flow: StudyFlow | None, step_key: str
+) -> dict[str, Any]:
+    """A step the flow SKIPS contributes nothing (a stale payload from an
+    earlier goal is ignored, never silently carried into a charter)."""
+
+    if flow is not None and not flow.includes(step_key):
+        return {}
+    return dict(draft.steps.get(step_key) or {})
 
 
 def _search_mode_for(draft: StudyDraft, axes_present: bool) -> SearchMode:
@@ -357,7 +508,7 @@ def _search_mode_for(draft: StudyDraft, axes_present: bool) -> SearchMode:
     return SearchMode.FSM_CONFIG_SEARCH if axes_present else SearchMode.SINGLE_CONFIGURATION
 
 
-def _requirement_set_for_draft(draft: StudyDraft, run_scope: str):
+def _requirement_set_for_draft(draft: StudyDraft, run_scope: str, flow: StudyFlow | None = None):
     """Mirror of ``validate_charter``'s computation path and dimensions —
     the requirement set a real bundle must reference."""
 
@@ -366,9 +517,9 @@ def _requirement_set_for_draft(draft: StudyDraft, run_scope: str):
     )
 
     prop_selected = tuple(
-        draft.step_payload("prop_contracts").get("selected_contract_ids") or ()
+        _effective_payload(draft, flow, "prop_contracts").get("selected_contract_ids") or ()
     )
-    selections = draft.step_payload("search_space").get("axis_selections") or {}
+    selections = _effective_payload(draft, flow, "search_space").get("axis_selections") or {}
     axes = sorted(str(axis) for axis in selections if tuple(selections[axis] or ()))
     search_mode = _search_mode_for(draft, bool(axes))
     path = ComputationPath(
@@ -418,7 +569,12 @@ def _resolve_for_draft(draft: StudyDraft, roots: Mapping[str, Any]) -> DraftReso
     else:
         evidence = EvidenceClass.REAL  # a synthetic fixture is confined to verification
     run_scope = PURPOSE_RUN_SCOPE[purpose]
-    requirement_set = _requirement_set_for_draft(draft, run_scope)
+    flow = flow_for_draft_fields(
+        {**draft.step_payload("objective"), "mode_id": draft.mode_id},
+        purpose=purpose,
+        evidence_class=evidence,
+    )
+    requirement_set = _requirement_set_for_draft(draft, run_scope, flow)
     namespace = resolve_store_namespace(
         store_root, expected_class=PURPOSE_NAMESPACE_CLASS[purpose]
     )
@@ -458,7 +614,9 @@ def _resolve_for_draft(draft: StudyDraft, roots: Mapping[str, Any]) -> DraftReso
         authorization_readiness=readiness.status if readiness is not None else None,
         authorization_detail=readiness.detail if readiness is not None else "",
     )
-    return DraftResolution(resolution, resolved, purpose_roots, readiness, requirement_set)
+    return DraftResolution(
+        resolution, resolved, purpose_roots, readiness, requirement_set, flow=flow
+    )
 
 
 def _purpose_card(
@@ -533,6 +691,18 @@ def _purpose_card(
         st_module.warning(
             f"Freeze is disabled — {sanitize_error(resolved.freeze_block_reason)}"
         )
+    flow = resolution.flow
+    if flow is not None:
+        st_module.markdown(
+            "**Flow** (goal-derived; plan §5.4): "
+            + " › ".join(step.title for step in flow.steps)
+        )
+        if flow.skipped:
+            st_module.markdown(
+                "**Skipped steps** (listed with their reason, never rendered empty):"
+            )
+            for step in flow.skipped:
+                st_module.markdown(f"- {FLOW_STEP_TITLES[step.key]} — {step.skip_reason}")
 
 
 def _gates_configured(stored: Mapping[str, Any] | None, defaults: Mapping[str, Any]) -> bool:
@@ -559,10 +729,13 @@ def _resolved_objectives(draft: StudyDraft) -> tuple[tuple[str, ...], tuple[str,
     return tuple(template.primary_objective), (*template.tie_breaks, "core_replay_id")
 
 
-def _challenger_selections(draft: StudyDraft) -> dict[str, tuple[str, ...]]:
-    """Selected CHALLENGER value ids per axis (the baseline value never counts)."""
+def _challenger_selections(
+    draft: StudyDraft, flow: StudyFlow | None = None
+) -> dict[str, tuple[str, ...]]:
+    """Selected CHALLENGER value ids per axis (the baseline value never counts;
+    a flow that skips the search space contributes none)."""
 
-    selections = draft.step_payload("search_space").get("axis_selections") or {}
+    selections = _effective_payload(draft, flow, "search_space").get("axis_selections") or {}
     out: dict[str, tuple[str, ...]] = {}
     for axis, values in selections.items():
         spec = SEARCH_AXIS_REGISTRY_V1.get(str(axis))
@@ -574,11 +747,11 @@ def _challenger_selections(draft: StudyDraft) -> dict[str, tuple[str, ...]]:
 
 
 def _satisfiability_for_draft(
-    draft: StudyDraft, resolved: ResolvedPurpose
+    draft: StudyDraft, resolved: ResolvedPurpose, flow: StudyFlow | None = None
 ) -> CharterSatisfiabilityReport:
     objective_step = draft.step_payload("objective")
-    prop = draft.step_payload("prop_contracts")
-    benchmarks = draft.step_payload("benchmarks")
+    prop = _effective_payload(draft, flow, "prop_contracts")
+    benchmarks = _effective_payload(draft, flow, "benchmarks")
     pareto, ties = _resolved_objectives(draft)
     try:
         goal = goal_for_draft(draft.mode_id, objective_step.get("question_id"))
@@ -592,7 +765,7 @@ def _satisfiability_for_draft(
     return evaluate_charter_satisfiability(
         goal=goal,
         search_mode=draft.mode_id,
-        axis_selections=_challenger_selections(draft),
+        axis_selections=_challenger_selections(draft, flow),
         baseline_profile_name=str(
             draft.step_payload("baseline").get("baseline_profile_name") or ""
         ),
@@ -907,13 +1080,36 @@ def _contract_cards(
         return ()
 
 
+def _prop_objectives_of(draft: StudyDraft) -> tuple[str, ...]:
+    pareto, ties = _resolved_objectives(draft)
+    return tuple(
+        metric
+        for metric in (*pareto, *ties)
+        if metric != "core_replay_id" and is_prop_metric(metric)
+    )
+
+
 def _step_prop(st_module, draft: StudyDraft, roots: Mapping[str, Any]) -> dict[str, Any]:
     payload = draft.step_payload("prop_contracts")
     mode = next((m for m in STUDY_MODES if m.mode_id == draft.mode_id), STUDY_MODES[0])
+    prop_objective = prop_objective_selected(
+        {**draft.step_payload("objective"), "mode_id": draft.mode_id}
+    )
+    prop_objectives = _prop_objectives_of(draft) if prop_objective else ()
     cards = _contract_cards(st_module, roots)
     if not cards:
         render_empty_state(st_module, "no_verified_firm_contract")
-        if not mode.requires_prop_selection:
+        if prop_objective:
+            # UI-2 (plan §7 / F-04): the objective is echoed unchanged and the
+            # path blocks here with the contract workflow — never rewritten
+            st_module.error(
+                f"The selected prop objective(s) {', '.join(prop_objectives)} require at "
+                "least one first_party_verified firm contract; the objective is never "
+                "rewritten. Compile first-party contract evidence and complete the owner "
+                "review (owner decisions 5/6), or choose a strategy-only objective on the "
+                "Goal step."
+            )
+        elif not mode.requires_prop_selection:
             st_module.caption(
                 "This study mode does not require a prop contract; continue "
                 "to Risk Policies."
@@ -922,6 +1118,8 @@ def _step_prop(st_module, draft: StudyDraft, roots: Mapping[str, Any]) -> dict[s
             "mode_id": draft.mode_id,
             "selected_contract_ids": (),
             "launchable_contract_ids": (),
+            "prop_objective_selected": prop_objective,
+            "prop_objectives": prop_objectives,
         }
     stored = set(payload.get("selected_contract_ids") or ())
     selected: list[str] = []
@@ -989,6 +1187,8 @@ def _step_prop(st_module, draft: StudyDraft, roots: Mapping[str, Any]) -> dict[s
         "mode_id": draft.mode_id,
         "selected_contract_ids": tuple(selected),
         "launchable_contract_ids": tuple(launchable),
+        "prop_objective_selected": prop_objective,
+        "prop_objectives": prop_objectives,
     }
 
 
@@ -1211,8 +1411,17 @@ def _gate_group(
     return values
 
 
-def _step_benchmarks(st_module, draft: StudyDraft) -> dict[str, Any]:
+_ROBUSTNESS_GOALS = frozenset(
+    {StudyGoal.FSM_SEARCH, StudyGoal.UNIVERSAL_PROP, StudyGoal.ADVANCED_END_TO_END}
+)
+
+
+def _step_benchmarks(
+    st_module, draft: StudyDraft, flow: StudyFlow | None = None
+) -> dict[str, Any]:
     payload = draft.step_payload("benchmarks")
+    show_prop = flow is None or flow.includes("prop_contracts")
+    show_robustness = flow is None or flow.goal in _ROBUSTNESS_GOALS
     strategy_defaults = ResolvedStrategyGateThresholds(
         min_session_stability_score=0.5
     ).model_dump()
@@ -1238,22 +1447,36 @@ def _step_benchmarks(st_module, draft: StudyDraft) -> dict[str, Any]:
         stored=payload.get("strategy_gates") or {},
         key_prefix=f"{_W}sg_",
     )
-    prop = _gate_group(
-        st_module,
-        title="2 · Prop Feasibility Gate",
-        rows=_PROP_GATE_ROWS,
-        defaults=prop_defaults,
-        stored=payload.get("prop_gates") or {},
-        key_prefix=f"{_W}pg_",
-    )
-    robustness = _gate_group(
-        st_module,
-        title="3 · Robustness Gate",
-        rows=_ROBUSTNESS_GATE_ROWS,
-        defaults=robustness_defaults,
-        stored=payload.get("robustness_gates") or {},
-        key_prefix=f"{_W}rg_",
-    )
+    if show_prop:
+        prop = _gate_group(
+            st_module,
+            title="2 · Prop Feasibility Gate",
+            rows=_PROP_GATE_ROWS,
+            defaults=prop_defaults,
+            stored=payload.get("prop_gates") or {},
+            key_prefix=f"{_W}pg_",
+        )
+    else:
+        prop = {}
+        st_module.caption(
+            "2 · Prop Feasibility Gate — skipped: no prop objective is selected for "
+            "this goal (select a prop-bearing objective on the Goal step to add it)"
+        )
+    if show_robustness:
+        robustness = _gate_group(
+            st_module,
+            title="3 · Robustness Gate",
+            rows=_ROBUSTNESS_GATE_ROWS,
+            defaults=robustness_defaults,
+            stored=payload.get("robustness_gates") or {},
+            key_prefix=f"{_W}rg_",
+        )
+    else:
+        robustness = {}
+        st_module.caption(
+            "3 · Robustness Gate — not applicable: this goal enumerates no search "
+            "axes (plateau / neighbour gates need a searched neighbourhood)"
+        )
     st_module.info(
         "Why configurations fail here: each gate row explains its own "
         "failure; later gates that were not run display the exact earlier "
@@ -1459,7 +1682,7 @@ def _step_validation(
         f"{SUPPORTED_CHILD_WORKERS}. No worker control exists; the backend refuses "
         "any other value before a job is created."
     )
-    selections_for_estimate = _challenger_selections(draft)
+    selections_for_estimate = _challenger_selections(draft, resolution.flow)
     n_children_estimate = enumerate_child_count(selections_for_estimate)
     estimate = estimate_search_work(
         n_children=n_children_estimate,
@@ -1467,7 +1690,9 @@ def _step_validation(
         n_firm_policy_combinations=sum(
             int(policy.get("n_accounts", 1))
             for policy in (
-                draft.step_payload("risk_policies").get("per_firm_policies")
+                _effective_payload(draft, resolution.flow, "risk_policies").get(
+                    "per_firm_policies"
+                )
                 or {}
             ).values()
         ),
@@ -1522,10 +1747,10 @@ def _step_review(
     st_module, draft: StudyDraft, roots: Mapping[str, Any], resolution: DraftResolution
 ) -> dict[str, Any]:
     objective = draft.step_payload("objective")
-    risk = draft.step_payload("risk_policies")
+    risk = _effective_payload(draft, resolution.flow, "risk_policies")
     validation = draft.step_payload("validation")
     resolved = resolution.resolved
-    selections = _challenger_selections(draft)
+    selections = _challenger_selections(draft, resolution.flow)
     n_children = enumerate_child_count(selections) if selections else 1
     firm_combos = sum(
         int(policy.get("n_accounts", 1))
@@ -1579,7 +1804,7 @@ def _step_review(
             st_module, "purpose_unresolved", detail=resolution.resolution.reason
         )
     else:
-        report = _satisfiability_for_draft(draft, resolved)
+        report = _satisfiability_for_draft(draft, resolved, resolution.flow)
         st_module.caption(report.configuration_sentence)
         st_module.table(
             {
@@ -1737,17 +1962,18 @@ def _assemble_charter(
         raise CharterValidationError(
             f"run purpose unresolved: {resolution.resolution.reason}"
         )
+    flow = resolution.flow
     baseline = draft.step_payload("baseline")
-    prop = draft.step_payload("prop_contracts")
-    risk = draft.step_payload("risk_policies")
-    benchmarks = draft.step_payload("benchmarks")
+    prop = _effective_payload(draft, flow, "prop_contracts")
+    risk = _effective_payload(draft, flow, "risk_policies")
+    benchmarks = _effective_payload(draft, flow, "benchmarks")
     validation = draft.step_payload("validation")
     from alpha_lab.agents.data_infra.ifvg.search.axis_registry import (  # noqa: PLC0415
         AxisClassification,
         registry_sha256,
     )
 
-    selections = _challenger_selections(draft)
+    selections = _challenger_selections(draft, flow)
     axes: dict[str, tuple[str, ...]] = {}
     for axis_key, values in selections.items():
         spec = SEARCH_AXIS_REGISTRY_V1[axis_key]
@@ -1976,7 +2202,7 @@ def _freeze_and_launch(st_module, draft: StudyDraft, roots: Mapping[str, Any]) -
         )
         render_empty_state(st_module, state_id, detail=resolved.freeze_block_reason)
         return
-    report = _satisfiability_for_draft(draft, resolved)
+    report = _satisfiability_for_draft(draft, resolved, resolution.flow)
     if not report.passed:
         st_module.error(
             "Charter cannot freeze (fail-closed): "
@@ -2117,27 +2343,55 @@ def _freeze_and_launch(st_module, draft: StudyDraft, roots: Mapping[str, Any]) -
 # Wizard shell
 # ─────────────────────────────────────────────────────────────────────────────
 
-_STEP_VALIDATORS = {
-    0: validate_objective_step,
-    1: validate_baseline_step,
-    2: validate_search_space_step,
-    3: validate_prop_step,
-    4: validate_risk_step,
-    5: validate_benchmarks_step,
-    6: validate_validation_step,
-    7: validate_review_step,
+_STEP_VALIDATORS_BY_KEY = {
+    "objective": validate_objective_step,
+    "baseline": validate_baseline_step,
+    "search_space": validate_search_space_step,
+    "prop_contracts": validate_prop_step,
+    "risk_policies": validate_risk_step,
+    "benchmarks": validate_benchmarks_step,
+    "validation": validate_validation_step,
+    "review": validate_review_step,
 }
 
-_STEP_KEY_BY_INDEX = {
-    0: "objective",
-    1: "baseline",
-    2: "search_space",
-    3: "prop_contracts",
-    4: "risk_policies",
-    5: "benchmarks",
-    6: "validation",
-    7: "review",
-}
+
+def _normalized(value: Any) -> Any:
+    """Tuples become lists (the shape a draft takes after its JSON round trip)
+    so a persisted payload compares equal to the freshly collected fields."""
+
+    if isinstance(value, dict):
+        return {str(key): _normalized(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_normalized(item) for item in value]
+    return value
+
+
+def _fields_equal(left: Any, right: Any) -> bool:
+    return _normalized(left) == _normalized(right)
+
+
+def _render_step_body(
+    st_module,
+    step_key: str,
+    draft: StudyDraft,
+    purpose_roots: Mapping[str, Any],
+    resolution: DraftResolution,
+) -> dict[str, Any]:
+    if step_key == "objective":
+        return _step_objective(st_module, draft)
+    if step_key == "baseline":
+        return _step_baseline(st_module, draft)
+    if step_key == "search_space":
+        return _step_search_space(st_module, draft)
+    if step_key == "prop_contracts":
+        return _step_prop(st_module, draft, purpose_roots)
+    if step_key == "risk_policies":
+        return _step_risk(st_module, draft)
+    if step_key == "benchmarks":
+        return _step_benchmarks(st_module, draft, resolution.flow)
+    if step_key == "validation":
+        return _step_validation(st_module, draft, purpose_roots, resolution)
+    return _step_review(st_module, draft, purpose_roots, resolution)
 
 
 def render_new_study(st_module=st, *, roots: Mapping[str, Any]) -> None:
@@ -2156,6 +2410,7 @@ def render_new_study(st_module=st, *, roots: Mapping[str, Any]) -> None:
                 del st_module.session_state[key]
         st_module.session_state[_ACTIVE_DRAFT_KEY] = draft.draft_id
     draft_root = Path(roots["draft_root"])
+    persisted = _draft_is_persisted(draft_root, draft)
     try:
         resolution = _resolve_for_draft(draft, roots)
     except Exception as error:  # noqa: BLE001 — sanitized surface only
@@ -2163,66 +2418,109 @@ def render_new_study(st_module=st, *, roots: Mapping[str, Any]) -> None:
         return
     _purpose_card(st_module, draft, draft_root, resolution)
     purpose_roots = resolution.roots
-    step = min(max(int(draft.step_index), 0), len(WIZARD_STEP_TITLES) - 1)
-    st_module.progress(
-        (step + 1) / len(WIZARD_STEP_TITLES),
-        text=f"Step {step + 1} of {len(WIZARD_STEP_TITLES)}: "
-        f"{WIZARD_STEP_TITLES[step]}",
-    )
-    st_module.caption(" › ".join(
-        f"**{title}**" if index == step else title
-        for index, title in enumerate(WIZARD_STEP_TITLES)
-    ))
-    new_name = st_module.text_input(
-        "Draft name", value=draft.display_name, key=f"{_W}name"
-    )
-    if new_name and new_name != draft.display_name:
-        draft.display_name = new_name
-
-    if step == 0:
-        fields = _step_objective(st_module, draft)
-    elif step == 1:
-        fields = _step_baseline(st_module, draft)
-    elif step == 2:
-        fields = _step_search_space(st_module, draft)
-    elif step == 3:
-        fields = _step_prop(st_module, draft, purpose_roots)
-    elif step == 4:
-        fields = _step_risk(st_module, draft)
-    elif step == 5:
-        fields = _step_benchmarks(st_module, draft)
-    elif step == 6:
-        fields = _step_validation(st_module, draft, purpose_roots, resolution)
+    flow = resolution.flow
+    if flow is not None:
+        step_keys: tuple[str, ...] = flow.step_keys
+        titles = [step.title for step in flow.steps]
+        position = restore_step_index(
+            flow, stored_step_key=draft.current_step_key, legacy_step_index=draft.step_index
+        )
     else:
-        fields = _step_review(st_module, draft, purpose_roots, resolution)
+        step_keys = STEP_KEYS
+        titles = list(WIZARD_STEP_TITLES)
+        position = min(max(int(draft.step_index), 0), len(STEP_KEYS) - 1)
+        st_module.caption(
+            "Every step is shown until the run purpose is confirmed (the goal-derived "
+            "flow needs the purpose)."
+        )
+    step_key = step_keys[position]
+    n_steps = len(step_keys)
+    st_module.progress(
+        (position + 1) / n_steps,
+        text=f"Step {position + 1} of {n_steps}: {titles[position]}",
+    )
+    st_module.caption(
+        f"Step {position + 1} of {n_steps} · "
+        + " › ".join(
+            f"**{title}**" if index == position else title
+            for index, title in enumerate(titles)
+        )
+    )
+    stored_name = draft.display_name
+    new_name = st_module.text_input(
+        "Draft name",
+        value=draft.display_name,
+        key=f"{_W}name",
+        help=(
+            "Required before the first save. The proposed default is "
+            "'<goal> — <baseline short name> — <date>'."
+        ),
+    )
+    draft.display_name = (new_name or "").strip()
+    if not persisted:
+        _saved_chip(st_module, "session", draft)
 
-    errors = _STEP_VALIDATORS[step](fields)
+    fields = _render_step_body(st_module, step_key, draft, purpose_roots, resolution)
+    errors = _STEP_VALIDATORS_BY_KEY[step_key](fields)
     for field, message in errors.items():
         st_module.error(f"{field}: {message}")
+
+    if persisted:
+        # owner Q2: after the first persistence every change autosaves (a
+        # legacy draft without a stored step key is not "changed" by itself)
+        changed = (
+            not _fields_equal(draft.steps.get(step_key), fields)
+            or draft.display_name != stored_name
+            or (draft.current_step_key is not None and draft.current_step_key != step_key)
+        )
+        if changed and draft.display_name:
+            draft.steps[step_key] = dict(fields)
+            draft.current_step_key = step_key
+            draft.step_index = position
+            try:
+                save_draft(draft_root, draft)
+            except DraftError as error:
+                st_module.warning(f"Autosave failed: {sanitize_error(error)}")
+            else:
+                _saved_chip(st_module, "autosaved", draft)
+        elif changed:
+            st_module.error(
+                "Draft name required — the change is not saved until the draft is named."
+            )
+        else:
+            _saved_chip(st_module, "saved", draft)
+    else:
+        _duplicate_warning(st_module, draft, draft_root, step_key=step_key, fields=fields)
+        _stash_session_draft(st_module, draft)
 
     columns = st_module.columns([1, 1, 1, 2])
     with columns[0]:
         if st_module.button("Save Draft", key=f"{_W}save"):
-            draft.steps[_STEP_KEY_BY_INDEX[step]] = dict(fields)
-            save_draft(draft_root, draft)
-            st_module.success("Draft saved.")
+            draft.steps[step_key] = dict(fields)
+            draft.current_step_key = step_key
+            draft.step_index = position
+            if _persist_now(st_module, draft_root, draft):
+                st_module.success("Draft saved.")
+                st_module.rerun()
     with columns[1]:
-        if step > 0 and st_module.button("Back", key=f"{_W}back"):
+        if position > 0 and st_module.button("Back", key=f"{_W}back"):
             # Back never discards valid data: persist the visible fields.
-            draft.steps[_STEP_KEY_BY_INDEX[step]] = dict(fields)
-            draft.step_index = step - 1
-            save_draft(draft_root, draft)
-            st_module.rerun()
+            draft.steps[step_key] = dict(fields)
+            draft.current_step_key = step_keys[position - 1]
+            draft.step_index = position - 1
+            if _persist_now(st_module, draft_root, draft):
+                st_module.rerun()
     with columns[2]:
-        if step < len(WIZARD_STEP_TITLES) - 1 and st_module.button(
+        if position < n_steps - 1 and st_module.button(
             "Next", key=f"{_W}next", disabled=bool(errors)
         ):
-            draft.steps[_STEP_KEY_BY_INDEX[step]] = dict(fields)
-            draft.step_index = step + 1
-            save_draft(draft_root, draft)  # autosave on Next (FUX-WIZ-002)
-            st_module.rerun()
+            draft.steps[step_key] = dict(fields)
+            draft.current_step_key = step_keys[position + 1]
+            draft.step_index = position + 1
+            if _persist_now(st_module, draft_root, draft):  # the first valid Next persists
+                st_module.rerun()
     with columns[3]:
-        if step == len(WIZARD_STEP_TITLES) - 1:
+        if step_key == "review":
             mode = next(
                 (m for m in STUDY_MODES if m.mode_id == draft.mode_id),
                 STUDY_MODES[0],
@@ -2244,10 +2542,12 @@ def render_new_study(st_module=st, *, roots: Mapping[str, Any]) -> None:
                     "reports the launch only after the worker persisted state."
                 ),
             ):
-                draft.steps[_STEP_KEY_BY_INDEX[step]] = dict(fields)
-                save_draft(draft_root, draft)
-                _freeze_and_launch(st_module, draft, roots)
-    if step == len(WIZARD_STEP_TITLES) - 1:
+                draft.steps[step_key] = dict(fields)
+                draft.current_step_key = step_key
+                draft.step_index = position
+                if _persist_now(st_module, draft_root, draft):
+                    _freeze_and_launch(st_module, draft, roots)
+    if step_key == "review":
         mode = next(
             (m for m in STUDY_MODES if m.mode_id == draft.mode_id),
             STUDY_MODES[0],
@@ -2256,8 +2556,10 @@ def render_new_study(st_module=st, *, roots: Mapping[str, Any]) -> None:
             # R5: the standardized §30 operator workflow replaces the R4-era
             # planned-capability state; the draft's visible fields persist
             # before the surface renders so Launch assembles the same state.
-            draft.steps[_STEP_KEY_BY_INDEX[step]] = dict(fields)
-            save_draft(draft_root, draft)
-            from ifvg_pipeline_tab import render_pipeline_run  # noqa: PLC0415
+            draft.steps[step_key] = dict(fields)
+            draft.current_step_key = step_key
+            draft.step_index = position
+            if _persist_now(st_module, draft_root, draft):
+                from ifvg_pipeline_tab import render_pipeline_run  # noqa: PLC0415
 
-            render_pipeline_run(st_module, roots=purpose_roots, draft=draft)
+                render_pipeline_run(st_module, roots=purpose_roots, draft=draft)

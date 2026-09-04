@@ -364,11 +364,23 @@ def test_candidate_full_setup_keeps_model_semantics_candidate_scoped(
 
 def test_review_ledger_write_uses_setup_kwargs(setup_mode_app) -> None:
     at, log = setup_mode_app
-    at.text_input(key=f"{tab._STATE_PREFIX}setup_review_reviewer").input("reviewer-1")
-    at.button(key=f"{tab._STATE_PREFIX}setup_review_save").click().run()
+    setup_key = _SETUP_LESS  # widgets are keyed by the FULL case id
+    # UI-2 (owner Q3): the case opens Unreviewed and Save stays disabled until
+    # an explicit verdict and a reviewer exist — nothing persists by itself
+    overall = at.selectbox(key=f"{tab._STATE_PREFIX}setup_review_overall_{setup_key}")
+    assert overall.value == "Unreviewed"
+    assert at.button(key=f"{tab._STATE_PREFIX}setup_review_save_{setup_key}").disabled
+    at.text_input(key=f"{tab._STATE_PREFIX}setup_review_reviewer_{setup_key}").input(
+        "reviewer-1"
+    ).run()
+    assert at.button(key=f"{tab._STATE_PREFIX}setup_review_save_{setup_key}").disabled
+    assert log["reviews"] == []
+    overall.set_value("Correct").run()
+    at.button(key=f"{tab._STATE_PREFIX}setup_review_save_{setup_key}").click().run()
     assert not at.exception
     assert log["reviews"], "append_review must be invoked"
     record = log["reviews"][-1]
+    assert record["verdicts"]["overall_verdict"] == "correct"
     assert record["setup_id"] == _SETUP_LESS
     assert record["fsm_audit_artifact_id"] == _HEX_D
     assert record["candidate_id"] == ""

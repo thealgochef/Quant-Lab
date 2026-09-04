@@ -31,6 +31,12 @@ from ifvg_verifier_charts import (  # noqa: E402
     to_display_timezone,
 )
 
+from alpha_lab.agents.data_infra.ifvg.presentation.review_vocabulary import (  # noqa: E402
+    VERDICT_DEFINITIONS,
+    label_for_verdict,
+    verdict_for_label,
+    verdict_options,
+)
 from alpha_lab.agents.data_infra.ifvg.replay_chart_provider import (  # noqa: E402
     MissingEvidenceError,
     RangeTooLargeError,
@@ -62,7 +68,7 @@ from alpha_lab.agents.data_infra.ifvg.setup_verifier_provider import (  # noqa: 
 )
 from alpha_lab.agents.data_infra.ifvg.visual_review_store import (  # noqa: E402
     REVIEW_TAGS,
-    REVIEW_VERDICTS,
+    REVIEW_VERDICTS,  # noqa: F401 — re-exported for the contract tests
     append_review,
     export_csv,
     list_reviews,
@@ -452,6 +458,115 @@ def _render_side_panel(st_module, ctx: ReplayContext, evidence, row: pd.Series) 
     _render_review_section(st_module, ctx, evidence, row)
 
 
+_CANDIDATE_DETAIL_VERDICTS = (
+    "fvg_geometry_verdict",
+    "lifecycle_verdict",
+    "entry_verdict",
+    "stop_verdict",
+    "outcome_verdict",
+)
+
+
+def _review_form(
+    st_module,
+    *,
+    prefix: str,
+    case_key: str,
+    existing: pd.DataFrame,
+    detail_fields: tuple[str, ...],
+    on_save,
+) -> None:
+    """UI-2 (owner Q3; plan F-06): the shared review form.
+
+    Every widget is keyed by the CASE (a verdict never carries across
+    candidates or setups); the overall verdict opens ``Unreviewed`` — nothing
+    is preselected and no ledger row exists until the explicit *Save Review*;
+    the owner-approved labels map onto the preserved ledger keys and each
+    carries its definition; the persistence state is visible (Unsaved /
+    Saved). Existing rows render with their labels and never preselect.
+    """
+
+    key = str(case_key)  # the FULL case id: a truncated prefix could collide
+    if len(existing):
+        st_module.caption(
+            f"{len(existing)} prior review(s) for this case — immutable ledger rows "
+            "(labels shown; they preselect nothing):"
+        )
+        shown = existing[["reviewed_at", "reviewer", "overall_verdict", "tags", "notes"]].copy()
+        shown["overall_verdict"] = shown["overall_verdict"].map(label_for_verdict)
+        st_module.dataframe(shown, hide_index=True, width="stretch")
+    reviewer = st_module.text_input(
+        "Reviewer",
+        key=f"{_STATE_PREFIX}{prefix}_reviewer_{key}",
+        help="Required before a review can be saved.",
+    )
+    overall_label = st_module.selectbox(
+        "Overall verdict",
+        verdict_options(),
+        index=0,
+        key=f"{_STATE_PREFIX}{prefix}_overall_{key}",
+        help=(
+            "Opens Unreviewed: nothing is preselected and nothing is written until "
+            "Save Review. Unreviewed is a UI state only — never a ledger value."
+        ),
+    )
+    for verdict, definition in VERDICT_DEFINITIONS.items():
+        st_module.caption(f"{label_for_verdict(verdict)} — {definition}")
+    overall = verdict_for_label(str(overall_label))
+    detail_verdicts: dict[str, str] = {}
+    if overall is not None:
+        detail_verdicts["overall_verdict"] = overall
+    with st_module.popover("Detail verdicts (optional)"):
+        for name in detail_fields:
+            label = st_module.selectbox(
+                name.replace("_", " "),
+                verdict_options(),
+                index=0,
+                key=f"{_STATE_PREFIX}{prefix}_{name}_{key}",
+            )
+            value = verdict_for_label(str(label))
+            if value is not None:
+                detail_verdicts[name] = value
+    tags = st_module.multiselect("Tags", REVIEW_TAGS, key=f"{_STATE_PREFIX}{prefix}_tags_{key}")
+    notes = st_module.text_area("Notes", key=f"{_STATE_PREFIX}{prefix}_notes_{key}")
+    signature = (
+        str(reviewer).strip(),
+        tuple(sorted(detail_verdicts.items())),
+        tuple(sorted(tags)),
+        str(notes).strip(),
+    )
+    saved_key = f"{_STATE_PREFIX}{prefix}_saved_{key}"
+    ready = overall is not None and bool(str(reviewer).strip())
+    if st_module.session_state.get(saved_key) == signature:
+        st_module.markdown("**✓ Saved** — this review is appended to the ledger.")
+    else:
+        st_module.markdown(
+            "**● Unsaved** — nothing is written until Save Review"
+            + ("" if ready else " (choose a verdict and name the reviewer to enable it)")
+            + "."
+        )
+    if st_module.button(
+        "Save Review",
+        key=f"{_STATE_PREFIX}{prefix}_save_{key}",
+        disabled=not ready,
+        type="primary",
+        help="Appends one immutable row to ifvg_visual_review_v1; nothing else changes.",
+    ):
+        try:
+            record = on_save(
+                reviewer=str(reviewer),
+                verdicts=dict(detail_verdicts),
+                tags=list(tags),
+                notes=str(notes),
+            )
+        except Exception as error:  # noqa: BLE001 — sanitized surface only
+            st_module.error(f"Review not saved: {_sanitize_error(error)}")
+        else:
+            st_module.session_state[saved_key] = signature
+            review_id = str((record or {}).get("review_id", ""))[:12]
+            st_module.success(f"Saved — review {review_id} appended to the ledger.")
+
+
 def _render_review_section(st_module, ctx: ReplayContext, evidence, row: pd.Series) -> None:
     with st_module.expander("Review (ifvg_visual_review_v1)", expanded=False):
         existing = pd.DataFrame()
@@ -459,57 +574,31 @@ def _render_review_section(st_module, ctx: ReplayContext, evidence, row: pd.Seri
             existing = list_reviews(repo_root=ROOT, candidate_id=evidence.candidate_id)
         except Exception as error:
             st_module.caption(f"Review ledger unreadable: {_sanitize_error(error)}")
-        if len(existing):
-            st_module.caption(f"{len(existing)} prior review(s) for this candidate:")
-            st_module.dataframe(
-                existing[["reviewed_at", "reviewer", "overall_verdict", "tags", "notes"]],
-                hide_index=True,
-                width="stretch",
+
+        def _save(*, reviewer: str, verdicts: dict, tags: list, notes: str):
+            return append_review(
+                repo_root=ROOT,
+                replay_chart_artifact_id=ctx.replay.artifact_id,
+                pair_ref=ctx.pair_ref.as_dict(),
+                candidate_id=evidence.candidate_id,
+                decision_id=(
+                    str(row["decision_id"]) if pd.notna(row["decision_id"]) else None
+                ),
+                trade_id=str(row["trade_id"]) if pd.notna(row["trade_id"]) else None,
+                reviewer=reviewer,
+                verdicts=verdicts,
+                tags=tags,
+                notes=notes,
             )
-        reviewer = st_module.text_input(
-            "Reviewer", key=f"{_STATE_PREFIX}review_reviewer"
+
+        _review_form(
+            st_module,
+            prefix="review",
+            case_key=str(evidence.candidate_id),
+            existing=existing,
+            detail_fields=_CANDIDATE_DETAIL_VERDICTS,
+            on_save=_save,
         )
-        overall = st_module.selectbox(
-            "Overall verdict", REVIEW_VERDICTS, key=f"{_STATE_PREFIX}review_overall"
-        )
-        detail_verdicts: dict[str, str] = {"overall_verdict": overall}
-        with st_module.popover("Detail verdicts (optional)"):
-            for name in (
-                "fvg_geometry_verdict",
-                "lifecycle_verdict",
-                "entry_verdict",
-                "stop_verdict",
-                "outcome_verdict",
-            ):
-                value = st_module.selectbox(
-                    name.replace("_", " "),
-                    ("—", *REVIEW_VERDICTS),
-                    key=f"{_STATE_PREFIX}review_{name}",
-                )
-                if value != "—":
-                    detail_verdicts[name] = value
-        tags = st_module.multiselect("Tags", REVIEW_TAGS, key=f"{_STATE_PREFIX}review_tags")
-        notes = st_module.text_area("Notes", key=f"{_STATE_PREFIX}review_notes")
-        if st_module.button("Save review note", key=f"{_STATE_PREFIX}review_save"):
-            try:
-                append_review(
-                    repo_root=ROOT,
-                    replay_chart_artifact_id=ctx.replay.artifact_id,
-                    pair_ref=ctx.pair_ref.as_dict(),
-                    candidate_id=evidence.candidate_id,
-                    decision_id=(
-                        str(row["decision_id"]) if pd.notna(row["decision_id"]) else None
-                    ),
-                    trade_id=str(row["trade_id"]) if pd.notna(row["trade_id"]) else None,
-                    reviewer=reviewer,
-                    verdicts=detail_verdicts,
-                    tags=list(tags),
-                    notes=notes,
-                )
-            except Exception as error:
-                st_module.error(f"Review not saved: {_sanitize_error(error)}")
-            else:
-                st_module.success("Review appended to the ledger.")
         try:
             csv_payload = export_csv(repo_root=ROOT)
         except Exception:
@@ -933,56 +1022,34 @@ def _render_setup_review_section(st_module, ctx, bundle, evidence) -> None:
             existing = list_reviews(repo_root=ROOT, setup_id=evidence.setup_id)
         except Exception as error:
             st_module.caption(f"Review ledger unreadable: {_sanitize_error(error)}")
-        if len(existing):
-            st_module.caption(f"{len(existing)} prior review(s) for this setup:")
-            st_module.dataframe(
-                existing[["reviewed_at", "reviewer", "overall_verdict", "tags", "notes"]],
-                hide_index=True,
-                width="stretch",
+
+        def _save(*, reviewer: str, verdicts: dict, tags: list, notes: str):
+            return append_review(
+                repo_root=ROOT,
+                replay_chart_artifact_id=bundle.replay_chart_artifact_id,
+                pair_ref=ctx.base.pair_ref.as_dict(),
+                # Setup-scope review: candidate reviews stay in candidate
+                # mode, so this record carries no candidate id ("" for
+                # candidate-less and candidate-full setups alike).
+                candidate_id="",
+                decision_id=None,
+                trade_id=None,
+                reviewer=reviewer,
+                verdicts=verdicts,
+                tags=tags,
+                notes=notes,
+                setup_id=evidence.setup_id,
+                fsm_audit_artifact_id=bundle.fsm_audit_artifact_id,
             )
-        reviewer = st_module.text_input(
-            "Reviewer", key=f"{_STATE_PREFIX}setup_review_reviewer"
+
+        _review_form(
+            st_module,
+            prefix="setup_review",
+            case_key=str(evidence.setup_id),
+            existing=existing,
+            detail_fields=_SETUP_DETAIL_VERDICTS,
+            on_save=_save,
         )
-        overall = st_module.selectbox(
-            "Overall verdict", REVIEW_VERDICTS, key=f"{_STATE_PREFIX}setup_review_overall"
-        )
-        detail_verdicts: dict[str, str] = {"overall_verdict": overall}
-        with st_module.popover("Detail verdicts (optional)"):
-            for name in _SETUP_DETAIL_VERDICTS:
-                value = st_module.selectbox(
-                    name.replace("_", " "),
-                    ("—", *REVIEW_VERDICTS),
-                    key=f"{_STATE_PREFIX}setup_review_{name}",
-                )
-                if value != "—":
-                    detail_verdicts[name] = value
-        tags = st_module.multiselect(
-            "Tags", REVIEW_TAGS, key=f"{_STATE_PREFIX}setup_review_tags"
-        )
-        notes = st_module.text_area("Notes", key=f"{_STATE_PREFIX}setup_review_notes")
-        if st_module.button("Save review note", key=f"{_STATE_PREFIX}setup_review_save"):
-            try:
-                append_review(
-                    repo_root=ROOT,
-                    replay_chart_artifact_id=bundle.replay_chart_artifact_id,
-                    pair_ref=ctx.base.pair_ref.as_dict(),
-                    # Setup-scope review: candidate reviews stay in candidate
-                    # mode, so this record carries no candidate id ("" for
-                    # candidate-less and candidate-full setups alike).
-                    candidate_id="",
-                    decision_id=None,
-                    trade_id=None,
-                    reviewer=reviewer,
-                    verdicts=detail_verdicts,
-                    tags=list(tags),
-                    notes=notes,
-                    setup_id=evidence.setup_id,
-                    fsm_audit_artifact_id=bundle.fsm_audit_artifact_id,
-                )
-            except Exception as error:
-                st_module.error(f"Review not saved: {_sanitize_error(error)}")
-            else:
-                st_module.success("Review appended to the ledger.")
 
 
 def _render_setup_section(st_module, pair_ref: ArtifactPairRef) -> None:

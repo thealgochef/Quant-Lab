@@ -40,11 +40,22 @@ from ifvg_ui_common import (
     verification_badge,
 )
 
+from alpha_lab.agents.data_infra.ifvg.presentation.flows import FLOW_STEP_TITLES
+from alpha_lab.agents.data_infra.ifvg.presentation.run_purpose import (
+    PURPOSE_LABELS,
+    PURPOSE_NAMESPACE_CLASS,
+    RunPurpose,
+)
 from alpha_lab.agents.data_infra.ifvg.search.catalog import append_catalog_event
 from alpha_lab.agents.data_infra.ifvg.study_drafts import (
+    DraftError,
+    archive_draft,
+    bulk_archive_empty_untitled_drafts,
     clone_draft,
-    discard_draft,
+    delete_draft_permanently,
+    is_empty_untitled_draft,
     list_drafts,
+    restore_draft,
     save_draft,
 )
 from alpha_lab.agents.data_infra.ifvg.study_presentation import (
@@ -58,6 +69,7 @@ from alpha_lab.agents.data_infra.ifvg.study_presentation import (
     human_config_name,
 )
 from alpha_lab.agents.data_infra.ifvg.study_providers import (
+    catalog_annotations,
     list_search_runs,
     load_charter,
     load_child_metrics,
@@ -998,56 +1010,239 @@ def _render_audit_block(st_module, bundle: Mapping[str, Any]) -> None:
         )
 
 
+_PURPOSE_FILTER_ALL = "All purposes"
+_PURPOSE_FILTER_UNRESOLVED = "Unresolved purpose"
+_STORE_FILTER_ALL = "All stores"
+_STORE_FILTER_OPTIONS = (_STORE_FILTER_ALL, "research", "test", "unmarked")
+
+
+def _draft_purpose_label(draft) -> str:
+    purpose = (draft.purpose_annotation or {}).get("purpose")
+    try:
+        return PURPOSE_LABELS[RunPurpose(str(purpose))]
+    except ValueError:
+        return _PURPOSE_FILTER_UNRESOLVED
+
+
+def _draft_store_class(draft) -> str:
+    purpose = (draft.purpose_annotation or {}).get("purpose")
+    try:
+        return PURPOSE_NAMESPACE_CLASS[RunPurpose(str(purpose))]
+    except ValueError:
+        return "unmarked"
+
+
+def _draft_step_label(draft) -> str:
+    if draft.current_step_key in FLOW_STEP_TITLES:
+        return FLOW_STEP_TITLES[str(draft.current_step_key)]
+    return f"step {int(draft.step_index) + 1}"
+
+
+def _run_purpose_label(annotations: Mapping[str, Mapping[str, Any]], search_id: str) -> str:
+    entry = annotations.get(search_id) or {}
+    payload = entry.get("purpose")
+    purpose = payload.get("purpose") if isinstance(payload, Mapping) else payload
+    try:
+        return PURPOSE_LABELS[RunPurpose(str(purpose))]
+    except ValueError:
+        return _PURPOSE_FILTER_UNRESOLVED
+
+
+def _history_filters(st_module) -> tuple[str, str, bool]:
+    """UI-2 (plan §5.1 / §7): READ-ONLY listing filters — they narrow this
+    page only and never decide where a charter freezes or launches."""
+
+    columns = st_module.columns([2, 2, 1])
+    purpose_options = [
+        _PURPOSE_FILTER_ALL,
+        *(PURPOSE_LABELS[purpose] for purpose in RunPurpose),
+        _PURPOSE_FILTER_UNRESOLVED,
+    ]
+    with columns[0]:
+        sanitize_select(st_module, f"{_RES}hist_purpose_filter", purpose_options)
+        purpose_filter = st_module.selectbox(
+            "Filter by purpose",
+            purpose_options,
+            key=f"{_RES}hist_purpose_filter",
+            help=(
+                "Read-only listing filter over the presentation annotation; it never "
+                "changes where a charter freezes or launches (the purpose derives that)."
+            ),
+        )
+    with columns[1]:
+        sanitize_select(st_module, f"{_RES}hist_store_filter", list(_STORE_FILTER_OPTIONS))
+        store_filter = st_module.selectbox(
+            "Filter by store namespace class",
+            list(_STORE_FILTER_OPTIONS),
+            key=f"{_RES}hist_store_filter",
+            help=(
+                "Read-only listing filter over each run's OWN verified store namespace "
+                "class (its charter located by exact id); never a selector of authority."
+            ),
+        )
+    with columns[2]:
+        show_archived = st_module.checkbox(
+            "Show archived drafts",
+            key=f"{_RES}hist_show_archived",
+            help=(
+                "The archived / advanced view: restore, or permanently delete a never-frozen "
+                "draft with its exact typed name."
+            ),
+        )
+    return str(purpose_filter), str(store_filter), bool(show_archived)
+
+
+def _draft_matches(draft, purpose_filter: str, store_filter: str) -> bool:
+    if purpose_filter != _PURPOSE_FILTER_ALL and _draft_purpose_label(draft) != purpose_filter:
+        return False
+    return store_filter == _STORE_FILTER_ALL or _draft_store_class(draft) == store_filter
+
+
+def _render_draft_row(st_module, draft, draft_root: Path) -> None:
+    columns = st_module.columns([3, 1, 1, 1])
+    with columns[0]:
+        st_module.write(
+            f"✎ **{draft.display_name}** · {draft.mode_id} · "
+            f"{_draft_step_label(draft)} · updated {draft.updated_at_utc} · "
+            f"{draft.status} · purpose {_draft_purpose_label(draft)} / store "
+            f"`{_draft_store_class(draft)}`"
+        )
+    with columns[1]:
+        if st_module.button("Open", key=f"{_RES}open_{draft.draft_id[:8]}"):
+            from ifvg_study_tab import request_route  # noqa: PLC0415
+
+            st_module.session_state[f"{STATE_PREFIX}draft_id"] = draft.draft_id
+            request_route(st_module, "new_study")
+            st_module.rerun()
+    with columns[2]:
+        if st_module.button("Clone", key=f"{_RES}clone_{draft.draft_id[:8]}"):
+            clone = clone_draft(draft)
+            save_draft(draft_root, clone)
+            st_module.success(f"Cloned to {clone.display_name}")
+    with columns[3]:
+        if st_module.button(
+            "Archive",
+            key=f"{_RES}archive_{draft.draft_id[:8]}",
+            help="Reversible: hides the draft from this list; nothing is deleted.",
+        ):
+            try:
+                archive_draft(draft_root, draft.draft_id)
+                st_module.rerun()
+            except DraftError as error:
+                st_module.warning(sanitize_error(error))
+
+
+def _render_archived_row(st_module, draft, draft_root: Path) -> None:
+    columns = st_module.columns([3, 1, 2])
+    with columns[0]:
+        st_module.write(
+            f"▣ **{draft.display_name}** · {draft.mode_id} · archived "
+            f"{draft.archived_at_utc or ''} · purpose {_draft_purpose_label(draft)}"
+        )
+    with columns[1]:
+        if st_module.button("Restore", key=f"{_RES}restore_{draft.draft_id[:8]}"):
+            try:
+                restore_draft(draft_root, draft.draft_id)
+                st_module.rerun()
+            except DraftError as error:
+                st_module.warning(sanitize_error(error))
+    with columns[2]:
+        if not draft.never_frozen:
+            st_module.caption(
+                "frozen / launched provenance — never deletable (catalog archive flag only)"
+            )
+            return
+        typed = st_module.text_input(
+            "Type the exact draft name to delete it permanently",
+            key=f"{_RES}del_name_{draft.draft_id[:8]}",
+            help=(
+                "Owner Q2: permanent deletion only for a draft that was never frozen and "
+                "never launched, only from this archived view, only with its exact name."
+            ),
+        )
+        if st_module.button(
+            "Delete draft permanently",
+            key=f"{_RES}del_{draft.draft_id[:8]}",
+            disabled=str(typed or "") != draft.display_name,
+        ):
+            try:
+                delete_draft_permanently(draft_root, draft.draft_id, confirm_name=str(typed))
+                st_module.rerun()
+            except DraftError as error:
+                st_module.warning(sanitize_error(error))
+
+
 def render_history(st_module=st, *, roots: Mapping[str, Any]) -> None:
     dev_only_badge(st_module)
     draft_root = Path(roots["draft_root"])
     store_root = Path(roots["store_root"])
     state_root = Path(roots["state_root"])
+    purpose_filter, store_filter, show_archived = _history_filters(st_module)
 
     st_module.subheader("Drafts")
-    drafts = [d for d in list_drafts(draft_root) if d.status == "draft"]
+    all_drafts = list_drafts(draft_root, include_archived=True)
+    # owner Q2: the one-time bulk archive of the R4-era empty untitled files
+    empties = [draft for draft in all_drafts if is_empty_untitled_draft(draft)]
+    if empties and st_module.button(
+        f"Archive empty untitled drafts ({len(empties)})",
+        key=f"{_RES}bulk_archive",
+        help="One-time migration: archives (never deletes) every empty, unnamed step-0 draft.",
+    ):
+        try:
+            bulk_archive_empty_untitled_drafts(draft_root)
+            st_module.rerun()
+        except DraftError as error:
+            st_module.warning(sanitize_error(error))
+    drafts = [
+        draft
+        for draft in all_drafts
+        if draft.status == "draft"
+        and not draft.archived
+        and _draft_matches(draft, purpose_filter, store_filter)
+    ]
     if not drafts:
-        st_module.caption("No mutable drafts.")
+        st_module.caption("No mutable drafts match the filters.")
     for draft in drafts:
-        columns = st_module.columns([3, 1, 1, 1])
-        with columns[0]:
-            purpose = (draft.purpose_annotation or {}).get("purpose")
-            purpose_note = f" · purpose {purpose}" if purpose else " · purpose unresolved"
-            st_module.write(
-                f"✎ **{draft.display_name}** · step "
-                f"{draft.step_index + 1}/8 · updated {draft.updated_at_utc}"
-                f"{purpose_note}"
-            )
-        with columns[1]:
-            if st_module.button("Open", key=f"{_RES}open_{draft.draft_id[:8]}"):
-                from ifvg_study_tab import request_route  # noqa: PLC0415
-
-                st_module.session_state[f"{STATE_PREFIX}draft_id"] = draft.draft_id
-                request_route(st_module, "new_study")
-                st_module.rerun()
-        with columns[2]:
-            if st_module.button("Clone", key=f"{_RES}clone_{draft.draft_id[:8]}"):
-                clone = clone_draft(draft)
-                save_draft(draft_root, clone)
-                st_module.success(f"Cloned to {clone.display_name}")
-        with columns[3]:
-            confirm_key = f"{_RES}discard_ok_{draft.draft_id[:8]}"
-            confirmed = st_module.checkbox("confirm", key=confirm_key)
-            if confirmed and st_module.button(
-                "Discard", key=f"{_RES}discard_{draft.draft_id[:8]}"
-            ):
-                try:
-                    discard_draft(draft_root, draft.draft_id)
-                    st_module.rerun()
-                except Exception as error:  # noqa: BLE001
-                    st_module.warning(sanitize_error(error))
+        _render_draft_row(st_module, draft, draft_root)
+    if show_archived:
+        st_module.subheader("Archived drafts")
+        archived = [
+            draft
+            for draft in all_drafts
+            if draft.archived and _draft_matches(draft, purpose_filter, store_filter)
+        ]
+        if not archived:
+            st_module.caption("No archived drafts match the filters.")
+        for draft in archived:
+            _render_archived_row(st_module, draft, draft_root)
 
     frozen_drafts = {
         d.frozen_search_id: d
-        for d in list_drafts(draft_root)
+        for d in all_drafts
         if d.status == "frozen" and d.frozen_search_id
     }
     runs = list_search_runs(state_root, store_root, store_roots=_known_store_roots(roots))
+    annotations_by_store: dict[str, Mapping[str, Mapping[str, Any]]] = {}
+
+    def _annotations_for(run) -> Mapping[str, Mapping[str, Any]]:
+        key = str(run.store_root or store_root)
+        if key not in annotations_by_store:
+            try:
+                annotations_by_store[key] = catalog_annotations(Path(key))
+            except Exception:  # noqa: BLE001 — an unreadable catalog annotates nothing
+                annotations_by_store[key] = {}
+        return annotations_by_store[key]
+
+    def _run_matches(run) -> bool:
+        if purpose_filter != _PURPOSE_FILTER_ALL and (
+            _run_purpose_label(_annotations_for(run), run.search_id) != purpose_filter
+        ):
+            return False
+        return store_filter == _STORE_FILTER_ALL or (
+            (run.namespace_class or "unmarked") == store_filter
+        )
+
+    runs = [run for run in runs if _run_matches(run)]
     running = [
         run for run in runs if run.phase not in ("search_complete",) and not run.archived
     ]
@@ -1080,7 +1275,8 @@ def render_history(st_module=st, *, roots: Mapping[str, Any]) -> None:
             st_module.write(
                 f"🔒 **{run.display_name}** · {run.phase} · "
                 f"{run.child_count} children{reuse_note} · store namespace "
-                f"`{run.namespace_class or 'unmarked'}`{scope_note}"
+                f"`{run.namespace_class or 'unmarked'}`{scope_note} · purpose "
+                f"{_run_purpose_label(_annotations_for(run), run.search_id)}"
             )
             st_module.code(run.search_id, language=None)
         with columns[1]:
@@ -1116,21 +1312,36 @@ def render_history(st_module=st, *, roots: Mapping[str, Any]) -> None:
                 key=f"{_RES}hist_name_{run.search_id[:8]}",
                 label_visibility="collapsed",
             )
+            run_store = Path(run.store_root) if run.store_root else store_root
             if new_name != run.display_name and st_module.button(
                 "Rename", key=f"{_RES}hist_rn_{run.search_id[:8]}"
             ):
                 append_catalog_event(
-                    Path(run.store_root) if run.store_root else store_root,
+                    run_store,
                     kind="display_name",
                     artifact_id=run.search_id,
                     payload={"display_name": new_name},
                 )
                 st_module.rerun()
+            # UI-2: the catalog archive FLAG (a mutable annotation; never a delete)
+            flag_label = "Restore run" if run.archived else "Archive run (catalog flag)"
+            if st_module.button(
+                flag_label,
+                key=f"{_RES}hist_arch_{run.search_id[:8]}",
+                help="A mutable catalog annotation: the immutable run is never deleted.",
+            ):
+                append_catalog_event(
+                    run_store,
+                    kind="archive",
+                    artifact_id=run.search_id,
+                    payload=not run.archived,
+                )
+                st_module.rerun()
         if immutable:
             st_module.caption(
                 "Frozen research evidence: no delete or overwrite control "
-                "exists; display names and notes are mutable annotations "
-                "only."
+                "exists; display names, notes and the archive flag are mutable "
+                "annotations only."
             )
 
     st_module.subheader("Frozen / Running Studies")

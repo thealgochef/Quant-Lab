@@ -138,7 +138,13 @@ of the namespace selector, `Start` and `Verify Implementation` routes,
 charter satisfiability before freeze, typed authorization readiness, the
 honest launch outcome, namespace-bound publication, the sequential-V1
 runtime truth, direction-aware colorscales and evaluated-gate banners —
-`ifvg/presentation/{run_purpose,charter_satisfiability,status_vocabulary}.py`)
+`ifvg/presentation/{run_purpose,charter_satisfiability,status_vocabulary}.py`),
+and UI-2 (Phase 2: the complete Verification Center — fixture, seed,
+final authorization, review / run, monitor — with no spawn seam, the
+goal-derived conditional flows, session-only drafts with archive /
+restore / typed delete, the explicit reviewer verdicts and the seed CLI
+receipt seams — `ifvg/presentation/{flows,review_vocabulary}.py`,
+`scripts/ifvg_verification_center.py`)
 implementations are complete;
 **R1 acceptance is blocked pending the owner-approved verification fixture**
 (`VerificationAuthorizationRef`; owner decisions 21/R-5) — no real five-day
