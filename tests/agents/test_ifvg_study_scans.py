@@ -123,8 +123,12 @@ def test_no_raw_override_editor_exists() -> None:
     text_area_labels = re.findall(
         r'text_area\(\s*[\"\']([^\"\']+)', wizard
     )
-    assert len(text_area_labels) == 2
+    # UI-1: the frozen warmup prefix is read-only (derived from the backend
+    # contract), so the ONE remaining text area is the evidence-date list,
+    # validated field-by-field against the logical-day calendar
+    assert len(text_area_labels) == 1
     assert all("dates" in label.lower() for label in text_area_labels)
+    assert "logical trading days" in text_area_labels[0]
     for name, source in sources.items():
         assert "json.loads" not in source or name in (
             "study_drafts.py",
@@ -179,7 +183,6 @@ def test_session_namespace_is_the_contracted_prefix() -> None:
         "_PHASE_KEY",
         "_SELECTED_KEY",
         "ROUTE_KEY",
-        "NAMESPACE_KEY",
         "_PENDING_ROUTE_KEY",
         "_DRAFT_KEY",
         "_ACTIVE_DRAFT_KEY",

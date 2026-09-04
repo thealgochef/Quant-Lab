@@ -585,10 +585,25 @@ def _render_coverage_report(st_module, report: dict[str, Any]) -> None:
 
 def _render_reconciliation_report(st_module, report: dict[str, Any]) -> None:
     adapted = adapt_reconciliation_report(report)
-    if adapted["passed"]:
-        st_module.success("Pair, schemas, hashes, rows, and access evidence reconcile.")
-    else:
+    # UI-1 (plan F-07): green ONLY for evaluated passing gates; a report that
+    # carries no evaluated gate is UNAVAILABLE, never a success banner
+    if adapted["passed"] is True:
+        st_module.success(
+            "Pair, schemas, hashes, rows, and access evidence reconcile "
+            f"({adapted['evaluated_gate_count']} evaluated gate(s) passed)."
+        )
+    elif adapted["passed"] is False:
         st_module.error("Reconciliation did not pass; this run must not be compared.")
+    else:
+        st_module.warning(
+            "Reconciliation not evaluated: no persisted report carries an evaluated "
+            "pass flag, so this evidence is UNAVAILABLE — it is not shown as passing."
+        )
+    if adapted["unevaluated_reports"]:
+        st_module.caption(
+            "Not evaluated (no pass flag): "
+            + ", ".join(str(name) for name in adapted["unevaluated_reports"])
+        )
     st_module.markdown("**Exact immutable identities**")
     st_module.dataframe(
         adapted["identities"], hide_index=True, width="stretch"

@@ -333,9 +333,10 @@ R4 additions (trader workspace UI — the guided study surface over R1–R3;
   delegation in `ifvg_lab_tab.py`): a session-state-backed horizontal radio
   (`New Study | Active Runs | Results | History | Context Research`,
   namespace `ifvg_study_v1_*`); only the selected route executes; the
-  M0–M3 Context Research panel delegates verbatim; a namespace selector
-  switches between the research (`search/v1`) and verification
-  (`search_test/v1`) stores with truthful badging.
+  M0–M3 Context Research panel delegates verbatim; the store a draft
+  freezes into derives from its run purpose (UI-1 — the R4 namespace
+  selector is gone; the store's verified `store_namespace_id` is displayed
+  read-only and a local path never defines authority).
 - **Presentation contracts** (`ifvg/study_status.py` ·
   `ifvg/study_presentation.py`): CS §13 status/scope/empty-state registries
   with the exact required copy (`Development Exploratory Representative`,
@@ -1181,3 +1182,45 @@ run; `backend_dev_complete_for_ui = true`, acceptance still transitively blocked
   Re-minted (synthetic only): inventories / windows / seed authorizations that serialized the
   physical stem, seeds created from non-UTC representations, simulations under the default (V2)
   event-detail budget, regime OOS / fold artifacts whose invalid rows previously collapsed.
+
+UI-1 additions (Phase 1 of the owner-approved UI/UX redesign,
+`QL-FSM-PROP-SEARCH-DASHBOARD/implementation-progress/UI-UX-REDESIGN-PLAN/IMPLEMENTATION_PLAN.md`
+revision 2, over the HARDENING-BACKEND-FIX.1 release head; UI-2 … UI-6 follow; acceptance
+still transitively blocked by R1):
+
+- **Presentation package** (`ifvg/presentation/`): `run_purpose` — the presentation-only
+  `RunPurpose` (Implementation Verification → `verification_5d` in the `test` namespace;
+  Development Research / Full Authorized Development → `full_authorized_development` in the
+  `research` namespace; `RunScope` values unchanged), the `EvidenceClass` (a synthetic fixture
+  is confined to Implementation Verification), the mutable non-semantic `RunPurposeAnnotation`
+  (draft field + catalog `purpose` event), `resolve_draft_purpose` (stored → unambiguous legacy
+  derivation → `purpose_unresolved`), `namespace_state_for_store` (the id from the VERIFIED
+  envelope only) and `resolve_purpose` (the freeze verdict); `charter_satisfiability` — the
+  named-rule report refused BEFORE freeze (FSM ≥ 1 challenger; Evaluate exactly one profile;
+  Compare exactly one challenger configuration; a selected prop objective requires a verified
+  contract and is never rewritten; Prop ≥ 1 / Universal ≥ 2 firms; real verification is the
+  exact baseline with verification gates only); `status_vocabulary` — the thirteen `UiStatus`
+  values (glyph + word + color token; PASS only for an evaluated true) with additive adapters.
+- **Validator** (`ifvg/search/charter.py`): the identity-bearing subset fail-closed (FSM ≥ 2
+  profiles, single ≤ 2, Universal ≥ 2 firms; a real charter's prop objective requires a firm
+  contract — never a silent rewrite).
+- **Providers** (`ifvg/study_providers.py`): `resolve_store_namespace`,
+  `artifact_scope_for_charter`, the typed `AuthorizationReadiness` for the
+  `VerificationAuthorizationRef` (namespace + current head through the complete authority-chain
+  proof, profile, allowlist) and for the owner bundle (catalogued verified owner-decision
+  artifacts per required key), bundles assembled only from `ready`, and run listings annotated
+  with each run's own store (exact-id located), namespace class and scope.
+- **UI** (`scripts/ifvg_study_tab.py`, `ifvg_study_wizard.py`, `ifvg_pipeline_tab.py`,
+  `ifvg_results_tab.py`, `ifvg_active_runs_tab.py`, `ifvg_results_charts.py`,
+  `ifvg_lab_tab.py`): the `Start` task cards and the `Verify Implementation` readiness surface;
+  the goal card on every step; the evidence-class choice and typed readiness on Validation; the
+  frozen warmup prefix read-only with field-level logical-day validation; no worker control
+  (`sequential_children_v1 · effective workers 1`); the satisfiability card on Review; the
+  registered executor resolved before any spawn (`runner_unavailable`) and the launch reported
+  only after persisted state exists (`launch_not_started`); gates recorded with the verified
+  namespace id + state digest and activation bound to both; direction-aware heatmap / firm-matrix
+  colorscales; the reconciliation banner derived from evaluated gates; the additive §31 states
+  (`no_runs`, `not_selected`, `artifact_missing` / `artifact_corrupt`, `purpose_unresolved`,
+  `authorization_not_ready`, …); the fifth research question `Evaluate one configuration`.
+- **Unchanged**: Strategy-Core, the fixed M0–M3 lane, every immutable artifact identity, the
+  exact-ID loading rule, S11, MBP-1's `research_only_offline` boundary, the backend contracts.

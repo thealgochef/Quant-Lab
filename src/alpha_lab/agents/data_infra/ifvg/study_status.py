@@ -47,8 +47,17 @@ __all__ = [
 
 
 class StudyWorkspaceRoute(StrEnum):
-    """The five Experiments sub-navigation routes (FUX §3.2)."""
+    """The Experiments sub-navigation routes (FUX §3.2 as amended by UI-1).
 
+    UI-1 adds the task-oriented ``Start`` entry and the dedicated
+    ``Verify Implementation`` route (the Verification Center); the existing
+    route ids are unchanged so programmatic ``request_route`` callers keep
+    working. The mutable "Artifact namespace" selector is gone — the
+    namespace derives from the run purpose (owner Q1).
+    """
+
+    START = "start"
+    VERIFY_IMPLEMENTATION = "verify_implementation"
     NEW_STUDY = "new_study"
     ACTIVE_RUNS = "active_runs"
     RESULTS = "results"
@@ -125,6 +134,25 @@ class EmptyStateKey(StrEnum):
     #: minimum, and a stratified report class refused by the regime status
     INSUFFICIENT_REGIME_PARTITION = "insufficient_regime_partition"
     REGIME_STATUS_BELOW_MINIMUM = "regime_status_below_minimum"
+    #: UI-1 (plan §6.7): distinct states so a "no runs" / "not selected" /
+    #: "not applicable" situation never renders as ARTIFACT_UNAVAILABLE, the
+    #: missing/corrupt artifact split, and the typed purpose / runner /
+    #: launch / authorization / namespace / seed states the redesign renders
+    NO_RUNS = "no_runs"
+    NOT_SELECTED = "not_selected"
+    NOT_APPLICABLE = "not_applicable"
+    NOT_CONFIGURED = "not_configured"
+    RESUME_AVAILABLE = "resume_available"
+    ARTIFACT_MISSING = "artifact_missing"
+    ARTIFACT_CORRUPT = "artifact_corrupt"
+    LEGACY_READ_ONLY = "legacy_read_only"
+    SUPERSEDED = "superseded"
+    PURPOSE_UNRESOLVED = "purpose_unresolved"
+    RUNNER_UNAVAILABLE = "runner_unavailable"
+    LAUNCH_NOT_STARTED = "launch_not_started"
+    AUTHORIZATION_NOT_READY = "authorization_not_ready"
+    STORE_NAMESPACE_UNVERIFIED = "store_namespace_unverified"
+    SEED_PRODUCTION_NOT_AUTHORIZED = "seed_production_not_authorized"
 
 
 class EmptyStatePresentation(FrozenContract):
@@ -177,6 +205,8 @@ FORBIDDEN_DISPLAY_PHRASES: tuple[str, ...] = (
 
 ROUTE_LABELS: Mapping[StudyWorkspaceRoute, str] = MappingProxyType(
     {
+        StudyWorkspaceRoute.START: "Start",
+        StudyWorkspaceRoute.VERIFY_IMPLEMENTATION: "Verify Implementation",
         StudyWorkspaceRoute.NEW_STUDY: "New Study",
         StudyWorkspaceRoute.ACTIVE_RUNS: "Active Runs",
         StudyWorkspaceRoute.RESULTS: "Results",
@@ -538,17 +568,220 @@ EMPTY_STATE_PRESENTATIONS: Mapping[str, EmptyStatePresentation] = MappingProxyTy
             ),
         ),
         "pipeline_no_runs": EmptyStatePresentation(
-            key=EmptyStateKey.ARTIFACT_UNAVAILABLE,
+            key=EmptyStateKey.NO_RUNS,
             heading="No pipeline runs exist yet",
             explanation=(
-                "No 16-stage pipeline has been launched against this "
-                "namespace. Configure and freeze a pipeline specification "
-                "from the Full Pipeline Run wizard mode to create one."
+                "No 16-stage pipeline has been launched from this workspace. "
+                "Nothing is missing or corrupt — configure and freeze a "
+                "pipeline specification from the Full Pipeline Run wizard "
+                "mode to create one."
             ),
             owning_gate=None,
             next_action=(
                 "Open New Study → Full Pipeline Run, complete the wizard, "
                 "and launch from the Review step."
+            ),
+        ),
+        "no_runs": EmptyStatePresentation(
+            key=EmptyStateKey.NO_RUNS,
+            heading="No search runs exist yet",
+            explanation=(
+                "No frozen search charter has been launched from this "
+                "workspace. Nothing is missing or corrupt — this is the "
+                "empty starting state, not an artifact failure."
+            ),
+            owning_gate=None,
+            next_action=(
+                "Open Start, choose what you are trying to do, and freeze "
+                "a satisfiable draft from Review & Launch."
+            ),
+        ),
+        "not_selected": EmptyStatePresentation(
+            key=EmptyStateKey.NOT_SELECTED,
+            heading="Nothing selected",
+            explanation=(
+                "No item is selected for this view yet; the panel waits "
+                "for a selection and fabricates nothing in the meantime."
+            ),
+            owning_gate=None,
+            next_action="Select a run, configuration, or case above.",
+        ),
+        "not_applicable": EmptyStatePresentation(
+            key=EmptyStateKey.NOT_APPLICABLE,
+            heading="Not applicable to this selection",
+            explanation=(
+                "This block does not apply to the selected purpose, study "
+                "family, or evidence class; it is intentionally absent "
+                "rather than rendered empty."
+            ),
+            owning_gate="purpose / study-family flow rules",
+            next_action=None,
+        ),
+        "not_configured": EmptyStatePresentation(
+            key=EmptyStateKey.NOT_CONFIGURED,
+            heading="Not configured yet",
+            explanation=(
+                "The required configuration step has not been completed "
+                "for this draft, so nothing downstream can be previewed "
+                "or launched."
+            ),
+            owning_gate="wizard step validation",
+            next_action="Complete the earlier step named in the goal card.",
+        ),
+        "resume_available": EmptyStatePresentation(
+            key=EmptyStateKey.RESUME_AVAILABLE,
+            heading="Interrupted — resume available",
+            explanation=(
+                "The run stopped before its terminal state. Completed "
+                "stages and children keep their verified identities; a "
+                "new operational attempt continues from the last atomic "
+                "checkpoint under the same semantic id."
+            ),
+            owning_gate="execution-attempt identity (P0-3)",
+            next_action="Use Resume / Retry to start a new attempt.",
+        ),
+        "artifact_missing": EmptyStatePresentation(
+            key=EmptyStateKey.ARTIFACT_MISSING,
+            heading="Artifact missing",
+            explanation=(
+                "The referenced immutable artifact is not present in the "
+                "store the run belongs to. Nothing was fabricated in its "
+                "place; the exact identity is shown under Audit."
+            ),
+            owning_gate="immutable store exact-id load",
+            next_action=(
+                "Verify the exact artifact identity under Technical "
+                "identity & audit; a missing artifact is never guessed."
+            ),
+        ),
+        "artifact_corrupt": EmptyStatePresentation(
+            key=EmptyStateKey.ARTIFACT_CORRUPT,
+            heading="Artifact failed verification",
+            explanation=(
+                "The referenced artifact exists but its manifest, hash, or "
+                "identity did not verify. Nothing derived from it is shown "
+                "as trusted evidence."
+            ),
+            owning_gate="immutable store manifest verification",
+            next_action=(
+                "Inspect the sanitized verification failure under Audit; "
+                "the store never overwrites a corrupt entry."
+            ),
+        ),
+        "legacy_read_only": EmptyStatePresentation(
+            key=EmptyStateKey.LEGACY_READ_ONLY,
+            heading="Legacy read-only result",
+            explanation=(
+                "This result was produced by an earlier lane and is kept "
+                "with its original reports and caveats. No rerun, "
+                "modification, or promotion control exists for it."
+            ),
+            owning_gate="fixed M0–M3 lane (unchanged)",
+            next_action=None,
+        ),
+        "superseded": EmptyStatePresentation(
+            key=EmptyStateKey.SUPERSEDED,
+            heading="Superseded",
+            explanation=(
+                "A newer artifact or decision replaced this one. It stays "
+                "read-only for audit under its catalog archive flag; "
+                "nothing is deleted."
+            ),
+            owning_gate="catalog archive flag / supersession chain",
+            next_action="Open the replacement named in the audit record.",
+        ),
+        "purpose_unresolved": EmptyStatePresentation(
+            key=EmptyStateKey.PURPOSE_UNRESOLVED,
+            heading="Run purpose unresolved",
+            explanation=(
+                "This draft carries no purpose annotation and its legacy "
+                "run scope does not derive one unambiguous purpose "
+                "(Development Research and Full Authorized Development "
+                "share the full_authorized_development scope). It cannot "
+                "freeze or launch until the owner confirms the purpose; "
+                "the confirmation is a presentation annotation and never "
+                "changes a charter identity."
+            ),
+            owning_gate="run-purpose resolution (plan §5.6)",
+            next_action="Confirm the purpose in the goal card above.",
+        ),
+        "runner_unavailable": EmptyStatePresentation(
+            key=EmptyStateKey.RUNNER_UNAVAILABLE,
+            heading="No registered executor is available in this process",
+            explanation=(
+                "The frozen charter names a runner-entry key that this "
+                "process has not registered, so no worker was spawned. "
+                "The charter stays immutable and reusable; nothing was "
+                "reported as launched."
+            ),
+            owning_gate="runner-entry registry (fail-closed before spawn)",
+            next_action=(
+                "Launch from a process that registers the executor, or "
+                "use the CLI fallback with a registered runner-entry key."
+            ),
+        ),
+        "launch_not_started": EmptyStatePresentation(
+            key=EmptyStateKey.LAUNCH_NOT_STARTED,
+            heading="Launch requested — no persisted state yet",
+            explanation=(
+                "The detached worker was spawned but no job state appeared "
+                "within the wait window, so the launch is NOT reported as "
+                "started. The worker may still be initializing, or it may "
+                "have exited before writing state; the job log is the "
+                "evidence."
+            ),
+            owning_gate="honest launch outcome (state must exist)",
+            next_action=(
+                "Refresh Active Runs; if no state appears, read the job log "
+                "named under Audit and relaunch with the CLI fallback."
+            ),
+        ),
+        "authorization_not_ready": EmptyStatePresentation(
+            key=EmptyStateKey.AUTHORIZATION_NOT_READY,
+            heading="Owner authorization is not ready",
+            explanation=(
+                "The actual computation path requires real owner "
+                "authorization bound to this store's verified namespace and "
+                "current supersession head. Its typed readiness state is "
+                "shown with the reason; freezing and launching stay "
+                "disabled until it is ready. Synthetic fixtures remain "
+                "available under Implementation Verification."
+            ),
+            owning_gate="computation-path-scoped owner authorization",
+            next_action=(
+                "Resolve the named readiness reason (missing, stale head, "
+                "superseded, wrong namespace, wrong profile or source) "
+                "through the owner's separate authorization workflow."
+            ),
+        ),
+        "store_namespace_unverified": EmptyStatePresentation(
+            key=EmptyStateKey.STORE_NAMESPACE_UNVERIFIED,
+            heading="Store namespace not verified",
+            explanation=(
+                "The store this purpose resolves to carries no verified "
+                "semantic namespace (unmarked, corrupt, incoherently "
+                "deployed, or of the wrong class). A local path never "
+                "defines authority, so real charters cannot freeze here."
+            ),
+            owning_gate="semantic store namespace (HARDENING-BACKEND §4.1)",
+            next_action=(
+                "Initialize the store explicitly with its intended class "
+                "and a recorded store instance id (ifvg_store_namespace.py)."
+            ),
+        ),
+        "seed_production_not_authorized": EmptyStatePresentation(
+            key=EmptyStateKey.SEED_PRODUCTION_NOT_AUTHORIZED,
+            heading="Seed production not authorized",
+            explanation=(
+                "Producing the verification seed requires the owner's "
+                "signed SeedProductionAuthorizationRef bound to this store; "
+                "none is verified yet, so no seed job can start and no "
+                "final verification authorization can exist."
+            ),
+            owning_gate="SeedProductionAuthorizationRef (HARDENING-BACKEND §5.3)",
+            next_action=(
+                "Prepare the seed-production packet, obtain the owner's "
+                "signature, and refresh."
             ),
         ),
         "regime_algorithm_planned": EmptyStatePresentation(

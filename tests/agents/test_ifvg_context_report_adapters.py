@@ -229,7 +229,44 @@ def test_empty_actual_and_failed_reconciliation_adapters_are_safe() -> None:
     assert actual["kpis"]["executed_trade_count"] == 0
     assert actual["equity"].empty
     assert reconciliation["passed"] is False
+    assert reconciliation["status"] == "fail"
     assert reconciliation["gates"].iloc[0]["violation_count"] == 1
+    assert reconciliation["gates"].iloc[0]["status"] == "fail"
+
+
+def test_unknown_access_evidence_is_never_pass() -> None:
+    """UI-1 (plan F-07): a report without an evaluated pass flag is
+    UNAVAILABLE; protected counters are policy-enforced zeros — informational,
+    never PASS; the roll-up is green only for evaluated passing gates."""
+
+    unevaluated = adapt_reconciliation_report(
+        {
+            "passed": None,
+            "evaluated": False,
+            "unevaluated_reports": ["data_access_audit"],
+            "reports": {
+                "data_access_audit.json": {
+                    "protected_file_opens": 0,
+                    "file_opens": 12,
+                    "denied_dates": {},
+                }
+            },
+        }
+    )
+    assert unevaluated["passed"] is None
+    assert unevaluated["status"] == "unavailable"
+    assert unevaluated["evaluated"] is False
+    gate = unevaluated["gates"].iloc[0]
+    assert gate["gate"] == "data_access_audit"
+    assert not bool(gate["evaluated"]) and gate["status"] == "unavailable"
+    counters = unevaluated["access_counters"].set_index("counter")
+    assert counters.loc["protected_file_opens", "status"] == "informational"
+    assert counters.loc["file_opens", "status"] == "informational"
+    assert "pass" not in set(counters["status"])
+    # a legacy True flag without evidence is still rendered as it was persisted
+    legacy = adapt_reconciliation_report({"passed": True})
+    assert legacy["passed"] is True and legacy["status"] == "pass"
+    assert legacy["evaluated"] is False  # … but it is not an evaluated gate
 
 
 def test_actual_execution_drawdown_includes_zero_starting_equity() -> None:

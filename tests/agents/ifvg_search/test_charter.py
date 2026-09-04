@@ -199,3 +199,91 @@ def test_synthetic_charters_are_namespace_confined(tmp_path) -> None:
     test_root = tmp_path / "data" / "ifvg_datasets" / "search_test" / "v1"
     saved, reused = save_charter(test_root, envelope)
     assert reused is False and saved.search_id == envelope.search_id
+
+
+# ── UI-1 (plan F-04 / owner Q4): fail-closed satisfiability in the validator ──
+
+
+def test_validate_charter_refuses_degenerate_charters() -> None:
+    zero_axis_search = _example_charter_payload().model_copy(update={"axes": {}})
+    with pytest.raises(CharterValidationError, match="challenger"):
+        validate_charter(zero_axis_search, as_of_utc=_AS_OF)
+    one_value_search = _example_charter_payload().model_copy(
+        update={
+            "axes": {"parent_retest_timeout_1m_bars": ("parent_retest_timeout_1m_bars.none",)}
+        }
+    )
+    with pytest.raises(CharterValidationError, match="challenger"):
+        validate_charter(one_value_search, as_of_utc=_AS_OF)
+    crowded_single = _example_charter_payload().model_copy(
+        update={
+            "search_mode": SearchMode.SINGLE_CONFIGURATION,
+            "axes": {
+                "parent_retest_timeout_1m_bars": (
+                    "parent_retest_timeout_1m_bars.none",
+                    "parent_retest_timeout_1m_bars.240",
+                    "parent_retest_timeout_1m_bars.480",
+                )
+            },
+        }
+    )
+    with pytest.raises(CharterValidationError, match="at most one baseline and one challenger"):
+        validate_charter(crowded_single, as_of_utc=_AS_OF)
+    # baseline + exactly one challenger remains a lawful single-configuration compare
+    compare = _example_charter_payload().model_copy(
+        update={"search_mode": SearchMode.SINGLE_CONFIGURATION}
+    )
+    validate_charter(compare, as_of_utc=_AS_OF)
+    one_firm_universal = _example_charter_payload().model_copy(
+        update={
+            "search_mode": SearchMode.UNIVERSAL_PROP_SEARCH,
+            "authorized_firm_contract_ids": ("c" * 64,),
+        }
+    )
+    with pytest.raises(CharterValidationError, match="at least two firm contracts"):
+        validate_charter(one_firm_universal, as_of_utc=_AS_OF)
+
+
+def test_real_charter_prop_objective_requires_a_firm_contract_and_is_never_rewritten() -> None:
+    from alpha_lab.agents.data_infra.ifvg.development_access import FROZEN_WARMUP_DATES
+    from alpha_lab.agents.data_infra.ifvg.search.authorization import (
+        OwnerAuthorizationBundle,
+    )
+    from alpha_lab.agents.data_infra.ifvg.search.charter import DatePolicy
+    from alpha_lab.agents.data_infra.ifvg.search.store_namespace import (
+        SupersessionHeadWitness,
+    )
+
+    # the example charter carries the prop objective expected_net_payout_90d
+    # with zero firm contracts: lawful for the SYNTHETIC fixture (its firms
+    # ride the injected wiring) …
+    synthetic = _example_charter_payload()
+    assert synthetic.objective_policy.pareto_objectives == ("expected_net_payout_90d",)
+    validate_charter(synthetic, as_of_utc=_AS_OF)
+    # … but a REAL charter blocks on the objective BEFORE the owner-evidence
+    # check, and the objective is echoed unchanged (never rewritten). The
+    # real charter evaluates the exact baseline (zero axes) so the
+    # owner-ratification check on searched values does not fire first.
+    real = synthetic.model_copy(
+        update={
+            "search_mode": SearchMode.SINGLE_CONFIGURATION,
+            "axes": {},
+            "owner_authorization": OwnerAuthorizationBundle(
+                requirement_set_id="1" * 64,
+                decision_refs={},
+                store_namespace_id="e" * 64,
+                supersession_head_witness=SupersessionHeadWitness(
+                    store_namespace_id="e" * 64, line_count=0, head_sha256="f" * 64
+                ),
+            ),
+            "date_policy": DatePolicy(
+                replay_dates=(*FROZEN_WARMUP_DATES, "2026-01-13"),
+                warmup_dates=FROZEN_WARMUP_DATES,
+                access_policy_id="development_explicit_dates_before_path_v2",
+            ),
+        }
+    )
+    with pytest.raises(CharterValidationError, match="never silently rewritten") as refused:
+        validate_charter(real, as_of_utc=_AS_OF)
+    assert "expected_net_payout_90d" in str(refused.value)
+    assert real.objective_policy.pareto_objectives == ("expected_net_payout_90d",)

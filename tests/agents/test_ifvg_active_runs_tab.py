@@ -202,7 +202,7 @@ def test_missing_status_file_renders_the_cli_escape_hatch(
         in codes
     )
     headings = " ".join(str(h.value) for h in at.subheader)
-    assert "Artifact unavailable" in headings
+    assert "Artifact missing" in headings  # UI-1: missing, never "unavailable"
     everything = codes + " ".join(str(c.value) for c in at.caption)
     assert str(ghost_root) not in everything  # no local path disclosure
 
@@ -215,4 +215,6 @@ def test_empty_state_when_no_jobs_exist(monkeypatch, tmp_path) -> None:
     }
     at = _run(monkeypatch, fixture)
     headings = " ".join(str(h.value) for h in at.subheader)
-    assert "Artifact unavailable" in headings
+    # UI-1 (plan §6.7): an empty job root is the distinct NO_RUNS state
+    assert "No search runs exist yet" in headings
+    assert "Artifact unavailable" not in headings

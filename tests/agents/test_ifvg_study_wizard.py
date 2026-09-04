@@ -1,9 +1,12 @@
-"""FUX-WIZ-001..012 AppTests: shell, drafts, modes/templates, baseline,
-search space, prop cards, risk, benchmarks, validation, review, freeze and
-registry-gated launch (TEST_MATRIX §3.11)."""
+"""FUX-WIZ-001..012 AppTests as amended by UI-1: shell, drafts, modes /
+questions / templates, baseline, search space, prop cards, risk, benchmarks,
+validation, review, the purpose card, charter satisfiability, authorization
+by the actual path, honest launch and the sequential-V1 runtime truth
+(TEST_MATRIX §3.11; plan §10)."""
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -35,11 +38,15 @@ from alpha_lab.agents.data_infra.ifvg.study_drafts import (  # noqa: E402
     new_draft,
     save_draft,
 )
+from alpha_lab.agents.data_infra.ifvg.study_providers import (  # noqa: E402
+    catalog_annotations,
+)
 from alpha_lab.agents.data_infra.ifvg.study_status import (  # noqa: E402
     VERIFICATION_BADGE_TEXT,
 )
 
 _DRAFT_KEY = f"{wizard.STATE_PREFIX}draft_id"
+_FREEZE = "Freeze Search Charter and Launch"
 
 
 def _app() -> None:
@@ -73,7 +80,24 @@ def _baseline_hash() -> str:
     return ifvg_profile_hash(canonicalize_section(resolved.section))
 
 
-def _seed_draft(draft_root: Path, *, step: int, mode: str = "fsm_config_search"):
+def _annotation(purpose: str) -> dict:
+    return {
+        "schema_version": 1,
+        "purpose": purpose,
+        "derivation": "card_selected",
+        "owner_confirmed": True,
+        "updated_at": "2026-09-04T00:00:00+00:00",
+    }
+
+
+def _seed_draft(
+    draft_root: Path,
+    *,
+    step: int,
+    mode: str = "fsm_config_search",
+    purpose: str | None = "implementation_verification",
+    run_scope: str | None = None,
+):
     spec = SEARCH_AXIS_REGISTRY_V1["parent_retest_timeout_1m_bars"]
     challenger = next(
         value
@@ -82,11 +106,18 @@ def _seed_draft(draft_root: Path, *, step: int, mode: str = "fsm_config_search")
     )
     draft = new_draft(mode, display_name="AppTest draft")
     draft.step_index = step
+    if purpose is not None:
+        draft.purpose_annotation = _annotation(purpose)
+    scope = run_scope or (
+        "verification_5d"
+        if purpose in (None, "implementation_verification")
+        else "full_authorized_development"
+    )
     draft.steps = {
         "objective": {
             "mode_id": mode,
             "question_id": "find_robust_fsm"
-            if mode == "fsm_config_search"
+            if mode in ("fsm_config_search", "full_pipeline_run")
             else "compare_one_with_baseline",
             "template_id": "strategy_quality_only",
             "custom_objectives": (),
@@ -109,31 +140,32 @@ def _seed_draft(draft_root: Path, *, step: int, mode: str = "fsm_config_search")
         "risk_policies": {"selected_contract_ids": [], "per_firm_policies": {}},
         "benchmarks": {},
         "validation": {
-            "run_scope": "verification_5d",
+            "run_scope": scope,
+            "evidence_class": "synthetic_fixture" if scope == "verification_5d" else "real",
             "real_dates": [
                 "2026-06-04",
                 "2026-06-05",
                 "2026-06-08",
                 "2026-06-09",
                 "2026-06-10",
-            ],
+            ]
+            if scope == "verification_5d"
+            else ["2026-01-13", "2026-01-14"],
             "warmup_dates": [],
             "seed": 7,
-            "worker_limit": 4,
+            "worker_limit": 1,
         },
-        "review": {"run_scope": "verification_5d", "n_children": 2},
+        "review": {"run_scope": scope, "n_children": 2},
     }
     save_draft(draft_root, draft)
     return draft
 
 
-def _run_at_step(monkeypatch, tmp_path, *, step: int, namespace: str | None = None):
+def _run_at_step(monkeypatch, tmp_path, *, step: int, **seed_kwargs):
     roots = _patched_roots(monkeypatch, tmp_path)
-    draft = _seed_draft(roots["drafts"], step=step)
+    draft = _seed_draft(roots["drafts"], step=step, **seed_kwargs)
     at = apptest.AppTest.from_function(_app, default_timeout=120)
     at.session_state[_DRAFT_KEY] = draft.draft_id
-    if namespace:
-        at.session_state[study_tab.NAMESPACE_KEY] = namespace
     at.run()
     assert not at.exception
     return at, draft, roots
@@ -149,6 +181,45 @@ def _markdown_text(at) -> str:
 
 def _caption_text(at) -> str:
     return "\n".join(str(block.value) for block in at.caption)
+
+
+def _headings(at) -> str:
+    return " ".join(str(h.value) for h in at.subheader)
+
+
+def _errors(at) -> str:
+    return " ".join(str(e.value) for e in at.error)
+
+
+def _tables(at) -> str:
+    return str([t.value.to_dict() for t in at.table])
+
+
+def _state_writing_spawn(spawned: list[list[str]], *, pid: int = 4242):
+    """A fake detached spawn that persists the worker's first checkpoint —
+    the honest launch reports success only once this file exists."""
+
+    def _spawn(command: list[str]) -> int:
+        spawned.append(command)
+        search_id = command[command.index("--search-id") + 1]
+        state_root = Path(command[command.index("--state-root") + 1])
+        directory = state_root / search_id
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "search_state.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "search_id": search_id,
+                    "phase": "children_enumerated",
+                    "phase_notes": {},
+                    "children": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return pid
+
+    return _spawn
 
 
 # ── shell, drafts, modes ────────────────────────────────────────────────────
@@ -174,8 +245,8 @@ def test_wizard_shell_and_exact_step_restore(monkeypatch, tmp_path) -> None:
     assert "**Prop Contracts**" in _caption_text(at2)  # exact-step restore
 
 
-def test_five_modes_four_questions_six_templates(monkeypatch, tmp_path) -> None:
-    """FUX-WIZ-004 + resolved thresholds/tie-breaks visible."""
+def test_five_modes_five_questions_six_templates(monkeypatch, tmp_path) -> None:
+    """FUX-WIZ-004 as amended (owner Q4: Evaluate is a separate question)."""
 
     at, _draft, _roots = _run_at_step(monkeypatch, tmp_path, step=0)
     mode_box = next(
@@ -188,8 +259,18 @@ def test_five_modes_four_questions_six_templates(monkeypatch, tmp_path) -> None:
         "Universal Prop Search",
         "Full Pipeline Run",
     ]
+    purpose_box = next(w for w in at.selectbox if w.key == f"{wizard._W}new_purpose")
+    assert purpose_box.options == [
+        "Implementation Verification",
+        "Development Research",
+        "Full Authorized Development",
+    ]
     question = next(w for w in at.radio if w.key == f"{wizard._W}question")
-    assert len(question.options) == 4
+    assert question.options[:2] == [
+        "Evaluate one configuration",
+        "Compare one configuration with the baseline",
+    ]
+    assert len(question.options) == 5
     template = next(w for w in at.selectbox if w.key == f"{wizard._W}template")
     assert template.options == [
         "Payout Reliability",
@@ -199,10 +280,7 @@ def test_five_modes_four_questions_six_templates(monkeypatch, tmp_path) -> None:
         "Strategy Quality Only",
         "Custom",
     ]
-    # the resolved objective table is visible — nothing hidden behind a name
-    assert "primary objective" in str(at.get("arrow_data_frame")) + str(
-        [t.value for t in at.get("table") or []]
-    ) or "Resolved objective" in _markdown_text(at)
+    assert "Resolved objective" in _markdown_text(at)
 
 
 def test_incompatible_mode_question_pair_blocks_next(monkeypatch, tmp_path) -> None:
@@ -210,10 +288,28 @@ def test_incompatible_mode_question_pair_blocks_next(monkeypatch, tmp_path) -> N
     question = next(w for w in at.radio if w.key == f"{wizard._W}question")
     question.set_value("Test repeat-payout feasibility").run()
     assert not at.exception
-    assert any(
-        "different study mode" in str(err.value) for err in at.error
-    )
+    assert "different study mode" in _errors(at)
     assert _button(at, "Next").disabled
+
+
+def test_goal_card_shows_purpose_scope_namespace_and_evidence(
+    monkeypatch, tmp_path
+) -> None:
+    """Plan §7 New Study: the goal card is fixed at the top of every step with
+    the derived purpose, run scope, namespace class, evidence class and the
+    typed authorization readiness; the namespace id is never guessed."""
+
+    at, _draft, _roots = _run_at_step(monkeypatch, tmp_path, step=2)
+    tables = _tables(at)
+    assert "Implementation Verification" in tables
+    assert "verification_5d" in tables
+    assert "'namespace class': {0: 'test'}" in tables
+    assert "synthetic_fixture" in tables
+    assert "synthetic_marker" in tables
+    assert "not_required" in tables
+    assert VERIFICATION_BADGE_TEXT in _errors(at)
+    assert "Store namespace: **unmarked**" in _caption_text(at)
+    assert "search_test" not in _tables(at)  # a path never names authority
 
 
 # ── baseline ────────────────────────────────────────────────────────────────
@@ -237,7 +333,7 @@ def test_blocked_baseline_explains_and_cannot_advance(monkeypatch, tmp_path) -> 
     baseline_box.set_value("ifvg_v2_ict_clean_fresh_static_1r").run()
     assert not at.exception
     assert _button(at, "Next").disabled
-    assert any("blocked" in str(err.value).lower() for err in at.error)
+    assert "blocked" in _errors(at).lower()
 
 
 # ── search space ────────────────────────────────────────────────────────────
@@ -264,10 +360,13 @@ def test_search_space_locked_blocked_axes_have_no_widget(
     assert not at.text_area  # no raw JSON/override editor exists
     text = _markdown_text(at)
     assert "Requires New Sequential Replay" in text
-    assert "Staleness" in str([e.label for e in at.expander]) or True
     expander_labels = [e.label for e in at.expander]
     assert "Staleness" in expander_labels
     assert "Parent Handling" in expander_labels
+    # plan F-12: the ambiguous "~N" caption is replaced by the configuration sentence
+    captions = _caption_text(at)
+    assert "2 configurations: baseline + 1 challenger" in captions
+    assert "~" not in captions.split("configurations")[0][-10:]
 
 
 def test_search_space_selection_updates_child_count(monkeypatch, tmp_path) -> None:
@@ -287,7 +386,9 @@ def test_search_space_selection_updates_child_count(monkeypatch, tmp_path) -> No
 
 
 def test_prop_step_renders_truthful_synthetic_cards(monkeypatch, tmp_path) -> None:
-    """FUX-WIZ-008: full card fields; synthetic visibly synthetic."""
+    """FUX-WIZ-008: full card fields; synthetic visibly synthetic. The cards
+    come from the PURPOSE's store (Implementation Verification → the test
+    store), never from a session selector."""
 
     roots = _patched_roots(monkeypatch, tmp_path)
     from tests.agents.ifvg_search.study_ui_fixture import build_completed_search
@@ -295,7 +396,7 @@ def test_prop_step_renders_truthful_synthetic_cards(monkeypatch, tmp_path) -> No
     fixture = build_completed_search(
         tmp_path / "fixture", with_prop=False, with_contract=True
     )
-    monkeypatch.setattr(study_tab, "STORE_ROOT_RESEARCH", fixture["store_root"])
+    monkeypatch.setattr(study_tab, "STORE_ROOT_VERIFICATION", fixture["store_root"])
     draft = _seed_draft(roots["drafts"], step=3, mode="prop_benchmark")
     at = apptest.AppTest.from_function(_app, default_timeout=120)
     at.session_state[_DRAFT_KEY] = draft.draft_id
@@ -311,8 +412,7 @@ def test_prop_step_without_contracts_renders_the_exact_state(
     monkeypatch, tmp_path
 ) -> None:
     at, _draft, _roots = _run_at_step(monkeypatch, tmp_path, step=3)
-    headings = " ".join(str(h.value) for h in at.subheader)
-    assert "No verified firm contract" in headings
+    assert "No verified firm contract" in _headings(at)
 
 
 # ── benchmarks / validation ─────────────────────────────────────────────────
@@ -334,109 +434,286 @@ def test_benchmarks_render_three_ordered_gate_groups(monkeypatch, tmp_path) -> N
 def test_validation_shows_readonly_allowlist_badge_and_checklist(
     monkeypatch, tmp_path
 ) -> None:
-    """FUX-WIZ-011 + FUX-WIZ-007: canonical allowlist read-only, exact badge,
-    authorization state, computation-path-scoped checklist."""
+    """FUX-WIZ-011 + FUX-WIZ-007 as amended: the run scope is DERIVED (no
+    scope radio), the canonical allowlist is read-only, the badge is exact,
+    the VerificationAuthorizationRef readiness is TYPED, and the
+    computation-path-scoped checklist is shown."""
 
     at, _draft, _roots = _run_at_step(monkeypatch, tmp_path, step=6)
-    errors = " ".join(str(e.value) for e in at.error)
-    assert VERIFICATION_BADGE_TEXT in errors  # the non-dismissible badge
+    assert VERIFICATION_BADGE_TEXT in _errors(at)  # the non-dismissible badge
     codes = " ".join(str(c.value) for c in at.code)
     assert "2026-06-04" in codes and "2026-06-10" in codes
     assert "2026-06-11" in codes  # protected boundary shown read-only
-    headings = " ".join(str(h.value) for h in at.subheader)
-    assert "Verification authorization missing" in headings
+    assert "Verification authorization missing" in _headings(at)
     text = _markdown_text(at)
     assert "21/R-5:verification_fixture_authorization" in text
+    assert "**Run scope:** `verification_5d`" in text
+    radio_labels = [radio.label for radio in at.radio]
+    assert "Run scope" not in radio_labels  # derived from the purpose (owner Q1)
+    evidence = next(w for w in at.radio if w.key == f"{wizard._W}evidence")
+    assert evidence.value.startswith("Synthetic fixture")
+    captions = _caption_text(at)
+    assert "store_unmarked" in captions or "missing" in captions
 
 
-# ── review, freeze, launch ──────────────────────────────────────────────────
+def test_worker_control_is_absent_or_fixed_to_one(monkeypatch, tmp_path) -> None:
+    """HARDENING-BACKEND §4.6 / plan F-13: no operative worker control; the
+    sequential V1 truth is stated."""
+
+    at, draft, roots = _run_at_step(monkeypatch, tmp_path, step=6)
+    assert not at.slider
+    labels = [w.label for w in at.number_input]
+    assert not any("worker" in (label or "").lower() for label in labels)
+    captions = _caption_text(at)
+    assert "sequential_children_v1" in captions
+    assert "effective workers: 1" in captions
+    _button(at, "Save Draft").click().run()
+    assert load_draft(roots["drafts"], draft.draft_id).steps["validation"]["worker_limit"] == 1
 
 
-def test_freeze_and_launch_only_in_the_button_handler(
+def test_development_dates_are_validated_field_by_field(monkeypatch, tmp_path) -> None:
+    """Plan F-08: the frozen warmup prefix is read-only and every evidence
+    date is checked against the backend logical-day contract at the field —
+    never as a generic freeze failure."""
+
+    at, _draft, _roots = _run_at_step(
+        monkeypatch, tmp_path, step=6, purpose="development_research"
+    )
+    codes = " ".join(str(c.value) for c in at.code)
+    assert "2026-01-01" in codes and "2026-01-12" in codes  # the frozen prefix
+    dates = next(w for w in at.text_area if w.key == f"{wizard._W}full_dates")
+    dates.set_value("2026-01-17\n2026-06-11").run()
+    assert not at.exception
+    errors = _errors(at)
+    assert "not a logical trading day" in errors
+    assert "outside the development evidence window" in errors
+    assert _button(at, "Next").disabled
+    dates.set_value("2026-01-13\n2026-01-14").run()
+    assert "real_dates" not in _errors(at)
+    assert "Owner authorization is not ready" in _headings(at)
+
+
+# ── review, satisfiability, freeze, launch ──────────────────────────────────
+
+
+def test_review_shows_satisfiability_report_and_unrewritten_objective(
     monkeypatch, tmp_path
 ) -> None:
-    """FUX-WIZ-012: freeze saves the immutable charter, marks the draft
-    frozen, spawns ONLY on the explicit click, and routes to Active Runs."""
-
-    spawned: list[list[str]] = []
-    monkeypatch.setattr(
-        wizard, "_spawn_search_job", lambda command: spawned.append(command) or 4242
-    )
-    at, draft, roots = _run_at_step(
-        monkeypatch,
-        tmp_path,
-        step=7,
-        namespace="Verification / synthetic (search_test/v1)",
-    )
-    assert spawned == []  # rendering launches nothing
+    at, _draft, _roots = _run_at_step(monkeypatch, tmp_path, step=7)
     text = _markdown_text(at)
     assert "Resolved charter preview" in text
-    assert "Expensive strategy replays" in str(
-        [t for t in at.get("table")]
-    ) or "Estimated work" in text
-    _button(at, "Freeze Search Charter and Launch").click().run()
-    assert not at.exception
-    assert len(spawned) == 1
-    command = spawned[0]
-    assert "--runner-entry-key" in command
-    assert "synthetic_search_job_fixture_v1" in command
-    search_id = command[command.index("--search-id") + 1]
-    assert has_envelope(
-        study_tab.STORE_ROOT_VERIFICATION, "charters", search_id
-    )
-    frozen = load_draft(roots["drafts"], draft.draft_id)
-    assert frozen.status == "frozen"
-    assert frozen.frozen_search_id == search_id
-    assert (
-        at.session_state[f"{wizard.STATE_PREFIX}pending_route"] == "Active Runs"
-    )
+    assert "Charter satisfiability" in text
+    tables = _tables(at)
+    assert "FSM search enumerates at least one challenger" in tables
+    assert "✓ PASS" in tables and "✕ FAIL" not in tables
+    assert "objective (selected; never rewritten)" in tables
+    assert "net_expectancy_r" in tables
+    assert "2 configurations: baseline + 1 challenger" in _caption_text(at)
+    assert "Blocked by contract" in tables and "S11" in tables
+    assert "Estimated work" in text
+    assert not _button(at, _FREEZE).disabled
 
 
-def test_research_namespace_freeze_fails_closed(monkeypatch, tmp_path) -> None:
-    """No owner evidence exists → a research-namespace charter cannot freeze
-    (P0-4 namespace confinement surfaces as a sanitized refusal)."""
+@pytest.mark.parametrize(
+    ("mutate", "rule"),
+    [
+        (lambda d: d.steps["search_space"].update(axis_selections={}),
+         "fsm_search_has_a_challenger"),
+        (
+            lambda d: d.steps["objective"].update(template_id="payout_reliability"),
+            "prop_objective_requires_a_verified_contract",
+        ),
+    ],
+)
+def test_contradictory_drafts_fail_before_freeze(monkeypatch, tmp_path, mutate, rule) -> None:
+    """Plan F-04: a zero-axis search and a prop objective without a verified
+    contract are refused at Review with their reason; Freeze is disabled and
+    the objective is echoed unchanged (never rewritten)."""
 
-    spawned: list[list[str]] = []
-    monkeypatch.setattr(
-        wizard, "_spawn_search_job", lambda command: spawned.append(command) or 1
-    )
-    at, draft, roots = _run_at_step(monkeypatch, tmp_path, step=7)
-    _button(at, "Freeze Search Charter and Launch").click().run()
-    assert not at.exception
-    assert spawned == []
-    errors = " ".join(str(e.value) for e in at.error)
-    assert "refus" in errors.lower() or "fail" in errors.lower()
-    assert load_draft(roots["drafts"], draft.draft_id).status == "draft"
-
-
-def test_full_scope_requires_the_exact_typed_confirmation(
-    monkeypatch, tmp_path
-) -> None:
     roots = _patched_roots(monkeypatch, tmp_path)
     draft = _seed_draft(roots["drafts"], step=7)
-    draft.steps["validation"]["run_scope"] = "full_authorized_development"
-    draft.steps["review"] = {"run_scope": "full_authorized_development"}
+    mutate(draft)
     save_draft(roots["drafts"], draft)
     at = apptest.AppTest.from_function(_app, default_timeout=120)
     at.session_state[_DRAFT_KEY] = draft.draft_id
     at.run()
     assert not at.exception
-    errors = " ".join(str(e.value) for e in at.error)
+    assert rule in _errors(at)
+    assert "✕ FAIL" in _tables(at)
+    assert _button(at, _FREEZE).disabled
+    if rule == "prop_objective_requires_a_verified_contract":
+        assert "payout_probability_per_rolling_30d" in _tables(at)  # unchanged
+        assert "never rewritten" in _errors(at) or "never rewritten" in _tables(at)
+
+
+def test_freeze_and_launch_only_in_the_button_handler(
+    monkeypatch, tmp_path
+) -> None:
+    """FUX-WIZ-012 as amended: freeze saves the immutable charter into the
+    PURPOSE's store (Implementation Verification → the test store), records
+    the purpose annotation, spawns ONLY on the explicit click, and routes to
+    Active Runs only after the worker's state exists."""
+
+    spawned: list[list[str]] = []
+    monkeypatch.setattr(wizard, "_spawn_search_job", _state_writing_spawn(spawned))
+    at, draft, roots = _run_at_step(monkeypatch, tmp_path, step=7)
+    assert spawned == []  # rendering launches nothing
+    _button(at, _FREEZE).click().run()
+    assert not at.exception
+    assert len(spawned) == 1
+    command = spawned[0]
+    assert "--runner-entry-key" in command
+    assert "synthetic_search_job_fixture_v1" in command
+    assert command[command.index("--store-root") + 1] == str(roots["verification"])
+    search_id = command[command.index("--search-id") + 1]
+    assert has_envelope(roots["verification"], "charters", search_id)
+    assert not has_envelope(roots["research"], "charters", search_id)
+    frozen = load_draft(roots["drafts"], draft.draft_id)
+    assert frozen.status == "frozen"
+    assert frozen.frozen_search_id == search_id
+    annotation = catalog_annotations(roots["verification"])[search_id]["purpose"]
+    assert annotation["purpose"] == "implementation_verification"
+    assert annotation["evidence_class"] == "synthetic_fixture"
+    success = " ".join(str(s.value) for s in at.success)
+    assert "state persisted" in success
+    assert (
+        at.session_state[f"{wizard.STATE_PREFIX}pending_route"] == "Active Runs"
+    )
+
+
+def test_launch_refuses_unregistered_runner_before_spawn(monkeypatch, tmp_path) -> None:
+    """Plan F-02: outside the development checkout the synthetic key is
+    unregistered — the typed runner_unavailable state renders and NO worker
+    is spawned (never a reported success that dead-ends)."""
+
+    from alpha_lab.agents.data_infra.ifvg.search import runner_registry
+
+    spawned: list[list[str]] = []
+    monkeypatch.setattr(wizard, "_spawn_search_job", _state_writing_spawn(spawned))
+    monkeypatch.setattr(runner_registry, "_DEVELOPMENT_ENTRIES", {})
+    at, draft, roots = _run_at_step(monkeypatch, tmp_path, step=7)
+    _button(at, _FREEZE).click().run()
+    assert not at.exception
+    assert spawned == []
+    assert "No registered executor is available in this process" in _headings(at)
+    assert not at.success
+    assert f"{wizard.STATE_PREFIX}pending_route" not in at.session_state
+    frozen = load_draft(roots["drafts"], draft.draft_id)
+    assert frozen.status == "frozen"  # the charter froze; only the launch refused
+    codes = " ".join(str(c.value) for c in at.code)
+    assert "--runner-entry-key synthetic_search_job_fixture_v1" in codes
+
+
+def test_launch_reports_started_only_after_state_exists(monkeypatch, tmp_path) -> None:
+    """Plan F-02: a spawned worker that never persists state is the typed
+    launch_not_started state — not a success, no route to Active Runs."""
+
+    spawned: list[list[str]] = []
+    monkeypatch.setattr(
+        wizard, "_spawn_search_job", lambda command: spawned.append(command) or 99
+    )
+    monkeypatch.setattr(wizard, "LAUNCH_STATE_WAIT_SECONDS", 0.4)
+    at, _draft, _roots = _run_at_step(monkeypatch, tmp_path, step=7)
+    _button(at, _FREEZE).click().run()
+    assert not at.exception
+    assert len(spawned) == 1
+    assert "Launch requested — no persisted state yet" in _headings(at)
+    assert not at.success
+    assert f"{wizard.STATE_PREFIX}pending_route" not in at.session_state
+    captions = _caption_text(at)
+    assert "pid 99" in captions
+
+
+def test_research_purpose_cannot_freeze_without_ready_owner_authorization(
+    monkeypatch, tmp_path
+) -> None:
+    """Owner Q1 / plan F-01: a Development Research draft resolves to the
+    research namespace; with no verified namespace and no owner evidence the
+    typed readiness blocks the freeze BEFORE eight steps — no 'Freeze failed'."""
+
+    spawned: list[list[str]] = []
+    monkeypatch.setattr(wizard, "_spawn_search_job", _state_writing_spawn(spawned))
+    at, draft, roots = _run_at_step(
+        monkeypatch, tmp_path, step=7, purpose="development_research"
+    )
+    tables = _tables(at)
+    assert "Development Research" in tables
+    assert "'namespace class': {0: 'research'}" in tables
+    assert "owner_authorization_bundle" in tables
+    assert _button(at, _FREEZE).disabled
+    errors = _errors(at)
+    assert "freeze_readiness" in errors
+    assert "verified store namespace" in errors or "readiness" in errors
+    assert "Freeze failed" not in errors
+    assert spawned == []
+    assert load_draft(roots["drafts"], draft.draft_id).status == "draft"
+
+
+def test_full_scope_requires_the_exact_typed_confirmation_and_readiness(
+    monkeypatch, tmp_path
+) -> None:
+    """FUX §15 + plan §5.2: the full-scope warning and typed acknowledgement
+    stay; the control remains disabled until the typed owner readiness is
+    ready (never a Boolean, never enabled by the phrase alone)."""
+
+    at, _draft, _roots = _run_at_step(
+        monkeypatch, tmp_path, step=7, purpose="full_authorized_development"
+    )
+    errors = _errors(at)
     assert "This will run the full authorized development pipeline." in errors
     assert "It is not an implementation verification run." in errors
-    assert _button(at, "Freeze Search Charter and Launch").disabled
+    assert "typed_acknowledgement" in errors
+    assert _button(at, _FREEZE).disabled
     ack = next(w for w in at.text_input if w.key == f"{wizard._W}ack")
     ack.set_value("run full authorized development").run()
-    assert not _button(at, "Freeze Search Charter and Launch").disabled
+    errors = _errors(at)
+    assert "typed_acknowledgement" not in errors  # the phrase is accepted …
+    assert "freeze_readiness" in errors  # … but readiness still blocks
+    assert _button(at, _FREEZE).disabled
+
+
+def test_ambiguous_legacy_purpose_blocks_freeze_until_confirmed(
+    monkeypatch, tmp_path
+) -> None:
+    """Plan §5.6: a legacy full-scope draft without an annotation is
+    purpose_unresolved (Development Research vs Full Authorized Development
+    share the scope); confirming records a presentation annotation only."""
+
+    at, draft, roots = _run_at_step(
+        monkeypatch,
+        tmp_path,
+        step=7,
+        purpose=None,
+        run_scope="full_authorized_development",
+    )
+    assert "Run purpose unresolved" in _headings(at)
+    assert _button(at, _FREEZE).disabled
+    box = next(w for w in at.selectbox if w.key == f"{wizard._W}confirm_purpose")
+    box.set_value("Development Research").run()
+    _button(at, "Confirm purpose").click().run()
+    assert not at.exception
+    stored = load_draft(roots["drafts"], draft.draft_id)
+    assert stored.purpose_annotation["purpose"] == "development_research"
+    assert stored.purpose_annotation["derivation"] == "owner_confirmed"
+    assert "Run purpose unresolved" not in _headings(at)
+    assert "Development Research" in _tables(at)
+
+
+def test_legacy_verification_draft_derives_its_purpose_unambiguously(
+    monkeypatch, tmp_path
+) -> None:
+    at, _draft, _roots = _run_at_step(monkeypatch, tmp_path, step=7, purpose=None)
+    assert "Run purpose unresolved" not in _headings(at)
+    assert "Implementation Verification" in _tables(at)
+    assert not _button(at, _FREEZE).disabled
 
 
 def test_full_pipeline_mode_renders_the_operator_workflow(
     monkeypatch, tmp_path
 ) -> None:
-    """R5 flip of the R4 planned-capability assertion: mode-5 step 8 now
-    delegates to the real §30 workflow — no planned state, no search-freeze
-    button, the pipeline phase radio present (full coverage in
-    test_ifvg_pipeline_tab.py)."""
+    """R5 flip of the R4 planned-capability assertion: mode-5 step 8 delegates
+    to the real §30 workflow — no planned state, no search-freeze button, the
+    pipeline phase radio present (full coverage in test_ifvg_pipeline_tab.py)."""
 
     import ifvg_pipeline_tab as pipeline_tab
 
@@ -445,17 +722,12 @@ def test_full_pipeline_mode_renders_the_operator_workflow(
         pipeline_tab, "PIPELINE_STATE_ROOT", tmp_path / "pipeline_jobs"
     )
     draft = _seed_draft(roots["drafts"], step=7, mode="full_pipeline_run")
-    draft.steps["objective"]["question_id"] = "find_robust_fsm"
-    save_draft(roots["drafts"], draft)
     at = apptest.AppTest.from_function(_app, default_timeout=120)
     at.session_state[_DRAFT_KEY] = draft.draft_id
     at.run()
     assert not at.exception
-    headings = " ".join(str(h.value) for h in at.subheader)
-    assert "planned / unavailable" not in headings.lower()
-    assert not any(
-        b.label == "Freeze Search Charter and Launch" for b in at.button
-    )
+    assert "planned / unavailable" not in _headings(at).lower()
+    assert not any(b.label == _FREEZE for b in at.button)
     phase_options = {tuple(radio.options) for radio in at.radio}
     assert any("Monitor" in options for options in phase_options)
 
@@ -538,8 +810,7 @@ def test_descriptive_interpretation_blocks_enumeration(
     at.session_state[_DRAFT_KEY] = draft.draft_id
     at.run()
     assert not at.exception
-    errors = " ".join(str(e.value) for e in at.error)
-    assert "never replays" in errors
+    assert "never replays" in _errors(at)
     assert _button(at, "Next").disabled
 
 
@@ -577,26 +848,19 @@ def test_unresolved_commit_provenance_refuses_freeze(
     immutable charter — the freeze refuses instead."""
 
     spawned: list[list[str]] = []
-    monkeypatch.setattr(
-        wizard, "_spawn_search_job", lambda command: spawned.append(command) or 1
-    )
+    monkeypatch.setattr(wizard, "_spawn_search_job", _state_writing_spawn(spawned))
     monkeypatch.setattr(wizard, "_commit_of", lambda path: "unknown")
-    at, draft, roots = _run_at_step(
-        monkeypatch,
-        tmp_path,
-        step=7,
-        namespace="Verification / synthetic (search_test/v1)",
-    )
-    _button(at, "Freeze Search Charter and Launch").click().run()
+    at, draft, roots = _run_at_step(monkeypatch, tmp_path, step=7)
+    _button(at, _FREEZE).click().run()
     assert not at.exception
     assert spawned == []
-    errors = " ".join(str(e.value) for e in at.error)
-    assert "provenance" in errors.lower()
+    assert "provenance" in _errors(at).lower()
     assert load_draft(roots["drafts"], draft.draft_id).status == "draft"
 
 
 def test_clone_as_new_search_from_a_frozen_draft(monkeypatch, tmp_path) -> None:
-    """FUX-WIZ-003: the original stays frozen; the clone is a new draft."""
+    """FUX-WIZ-003: the original stays frozen; the clone is a new draft that
+    keeps the purpose annotation (derivation: cloned)."""
 
     from alpha_lab.agents.data_infra.ifvg.study_drafts import mark_frozen
 
@@ -614,5 +878,7 @@ def test_clone_as_new_search_from_a_frozen_draft(monkeypatch, tmp_path) -> None:
     clone = load_draft(roots["drafts"], clone_id)
     assert clone.status == "draft"
     assert clone.cloned_from == draft.draft_id
+    assert clone.purpose_annotation["purpose"] == "implementation_verification"
+    assert clone.purpose_annotation["derivation"] == "cloned"
     original = load_draft(roots["drafts"], draft.draft_id)
     assert original.status == "frozen"

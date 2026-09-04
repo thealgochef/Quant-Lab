@@ -369,9 +369,23 @@ def validate_charter(
             except PermissionError as error:
                 raise CharterValidationError(str(error)) from error
 
-    if _enumerated_child_count(payload.axes) > payload.max_child_count:
+    child_count = _enumerated_child_count(payload.axes)
+    if child_count > payload.max_child_count:
         raise CharterValidationError(
             "enumerated child count exceeds the charter's max_child_count"
+        )
+
+    # UI-1 (plan F-04 / owner Q4): identity-bearing satisfiability, fail
+    # closed — a contradictory intent never freezes into an immutable charter.
+    if payload.search_mode is SearchMode.FSM_CONFIG_SEARCH and child_count < 2:
+        raise CharterValidationError(
+            "fsm_config_search requires at least one search axis with a challenger "
+            "value (a zero-axis search would freeze as a one-child study)"
+        )
+    if payload.search_mode is SearchMode.SINGLE_CONFIGURATION and child_count > 2:
+        raise CharterValidationError(
+            "single_configuration resolves at most one baseline and one challenger "
+            f"configuration; {child_count} profiles enumerate — use fsm_config_search"
         )
 
     prop_search = payload.search_mode in (
@@ -381,6 +395,14 @@ def validate_charter(
     if prop_search and not payload.authorized_firm_contract_ids:
         raise CharterValidationError(
             f"{payload.search_mode.value} requires at least one firm contract"
+        )
+    if (
+        payload.search_mode is SearchMode.UNIVERSAL_PROP_SEARCH
+        and len(payload.authorized_firm_contract_ids) < 2
+    ):
+        raise CharterValidationError(
+            "universal_prop_search requires at least two firm contracts (one firm "
+            "cannot be universal)"
         )
 
     prop_modes = {
@@ -411,7 +433,28 @@ def validate_charter(
     )
 
     if synthetic:
+        # a synthetic fixture proves the machinery: its firms ride the
+        # injected wiring (never owner-authorized contract ids), so the
+        # prop-objective rule below applies to REAL charters only
         return
+
+    from .strategy_metrics import StrategyMetrics  # noqa: PLC0415
+
+    strategy_metric_names = set(StrategyMetrics.model_fields)
+    prop_objectives = tuple(
+        metric
+        for metric in (
+            *payload.objective_policy.pareto_objectives,
+            *payload.objective_policy.lexicographic_tie_breaks,
+        )
+        if metric != "core_replay_id" and metric not in strategy_metric_names
+    )
+    if prop_objectives and not payload.authorized_firm_contract_ids:
+        # the selected objective is NEVER rewritten (plan F-04): the path blocks
+        raise CharterValidationError(
+            f"prop objective(s) {', '.join(prop_objectives)} require at least one "
+            "authorized firm contract; the objective is never silently rewritten"
+        )
 
     run_scope = (
         "verification_5d"

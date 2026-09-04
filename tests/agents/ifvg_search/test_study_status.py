@@ -53,6 +53,8 @@ def test_status_vocabulary_matches_cs13_exactly() -> None:
         "stress_simulation",
     ]
     assert [route.value for route in StudyWorkspaceRoute] == [
+        "start",
+        "verify_implementation",
         "new_study",
         "active_runs",
         "results",
@@ -95,6 +97,16 @@ def test_exact_required_copy() -> None:
         "It is not an implementation verification run."
     )
     assert ROUTE_LABELS[StudyWorkspaceRoute.NEW_STUDY] == "New Study"
+    # UI-1: Start and Verify Implementation are additive routes (§3.2 amended)
+    assert [ROUTE_LABELS[route] for route in StudyWorkspaceRoute] == [
+        "Start",
+        "Verify Implementation",
+        "New Study",
+        "Active Runs",
+        "Results",
+        "History",
+        "Context Research",
+    ]
     assert (
         RESULT_SCOPE_LABELS[ResultScope.PROP_1M_SCENARIO]
         == "Prop 1m Scenario / Approximation"
@@ -143,8 +155,34 @@ def test_every_section31_state_is_registered() -> None:
         # R6.1: the two stratified-result states (plan §6.G)
         "insufficient_regime_partition",
         "regime_status_below_minimum",
+        # UI-1 (plan §6.7): distinct no-runs / not-selected / not-applicable /
+        # not-configured / resume / missing-vs-corrupt / legacy / superseded
+        # states plus the typed purpose, runner, launch, authorization,
+        # namespace and seed states
+        "no_runs",
+        "not_selected",
+        "not_applicable",
+        "not_configured",
+        "resume_available",
+        "artifact_missing",
+        "artifact_corrupt",
+        "legacy_read_only",
+        "superseded",
+        "purpose_unresolved",
+        "runner_unavailable",
+        "launch_not_started",
+        "authorization_not_ready",
+        "store_namespace_unverified",
+        "seed_production_not_authorized",
     }
     assert set(EMPTY_STATE_PRESENTATIONS) == expected
+    # UI-1 contract: a no-runs situation never renders as artifact_unavailable
+    assert EMPTY_STATE_PRESENTATIONS["pipeline_no_runs"].key is EmptyStateKey.NO_RUNS
+    assert EMPTY_STATE_PRESENTATIONS["no_runs"].key is EmptyStateKey.NO_RUNS
+    assert EMPTY_STATE_PRESENTATIONS["not_selected"].key is EmptyStateKey.NOT_SELECTED
+    assert (
+        EMPTY_STATE_PRESENTATIONS["not_applicable"].key is EmptyStateKey.NOT_APPLICABLE
+    )
     assert (
         EMPTY_STATE_PRESENTATIONS["insufficient_regime_partition"].key
         is EmptyStateKey.INSUFFICIENT_REGIME_PARTITION

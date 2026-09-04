@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import time
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -57,6 +58,11 @@ _REGIME_CANDIDATE_INPUT_DEFAULT = ("distance_to_htf_ticks", "opposing_size_ticks
 _FULL_PLAN_LABEL = (
     "Full 16-stage pipeline (adds feature/label/fold/model stages; S11 stays blocked)"
 )
+
+#: UI-1 honest launch: the wait for the worker's persisted pipeline state
+#: before the launch is reported as started (tests shorten it).
+LAUNCH_STATE_WAIT_SECONDS = 10.0
+_LAUNCH_POLL_SECONDS = 0.2
 
 
 def _spawn_pipeline_job(command: list[str]) -> int:
@@ -141,18 +147,20 @@ def _regime_default_ids(
     store-integrity failure yields a sanitized note the panel surfaces."""
 
     from alpha_lab.agents.data_infra.ifvg.study_providers import (  # noqa: PLC0415
-        list_pipeline_runs,
         regime_stage_evidence_defaults,
     )
 
     try:
-        runs = list_pipeline_runs(PIPELINE_STATE_ROOT)
+        runs = _pipeline_runs(roots)
         pipeline_id = st_module.session_state.get(_SELECTED_KEY) or (
             runs[0].pipeline_semantic_id if runs else None
         )
-        return regime_stage_evidence_defaults(
-            PIPELINE_STATE_ROOT, Path(roots["store_root"]), pipeline_id
+        store_root = (
+            _run_store_root(runs, pipeline_id, roots)
+            if pipeline_id
+            else Path(roots["store_root"])
         )
+        return regime_stage_evidence_defaults(PIPELINE_STATE_ROOT, store_root, pipeline_id)
     except Exception:  # noqa: BLE001 — defaults are a convenience, never a gate
         return {}, None
 
@@ -242,18 +250,20 @@ def _mbp1_default_ids(
     sanitized note the panel surfaces (safety review S6)."""
 
     from alpha_lab.agents.data_infra.ifvg.study_providers import (  # noqa: PLC0415
-        list_pipeline_runs,
         mbp1_stage_evidence_defaults,
     )
 
     try:
-        runs = list_pipeline_runs(PIPELINE_STATE_ROOT)
+        runs = _pipeline_runs(roots)
         pipeline_id = st_module.session_state.get(_SELECTED_KEY) or (
             runs[0].pipeline_semantic_id if runs else None
         )
-        return mbp1_stage_evidence_defaults(
-            PIPELINE_STATE_ROOT, Path(roots["store_root"]), pipeline_id
+        store_root = (
+            _run_store_root(runs, pipeline_id, roots)
+            if pipeline_id
+            else Path(roots["store_root"])
         )
+        return mbp1_stage_evidence_defaults(PIPELINE_STATE_ROOT, store_root, pipeline_id)
     except Exception:  # noqa: BLE001 — defaults are a convenience, never a gate
         return {}, None
 
@@ -690,19 +700,25 @@ def _configure_fields(st_module) -> dict[str, Any]:
     regime_fields = _regime_configure_fields(
         st_module, full_plan=full_plan, bundle=str(bundle) if bundle else None
     )
-    max_workers = st_module.slider(
-        "Worker limit (operational — never part of the scientific identity)",
-        min_value=1,
-        max_value=4,
-        value=1,
-        key=f"{_PIPE}workers",
+    from alpha_lab.agents.data_infra.ifvg.search.pipeline import (  # noqa: PLC0415
+        EXECUTION_MODE_V1,
+        SUPPORTED_CHILD_WORKERS,
+    )
+
+    # HARDENING-BACKEND §4.6 / UI-1 (plan F-13): the V1 executor is
+    # sequential — no operative worker control exists; the runtime truth is
+    # stated and the backend refuses any other value before a job exists
+    st_module.caption(
+        f"Execution mode: {EXECUTION_MODE_V1} — sequential in V1; effective workers: "
+        f"{SUPPORTED_CHILD_WORKERS} (operational — never part of the scientific "
+        "identity; no worker control exists)."
     )
     return {
         "full_plan": full_plan,
         "bundle": bundle,
         "label_policy": label_policy,
         "model_protocol": model_protocol,
-        "max_workers": int(max_workers),
+        "max_workers": int(SUPPORTED_CHILD_WORKERS),
         **regime_fields,
     }
 
@@ -712,10 +728,11 @@ def _render_configure(st_module, roots: Mapping[str, Any], draft) -> dict[str, A
     if draft is None:
         render_empty_state(
             st_module,
-            "artifact_unavailable",
+            "not_configured",
             detail=(
-                "no Full Pipeline Run draft is open — create one in "
-                "New Study → Full Pipeline Run (steps 1–7 configure the "
+                "no Full Pipeline Run draft is open — create one from Start "
+                "(Evaluate feature and model evidence / Run an advanced end-to-end "
+                "study) or New Study → Full Pipeline Run (steps 1–7 configure the "
                 "underlying charter)"
             ),
         )
@@ -909,6 +926,9 @@ def _render_preview(st_module, roots: Mapping[str, Any], draft, fields) -> None:
 
 
 def _render_launch(st_module, roots: Mapping[str, Any], draft, fields) -> None:
+    from alpha_lab.agents.data_infra.ifvg.presentation.run_purpose import (  # noqa: PLC0415
+        RunPurpose,
+    )
     from alpha_lab.agents.data_infra.ifvg.study_status import (  # noqa: PLC0415
         FULL_SCOPE_ACKNOWLEDGEMENT,
         FULL_SCOPE_WARNING_TEXT,
@@ -918,15 +938,31 @@ def _render_launch(st_module, roots: Mapping[str, Any], draft, fields) -> None:
     if draft is None or fields is None:
         st_module.caption("Complete Configure first.")
         return
-    validation = draft.step_payload("validation")
-    verification = (
-        str(validation.get("run_scope") or "verification_5d")
-        != "full_authorized_development"
+    import ifvg_study_wizard as wizard  # noqa: PLC0415
+
+    try:
+        resolution = wizard._resolve_for_draft(draft, roots)
+    except Exception as error:  # noqa: BLE001 — sanitized surface only
+        st_module.error(f"Purpose could not be resolved: {sanitize_error(error)}")
+        return
+    resolved = resolution.resolved
+    if resolved is None:
+        render_empty_state(
+            st_module, "purpose_unresolved", detail=resolution.resolution.reason
+        )
+        return
+    st_module.caption(
+        f"Purpose **{resolved.label}** · run scope `{resolved.run_scope}` · namespace "
+        f"class `{resolved.namespace_class}` ({resolved.namespace_status}) · evidence "
+        f"`{resolved.evidence_class.value}` · authorization "
+        f"`{resolved.authorization_class}` readiness **{resolved.authorization_readiness}**"
     )
-    if verification:
+    if resolved.store_namespace_id:
+        identity_block(st_module, "store_namespace_id", resolved.store_namespace_id)
+    if resolved.purpose is RunPurpose.IMPLEMENTATION_VERIFICATION:
         verification_badge(st_module)
     acknowledged = True
-    if not verification:
+    if resolved.purpose is RunPurpose.FULL_AUTHORIZED_DEVELOPMENT:
         st_module.error(FULL_SCOPE_WARNING_TEXT)
         typed = st_module.text_input(
             f"Type '{FULL_SCOPE_ACKNOWLEDGEMENT}' to enable the launch control",
@@ -934,11 +970,29 @@ def _render_launch(st_module, roots: Mapping[str, Any], draft, fields) -> None:
             key=f"{_PIPE}ack",
         )
         acknowledged = typed.strip() == FULL_SCOPE_ACKNOWLEDGEMENT
+    blocked = False
+    if not resolved.freeze_allowed:
+        blocked = True
+        render_empty_state(
+            st_module,
+            "store_namespace_unverified"
+            if resolved.namespace_status != "verified"
+            and resolved.authorization_class != "synthetic_marker"
+            else "authorization_not_ready",
+            detail=resolved.freeze_block_reason,
+        )
+    report = wizard._satisfiability_for_draft(draft, resolved)
+    if not report.passed:
+        blocked = True
+        st_module.error(
+            "This draft cannot freeze: "
+            + "; ".join(f"{rule.rule_id} — {rule.detail}" for rule in report.failures)
+        )
     if st_module.button(
         "Freeze Pipeline Specification and Launch",
         key=f"{_PIPE}launch",
         type="primary",
-        disabled=not acknowledged,
+        disabled=(not acknowledged) or blocked,
     ):
         _freeze_and_launch_pipeline(st_module, roots, draft, fields)
 
@@ -959,11 +1013,31 @@ def _effective_run_scope(charter_payload, spec) -> str:
     return str(spec.run_scope.value)
 
 
+def _wait_for_pipeline_state(pipeline_id: str) -> dict[str, Any] | None:
+    from alpha_lab.agents.data_infra.ifvg.search.pipeline import (  # noqa: PLC0415
+        read_pipeline_state,
+    )
+
+    deadline = time.monotonic() + float(LAUNCH_STATE_WAIT_SECONDS)
+    while True:
+        try:
+            state = read_pipeline_state(PIPELINE_STATE_ROOT, pipeline_id)
+        except Exception:  # noqa: BLE001 — a torn write reads again on the next poll
+            state = None
+        if state is not None:
+            return state
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(_LAUNCH_POLL_SECONDS)
+
+
 def _freeze_and_launch_pipeline(st_module, roots: Mapping[str, Any], draft, fields) -> None:
     """Freeze the pipeline spec and spawn the detached job — strictly
     inside the Launch button handler (FUX-PIPE-003; the Resume phase's
     retry handler is the one other spawner, both through the single
-    scan-pinned `_spawn_pipeline_job` seam)."""
+    scan-pinned `_spawn_pipeline_job` seam). UI-1: the store is the
+    draft's PURPOSE store, the registered executor is resolved BEFORE the
+    spawn, and the launch is reported only after the worker persisted state."""
 
     import ifvg_study_wizard as wizard  # noqa: PLC0415
 
@@ -978,16 +1052,34 @@ def _freeze_and_launch_pipeline(st_module, roots: Mapping[str, Any], draft, fiel
         assert_stage_plan_launchable,
     )
     from alpha_lab.agents.data_infra.ifvg.search.runner_registry import (  # noqa: PLC0415
+        RunnerEntryError,
         pipeline_entry_key_for_charter,
+        resolve_registered_runner_entry,
     )
     from alpha_lab.agents.data_infra.ifvg.search.store import (  # noqa: PLC0415
         save_or_reuse_envelope,
     )
     from alpha_lab.agents.data_infra.ifvg.study_drafts import mark_frozen  # noqa: PLC0415
 
-    store_root = Path(roots["store_root"])
     try:
-        charter_payload = wizard._assemble_charter(draft, roots)
+        resolution = wizard._resolve_for_draft(draft, roots)
+    except Exception as error:  # noqa: BLE001 — sanitized surface only
+        st_module.error(f"Purpose could not be resolved: {sanitize_error(error)}")
+        return
+    resolved = resolution.resolved
+    if resolved is None:
+        render_empty_state(
+            st_module, "purpose_unresolved", detail=resolution.resolution.reason
+        )
+        return
+    if not resolved.freeze_allowed:
+        render_empty_state(
+            st_module, "authorization_not_ready", detail=resolved.freeze_block_reason
+        )
+        return
+    store_root = Path(resolution.roots["store_root"])
+    try:
+        charter_payload = wizard._assemble_charter(draft, resolution.roots, resolution=resolution)
         if "unknown" in (
             charter_payload.strategy_core_commit,
             charter_payload.quant_lab_commit,
@@ -997,7 +1089,11 @@ def _freeze_and_launch_pipeline(st_module, roots: Mapping[str, Any], draft, fiel
                 "refused rather than stamping 'unknown' into the identity"
             )
         validate_charter(
-            charter_payload, as_of_utc=datetime.now(UTC).isoformat(timespec="seconds")
+            charter_payload,
+            as_of_utc=datetime.now(UTC).isoformat(timespec="seconds"),
+            store_root=(
+                None if resolved.authorization_class == "synthetic_marker" else store_root
+            ),
         )
         charter = SearchCharterEnvelope.from_payload(charter_payload)
         spec = _assemble_pipeline_spec(charter_payload, charter.search_id, fields=fields)
@@ -1026,6 +1122,10 @@ def _freeze_and_launch_pipeline(st_module, roots: Mapping[str, Any], draft, fiel
         mark_frozen(Path(roots["draft_root"]), draft, search_id=charter.search_id)
     except Exception as error:  # noqa: BLE001 — draft linkage is non-fatal
         st_module.caption(f"draft could not be marked frozen: {sanitize_error(error)}")
+    try:
+        wizard._annotate_purpose(store_root, charter.search_id, resolved)
+    except Exception as error:  # noqa: BLE001 — annotation is non-semantic
+        st_module.caption(f"purpose annotation not recorded: {sanitize_error(error)}")
     identity_block(st_module, "Frozen pipeline semantic id", semantic.pipeline_semantic_id)
     entry_key = pipeline_entry_key_for_charter(charter)
     if entry_key is None:
@@ -1036,6 +1136,21 @@ def _freeze_and_launch_pipeline(st_module, roots: Mapping[str, Any], draft, fiel
                 "full-development pipelines have no registered executor; the "
                 "operator full run is a separate, explicitly authorized action"
             ),
+        )
+        return
+    try:
+        resolve_registered_runner_entry(entry_key)
+    except RunnerEntryError as error:
+        render_empty_state(
+            st_module,
+            "runner_unavailable",
+            detail=f"runner-entry key {entry_key!r}: {sanitize_error(error)}",
+        )
+        cli_escape_hatch(
+            st_module,
+            "python scripts/ifvg_pipeline_job.py start --pipeline-id "
+            f"{semantic.pipeline_semantic_id} --runner-entry-key {entry_key}",
+            reason="launch from a process that registers this executor",
         )
         return
     command = [
@@ -1064,9 +1179,55 @@ def _freeze_and_launch_pipeline(st_module, roots: Mapping[str, Any], draft, fiel
             reason="launch the detached pipeline worker manually",
         )
         return
-    st_module.success(f"Pipeline launched detached (pid {pid}).")
     st_module.session_state[_SELECTED_KEY] = semantic.pipeline_semantic_id
+    state = _wait_for_pipeline_state(semantic.pipeline_semantic_id)
+    if state is None:
+        render_empty_state(
+            st_module,
+            "launch_not_started",
+            detail=(
+                f"pid {pid}; no pipeline_state.json within {LAUNCH_STATE_WAIT_SECONDS:.0f} s; "
+                f"job log: data/ifvg_pipeline_jobs/{semantic.pipeline_semantic_id[:12]}…/job.log"
+            ),
+        )
+        cli_escape_hatch(
+            st_module,
+            "python scripts/ifvg_pipeline_job.py status --pipeline-id "
+            f"{semantic.pipeline_semantic_id}",
+            reason="check whether the worker persisted state",
+        )
+        return
+    st_module.success(
+        f"Pipeline launched detached (pid {pid}); state persisted "
+        f"(stage {state.get('current_stage') or 'starting'})."
+    )
     st_module.session_state[_PHASE_KEY] = "Monitor"
+
+
+def _pipeline_runs(roots: Mapping[str, Any]):
+    """Every pipeline run of the job root, annotated with the store that
+    holds its exact charter (the default read root first, then every
+    deployed store by class)."""
+
+    from alpha_lab.agents.data_infra.ifvg.study_providers import (  # noqa: PLC0415
+        list_pipeline_runs,
+    )
+
+    candidates: list[Path] = [Path(roots["store_root"])]
+    for root in dict(roots.get("store_roots") or {}).values():
+        if Path(root) not in candidates:
+            candidates.append(Path(root))
+    return list_pipeline_runs(PIPELINE_STATE_ROOT, store_roots=candidates)
+
+
+def _run_store_root(runs, pipeline_id: str, roots: Mapping[str, Any]) -> Path:
+    """The store holding the selected run's charter (exact-id located), or
+    the default read root when the charter is not present in any store."""
+
+    for run in runs:
+        if run.pipeline_semantic_id == pipeline_id and run.store_root:
+            return Path(run.store_root)
+    return Path(roots["store_root"])
 
 
 def _selected_run(st_module, runs):
@@ -1105,7 +1266,7 @@ def _render_monitor_body(st_module, *, roots: Mapping[str, Any], pipeline_id: st
     if state is None:
         render_empty_state(
             st_module,
-            "artifact_unavailable",
+            "artifact_missing",
             detail="the pipeline status file is missing or unreadable",
         )
         cli_escape_hatch(
@@ -1135,6 +1296,8 @@ def _render_monitor_body(st_module, *, roots: Mapping[str, Any], pipeline_id: st
             f" · ended {ended}" if ended else " · running"
         )
         workers = dict(latest.get("worker_policy") or {}).get("max_workers", 1)
+        execution_mode = latest.get("execution_mode") or "sequential_children_v1"
+        effective_workers = latest.get("effective_workers", 1)
         pending = max(progress.planned_count - progress.terminal_count, 0)
         remaining_note = (
             "0 stages remaining (run terminal)"
@@ -1143,8 +1306,9 @@ def _render_monitor_body(st_module, *, roots: Mapping[str, Any], pipeline_id: st
         )
         st_module.caption(
             f"Elapsed: {elapsed_note} · Remaining: {remaining_note} · "
-            f"Workers configured: {workers} (children execute sequentially "
-            "in R5)"
+            f"Execution: {execution_mode} · Workers configured: {workers} · "
+            f"effective workers: {effective_workers} (children execute "
+            "sequentially in V1)"
         )
     running_children = [
         row
@@ -1588,12 +1752,8 @@ def _render_persisted_comparisons(
 
 
 def _render_monitor(st_module, roots: Mapping[str, Any]) -> None:
-    from alpha_lab.agents.data_infra.ifvg.study_providers import (  # noqa: PLC0415
-        list_pipeline_runs,
-    )
-
     st_module.subheader("Monitor")
-    runs = list_pipeline_runs(PIPELINE_STATE_ROOT)
+    runs = _pipeline_runs(roots)
     if not runs:
         render_empty_state(st_module, "pipeline_no_runs")
         cli_escape_hatch(
@@ -1603,24 +1763,50 @@ def _render_monitor(st_module, roots: Mapping[str, Any]) -> None:
         )
         return
     pipeline_id = _selected_run(st_module, runs)
+    run_roots = {**roots, "store_root": _run_store_root(runs, pipeline_id, roots)}
+    _run_scope_caption(st_module, runs, pipeline_id)
     st_module.button("Refresh", key=f"{_PIPE}refresh", help="Manual poll fallback")
     fragment = getattr(st_module, "fragment", None)
     if callable(fragment):
 
         @fragment(run_every="5s")
         def _auto_body() -> None:
-            _render_monitor_body(st_module, roots=roots, pipeline_id=pipeline_id)
+            _render_monitor_body(st_module, roots=run_roots, pipeline_id=pipeline_id)
 
         _auto_body()
     else:
-        _render_monitor_body(st_module, roots=roots, pipeline_id=pipeline_id)
+        _render_monitor_body(st_module, roots=run_roots, pipeline_id=pipeline_id)
+
+
+def _run_scope_caption(st_module, runs, pipeline_id: str) -> None:
+    """The artifact-derived scope of the selected run: its store's verified
+    namespace class and whether it is verification-only (never a selector)."""
+
+    run = next((item for item in runs if item.pipeline_semantic_id == pipeline_id), None)
+    if run is None:
+        return
+    namespace = run.namespace_class or "unmarked"
+    st_module.caption(
+        f"Run scope `{run.run_scope}` · store namespace class `{namespace}` · "
+        + (
+            "verification-only artifact (never research evidence)"
+            if run.verification_only
+            else "owner-authorized development artifact"
+            if run.verification_only is False
+            else "artifact scope unresolved (charter not located in a known store)"
+        )
+    )
+    if run.verification_only:
+        verification_badge(st_module)
 
 
 def _render_resume(st_module, roots: Mapping[str, Any]) -> None:
     from alpha_lab.agents.data_infra.ifvg.search.charter import (  # noqa: PLC0415
         SearchCharterEnvelope,
     )
-    from alpha_lab.agents.data_infra.ifvg.search.pipeline import (  # noqa: PLC0415
+    from alpha_lab.agents.data_infra.ifvg.search.pipeline import (  # noqa: PLC0415  # noqa: PLC0415
+        EXECUTION_MODE_V1,
+        SUPPORTED_CHILD_WORKERS,
         read_pipeline_state,
     )
     from alpha_lab.agents.data_infra.ifvg.search.runner_registry import (  # noqa: PLC0415
@@ -1629,19 +1815,17 @@ def _render_resume(st_module, roots: Mapping[str, Any]) -> None:
     from alpha_lab.agents.data_infra.ifvg.search.store import (  # noqa: PLC0415
         load_verified_envelope,
     )
-    from alpha_lab.agents.data_infra.ifvg.study_providers import (  # noqa: PLC0415
-        list_pipeline_runs,
-    )
 
     st_module.subheader("Resume / Retry")
-    runs = list_pipeline_runs(PIPELINE_STATE_ROOT)
+    runs = _pipeline_runs(roots)
     if not runs:
         render_empty_state(st_module, "pipeline_no_runs")
         return
     pipeline_id = _selected_run(st_module, runs)
+    store_root = _run_store_root(runs, pipeline_id, roots)
     state = read_pipeline_state(PIPELINE_STATE_ROOT, pipeline_id)
     if state is None:
-        render_empty_state(st_module, "artifact_unavailable")
+        render_empty_state(st_module, "artifact_missing")
         return
     failed = [
         (stage_value, entry)
@@ -1657,13 +1841,12 @@ def _render_resume(st_module, roots: Mapping[str, Any]) -> None:
         "pipeline semantic id (a new operational attempt). Research-bearing "
         "changes require a new pipeline specification — a new semantic id."
     )
-    max_workers = st_module.slider(
-        "Worker limit for the retry (a resource clone is visibly operational)",
-        min_value=1,
-        max_value=4,
-        value=1,
-        key=f"{_PIPE}retry_workers",
+    st_module.caption(
+        f"Execution mode: {EXECUTION_MODE_V1} — sequential in V1; effective workers: "
+        f"{SUPPORTED_CHILD_WORKERS} (a retry is a new operational attempt under the "
+        "same semantic id; no worker control exists)."
     )
+    max_workers = SUPPORTED_CHILD_WORKERS
     reason = st_module.text_input(
         "Operational retry reason", value="", key=f"{_PIPE}retry_reason"
     )
@@ -1671,7 +1854,7 @@ def _render_resume(st_module, roots: Mapping[str, Any]) -> None:
         try:
             semantic_charter_id = str(state.get("search_charter_id"))
             charter = load_verified_envelope(
-                Path(roots["store_root"]),
+                store_root,
                 "charters",
                 semantic_charter_id,
                 SearchCharterEnvelope,
@@ -1687,7 +1870,7 @@ def _render_resume(st_module, roots: Mapping[str, Any]) -> None:
                 "--pipeline-id",
                 pipeline_id,
                 "--store-root",
-                str(Path(roots["store_root"])),
+                str(store_root),
                 "--state-root",
                 str(PIPELINE_STATE_ROOT),
                 "--runner-entry-key",
@@ -1708,37 +1891,50 @@ def _render_publish(st_module, roots: Mapping[str, Any]) -> None:
     from alpha_lab.agents.data_infra.ifvg.search.pipeline import (  # noqa: PLC0415
         PublicationError,
         activate_pipeline_result,
+        publication_state_sha256,
         read_pipeline_state,
         run_publication_gates,
     )
     from alpha_lab.agents.data_infra.ifvg.study_providers import (  # noqa: PLC0415
-        list_pipeline_runs,
+        resolve_store_namespace,
     )
 
     st_module.subheader("Publish")
-    runs = list_pipeline_runs(PIPELINE_STATE_ROOT)
+    runs = _pipeline_runs(roots)
     if not runs:
         render_empty_state(st_module, "pipeline_no_runs")
         return
     pipeline_id = _selected_run(st_module, runs)
+    store_root = _run_store_root(runs, pipeline_id, roots)
     state = read_pipeline_state(PIPELINE_STATE_ROOT, pipeline_id)
     if state is None:
-        render_empty_state(st_module, "artifact_unavailable")
+        render_empty_state(st_module, "artifact_missing")
         return
+    _run_scope_caption(st_module, runs, pipeline_id)
     publication = dict(state.get("publication") or {})
     st_module.caption(
         f"State: **{publication.get('state', 'not_prepared')}** — preparation "
         "never publishes; verification-only artifacts can never activate a "
         "research catalog entry."
     )
-    # adversarial m-6: the cache is scoped to THIS pipeline id, so another
-    # run's gates can never enable this run's activation control
-    gate_cache_key = f"{_PIPE}gate_results_{pipeline_id}"
+    # UI-1 (plan F-03): the gates and the activation are bound to the SAME
+    # verified store namespace and to the state digest the gates ran over —
+    # the cache key carries both, so gates run under one namespace can never
+    # enable an activation under another (the namespace is read from the
+    # run's own store, never from a session selector)
+    namespace = resolve_store_namespace(store_root)
+    namespace_id = namespace.store_namespace_id
+    st_module.caption(
+        f"Store namespace: **{namespace.status}** ({namespace.namespace_class or 'unmarked'})"
+        + (f" · id `{namespace_id[:16]}…`" if namespace_id else "")
+    )
+    state_digest = publication_state_sha256(state)
+    gate_cache_key = (
+        f"{_PIPE}gate_results_{pipeline_id}_{namespace_id or 'unmarked'}_{state_digest[:16]}"
+    )
     if st_module.button("Run Publication Gates", key=f"{_PIPE}gates"):
         try:
-            gates = run_publication_gates(
-                PIPELINE_STATE_ROOT, pipeline_id, store_root=Path(roots["store_root"])
-            )
+            gates = run_publication_gates(PIPELINE_STATE_ROOT, pipeline_id, store_root=store_root)
         except Exception as error:  # noqa: BLE001 — sanitized surface only
             st_module.error(f"Publication gates failed to run: {sanitize_error(error)}")
         else:
@@ -1760,7 +1956,12 @@ def _render_publish(st_module, roots: Mapping[str, Any]) -> None:
             "Activation is disabled: verification-only artifacts can never "
             "activate a research catalog entry."
         )
-    activate_disabled = verification_scope or not gates_passed
+    if namespace.status != "verified":
+        st_module.caption(
+            "Activation is disabled: the run's store carries no verified semantic "
+            f"namespace ({namespace.status}) — a local path never defines authority."
+        )
+    activate_disabled = verification_scope or not gates_passed or namespace.status != "verified"
     if st_module.button(
         "Publish and Activate Catalog Entry",
         key=f"{_PIPE}activate",
@@ -1768,7 +1969,10 @@ def _render_publish(st_module, roots: Mapping[str, Any]) -> None:
     ):
         try:
             result_id = activate_pipeline_result(
-                PIPELINE_STATE_ROOT, pipeline_id, store_root=Path(roots["store_root"])
+                PIPELINE_STATE_ROOT,
+                pipeline_id,
+                store_root=store_root,
+                expected_store_namespace_id=namespace_id,
             )
         except PublicationError as error:
             st_module.error(f"Activation refused: {sanitize_error(error)}")
@@ -1808,17 +2012,34 @@ def render_pipeline_run(st_module=st, *, roots: Mapping[str, Any], draft=None) -
         _render_resume(st_module, roots)
     elif phase == "Publish":
         _render_publish(st_module, roots)
+    # UI-1: the panels read the SELECTED run's own store (exact-id located),
+    # never a session-selected namespace
+    panel_roots = _panel_roots(st_module, roots)
     with st_module.expander("MBP-1 Order Flow (research-only offline)"):
         from ifvg_mbp1_panels import render_mbp1_order_flow  # noqa: PLC0415
 
-        default_ids, integrity_note = _mbp1_default_ids(st_module, roots)
+        default_ids, integrity_note = _mbp1_default_ids(st_module, panel_roots)
         if integrity_note:
             st_module.error(integrity_note)
-        render_mbp1_order_flow(st_module, roots=roots, default_ids=default_ids)
+        render_mbp1_order_flow(st_module, roots=panel_roots, default_ids=default_ids)
     with st_module.expander("Regime Lane (V1 KMeans, development)"):
         from ifvg_regime_panels import render_regime_lane  # noqa: PLC0415
 
-        regime_defaults, regime_note = _regime_default_ids(st_module, roots)
+        regime_defaults, regime_note = _regime_default_ids(st_module, panel_roots)
         if regime_note:
             st_module.error(regime_note)
-        render_regime_lane(st_module, roots=roots, default_ids=regime_defaults)
+        render_regime_lane(st_module, roots=panel_roots, default_ids=regime_defaults)
+
+
+def _panel_roots(st_module, roots: Mapping[str, Any]) -> dict[str, Any]:
+    """The roots whose store is the selected run's own store (or the
+    default read root when no run exists or none can be located)."""
+
+    try:
+        runs = _pipeline_runs(roots)
+    except Exception:  # noqa: BLE001 — listing failures fall back to the default root
+        return dict(roots)
+    if not runs:
+        return dict(roots)
+    pipeline_id = st_module.session_state.get(_SELECTED_KEY) or runs[0].pipeline_semantic_id
+    return {**roots, "store_root": _run_store_root(runs, pipeline_id, roots)}

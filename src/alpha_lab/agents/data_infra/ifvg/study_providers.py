@@ -68,6 +68,15 @@ __all__ = [
     "verification_authorization_state",
     "PipelineRunSummary",
     "list_pipeline_runs",
+    "ArtifactScope",
+    "artifact_scope_for_charter",
+    "AuthorizationReadiness",
+    "resolve_store_namespace",
+    "verification_authorization_readiness",
+    "verification_owner_bundle",
+    "owner_authorization_readiness",
+    "owner_authorization_bundle_from_store",
+    "locate_charter_store",
     "load_comparison_results_for_search",
     "load_ladder_diagnostics",
     "mbp1_stage_evidence_defaults",
@@ -85,6 +94,14 @@ class SearchRunSummary:
     display_name: str
     child_count: int
     archived: bool = False
+    #: UI-1: the run's OWN store (located by its exact charter id across the
+    #: known roots), the store's verified namespace class (``None`` for an
+    #: unmarked or unreadable store — never a path guess) and the artifact's
+    #: evidence scope (a synthetic-marker or verification charter is
+    #: verification-only). The badge keys on the artifact, never a radio.
+    store_root: str | None = None
+    namespace_class: str | None = None
+    verification_only: bool | None = None
 
 
 def load_search_state(state_root: Path, search_id: str) -> dict[str, Any] | None:
@@ -110,20 +127,69 @@ def _display_name(entry: Mapping[str, Any]) -> str | None:
     return str(payload) if payload else None
 
 
+def locate_charter_store(
+    charter_id: str, store_roots: Sequence[Path]
+) -> Path | None:
+    """The FIRST known store holding the exact charter id (exact-id probe;
+    the stores are never listed), or ``None``."""
+
+    for root in store_roots:
+        try:
+            if has_envelope(Path(root), "charters", str(charter_id)):
+                return Path(root)
+        except (ValueError, OSError):
+            continue
+    return None
+
+
+def _namespace_class_or_none(store_root: Path) -> str | None:
+    """``research`` / ``test`` for a marked store; ``None`` when unmarked or
+    unreadable (a corrupt envelope is reported by the namespace state, never
+    guessed here)."""
+
+    from .search.store_namespace import StoreNamespaceError, namespace_class_of  # noqa: PLC0415
+
+    try:
+        return namespace_class_of(Path(store_root))
+    except (StoreNamespaceError, OSError):
+        return None
+
+
+def _verification_only_for(store_root: Path, charter_id: str) -> bool | None:
+    try:
+        charter = load_charter(Path(store_root), charter_id)
+    except Exception:  # noqa: BLE001 — a corrupt charter is reported by the loader
+        return None
+    if charter is None:
+        return None
+    return artifact_scope_for_charter(charter).verification_only
+
+
 def list_search_runs(
-    state_root: Path, store_root: Path
+    state_root: Path,
+    store_root: Path,
+    *,
+    store_roots: Sequence[Path] | None = None,
 ) -> tuple[SearchRunSummary, ...]:
     """Every search the JOB root knows, newest state first.
 
     The job root is mutable operational state (listing it is fine); the
     immutable stores are never listed. Display names come from the mutable
     catalog; the technical ``search_id`` stays authoritative (FUX §5.5).
+    UI-1: each run is annotated with the store that holds its exact charter
+    (``store_root`` first, then every extra ``store_roots`` entry), that
+    store's verified namespace class and the artifact's evidence scope — the
+    verification badge and the read location derive from the artifact.
     """
 
     state_root = Path(state_root)
     if not state_root.exists():
         return ()
-    annotations = catalog_annotations(store_root)
+    roots: list[Path] = [Path(store_root)]
+    for extra in store_roots or ():
+        if Path(extra) not in roots:
+            roots.append(Path(extra))
+    annotations_by_root = {root: catalog_annotations(root) for root in roots}
     summaries: list[tuple[float, SearchRunSummary]] = []
     for child in state_root.iterdir():
         if len(child.name) != _HEX64 or not child.is_dir():
@@ -131,7 +197,9 @@ def list_search_runs(
         state = read_search_state(state_root, child.name)
         if state is None:
             continue
-        entry = annotations.get(child.name, {})
+        located = locate_charter_store(child.name, roots)
+        annotation_root = located if located is not None else roots[0]
+        entry = annotations_by_root[annotation_root].get(child.name, {})
         summaries.append(
             (
                 (child / "search_state.json").stat().st_mtime,
@@ -141,6 +209,15 @@ def list_search_runs(
                     display_name=_display_name(entry) or child.name[:12] + "…",
                     child_count=len(state.get("children") or ()),
                     archived=bool(entry.get("archived", False)),
+                    store_root=str(located) if located is not None else None,
+                    namespace_class=(
+                        _namespace_class_or_none(located) if located is not None else None
+                    ),
+                    verification_only=(
+                        _verification_only_for(located, child.name)
+                        if located is not None
+                        else None
+                    ),
                 ),
             )
         )
@@ -516,14 +593,23 @@ class PipelineRunSummary:
     attempt_count: int
     publication_state: str
     failed: bool
+    #: UI-1: the store holding the run's exact charter, its verified
+    #: namespace class and the charter's evidence scope (see SearchRunSummary)
+    search_charter_id: str | None = None
+    store_root: str | None = None
+    namespace_class: str | None = None
+    verification_only: bool | None = None
 
 
-def list_pipeline_runs(state_root: Path) -> tuple[PipelineRunSummary, ...]:
+def list_pipeline_runs(
+    state_root: Path, *, store_roots: Sequence[Path] | None = None
+) -> tuple[PipelineRunSummary, ...]:
     from .search.pipeline import read_pipeline_state  # noqa: PLC0415
 
     root = Path(state_root)
     if not root.exists():
         return ()
+    roots = [Path(item) for item in (store_roots or ())]
     summaries: list[tuple[float, PipelineRunSummary]] = []
     for entry in root.iterdir():
         if not entry.is_dir() or len(entry.name) != _HEX64:
@@ -542,6 +628,10 @@ def list_pipeline_runs(state_root: Path) -> tuple[PipelineRunSummary, ...]:
             mtime = state_file.stat().st_mtime
         except OSError:
             mtime = 0.0
+        charter_id = state.get("search_charter_id")
+        located = (
+            locate_charter_store(str(charter_id), roots) if charter_id and roots else None
+        )
         summaries.append(
             (
                 mtime,
@@ -552,6 +642,16 @@ def list_pipeline_runs(state_root: Path) -> tuple[PipelineRunSummary, ...]:
                     attempt_count=len(state.get("attempts") or ()),
                     publication_state=str(publication.get("state") or "not_prepared"),
                     failed=failed,
+                    search_charter_id=str(charter_id) if charter_id else None,
+                    store_root=str(located) if located is not None else None,
+                    namespace_class=(
+                        _namespace_class_or_none(located) if located is not None else None
+                    ),
+                    verification_only=(
+                        _verification_only_for(located, str(charter_id))
+                        if located is not None
+                        else None
+                    ),
                 ),
             )
         )
@@ -803,3 +903,422 @@ def regime_stage_evidence_defaults(
         if report_ids:
             defaults["report_id"] = str(report_ids[0])
     return {key: value for key, value in defaults.items() if value}, None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# UI-1 — verified namespace, artifact scope and TYPED authorization readiness
+# (plan §8 "study_providers": read-only adapters over the backend contracts;
+# no duplicate authorization, namespace or date logic lives here)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def resolve_store_namespace(store_root: Path, *, expected_class: str | None = None):
+    """The store's SEMANTIC namespace state from its verified envelope
+    (``verified`` / ``unmarked`` / ``corrupt`` / ``deployment_incoherent`` /
+    ``class_mismatch``); a local path never defines authority."""
+
+    from .presentation.run_purpose import namespace_state_for_store  # noqa: PLC0415
+
+    return namespace_state_for_store(Path(store_root), expected_class=expected_class)
+
+
+@dataclass(frozen=True)
+class ArtifactScope:
+    """What a frozen charter IS, derived from the artifact itself (never from
+    a session selector): its evidence class, the run scope its date policy
+    and authorization imply, and whether it is verification-only."""
+
+    evidence_class: str  # synthetic_fixture | real
+    run_scope: str  # synthetic_fixture | verification_5d | full_authorized_development
+    verification_only: bool
+    label: str
+
+
+def artifact_scope_for_charter(charter_envelope) -> ArtifactScope:
+    from .search.authorization import SyntheticAuthorizationMarker  # noqa: PLC0415
+
+    payload = charter_envelope.payload
+    if isinstance(payload.owner_authorization, SyntheticAuthorizationMarker):
+        return ArtifactScope(
+            evidence_class="synthetic_fixture",
+            run_scope="synthetic_fixture",
+            verification_only=True,
+            label="Synthetic fixture — verification only, never research evidence",
+        )
+    if payload.date_policy.access_policy_id == "verification_fixed_allowlist_max5_v1":
+        return ArtifactScope(
+            evidence_class="real",
+            run_scope="verification_5d",
+            verification_only=True,
+            label="Real ≤5-day verification slice — verification only",
+        )
+    return ArtifactScope(
+        evidence_class="real",
+        run_scope="full_authorized_development",
+        verification_only=False,
+        label="Owner-authorized development data",
+    )
+
+
+@dataclass(frozen=True)
+class AuthorizationReadiness:
+    """The TYPED readiness of the real authorization a computation path
+    requires (plan §9 Phase 1). ``status`` is one of
+    ``presentation.run_purpose.AUTHORIZATION_READINESS_STATUSES``; the UI
+    renders every one of them and never collapses them into "present"."""
+
+    authorization_class: str  # verification_authorization_ref | owner_authorization_bundle
+    status: str
+    detail: str
+    evidence_ids: tuple[str, ...] = ()
+    missing_decision_keys: tuple[str, ...] = ()
+    store_namespace_id: str | None = None
+
+
+_HEAD_REASON_TO_STATUS: Mapping[str, str] = {
+    "supersession_head_witness_mismatch": "stale_head",
+    "supersession_head_shorter_than_witness": "wrong_head",
+    "supersession_chain_broken": "wrong_head",
+    "supersession_record_unverifiable": "wrong_head",
+    "supersession_decision_unverifiable": "superseded",
+    "supersession_transition_unlawful": "superseded",
+    "supersession_chain_divergent": "superseded",
+    "store_namespace_identity_mismatch": "wrong_namespace",
+    "store_namespace_class_mismatch": "wrong_namespace",
+    "store_namespace_deployment_incoherent": "store_incoherent",
+    "store_namespace_missing": "store_unmarked",
+}
+
+
+def _namespace_readiness_block(
+    store_root: Path, *, authorization_class: str, expected_class: str | None
+) -> AuthorizationReadiness | None:
+    namespace = resolve_store_namespace(store_root, expected_class=expected_class)
+    if namespace.status == "verified":
+        return None
+    status = {
+        "unmarked": "store_unmarked",
+        "corrupt": "store_corrupt",
+        "deployment_incoherent": "store_incoherent",
+        "class_mismatch": "wrong_namespace",
+    }.get(namespace.status, "unavailable")
+    return AuthorizationReadiness(
+        authorization_class=authorization_class,
+        status=status,
+        detail=namespace.detail,
+        store_namespace_id=namespace.store_namespace_id,
+    )
+
+
+def verification_authorization_readiness(
+    store_root: Path,
+    *,
+    baseline_profile_name: str | None = None,
+    baseline_section_config_hash: str | None = None,
+    allowlist: Sequence[str] | None = None,
+) -> AuthorizationReadiness:
+    """Typed readiness of the owner's ``VerificationAuthorizationRef`` for the
+    real ≤5-day slice: the store must be a verified, coherently deployed
+    ``test`` namespace; a persisted verification run must carry a ref bound to
+    THIS namespace whose signed head witness is CURRENT (the complete owner
+    authority chain proof); and, when given, the run's baseline profile /
+    section hash and allowlist must match the draft. Every failure keeps its
+    typed reason; nothing here asserts readiness."""
+
+    from .data_access import allowlist_sha256  # noqa: PLC0415
+    from .search.authorization import (  # noqa: PLC0415
+        AuthorizationError,
+        assert_authorization_bound_to_store,
+    )
+    from .search.verification import VerificationRunEnvelope  # noqa: PLC0415
+
+    root = Path(store_root)
+    authorization_class = "verification_authorization_ref"
+    try:
+        blocked = _namespace_readiness_block(
+            root, authorization_class=authorization_class, expected_class="test"
+        )
+        if blocked is not None:
+            return blocked
+        namespace = resolve_store_namespace(root, expected_class="test")
+        candidates = list_catalogued_envelope_ids(root, "verification_runs")
+    except Exception as error:  # noqa: BLE001 — the lookup itself failed (typed, sanitized later)
+        return AuthorizationReadiness(
+            authorization_class=authorization_class,
+            status="unavailable",
+            detail=f"the verification-run lookup failed: {type(error).__name__}",
+        )
+    if not candidates:
+        return AuthorizationReadiness(
+            authorization_class=authorization_class,
+            status="missing",
+            detail=(
+                "no persisted verification run carries an owner-approved "
+                "VerificationAuthorizationRef bound to this store (owner decisions 21/R-5)"
+            ),
+            store_namespace_id=namespace.store_namespace_id,
+        )
+    failures: list[AuthorizationReadiness] = []
+    ready_ids: list[str] = []
+    for run_id, _display in candidates:
+        try:
+            envelope = load_verified_envelope(
+                root, "verification_runs", run_id, VerificationRunEnvelope
+            )
+        except Exception as error:  # noqa: BLE001 — a corrupt entry is reported, not trusted
+            failures.append(
+                AuthorizationReadiness(
+                    authorization_class,
+                    "store_corrupt",
+                    f"verification run {run_id[:12]}… failed verification "
+                    f"({type(error).__name__})",
+                    (run_id,),
+                    store_namespace_id=namespace.store_namespace_id,
+                )
+            )
+            continue
+        payload = envelope.payload
+        ref = payload.verification_authorization
+        if ref.store_namespace_id != namespace.store_namespace_id:
+            failures.append(
+                AuthorizationReadiness(
+                    authorization_class,
+                    "wrong_namespace",
+                    f"verification run {run_id[:12]}… authorizes another store namespace "
+                    f"({ref.store_namespace_id[:12]}… ≠ {namespace.store_namespace_id[:12]}…)",
+                    (run_id,),
+                    store_namespace_id=namespace.store_namespace_id,
+                )
+            )
+            continue
+        try:
+            assert_authorization_bound_to_store(
+                root,
+                store_namespace_id=ref.store_namespace_id,
+                supersession_head_witness=ref.supersession_head_witness,
+                expected_namespace_class="test",
+            )
+        except AuthorizationError as error:
+            reason = str(getattr(error, "reason", "") or "")
+            failures.append(
+                AuthorizationReadiness(
+                    authorization_class,
+                    _HEAD_REASON_TO_STATUS.get(reason, "wrong_head"),
+                    f"verification run {run_id[:12]}…: {error}",
+                    (run_id,),
+                    store_namespace_id=namespace.store_namespace_id,
+                )
+            )
+            continue
+        if baseline_profile_name is not None and (
+            payload.baseline_profile_id != baseline_profile_name
+            or (
+                baseline_section_config_hash is not None
+                and payload.baseline_section_config_hash != baseline_section_config_hash
+            )
+        ):
+            failures.append(
+                AuthorizationReadiness(
+                    authorization_class,
+                    "wrong_profile",
+                    f"verification run {run_id[:12]}… authorizes baseline "
+                    f"{payload.baseline_profile_id!r}, not {baseline_profile_name!r} "
+                    "(or a different resolved section hash)",
+                    (run_id,),
+                    store_namespace_id=namespace.store_namespace_id,
+                )
+            )
+            continue
+        expected_hash = allowlist_sha256(tuple(payload.allowlist))
+        if (
+            payload.allowlist_hash != expected_hash
+            or ref.approved_allowlist_hash != payload.allowlist_hash
+            or (allowlist is not None and tuple(payload.allowlist) != tuple(allowlist))
+        ):
+            failures.append(
+                AuthorizationReadiness(
+                    authorization_class,
+                    "wrong_source",
+                    f"verification run {run_id[:12]}… authorizes the allowlist "
+                    f"{list(payload.allowlist)}, which does not match the draft's dates "
+                    "(one canonical allowlist; never rotated)",
+                    (run_id,),
+                    store_namespace_id=namespace.store_namespace_id,
+                )
+            )
+            continue
+        ready_ids.append(run_id)
+    if ready_ids:
+        return AuthorizationReadiness(
+            authorization_class,
+            "ready",
+            f"{len(ready_ids)} persisted verification run(s) carry an owner-approved "
+            "VerificationAuthorizationRef bound to this store's verified namespace and "
+            "current supersession head",
+            tuple(ready_ids),
+            store_namespace_id=namespace.store_namespace_id,
+        )
+    first = failures[0]
+    if len(failures) > 1:
+        first = AuthorizationReadiness(
+            first.authorization_class,
+            first.status,
+            first.detail + f" (+{len(failures) - 1} other run(s) refused)",
+            tuple(item for failure in failures for item in failure.evidence_ids),
+            store_namespace_id=first.store_namespace_id,
+        )
+    return first
+
+
+def verification_owner_bundle(
+    store_root: Path, readiness: AuthorizationReadiness, requirement_set
+):
+    """The computation-path-scoped ``OwnerAuthorizationBundle`` a REAL
+    verification charter carries, assembled ONLY from a ``ready`` readiness
+    over the persisted, verified ``VerificationAuthorizationRef`` (the
+    verification decision 21/R-5 references the persisted run and the ref's
+    own content hash). ``None`` unless ready."""
+
+    from .search.authorization import (  # noqa: PLC0415
+        VERIFICATION_FIXTURE_DECISION_KEY,
+        OwnerAuthorizationBundle,
+        OwnerDecisionEvidenceRef,
+    )
+    from .search.verification import VerificationRunEnvelope  # noqa: PLC0415
+
+    if readiness.status != "ready" or not readiness.evidence_ids:
+        return None
+    run_id = readiness.evidence_ids[0]
+    envelope = load_verified_envelope(
+        Path(store_root), "verification_runs", run_id, VerificationRunEnvelope
+    )
+    ref = envelope.payload.verification_authorization
+    evidence = OwnerDecisionEvidenceRef(
+        decision_id=VERIFICATION_FIXTURE_DECISION_KEY,
+        decision_artifact_id=run_id,
+        content_hash=ref.content_hash,
+        author=ref.approved_by,
+        approved_at=ref.approved_at,
+        effective_from=ref.approved_at,
+        reviewed_evidence_refs=(ref.coverage_matrix_artifact_id, ref.seed_snapshot_id),
+    )
+    return OwnerAuthorizationBundle(
+        requirement_set_id=requirement_set.requirement_set_id,
+        decision_refs={VERIFICATION_FIXTURE_DECISION_KEY: evidence},
+        store_namespace_id=ref.store_namespace_id,
+        supersession_head_witness=ref.supersession_head_witness,
+    )
+
+
+def _owner_decision_evidence(store_root: Path, namespace_id: str):
+    """decision key → (artifact id, evidence ref) for every CATALOGUED,
+    verified owner decision artifact of THIS namespace (exact-id loads)."""
+
+    from .search.owner_decisions import OwnerDecisionArtifactEnvelope  # noqa: PLC0415
+
+    found: dict[str, tuple[str, Any]] = {}
+    for artifact_id, _display in list_catalogued_envelope_ids(
+        Path(store_root), "owner_decisions"
+    ):
+        try:
+            envelope = load_verified_envelope(
+                Path(store_root), "owner_decisions", artifact_id, OwnerDecisionArtifactEnvelope
+            )
+        except Exception:  # noqa: BLE001 — a corrupt artifact is never evidence
+            continue
+        if envelope.payload.store_namespace_id != namespace_id:
+            continue
+        for key in (envelope.payload.decision_id, *envelope.payload.decision_keys):
+            found.setdefault(str(key), (artifact_id, envelope.evidence_ref()))
+    return found
+
+
+def owner_authorization_readiness(
+    store_root: Path, requirement_set, *, expected_class: str | None = "research"
+) -> AuthorizationReadiness:
+    """Typed readiness of the computation-path-scoped owner bundle for a
+    research purpose: the store must be a verified namespace of the expected
+    class; every required decision key needs a catalogued, verified owner
+    decision artifact of THIS namespace; the current supersession head must
+    be provable. Absent artifacts are ``missing`` with the exact keys —
+    never inferred from a path, a file name or a synthetic marker."""
+
+    from .search.store_namespace import StoreNamespaceError  # noqa: PLC0415
+    from .search.supersession_chain import current_supersession_head_witness  # noqa: PLC0415
+
+    root = Path(store_root)
+    authorization_class = "owner_authorization_bundle"
+    required = tuple(
+        requirement.decision_key for requirement in requirement_set.payload.requirements
+    )
+    try:
+        blocked = _namespace_readiness_block(
+            root, authorization_class=authorization_class, expected_class=expected_class
+        )
+        if blocked is not None:
+            return blocked
+        namespace = resolve_store_namespace(root, expected_class=expected_class)
+        assert namespace.store_namespace_id is not None
+        evidence = _owner_decision_evidence(root, namespace.store_namespace_id)
+    except Exception as error:  # noqa: BLE001
+        return AuthorizationReadiness(
+            authorization_class,
+            "unavailable",
+            f"the owner-decision lookup failed: {type(error).__name__}",
+        )
+    missing = tuple(key for key in required if key not in evidence)
+    if missing:
+        return AuthorizationReadiness(
+            authorization_class,
+            "missing",
+            "no registered owner-decision evidence artifact exists for "
+            f"{len(missing)} required decision(s): {', '.join(missing)}",
+            missing_decision_keys=missing,
+            store_namespace_id=namespace.store_namespace_id,
+        )
+    try:
+        current_supersession_head_witness(root)
+    except StoreNamespaceError as error:
+        return AuthorizationReadiness(
+            authorization_class,
+            _HEAD_REASON_TO_STATUS.get(error.reason, "wrong_head"),
+            str(error),
+            store_namespace_id=namespace.store_namespace_id,
+        )
+    return AuthorizationReadiness(
+        authorization_class,
+        "ready",
+        f"every required decision ({len(required)}) has a verified owner-decision artifact "
+        "of this namespace; the bundle binds the current supersession head",
+        tuple(evidence[key][0] for key in required),
+        store_namespace_id=namespace.store_namespace_id,
+    )
+
+
+def owner_authorization_bundle_from_store(
+    store_root: Path, requirement_set, *, expected_class: str | None = "research"
+):
+    """The bundle for a ``ready`` research readiness (``None`` otherwise):
+    the persisted evidence refs bound to the store's verified namespace and
+    its CURRENT head witness."""
+
+    from .search.authorization import OwnerAuthorizationBundle  # noqa: PLC0415
+    from .search.supersession_chain import current_supersession_head_witness  # noqa: PLC0415
+
+    readiness = owner_authorization_readiness(
+        store_root, requirement_set, expected_class=expected_class
+    )
+    if readiness.status != "ready" or readiness.store_namespace_id is None:
+        return None
+    root = Path(store_root)
+    evidence = _owner_decision_evidence(root, readiness.store_namespace_id)
+    witness = current_supersession_head_witness(root)
+    return OwnerAuthorizationBundle(
+        requirement_set_id=requirement_set.requirement_set_id,
+        decision_refs={
+            requirement.decision_key: evidence[requirement.decision_key][1]
+            for requirement in requirement_set.payload.requirements
+        },
+        store_namespace_id=readiness.store_namespace_id,
+        supersession_head_witness=witness,
+    )

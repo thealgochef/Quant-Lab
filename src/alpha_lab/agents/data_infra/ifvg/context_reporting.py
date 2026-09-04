@@ -288,11 +288,40 @@ def build_context_feature_coverage_report(
     }
 
 
+_RECONCILIATION_REPORT_NAMES: tuple[str, ...] = (
+    "reconciliation_report.json",
+    "identity_report.json",
+    "data_access_audit.json",
+    "capacity_report.json",
+    "performance_report.json",
+    "validity_report.json",
+)
+
+
 def build_context_reconciliation_audit_report(pair: VerifiedIfvgPair) -> dict[str, Any]:
+    """UI-1 (plan F-07): ``passed`` is DERIVED from the evaluated gate
+    evidence of the pair's persisted reports — ``True`` only when every
+    report carrying a Boolean ``passed`` flag passed, ``False`` when any
+    evaluated gate failed, ``None`` when no report was evaluated at all.
+    Reports without a ``passed`` flag (the data-access audit carries
+    counters, not a verdict) are listed as unevaluated, never counted green.
+    """
+
     v3_registry = pair.v3.manifest.get("context_arrow_registry", {})
+    reports = {name: pair.v3.reports.get(name, {}) for name in _RECONCILIATION_REPORT_NAMES}
+    evaluations: dict[str, bool | None] = {}
+    for name, payload in reports.items():
+        flag = payload.get("passed") if isinstance(payload, dict) else None
+        evaluations[name] = flag if isinstance(flag, bool) else None
+    evaluated = {name: flag for name, flag in evaluations.items() if flag is not None}
+    unevaluated = tuple(sorted(name for name, flag in evaluations.items() if flag is None))
     return {
         "surface": "reconciliation_and_audit",
-        "passed": True,
+        "passed": all(evaluated.values()) if evaluated else None,
+        "evaluated": bool(evaluated),
+        "evaluated_gate_count": len(evaluated),
+        "gate_evaluations": evaluations,
+        "unevaluated_reports": unevaluated,
         "v2": {
             "artifact_id": pair.v2.reference.artifact_id,
             "manifest_payload_sha256": pair.v2.reference.manifest_payload_sha256,
@@ -311,17 +340,7 @@ def build_context_reconciliation_audit_report(pair: VerifiedIfvgPair) -> dict[st
         "context_table_rows": {
             table.value: len(pair.v3.tables[table]) for table in ContextRecordTable
         },
-        "reports": {
-            name: pair.v3.reports.get(name, {})
-            for name in (
-                "reconciliation_report.json",
-                "identity_report.json",
-                "data_access_audit.json",
-                "capacity_report.json",
-                "performance_report.json",
-                "validity_report.json",
-            )
-        },
+        "reports": reports,
     }
 
 

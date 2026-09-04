@@ -97,6 +97,12 @@ class StudyDraft:
     created_at_utc: str = ""
     updated_at_utc: str = ""
     schema_version: int = DRAFT_SCHEMA_VERSION
+    #: UI-1 (plan §5.6): the MUTABLE presentation-only run-purpose annotation
+    #: (``RunPurposeAnnotation.to_dict()``); never part of a charter or
+    #: pipeline identity. Absent on legacy drafts — the wizard derives a
+    #: purpose only when the legacy scope is unambiguous, else the draft is
+    #: ``purpose_unresolved`` until the owner confirms it.
+    purpose_annotation: dict[str, Any] | None = None
 
     def step_payload(self, step_key: str) -> dict[str, Any]:
         if step_key not in STEP_KEYS:
@@ -266,6 +272,9 @@ def clone_draft(
     """Deep-copy any draft (frozen included) into a new mutable draft."""
 
     now = now_fn()
+    annotation = copy.deepcopy(source.purpose_annotation)
+    if isinstance(annotation, dict):
+        annotation = {**annotation, "derivation": "cloned", "updated_at": now}
     return StudyDraft(
         draft_id=uuid4().hex,
         display_name=f"{source.display_name} (clone)",
@@ -277,6 +286,7 @@ def clone_draft(
         cloned_from=source.draft_id,
         created_at_utc=now,
         updated_at_utc=now,
+        purpose_annotation=annotation,
     )
 
 

@@ -330,12 +330,12 @@ STUDY_MODES: tuple[StudyModeSpec, ...] = (
         mode_id="full_pipeline_run",
         label="Full Pipeline Run",
         description=(
-            "Configure the standardized pipeline under Verification Fixture "
-            "(maximum five authorized real trading days) or Full Authorized "
-            "Development Data (explicit post-acceptance operator action). "
-            "The Configure/Preview/Launch/Monitor workflow lands with R5; "
-            "until then the launch stays capability-blocked with this "
-            "reason."
+            "Configure the standardized 16-stage pipeline for the draft's "
+            "purpose: Implementation Verification (the exact baseline over "
+            "the verification fixture) or the owner-authorized development "
+            "data (Development Research / Full Authorized Development). "
+            "S11 model-gated replays stay blocked by contract; the V1 "
+            "executor runs children sequentially."
         ),
         search_mode=None,
         requires_prop_selection=False,
@@ -346,6 +346,9 @@ _MODES_BY_ID = {mode.mode_id: mode for mode in STUDY_MODES}
 
 RESEARCH_QUESTIONS: Mapping[str, str] = MappingProxyType(
     {
+        # UI-1 (owner Q4): Evaluate one configuration is a separate task from
+        # Compare — exactly one resolved profile, no comparison or delta claim
+        "evaluate_one_configuration": "Evaluate one configuration",
         "compare_one_with_baseline": (
             "Compare one configuration with the baseline"
         ),
@@ -361,7 +364,10 @@ RESEARCH_QUESTIONS: Mapping[str, str] = MappingProxyType(
 #: its natural question; the pipeline mode standardizes any of them).
 MODE_QUESTION_COMPATIBILITY: Mapping[str, tuple[str, ...]] = MappingProxyType(
     {
-        "single_configuration": ("compare_one_with_baseline",),
+        "single_configuration": (
+            "evaluate_one_configuration",
+            "compare_one_with_baseline",
+        ),
         "fsm_config_search": ("find_robust_fsm",),
         "prop_benchmark": ("repeat_payout_feasibility",),
         "universal_prop_search": ("one_config_across_firms",),
@@ -661,6 +667,37 @@ def validate_benchmarks_step(fields: Mapping[str, Any]) -> dict[str, str]:
     return errors
 
 
+#: UI-1: the development evidence window (the frozen ten-date warmup prefix
+#: precedes it; the protected buffer 2026-06-11 and the sealed range never
+#: enter a policy) — logical trading days under the registered calendar.
+DEVELOPMENT_EVIDENCE_FIRST_DAY = "2026-01-13"
+DEVELOPMENT_EVIDENCE_LAST_DAY = "2026-06-10"
+
+
+def development_evidence_day_error(day: str) -> str | None:
+    """``None`` for a lawful development evidence date, else the reason."""
+
+    from datetime import date  # noqa: PLC0415
+
+    from .search.trading_calendar import is_logical_trading_day  # noqa: PLC0415
+
+    try:
+        date.fromisoformat(str(day))
+    except ValueError:
+        return f"{day!r} is not an ISO date"
+    if not DEVELOPMENT_EVIDENCE_FIRST_DAY <= str(day) <= DEVELOPMENT_EVIDENCE_LAST_DAY:
+        return (
+            f"{day} lies outside the development evidence window "
+            f"{DEVELOPMENT_EVIDENCE_FIRST_DAY} … {DEVELOPMENT_EVIDENCE_LAST_DAY}"
+        )
+    if not is_logical_trading_day(str(day)):
+        return (
+            f"{day} is not a logical trading day (weekend or registered full "
+            "closure; a physical partition date is never a trading day)"
+        )
+    return None
+
+
 def validate_validation_step(fields: Mapping[str, Any]) -> dict[str, str]:
     errors: dict[str, str] = {}
     run_scope = fields.get("run_scope")
@@ -668,6 +705,9 @@ def validate_validation_step(fields: Mapping[str, Any]) -> dict[str, str]:
         errors["run_scope"] = (
             "choose verification_5d or full_authorized_development"
         )
+    evidence_class = fields.get("evidence_class")
+    if evidence_class not in (None, "synthetic_fixture", "real"):
+        errors["evidence_class"] = "evidence class is synthetic_fixture or real"
     real_dates = tuple(fields.get("real_dates") or ())
     warmup_dates = tuple(fields.get("warmup_dates") or ())
     if run_scope == "verification_5d":
@@ -677,18 +717,54 @@ def validate_validation_step(fields: Mapping[str, Any]) -> dict[str, str]:
             errors["warmup_dates"] = (
                 "warmup + evidence must stay within the 5-day budget"
             )
+    elif run_scope == "full_authorized_development":
+        # UI-1 (plan F-08): per-field date validation from the backend
+        # logical-day contract — never a pydantic error at freeze
+        from .development_access import FROZEN_WARMUP_DATES  # noqa: PLC0415
+
+        if not real_dates:
+            errors["real_dates"] = (
+                "select at least one evidence date — a logical trading day "
+                f"between {DEVELOPMENT_EVIDENCE_FIRST_DAY} and "
+                f"{DEVELOPMENT_EVIDENCE_LAST_DAY}"
+            )
+        else:
+            problems = [
+                reason
+                for reason in (development_evidence_day_error(day) for day in real_dates)
+                if reason
+            ]
+            if problems:
+                errors["real_dates"] = "; ".join(problems[:3])
+            elif list(real_dates) != sorted(set(real_dates)):
+                errors["real_dates"] = "evidence dates must be unique and chronological"
+        if tuple(warmup_dates) != FROZEN_WARMUP_DATES:
+            errors["warmup_dates"] = (
+                "the development policy requires the frozen ten-date warmup "
+                "prefix (read-only; derived from the backend contract)"
+            )
     seed = fields.get("seed")
     if seed is None or not isinstance(seed, int):
         errors["seed"] = "a deterministic integer seed is required"
     workers = fields.get("worker_limit")
-    if workers is not None and not 1 <= int(workers) <= 4:
-        errors["worker_limit"] = "worker limit is bounded to 1..4"
+    if workers is not None and int(workers) != 1:
+        # HARDENING-BACKEND §4.6: the V1 executor is sequential; a request
+        # above one worker is refused by the backend before any job exists
+        errors["worker_limit"] = (
+            "the V1 executor runs children sequentially (effective workers: 1); "
+            "no other value is offered or coerced"
+        )
     return errors
 
 
 def validate_review_step(fields: Mapping[str, Any]) -> dict[str, str]:
     errors: dict[str, str] = {}
-    if fields.get("run_scope") == "full_authorized_development":
+    requires_acknowledgement = fields.get("requires_acknowledgement")
+    if requires_acknowledgement is None:
+        requires_acknowledgement = (
+            fields.get("run_scope") == "full_authorized_development"
+        )
+    if requires_acknowledgement:
         typed = (fields.get("typed_acknowledgement") or "").strip().lower()
         expected = (fields.get("required_acknowledgement") or "").strip().lower()
         if not expected or typed != expected:
@@ -696,6 +772,15 @@ def validate_review_step(fields: Mapping[str, Any]) -> dict[str, str]:
                 "type the exact acknowledgement phrase to enable the "
                 "full-scope launch control"
             )
+    # UI-1: a contradictory draft never reaches the freeze handler, and a
+    # purpose whose authorization / namespace is not ready cannot freeze
+    if fields.get("satisfiable") is False:
+        errors["charter_satisfiability"] = (
+            "resolve the failing satisfiability rules above before freezing"
+        )
+    block = fields.get("freeze_block_reason")
+    if block:
+        errors["freeze_readiness"] = str(block)
     return errors
 
 

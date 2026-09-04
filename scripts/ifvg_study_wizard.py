@@ -1,4 +1,4 @@
-"""New Study — the eight-step wizard (R4; FUX §§6–15).
+"""New Study — the eight-step wizard (R4; FUX §§6–15; UI-1 amendments).
 
 ``render_new_study`` owns drafts (disk-persisted, autosaved on Next, Save
 Draft always visible, exact-step restore, immutable after freeze, Clone as
@@ -9,6 +9,19 @@ handoff. Freezing builds a ``SearchCharterPayload``, runs the fail-closed
 charters with a REGISTERED runner entry — spawns the detached job shim and
 routes to Active Runs. Launching happens ONLY inside the explicit button
 handler; render, import, AppTest, and page refresh launch nothing.
+
+UI-1 (plan Phase 1): one presentation-only RUN PURPOSE replaces the
+independent namespace / run-scope radios — the goal card derives the run
+scope, the semantic namespace (verified id shown read-only), the evidence
+class and the authorization class of the ACTUAL computation path (a
+synthetic fixture → the typed marker; the real ≤5-day slice → the owner's
+validated VerificationAuthorizationRef; research scopes → the
+computation-path-scoped owner bundle); a ``CharterSatisfiabilityReport``
+refuses contradictory drafts BEFORE freeze and the selected objective is
+never rewritten; the launch resolves the registered runner BEFORE spawning
+and reports success ONLY after the worker's state file exists; the V1
+executor is sequential (no worker control); development dates follow the
+backend logical-day contract with the frozen warmup prefix.
 """
 
 from __future__ import annotations
@@ -16,7 +29,9 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import time
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -38,6 +53,28 @@ from alpha_lab.agents.data_infra.ifvg.context_experiment_contracts import (
     PROFILE_CAPABILITY_REGISTRY,
     ProfileCapabilityStatus,
 )
+from alpha_lab.agents.data_infra.ifvg.development_access import FROZEN_WARMUP_DATES
+from alpha_lab.agents.data_infra.ifvg.presentation.charter_satisfiability import (
+    CharterSatisfiabilityReport,
+    StudyGoal,
+    evaluate_charter_satisfiability,
+    goal_for_draft,
+    summarize_challenger_differences,
+)
+from alpha_lab.agents.data_infra.ifvg.presentation.run_purpose import (
+    PURPOSE_DESCRIPTIONS,
+    PURPOSE_LABELS,
+    PURPOSE_NAMESPACE_CLASS,
+    PURPOSE_RUN_SCOPE,
+    EvidenceClass,
+    PurposeResolution,
+    PurposeResolutionStatus,
+    ResolvedPurpose,
+    RunPurpose,
+    RunPurposeAnnotation,
+    resolve_draft_purpose,
+    resolve_purpose,
+)
 from alpha_lab.agents.data_infra.ifvg.profiles import resolve_profile_config
 from alpha_lab.agents.data_infra.ifvg.search.authorization import (
     SyntheticAuthorizationMarker,
@@ -47,6 +84,7 @@ from alpha_lab.agents.data_infra.ifvg.search.axis_registry import (
     AXIS_VALUE_REGISTRY_V1,
     SEARCH_AXIS_REGISTRY_V1,
 )
+from alpha_lab.agents.data_infra.ifvg.search.catalog import append_catalog_event
 from alpha_lab.agents.data_infra.ifvg.search.charter import (
     CharterValidationError,
     CostPolicy,
@@ -67,6 +105,8 @@ from alpha_lab.agents.data_infra.ifvg.search.identities import (
     name_free_section_hash,
 )
 from alpha_lab.agents.data_infra.ifvg.search.runner_registry import (
+    RunnerEntryError,
+    resolve_registered_runner_entry,
     runner_entry_key_for_charter,
 )
 from alpha_lab.agents.data_infra.ifvg.search.verification import (
@@ -84,6 +124,8 @@ from alpha_lab.agents.data_infra.ifvg.study_drafts import (
 )
 from alpha_lab.agents.data_infra.ifvg.study_presentation import (
     AXIS_GROUP_ORDER,
+    DEVELOPMENT_EVIDENCE_FIRST_DAY,
+    DEVELOPMENT_EVIDENCE_LAST_DAY,
     INTERPRETATIONS,
     MAX_ACCOUNTS_PER_FIRM,
     OBJECTIVE_TEMPLATES,
@@ -110,6 +152,14 @@ from alpha_lab.agents.data_infra.ifvg.study_presentation import (
     validate_search_space_step,
     validate_validation_step,
 )
+from alpha_lab.agents.data_infra.ifvg.study_providers import (
+    AuthorizationReadiness,
+    owner_authorization_bundle_from_store,
+    owner_authorization_readiness,
+    resolve_store_namespace,
+    verification_authorization_readiness,
+    verification_owner_bundle,
+)
 from alpha_lab.agents.data_infra.ifvg.study_status import (
     FULL_SCOPE_ACKNOWLEDGEMENT,
     FULL_SCOPE_WARNING_TEXT,
@@ -129,8 +179,44 @@ _SESSION_DIRECTION_AXES = SESSION_DIRECTION_AXES
 #: Draft-header widget keys that are already instantiated when the shell
 #: decides whether to purge stale step-widget state on a draft switch.
 _HEADER_WIDGET_KEYS = frozenset(
-    {f"{_W}new_mode", f"{_W}new_draft", f"{_W}open_draft", f"{_W}open_btn"}
+    {
+        f"{_W}new_purpose",
+        f"{_W}new_mode",
+        f"{_W}new_draft",
+        f"{_W}open_draft",
+        f"{_W}open_btn",
+    }
 )
+
+#: UI-1 honest launch: after the detached spawn the handler waits for the
+#: worker's persisted ``search_state.json`` up to this many seconds before
+#: reporting the launch as started (tests shorten it); silence renders the
+#: typed ``launch_not_started`` state, never a success.
+LAUNCH_STATE_WAIT_SECONDS = 10.0
+_LAUNCH_POLL_SECONDS = 0.2
+
+_EVIDENCE_LABELS: Mapping[str, str] = {
+    "synthetic_fixture": "Synthetic fixture — proves the machinery; never evidence",
+    "real": (
+        "Real ≤5-day verification slice — requires the owner's validated "
+        "VerificationAuthorizationRef"
+    ),
+}
+
+_PROP_GATE_DEFAULTS = ResolvedPropGateThresholds(
+    minimum_first_payout_probability_60d=0.5,
+    maximum_breach_probability_90d=0.35,
+    minimum_expected_net_payout_90d=None,
+    minimum_p10_net_payout_90d=None,
+    maximum_p90_payout_drought_days=None,
+    minimum_three_payout_probability=None,
+).model_dump()
+_ROBUSTNESS_GATE_DEFAULTS = ResolvedRobustnessGateThresholds(
+    maximum_neighbor_expectancy_degradation_r=None,
+    minimum_plateau_width=None,
+    maximum_worst_firm_breach_probability_90d=None,
+    minimum_time_block_sign_consistency=None,
+).model_dump()
 
 
 def _spawn_search_job(command: list[str]) -> int:
@@ -155,6 +241,10 @@ def _spawn_search_job(command: list[str]) -> int:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _utc_now() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
 def _draft_header(st_module, roots: Mapping[str, Any]) -> StudyDraft | None:
     draft_root = Path(roots["draft_root"])
     drafts = list_drafts(draft_root)
@@ -164,6 +254,17 @@ def _draft_header(st_module, roots: Mapping[str, Any]) -> StudyDraft | None:
     }
     columns = st_module.columns([2, 2, 1])
     with columns[0]:
+        purpose_labels = [PURPOSE_LABELS[purpose] for purpose in RunPurpose]
+        purpose_label = st_module.selectbox(
+            "Purpose for a new draft",
+            purpose_labels,
+            key=f"{_W}new_purpose",
+            help=(
+                "The purpose derives the run scope, the semantic namespace, the "
+                "evidence class and the authorization class; it is a presentation "
+                "annotation and never changes a charter identity (owner Q1)."
+            ),
+        )
         mode_label = st_module.selectbox(
             "Study mode for a new draft",
             [mode.label for mode in STUDY_MODES],
@@ -172,7 +273,23 @@ def _draft_header(st_module, roots: Mapping[str, Any]) -> StudyDraft | None:
         )
         if st_module.button("Start new draft", key=f"{_W}new_draft"):
             mode = next(m for m in STUDY_MODES if m.label == mode_label)
+            purpose = next(p for p in RunPurpose if PURPOSE_LABELS[p] == purpose_label)
             draft = new_draft(mode.mode_id)
+            draft.purpose_annotation = RunPurposeAnnotation(
+                purpose=purpose,
+                derivation="card_selected",
+                owner_confirmed=True,
+                updated_at=_utc_now(),
+            ).to_dict()
+            draft.steps["validation"] = {
+                "run_scope": PURPOSE_RUN_SCOPE[purpose],
+                "evidence_class": (
+                    "synthetic_fixture"
+                    if purpose is RunPurpose.IMPLEMENTATION_VERIFICATION
+                    else "real"
+                ),
+                "worker_limit": 1,
+            }
             save_draft(draft_root, draft)
             st_module.session_state[_DRAFT_KEY] = draft.draft_id
     with columns[1]:
@@ -189,8 +306,9 @@ def _draft_header(st_module, roots: Mapping[str, Any]) -> StudyDraft | None:
     draft_id = st_module.session_state.get(_DRAFT_KEY)
     if not draft_id:
         st_module.info(
-            "Start a new draft or open a saved one. Drafts autosave on every "
-            "successful Next and can always be saved explicitly."
+            "Start a new draft (or one from Start's task cards) or open a saved "
+            "one. Drafts autosave on every successful Next and can always be "
+            "saved explicitly."
         )
         return None
     try:
@@ -209,6 +327,288 @@ def _draft_header(st_module, roots: Mapping[str, Any]) -> StudyDraft | None:
             st_module.rerun()
         return None
     return draft
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# UI-1 — purpose resolution, typed readiness and satisfiability (pure inputs
+# from the presentation package and the providers; nothing here launches)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class DraftResolution:
+    """Everything the steps and the freeze handler need about a draft's
+    purpose: the resolution, the resolved purpose (``None`` when
+    ``purpose_unresolved``), the purpose's roots, the typed readiness of the
+    real authorization the path requires and the requirement set."""
+
+    resolution: PurposeResolution
+    resolved: ResolvedPurpose | None
+    roots: dict[str, Any]
+    readiness: AuthorizationReadiness | None
+    requirement_set: Any | None
+
+
+def _search_mode_for(draft: StudyDraft, axes_present: bool) -> SearchMode:
+    if draft.mode_id in {mode.value for mode in SearchMode}:
+        return SearchMode(draft.mode_id)
+    # Full Pipeline Run drafts (mode 5) freeze the underlying SEARCH charter
+    # their pipeline runs over (engineering default, DECISIONS_TAKEN R5)
+    return SearchMode.FSM_CONFIG_SEARCH if axes_present else SearchMode.SINGLE_CONFIGURATION
+
+
+def _requirement_set_for_draft(draft: StudyDraft, run_scope: str):
+    """Mirror of ``validate_charter``'s computation path and dimensions —
+    the requirement set a real bundle must reference."""
+
+    from alpha_lab.agents.data_infra.ifvg.study.computation_path import (  # noqa: PLC0415
+        ComputationPath,
+    )
+
+    prop_selected = tuple(
+        draft.step_payload("prop_contracts").get("selected_contract_ids") or ()
+    )
+    selections = draft.step_payload("search_space").get("axis_selections") or {}
+    axes = sorted(str(axis) for axis in selections if tuple(selections[axis] or ()))
+    search_mode = _search_mode_for(draft, bool(axes))
+    path = ComputationPath(
+        full_strategy_replay=any(
+            SEARCH_AXIS_REGISTRY_V1[axis].requires_full_sequential_replay
+            for axis in axes
+            if axis in SEARCH_AXIS_REGISTRY_V1
+        )
+        or search_mode in (SearchMode.FSM_CONFIG_SEARCH, SearchMode.SINGLE_CONFIGURATION),
+        feature_materialization=False,
+        label_recomputation=False,
+        model_refit=False,
+        model_gated_sequential_replay=False,
+        cost_recomputation=True,
+        prop_resimulation=bool(prop_selected),
+        bootstrap_resimulation=False,
+        reuse_trade_stream_hash=False,
+    )
+    dimensions = tuple(f"strategy_profile.{axis}" for axis in axes) + tuple(
+        f"prop_contract.{contract}" for contract in prop_selected
+    )
+    return derive_authorization_requirements(run_scope, dimensions, path, (), prop_selected)
+
+
+def _resolve_for_draft(draft: StudyDraft, roots: Mapping[str, Any]) -> DraftResolution:
+    """Resolve the draft's purpose (stored annotation → unambiguous legacy
+    derivation → ``purpose_unresolved``), the purpose's roots, the verified
+    store namespace and the TYPED readiness of the authorization the actual
+    path requires."""
+
+    from ifvg_study_tab import roots_for_purpose  # noqa: PLC0415
+
+    validation = draft.step_payload("validation")
+    resolution = resolve_draft_purpose(
+        draft.purpose_annotation, run_scope=validation.get("run_scope")
+    )
+    if resolution.status is not PurposeResolutionStatus.RESOLVED or resolution.purpose is None:
+        return DraftResolution(resolution, None, dict(roots), None, None)
+    purpose = resolution.purpose
+    purpose_roots = roots_for_purpose(roots, purpose)
+    store_root = Path(purpose_roots["store_root"])
+    stored_evidence = str(validation.get("evidence_class") or "")
+    if purpose is RunPurpose.IMPLEMENTATION_VERIFICATION:
+        evidence = (
+            EvidenceClass.REAL if stored_evidence == "real" else EvidenceClass.SYNTHETIC_FIXTURE
+        )
+    else:
+        evidence = EvidenceClass.REAL  # a synthetic fixture is confined to verification
+    run_scope = PURPOSE_RUN_SCOPE[purpose]
+    requirement_set = _requirement_set_for_draft(draft, run_scope)
+    namespace = resolve_store_namespace(
+        store_root, expected_class=PURPOSE_NAMESPACE_CLASS[purpose]
+    )
+    readiness: AuthorizationReadiness | None = None
+    if evidence is EvidenceClass.REAL:
+        baseline = draft.step_payload("baseline")
+        try:
+            if purpose is RunPurpose.IMPLEMENTATION_VERIFICATION:
+                readiness = verification_authorization_readiness(
+                    store_root,
+                    baseline_profile_name=baseline.get("baseline_profile_name") or None,
+                    baseline_section_config_hash=(
+                        baseline.get("baseline_section_config_hash") or None
+                    ),
+                    allowlist=tuple(validation.get("real_dates") or ()) or None,
+                )
+            else:
+                readiness = owner_authorization_readiness(
+                    store_root,
+                    requirement_set,
+                    expected_class=PURPOSE_NAMESPACE_CLASS[purpose],
+                )
+        except Exception as error:  # noqa: BLE001 — typed, sanitized at render
+            readiness = AuthorizationReadiness(
+                authorization_class=(
+                    "verification_authorization_ref"
+                    if purpose is RunPurpose.IMPLEMENTATION_VERIFICATION
+                    else "owner_authorization_bundle"
+                ),
+                status="unavailable",
+                detail=f"readiness lookup failed: {sanitize_error(error)}",
+            )
+    resolved = resolve_purpose(
+        purpose,
+        evidence_class=evidence,
+        namespace=namespace,
+        authorization_readiness=readiness.status if readiness is not None else None,
+        authorization_detail=readiness.detail if readiness is not None else "",
+    )
+    return DraftResolution(resolution, resolved, purpose_roots, readiness, requirement_set)
+
+
+def _purpose_card(
+    st_module, draft: StudyDraft, draft_root: Path, resolution: DraftResolution
+) -> None:
+    """The goal card fixed at the top of every step (plan §7 New Study)."""
+
+    st_module.markdown("**Goal card**")
+    resolved = resolution.resolved
+    if resolved is None:
+        render_empty_state(
+            st_module, "purpose_unresolved", detail=resolution.resolution.reason
+        )
+        labels = [PURPOSE_LABELS[purpose] for purpose in RunPurpose]
+        chosen = st_module.selectbox(
+            "Confirm the run purpose",
+            labels,
+            key=f"{_W}confirm_purpose",
+            help=(
+                "Confirming records a presentation annotation only; the run scope, "
+                "namespace and authorization are still validated by the backend."
+            ),
+        )
+        if st_module.button("Confirm purpose", key=f"{_W}confirm_purpose_btn"):
+            purpose = next(p for p in RunPurpose if PURPOSE_LABELS[p] == chosen)
+            draft.purpose_annotation = RunPurposeAnnotation(
+                purpose=purpose,
+                derivation="owner_confirmed",
+                owner_confirmed=True,
+                updated_at=_utc_now(),
+            ).to_dict()
+            validation = draft.step_payload("validation")
+            validation["run_scope"] = PURPOSE_RUN_SCOPE[purpose]
+            validation.setdefault(
+                "evidence_class",
+                "synthetic_fixture"
+                if purpose is RunPurpose.IMPLEMENTATION_VERIFICATION
+                else "real",
+            )
+            save_draft(draft_root, draft)
+            st_module.rerun()
+        return
+    if resolved.purpose is RunPurpose.IMPLEMENTATION_VERIFICATION:
+        verification_badge(st_module)
+    st_module.table(
+        {
+            "purpose": [resolved.label],
+            "run scope": [resolved.run_scope],
+            "namespace class": [resolved.namespace_class],
+            "evidence class": [resolved.evidence_class.value],
+            "authorization": [
+                f"{resolved.authorization_class} · readiness: "
+                f"{resolved.authorization_readiness}"
+            ],
+            "stage plan policy": [resolved.stage_plan_policy],
+            "publication": [
+                "separate eligibility gate"
+                if resolved.publication_available
+                else "not available for this purpose"
+            ],
+            "result label": [resolved.result_label],
+        }
+    )
+    st_module.caption(PURPOSE_DESCRIPTIONS[resolved.purpose])
+    st_module.caption(
+        f"Store namespace: **{resolved.namespace_status}** — "
+        f"{sanitize_error(resolved.namespace_detail)}"
+    )
+    if resolved.store_namespace_id:
+        identity_block(st_module, "store_namespace_id", resolved.store_namespace_id)
+    if not resolved.freeze_allowed and resolved.freeze_block_reason:
+        st_module.warning(
+            f"Freeze is disabled — {sanitize_error(resolved.freeze_block_reason)}"
+        )
+
+
+def _gates_configured(stored: Mapping[str, Any] | None, defaults: Mapping[str, Any]) -> bool:
+    return any(
+        value is not None and value != defaults.get(name)
+        for name, value in (stored or {}).items()
+    )
+
+
+def _resolved_objectives(draft: StudyDraft) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The SELECTED objectives and tie-breaks — never rewritten (plan F-04)."""
+
+    objective_step = draft.step_payload("objective")
+    template = next(
+        (
+            template
+            for template in OBJECTIVE_TEMPLATES
+            if template.template_id == objective_step.get("template_id")
+        ),
+        OBJECTIVE_TEMPLATES[-1],
+    )
+    if template.template_id == "custom":
+        return tuple(objective_step.get("custom_objectives") or ()), ("core_replay_id",)
+    return tuple(template.primary_objective), (*template.tie_breaks, "core_replay_id")
+
+
+def _challenger_selections(draft: StudyDraft) -> dict[str, tuple[str, ...]]:
+    """Selected CHALLENGER value ids per axis (the baseline value never counts)."""
+
+    selections = draft.step_payload("search_space").get("axis_selections") or {}
+    out: dict[str, tuple[str, ...]] = {}
+    for axis, values in selections.items():
+        spec = SEARCH_AXIS_REGISTRY_V1.get(str(axis))
+        baseline = spec.baseline_value_id if spec is not None else None
+        chosen = tuple(str(value) for value in (values or ()) if value != baseline)
+        if chosen:
+            out[str(axis)] = chosen
+    return out
+
+
+def _satisfiability_for_draft(
+    draft: StudyDraft, resolved: ResolvedPurpose
+) -> CharterSatisfiabilityReport:
+    objective_step = draft.step_payload("objective")
+    prop = draft.step_payload("prop_contracts")
+    benchmarks = draft.step_payload("benchmarks")
+    pareto, ties = _resolved_objectives(draft)
+    try:
+        goal = goal_for_draft(draft.mode_id, objective_step.get("question_id"))
+    except ValueError:
+        goal = StudyGoal.ADVANCED_END_TO_END
+    if (
+        resolved.purpose is RunPurpose.IMPLEMENTATION_VERIFICATION
+        and resolved.evidence_class is EvidenceClass.REAL
+    ):
+        goal = StudyGoal.VERIFICATION
+    return evaluate_charter_satisfiability(
+        goal=goal,
+        search_mode=draft.mode_id,
+        axis_selections=_challenger_selections(draft),
+        baseline_profile_name=str(
+            draft.step_payload("baseline").get("baseline_profile_name") or ""
+        ),
+        pareto_objectives=pareto,
+        tie_breaks=ties,
+        selected_contract_ids=tuple(prop.get("selected_contract_ids") or ()),
+        launchable_contract_ids=tuple(prop.get("launchable_contract_ids") or ()),
+        purpose=resolved.purpose,
+        evidence_class=resolved.evidence_class,
+        prop_gates_configured=_gates_configured(
+            benchmarks.get("prop_gates"), _PROP_GATE_DEFAULTS
+        ),
+        robustness_gates_configured=_gates_configured(
+            benchmarks.get("robustness_gates"), _ROBUSTNESS_GATE_DEFAULTS
+        ),
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -480,8 +880,11 @@ def _step_search_space(st_module, draft: StudyDraft) -> dict[str, Any]:
         )
     count = enumerate_child_count(selections) if selections else 1
     st_module.caption(
-        f"Enumerated child combinations (baseline included per axis at "
-        f"launch): ~{count}"
+        "Baseline only: 1 configuration"
+        if count <= 1
+        else f"{count} configurations: baseline + {count - 1} challenger"
+        + ("s" if count - 1 != 1 else "")
+        + " (the baseline value of every searched axis enumerates at launch)"
     )
     return {
         "mode_id": draft.mode_id,
@@ -867,32 +1270,55 @@ def _step_benchmarks(st_module, draft: StudyDraft) -> dict[str, Any]:
 
 
 def _step_validation(
-    st_module, draft: StudyDraft, roots: Mapping[str, Any]
+    st_module, draft: StudyDraft, roots: Mapping[str, Any], resolution: DraftResolution
 ) -> dict[str, Any]:
     payload = draft.step_payload("validation")
-    scope_labels = {
-        "verification_5d": "Verification Fixture — maximum five authorized real trading days",
-        "full_authorized_development": (
-            "Full Authorized Development Data — explicit post-acceptance "
-            "operator action"
-        ),
-    }
-    stored_scope = payload.get("run_scope", "verification_5d")
-    scope_label = st_module.radio(
-        "Run scope",
-        list(scope_labels.values()),
-        index=0 if stored_scope != "full_authorized_development" else 1,
-        key=f"{_W}scope",
+    resolved = resolution.resolved
+    seed_default = int(payload.get("seed", 7))
+    if resolved is None:
+        render_empty_state(
+            st_module, "purpose_unresolved", detail=resolution.resolution.reason
+        )
+        return {
+            "run_scope": payload.get("run_scope"),
+            "evidence_class": payload.get("evidence_class"),
+            "real_dates": tuple(payload.get("real_dates") or ()),
+            "warmup_dates": tuple(payload.get("warmup_dates") or ()),
+            "seed": seed_default,
+            "worker_limit": 1,
+        }
+    run_scope = resolved.run_scope
+    store_root = Path(resolution.roots["store_root"])
+    st_module.markdown(
+        f"**Run scope:** `{run_scope}` — derived from the purpose "
+        f"**{resolved.label}**; it is not a separate selector (owner Q1)."
     )
-    run_scope = next(
-        key for key, label in scope_labels.items() if label == scope_label
-    )
-    if run_scope == "verification_5d":
+    baseline = draft.step_payload("baseline")
+    if resolved.purpose is RunPurpose.IMPLEMENTATION_VERIFICATION:
         verification_badge(st_module)
+        stored_evidence = str(payload.get("evidence_class") or "synthetic_fixture")
+        evidence_label = st_module.radio(
+            "Evidence class",
+            list(_EVIDENCE_LABELS.values()),
+            index=1 if stored_evidence == "real" else 0,
+            key=f"{_W}evidence",
+            help=(
+                "A synthetic fixture carries the typed SyntheticAuthorizationMarker "
+                "and proves the machinery only. The real ≤5-day slice needs the "
+                "owner's VerificationAuthorizationRef bound to this store's verified "
+                "namespace and current supersession head; its typed readiness is "
+                "shown below."
+            ),
+        )
+        evidence_class = next(
+            key for key, label in _EVIDENCE_LABELS.items() if label == evidence_label
+        )
         allowlist = tuple(PROPOSED_VERIFICATION_ALLOWLIST)
         st_module.write(
             "One canonical program-wide allowlist (read-only; owner decision "
-            "21/R-5 — the proposed candidate pending coverage sign-off):"
+            "21/R-5 — the proposed candidate pending coverage sign-off; the owner "
+            "selects the logical trading-day window from the HARDENING-BACKEND "
+            "shortlist):"
         )
         st_module.code("\n".join(allowlist), language="text")
         st_module.download_button(
@@ -912,64 +1338,102 @@ def _step_validation(
             "(the profile-matching precomputed seed snapshot replaces real "
             "warmup; warmup + evidence ≤ 5 holds)"
         )
-        # FUX §14.2: show WHETHER the exact VerificationAuthorizationRef
-        # exists — derived from the repository, never asserted.
-        from alpha_lab.agents.data_infra.ifvg.study_providers import (  # noqa: PLC0415
-            verification_authorization_state,
-        )
-
+        # FUX §14.2 as amended: the TYPED readiness of the exact
+        # VerificationAuthorizationRef — derived from the repository, never
+        # asserted, never collapsed into a Boolean
         try:
-            authorization = verification_authorization_state(
-                Path(roots["store_root"])
+            readiness: AuthorizationReadiness | None = verification_authorization_readiness(
+                store_root,
+                baseline_profile_name=baseline.get("baseline_profile_name") or None,
+                baseline_section_config_hash=(
+                    baseline.get("baseline_section_config_hash") or None
+                ),
+                allowlist=real_dates,
             )
         except Exception as error:  # noqa: BLE001 — sanitized surface only
-            st_module.warning(
-                f"Authorization lookup failed: {sanitize_error(error)}"
-            )
-            authorization = None
-        if authorization is not None and authorization.exists:
-            st_module.success(
-                f"VerificationAuthorizationRef: EXISTS — {authorization.detail}"
-            )
-            for run_id in authorization.verification_run_ids:
-                identity_block(st_module, "verification_run_id", run_id)
-        elif authorization is not None:
-            render_empty_state(
-                st_module,
-                "verification_authorization_missing",
-                detail=authorization.detail,
-            )
+            st_module.warning(f"Authorization lookup failed: {sanitize_error(error)}")
+            readiness = None
+        if readiness is not None:
+            if readiness.status == "ready":
+                st_module.success(
+                    f"VerificationAuthorizationRef: READY — {sanitize_error(readiness.detail)}"
+                )
+                for run_id in readiness.evidence_ids:
+                    identity_block(st_module, "verification_run_id", run_id)
+            elif readiness.status in ("missing", "store_unmarked"):
+                render_empty_state(
+                    st_module,
+                    "verification_authorization_missing",
+                    detail=f"{readiness.status}: {readiness.detail}",
+                )
+            else:
+                render_empty_state(
+                    st_module,
+                    "authorization_not_ready",
+                    detail=f"{readiness.status}: {readiness.detail}",
+                )
+            if evidence_class == "synthetic_fixture":
+                st_module.caption(
+                    "Synthetic fixture: the typed marker satisfies the charter layer; "
+                    "the real-ref readiness above is informational."
+                )
+            elif readiness.status != "ready":
+                st_module.error(
+                    "The real ≤5-day slice cannot freeze until the "
+                    "VerificationAuthorizationRef readiness is ready."
+                )
     else:
+        evidence_class = "real"
         st_module.warning(
-            "Full authorized development scope: no full run starts during "
-            "tests, import, startup, or page render. Launch requires a "
-            "frozen pipeline specification and the typed second "
+            "Owner-authorized development scope: no run starts during tests, "
+            "import, startup, or page render. Launch requires a frozen charter or "
+            "pipeline specification, a ready owner authorization bundle bound to "
+            "this store, and — for Full Authorized Development — the typed second "
             "confirmation in Review & Launch."
         )
+        st_module.write(
+            "Frozen warmup prefix (read-only; the development date policy "
+            "requires it before any evidence date):"
+        )
+        st_module.code("\n".join(FROZEN_WARMUP_DATES), language="text")
         raw = st_module.text_area(
-            "Authorized development dates (one ISO date per line; the "
-            "complete resolved allowlist is downloadable below)",
+            "Evidence dates — logical trading days between "
+            f"{DEVELOPMENT_EVIDENCE_FIRST_DAY} and {DEVELOPMENT_EVIDENCE_LAST_DAY}, "
+            "one ISO date per line",
             value="\n".join(payload.get("real_dates") or ()),
             key=f"{_W}full_dates",
+            help=(
+                "Weekends, registered full closures, the protected buffer "
+                "2026-06-11 and the sealed range are refused field-by-field here, "
+                "never as a generic freeze failure."
+            ),
         )
         real_dates = tuple(line.strip() for line in raw.splitlines() if line.strip())
+        warmup_dates = FROZEN_WARMUP_DATES
         st_module.download_button(
             "Download resolved date list",
-            data=json.dumps({"dates": real_dates}, indent=2),
+            data=json.dumps(
+                {"warmup": list(warmup_dates), "evidence": list(real_dates)}, indent=2
+            ),
             file_name="authorized_development_dates.json",
             key=f"{_W}dl_dates",
         )
-        raw_warmup = st_module.text_area(
-            "Warmup dates (one ISO date per line)",
-            value="\n".join(payload.get("warmup_dates") or ()),
-            key=f"{_W}warmup_dates",
-        )
-        warmup_dates = tuple(
-            line.strip() for line in raw_warmup.splitlines() if line.strip()
-        )
         st_module.caption(
-            f"Real-date count: {len(real_dates)} · warmup: {len(warmup_dates)}"
+            f"Warmup: {len(warmup_dates)} frozen days · evidence: {len(real_dates)}"
         )
+        readiness = resolution.readiness
+        if readiness is not None:
+            if readiness.status == "ready":
+                st_module.success(
+                    "Owner authorization bundle: READY — "
+                    f"{sanitize_error(readiness.detail)}"
+                )
+            else:
+                render_empty_state(
+                    st_module,
+                    "authorization_not_ready",
+                    detail=f"{readiness.status}: {readiness.detail}",
+                )
     st_module.write("Protected buffer and sealed boundary (read-only):")
     st_module.code(
         "protected: 2026-06-11 (never constructed, listed, stat-ed, or read)\n"
@@ -980,30 +1444,26 @@ def _step_validation(
     seed = int(
         st_module.number_input(
             "Deterministic seed",
-            value=int(payload.get("seed", 7)),
+            value=seed_default,
             step=1,
             key=f"{_W}seed",
         )
     )
-    workers = int(
-        st_module.number_input(
-            "Worker limit (operational — never scientific identity)",
-            min_value=1,
-            max_value=4,
-            value=int(payload.get("worker_limit", 4)),
-            key=f"{_W}workers",
-        )
+    from alpha_lab.agents.data_infra.ifvg.search.pipeline import (  # noqa: PLC0415
+        EXECUTION_MODE_V1,
+        SUPPORTED_CHILD_WORKERS,
     )
-    selections_for_estimate = {
-        key: tuple(values)
-        for key, values in (
-            draft.step_payload("search_space").get("axis_selections") or {}
-        ).items()
-    }
+
+    st_module.caption(
+        f"Execution mode: {EXECUTION_MODE_V1} — sequential in V1; effective workers: "
+        f"{SUPPORTED_CHILD_WORKERS}. No worker control exists; the backend refuses "
+        "any other value before a job is created."
+    )
+    selections_for_estimate = _challenger_selections(draft)
     n_children_estimate = enumerate_child_count(selections_for_estimate)
     estimate = estimate_search_work(
         n_children=n_children_estimate,
-        n_replay_days=len(real_dates),
+        n_replay_days=len(real_dates) + len(warmup_dates),
         n_firm_policy_combinations=sum(
             int(policy.get("n_accounts", 1))
             for policy in (
@@ -1028,68 +1488,44 @@ def _step_validation(
             ],
         }
     )
-    prop_selected = tuple(
-        draft.step_payload("prop_contracts").get("selected_contract_ids") or ()
-    )
-    selections = draft.step_payload("search_space").get("axis_selections") or {}
-    from alpha_lab.agents.data_infra.ifvg.study.computation_path import (  # noqa: PLC0415
-        ComputationPath,
-    )
-
-    has_search = bool(selections)
-    path = ComputationPath(
-        full_strategy_replay=has_search,
-        feature_materialization=False,
-        label_recomputation=False,
-        model_refit=False,
-        model_gated_sequential_replay=False,
-        cost_recomputation=has_search,
-        prop_resimulation=bool(prop_selected),
-        bootstrap_resimulation=bool(prop_selected),
-        reuse_trade_stream_hash=not has_search,
-    )
-    dimensions = tuple(
-        f"strategy_profile.{axis}" for axis in sorted(selections)
-    ) + tuple(f"prop_contract.{contract}" for contract in prop_selected)
-    requirements = derive_authorization_requirements(
-        run_scope, dimensions, path, (), prop_selected
-    )
+    requirements = resolution.requirement_set
     st_module.markdown("**Authorization requirement checklist** (computation-path-scoped)")
-    for requirement in requirements.payload.requirements:
-        # No owner-decision evidence artifact is REGISTERED in this
-        # repository (the R-2 evidence workflow is unratified), so every
-        # requirement derives to unsatisfied; a real launch fails closed
-        # at charter validation until the referenced evidence exists.
-        st_module.write(
-            f"- `{requirement.decision_key}` — {requirement.reason} "
-            "(no registered evidence artifact — the launch fails closed "
-            "until one exists)"
-        )
-    if not requirements.payload.requirements:
-        st_module.caption(
-            "No owner decisions are required for this synthetic/verification "
-            "computation path."
-        )
+    missing_keys = set(
+        resolution.readiness.missing_decision_keys if resolution.readiness else ()
+    )
+    if requirements is not None:
+        for requirement in requirements.payload.requirements:
+            if evidence_class == "synthetic_fixture":
+                state = "informational — a synthetic fixture needs the typed marker only"
+            elif resolution.readiness is None:
+                state = "readiness not evaluated"
+            elif requirement.decision_key in missing_keys:
+                state = "no registered evidence artifact — the freeze fails closed"
+            else:
+                state = f"readiness: {resolution.readiness.status}"
+            st_module.write(f"- `{requirement.decision_key}` — {requirement.reason} ({state})")
+        if not requirements.payload.requirements:
+            st_module.caption(
+                "No owner decisions are required for this computation path."
+            )
     return {
         "run_scope": run_scope,
+        "evidence_class": evidence_class,
         "real_dates": real_dates,
         "warmup_dates": warmup_dates,
         "seed": seed,
-        "worker_limit": workers,
+        "worker_limit": 1,
     }
 
 
 def _step_review(
-    st_module, draft: StudyDraft, roots: Mapping[str, Any]
+    st_module, draft: StudyDraft, roots: Mapping[str, Any], resolution: DraftResolution
 ) -> dict[str, Any]:
     objective = draft.step_payload("objective")
-    search_space = draft.step_payload("search_space")
     risk = draft.step_payload("risk_policies")
     validation = draft.step_payload("validation")
-    selections = {
-        key: tuple(values)
-        for key, values in (search_space.get("axis_selections") or {}).items()
-    }
+    resolved = resolution.resolved
+    selections = _challenger_selections(draft)
     n_children = enumerate_child_count(selections) if selections else 1
     firm_combos = sum(
         int(policy.get("n_accounts", 1))
@@ -1097,7 +1533,8 @@ def _step_review(
     )
     estimate = estimate_search_work(
         n_children=n_children,
-        n_replay_days=len(tuple(validation.get("real_dates") or ())),
+        n_replay_days=len(tuple(validation.get("real_dates") or ()))
+        + len(tuple(validation.get("warmup_dates") or ())),
         n_firm_policy_combinations=firm_combos,
         n_stress_scenarios=0,
     )
@@ -1105,11 +1542,15 @@ def _step_review(
     frozen_axes = sorted(
         key for key in SEARCH_AXIS_REGISTRY_V1 if key not in selections
     )
+    pareto, ties = _resolved_objectives(draft)
     st_module.markdown("**Resolved charter preview**")
     st_module.table(
         {
+            "purpose": [resolved.label if resolved is not None else "unresolved"],
             "study mode": [draft.mode_id],
             "objective template": [objective.get("template_id", "—")],
+            "objective (selected; never rewritten)": [", ".join(pareto) or "—"],
+            "tie-breaks": [", ".join(ties)],
             "baseline": [baseline_step.get("baseline_profile_name", "—")],
             "changed axes": [", ".join(sorted(selections)) or "none (baseline only)"],
             "frozen dimensions": [
@@ -1118,8 +1559,12 @@ def _step_review(
             ],
             "unique strategy profiles": [str(n_children)],
             "firm/risk/account-policy combinations": [str(firm_combos)],
-            "run scope": [validation.get("run_scope", "—")],
+            "run scope": [resolved.run_scope if resolved is not None else "—"],
+            "evidence class": [
+                resolved.evidence_class.value if resolved is not None else "—"
+            ],
             "seed": [str(validation.get("seed", "—"))],
+            "execution": ["sequential_children_v1 · effective workers 1"],
         }
     )
     identity_block(
@@ -1127,21 +1572,52 @@ def _step_review(
         "Baseline resolved section hash",
         str(baseline_step.get("baseline_section_config_hash") or ""),
     )
-    prop_selected_review = tuple(
-        draft.step_payload("prop_contracts").get("selected_contract_ids") or ()
-    )
-    st_module.markdown("**Owner-authorization checklist (resolved for this path)**")
-    if validation.get("run_scope") == "verification_5d" and not prop_selected_review:
-        st_module.caption(
-            "Verification scope: the single blocking item is the owner's "
-            "VerificationAuthorizationRef (decisions 21/R-5) — shown with "
-            "its live state on the Validation step."
+    st_module.markdown("**Charter satisfiability** (refused before freeze, with the reason)")
+    report: CharterSatisfiabilityReport | None = None
+    if resolved is None:
+        render_empty_state(
+            st_module, "purpose_unresolved", detail=resolution.resolution.reason
         )
     else:
+        report = _satisfiability_for_draft(draft, resolved)
+        st_module.caption(report.configuration_sentence)
+        st_module.table(
+            {
+                "rule": [rule.label for rule in report.rules],
+                "result": ["✓ PASS" if rule.passed else "✕ FAIL" for rule in report.rules],
+                "detail": [rule.detail for rule in report.rules],
+            }
+        )
+        if report.failures:
+            st_module.error(
+                "This draft cannot freeze: "
+                + "; ".join(f"{rule.rule_id} — {rule.detail}" for rule in report.failures)
+            )
+        if report.goal is StudyGoal.COMPARE_WITH_BASELINE and selections:
+            baseline_values = {
+                axis: SEARCH_AXIS_REGISTRY_V1[axis].baseline_value_id
+                for axis in selections
+                if axis in SEARCH_AXIS_REGISTRY_V1
+            }
+            challenger = {axis: values[0] for axis, values in selections.items()}
+            st_module.markdown("**Challenger differences (every registered difference)**")
+            for line in summarize_challenger_differences(baseline_values, challenger):
+                st_module.write(f"- {line}")
+    st_module.markdown("**Owner-authorization readiness (resolved for this path)**")
+    if resolved is not None:
+        st_module.write(
+            f"Authorization class `{resolved.authorization_class}` · readiness "
+            f"**{resolved.authorization_readiness}**"
+            + (
+                f" — {sanitize_error(resolved.authorization_detail)}"
+                if resolved.authorization_detail
+                else ""
+            )
+        )
         st_module.caption(
-            "The computation-path-scoped requirement list (with its live "
-            "evidence state) is on the Validation step; every unmet "
-            "requirement fails the freeze closed."
+            "The computation-path-scoped requirement list with its live evidence "
+            "state is on the Validation step; every unmet requirement fails the "
+            "freeze closed."
         )
     st_module.markdown("**Estimated work — expensive vs cheap, separated**")
     st_module.table(
@@ -1163,13 +1639,17 @@ def _step_review(
             "New artifacts expected": [
                 "core replays · memberships · costed evaluations · frontier"
             ],
-            "Blocked or planned capabilities": [
-                "real executors (R5) · MBP-1 bundle (R5B) · regime lane (R6)"
+            "Blocked by contract": [
+                "S11 frozen model-gated replays (owner decision R-1) · MBP-1 "
+                "research_only_offline · no worker parallelism (sequential V1)"
             ],
         }
     )
     typed = ""
-    if validation.get("run_scope") == "full_authorized_development":
+    requires_acknowledgement = (
+        resolved is not None and resolved.purpose is RunPurpose.FULL_AUTHORIZED_DEVELOPMENT
+    )
+    if requires_acknowledgement:
         st_module.error(FULL_SCOPE_WARNING_TEXT)
         typed = st_module.text_input(
             f"Type '{FULL_SCOPE_ACKNOWLEDGEMENT}' to enable the launch control",
@@ -1177,10 +1657,18 @@ def _step_review(
             key=f"{_W}ack",
         )
     return {
-        "run_scope": validation.get("run_scope"),
+        "run_scope": resolved.run_scope if resolved is not None else validation.get("run_scope"),
+        "purpose": resolved.purpose.value if resolved is not None else None,
         "typed_acknowledgement": typed,
         "required_acknowledgement": FULL_SCOPE_ACKNOWLEDGEMENT,
+        "requires_acknowledgement": requires_acknowledgement,
         "n_children": n_children,
+        "satisfiable": bool(report.passed) if report is not None else False,
+        "freeze_block_reason": (
+            resolved.freeze_block_reason
+            if resolved is not None
+            else resolution.resolution.reason
+        ),
     }
 
 
@@ -1233,24 +1721,33 @@ def _strategy_core_root() -> Path:
 
 
 def _assemble_charter(
-    draft: StudyDraft, roots: Mapping[str, Any]
+    draft: StudyDraft,
+    roots: Mapping[str, Any],
+    resolution: DraftResolution | None = None,
 ) -> SearchCharterPayload:
+    """Assemble the charter for the draft's RESOLVED purpose: the objective
+    is never rewritten, the date policy follows the backend contract for the
+    run scope, and the authorization is the class the ACTUAL path requires
+    (synthetic marker / validated verification ref / owner bundle)."""
+
+    if resolution is None:
+        resolution = _resolve_for_draft(draft, roots)
+    resolved = resolution.resolved
+    if resolved is None:
+        raise CharterValidationError(
+            f"run purpose unresolved: {resolution.resolution.reason}"
+        )
     baseline = draft.step_payload("baseline")
-    search_space = draft.step_payload("search_space")
     prop = draft.step_payload("prop_contracts")
     risk = draft.step_payload("risk_policies")
     benchmarks = draft.step_payload("benchmarks")
     validation = draft.step_payload("validation")
-    objective_step = draft.step_payload("objective")
     from alpha_lab.agents.data_infra.ifvg.search.axis_registry import (  # noqa: PLC0415
         AxisClassification,
         registry_sha256,
     )
 
-    selections = {
-        key: tuple(values)
-        for key, values in (search_space.get("axis_selections") or {}).items()
-    }
+    selections = _challenger_selections(draft)
     axes: dict[str, tuple[str, ...]] = {}
     for axis_key, values in selections.items():
         spec = SEARCH_AXIS_REGISTRY_V1[axis_key]
@@ -1258,51 +1755,28 @@ def _assemble_charter(
             dict.fromkeys((spec.baseline_value_id, *values))
         )  # baseline first, deduped, order-stable
         axes[axis_key] = merged
-    template = next(
-        (
-            template
-            for template in OBJECTIVE_TEMPLATES
-            if template.template_id == objective_step.get("template_id")
-        ),
-        OBJECTIVE_TEMPLATES[-1],
-    )
-    if template.template_id == "custom":
-        pareto = tuple(objective_step.get("custom_objectives") or ())
-        tie_breaks: tuple[str, ...] = ("core_replay_id",)
-    else:
-        pareto = template.primary_objective
-        tie_breaks = (*template.tie_breaks, "core_replay_id")
+    pareto, tie_breaks = _resolved_objectives(draft)
     prop_selected = tuple(prop.get("selected_contract_ids") or ())
-    if not prop_selected:
-        # strategy-only studies keep strategy-owned objectives only
-        from alpha_lab.agents.data_infra.ifvg.search.strategy_metrics import (  # noqa: PLC0415
-            StrategyMetrics,
-        )
-
-        pareto = tuple(
-            metric for metric in pareto if hasattr(StrategyMetrics, metric)
-        ) or ("net_expectancy_r",)
-        tie_breaks = tuple(
-            metric
-            for metric in tie_breaks
-            if metric == "core_replay_id" or hasattr(StrategyMetrics, metric)
-        )
     strategy_gates = {
         **(benchmarks.get("strategy_gates") or {}),
     }
     strategy_gates.setdefault("min_session_stability_score", 0.5)
     prop_gate_values = benchmarks.get("prop_gates") or {}
     robustness_values = benchmarks.get("robustness_gates") or {}
-    run_scope = validation.get("run_scope", "verification_5d")
-    date_policy = DatePolicy(
-        replay_dates=tuple(validation.get("real_dates") or ()),
-        warmup_dates=tuple(validation.get("warmup_dates") or ()),
-        access_policy_id=(
-            "verification_fixed_allowlist_max5_v1"
-            if run_scope == "verification_5d"
-            else "development_explicit_dates_before_path_v2"
-        ),
-    )
+    run_scope = resolved.run_scope
+    if run_scope == "verification_5d":
+        date_policy = DatePolicy(
+            replay_dates=tuple(validation.get("real_dates") or PROPOSED_VERIFICATION_ALLOWLIST),
+            warmup_dates=(),
+            access_policy_id="verification_fixed_allowlist_max5_v1",
+        )
+    else:
+        evidence_dates = tuple(validation.get("real_dates") or ())
+        date_policy = DatePolicy(
+            replay_dates=(*FROZEN_WARMUP_DATES, *evidence_dates),
+            warmup_dates=FROZEN_WARMUP_DATES,
+            access_policy_id="development_explicit_dates_before_path_v2",
+        )
     withdrawal_ids = tuple(
         sorted(
             {
@@ -1316,9 +1790,6 @@ def _assemble_charter(
     # identity: the risk-policy ids are CONTENT hashes of the complete
     # per-firm policy dicts (template + value + accounts + replacement), so
     # two charters differing in any parameter can never share an identity.
-    # Real AccountPolicySetEnvelope construction is the R5 pipeline's job
-    # (DEV-R4-17); the frozen draft retains the resolved parameters as
-    # provenance.
     from alpha_lab.agents.data_infra.ifvg.search.identities import (  # noqa: PLC0415
         canonical_contract_sha256,
     )
@@ -1339,13 +1810,49 @@ def _assemble_charter(
             ).items()
         )
     )
-    # No owner evidence bundle exists yet, so every charter carries the typed
-    # synthetic marker: in the verification namespace it freezes normally; in
-    # the research namespace save_charter REFUSES it (P0-4 namespace
-    # confinement) and the wizard surfaces the sanitized refusal — a real
-    # charter becomes freezable only when the owner evidence exists
-    # (FUX-WIZ-007 fail-closed).
-    owner_authorization: Any = SyntheticAuthorizationMarker()
+    # Authorization by the ACTUAL computation path (plan F-01 / F-13): the
+    # typed marker for a fully synthetic fixture only; the real ≤5-day slice
+    # carries the bundle assembled from the persisted, verified
+    # VerificationAuthorizationRef; research scopes carry the
+    # computation-path-scoped owner bundle — each bound to THIS store's
+    # verified namespace and current supersession head, or the freeze refuses.
+    store_root = Path(resolution.roots["store_root"])
+    owner_authorization: Any
+    if resolved.authorization_class == "synthetic_marker":
+        owner_authorization = SyntheticAuthorizationMarker()
+    elif resolved.authorization_class == "verification_authorization_ref":
+        bundle = (
+            verification_owner_bundle(
+                store_root, resolution.readiness, resolution.requirement_set
+            )
+            if resolution.readiness is not None and resolution.requirement_set is not None
+            else None
+        )
+        if bundle is None:
+            raise CharterValidationError(
+                "the real verification slice requires a ready "
+                "VerificationAuthorizationRef (readiness: "
+                f"{resolved.authorization_readiness}): "
+                f"{resolved.authorization_detail or 'no ready evidence'}"
+            )
+        owner_authorization = bundle
+    else:
+        bundle = (
+            owner_authorization_bundle_from_store(
+                store_root,
+                resolution.requirement_set,
+                expected_class=PURPOSE_NAMESPACE_CLASS[resolved.purpose],
+            )
+            if resolution.requirement_set is not None
+            else None
+        )
+        if bundle is None:
+            raise CharterValidationError(
+                "owner authorization is not ready for this computation path "
+                f"(readiness: {resolved.authorization_readiness}): "
+                f"{resolved.authorization_detail or 'no ready evidence'}"
+            )
+        owner_authorization = bundle
     measured_only = tuple(
         key
         for key, spec in SEARCH_AXIS_REGISTRY_V1.items()
@@ -1356,16 +1863,7 @@ def _assemble_charter(
         for key, spec in SEARCH_AXIS_REGISTRY_V1.items()
         if spec.classification is AxisClassification.BLOCKED
     )
-    if draft.mode_id in {mode.value for mode in SearchMode}:
-        search_mode = SearchMode(draft.mode_id)
-    else:
-        # Full Pipeline Run drafts (mode 5) freeze the underlying SEARCH
-        # charter their pipeline runs over: a config search when axes were
-        # selected, the single baseline configuration otherwise
-        # (engineering default, DECISIONS_TAKEN R5).
-        search_mode = (
-            SearchMode.FSM_CONFIG_SEARCH if axes else SearchMode.SINGLE_CONFIGURATION
-        )
+    search_mode = _search_mode_for(draft, bool(axes))
     return SearchCharterPayload(
         search_mode=search_mode,
         baseline_profile_name=str(baseline.get("baseline_profile_name")),
@@ -1383,22 +1881,10 @@ def _assemble_charter(
             feasibility_gates=ResolvedStrategyGateThresholds(**strategy_gates),
             prop_feasibility_gates=ResolvedPropGateThresholds(**prop_gate_values)
             if prop_gate_values
-            else ResolvedPropGateThresholds(
-                minimum_first_payout_probability_60d=0.5,
-                maximum_breach_probability_90d=0.35,
-                minimum_expected_net_payout_90d=None,
-                minimum_p10_net_payout_90d=None,
-                maximum_p90_payout_drought_days=None,
-                minimum_three_payout_probability=None,
-            ),
+            else ResolvedPropGateThresholds(**_PROP_GATE_DEFAULTS),
             robustness_gates=ResolvedRobustnessGateThresholds(**robustness_values)
             if robustness_values
-            else ResolvedRobustnessGateThresholds(
-                maximum_neighbor_expectancy_degradation_r=None,
-                minimum_plateau_width=None,
-                maximum_worst_firm_breach_probability_90d=None,
-                minimum_time_block_sign_consistency=None,
-            ),
+            else ResolvedRobustnessGateThresholds(**_ROBUSTNESS_GATE_DEFAULTS),
             pareto_objectives=pareto,
             lexicographic_tie_breaks=tie_breaks,
         ),
@@ -1410,7 +1896,9 @@ def _assemble_charter(
             clock_policy_id="historical_calendar_clock_v1",
         ),
         max_child_count=max(
-            int(draft.step_payload("review").get("n_children", 1)), 1
+            int(draft.step_payload("review").get("n_children", 1)),
+            enumerate_child_count(selections) if selections else 1,
+            1,
         ),
         seed=int(validation.get("seed", 7)),
         cost_policy=CostPolicy(),
@@ -1421,16 +1909,82 @@ def _assemble_charter(
     )
 
 
+def _wait_for_search_state(state_root: Path, search_id: str) -> dict[str, Any] | None:
+    """The worker's persisted state within the wait window, else ``None``
+    (silence is never reported as a started launch)."""
+
+    from alpha_lab.agents.data_infra.ifvg.search.orchestrator import (  # noqa: PLC0415
+        read_search_state,
+    )
+
+    deadline = time.monotonic() + float(LAUNCH_STATE_WAIT_SECONDS)
+    while True:
+        try:
+            state = read_search_state(Path(state_root), search_id)
+        except Exception:  # noqa: BLE001 — a torn write reads again on the next poll
+            state = None
+        if state is not None:
+            return state
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(_LAUNCH_POLL_SECONDS)
+
+
+def _annotate_purpose(store_root: Path, search_id: str, resolved: ResolvedPurpose) -> None:
+    """The mutable catalog purpose annotation of the frozen charter (never
+    part of its identity; best effort — a catalog lock timeout is reported,
+    not fatal)."""
+
+    append_catalog_event(
+        store_root,
+        kind="purpose",
+        artifact_id=search_id,
+        payload={
+            "purpose": resolved.purpose.value,
+            "evidence_class": resolved.evidence_class.value,
+            "run_scope": resolved.run_scope,
+            "namespace_class": resolved.namespace_class,
+        },
+    )
+
+
 def _freeze_and_launch(st_module, draft: StudyDraft, roots: Mapping[str, Any]) -> None:
     """The explicit launch-button handler — the only place work starts."""
 
     from ifvg_study_tab import request_route  # noqa: PLC0415
 
     draft_root = Path(roots["draft_root"])
-    store_root = Path(roots["store_root"])
     state_root = Path(roots["state_root"])
     try:
-        payload = _assemble_charter(draft, roots)
+        resolution = _resolve_for_draft(draft, roots)
+    except Exception as error:  # noqa: BLE001 — sanitized surface only
+        st_module.error(f"Purpose could not be resolved: {sanitize_error(error)}")
+        return
+    resolved = resolution.resolved
+    if resolved is None:
+        render_empty_state(
+            st_module, "purpose_unresolved", detail=resolution.resolution.reason
+        )
+        return
+    store_root = Path(resolution.roots["store_root"])
+    if not resolved.freeze_allowed:
+        state_id = (
+            "store_namespace_unverified"
+            if resolved.namespace_status != "verified"
+            and resolved.authorization_class != "synthetic_marker"
+            else "authorization_not_ready"
+        )
+        render_empty_state(st_module, state_id, detail=resolved.freeze_block_reason)
+        return
+    report = _satisfiability_for_draft(draft, resolved)
+    if not report.passed:
+        st_module.error(
+            "Charter cannot freeze (fail-closed): "
+            + "; ".join(f"{rule.rule_id} — {rule.detail}" for rule in report.failures)
+        )
+        return
+    try:
+        payload = _assemble_charter(draft, resolution.roots, resolution=resolution)
         if "unknown" in (payload.strategy_core_commit, payload.quant_lab_commit):
             # DEV-R4-14: two source states must never share a charter
             # identity through a silent provenance fallback.
@@ -1440,7 +1994,11 @@ def _freeze_and_launch(st_module, draft: StudyDraft, roots: Mapping[str, Any]) -
                 "'unknown' into the immutable charter"
             )
         validate_charter(
-            payload, as_of_utc=datetime.now(UTC).isoformat(timespec="seconds")
+            payload,
+            as_of_utc=datetime.now(UTC).isoformat(timespec="seconds"),
+            store_root=(
+                None if resolved.authorization_class == "synthetic_marker" else store_root
+            ),
         )
         envelope = SearchCharterEnvelope.from_payload(payload)
         save_charter(store_root, envelope)
@@ -1451,6 +2009,10 @@ def _freeze_and_launch(st_module, draft: StudyDraft, roots: Mapping[str, Any]) -
         st_module.error(f"Freeze failed: {sanitize_error(error)}")
         return
     mark_frozen(draft_root, draft, search_id=envelope.search_id)
+    try:
+        _annotate_purpose(store_root, envelope.search_id, resolved)
+    except Exception as error:  # noqa: BLE001 — annotation is non-semantic
+        st_module.caption(f"purpose annotation not recorded: {sanitize_error(error)}")
     identity_block(st_module, "Frozen search charter id", envelope.search_id)
     entry_key = runner_entry_key_for_charter(envelope)
     if entry_key is None:
@@ -1458,8 +2020,8 @@ def _freeze_and_launch(st_module, draft: StudyDraft, roots: Mapping[str, Any]) -
             st_module,
             "runner_executor_planned",
             detail=(
-                "this charter carries real (non-synthetic) authorization "
-                "requirements; the R5 pipeline registers the executors"
+                "this charter carries real full-development authorization; the "
+                "operator full run is a separate, explicitly authorized action"
             ),
         )
         cli_escape_hatch(
@@ -1469,6 +2031,27 @@ def _freeze_and_launch(st_module, draft: StudyDraft, roots: Mapping[str, Any]) -
                 f"{envelope.search_id} --runner-entry-key <registered key>"
             ),
             reason="explicit owner action once an executor is registered",
+        )
+        return
+    # UI-1 (plan F-02): the registered runner is resolved BEFORE any spawn —
+    # an unregistered key (the synthetic fixture key outside the development
+    # checkout) is the typed runner_unavailable state, never a spawned worker
+    # that exits before writing state
+    try:
+        resolve_registered_runner_entry(entry_key)
+    except RunnerEntryError as error:
+        render_empty_state(
+            st_module,
+            "runner_unavailable",
+            detail=f"runner-entry key {entry_key!r}: {sanitize_error(error)}",
+        )
+        cli_escape_hatch(
+            st_module,
+            (
+                "python scripts/ifvg_search_job.py start --search-id "
+                f"{envelope.search_id} --runner-entry-key {entry_key}"
+            ),
+            reason="launch from a process that registers this executor",
         )
         return
     command = [
@@ -1504,10 +2087,28 @@ def _freeze_and_launch(st_module, draft: StudyDraft, roots: Mapping[str, Any]) -
             reason="the detached spawn failed",
         )
         return
-    st_module.success(
-        f"Search launched detached (pid {pid}). Routing to Active Runs."
-    )
     st_module.session_state[f"{STATE_PREFIX}monitor_search_id"] = envelope.search_id
+    state = _wait_for_search_state(state_root, envelope.search_id)
+    if state is None:
+        # honest launch outcome: no persisted state → NOT reported as started
+        render_empty_state(
+            st_module,
+            "launch_not_started",
+            detail=(
+                f"pid {pid}; no search_state.json within {LAUNCH_STATE_WAIT_SECONDS:.0f} s; "
+                f"job log: data/ifvg_search_jobs/{envelope.search_id[:12]}…/job.log"
+            ),
+        )
+        cli_escape_hatch(
+            st_module,
+            f"python scripts/ifvg_search_job.py status --search-id {envelope.search_id}",
+            reason="check whether the worker persisted state",
+        )
+        return
+    st_module.success(
+        f"Search launched detached (pid {pid}); state persisted "
+        f"(phase {state.get('phase', 'unknown')}). Routing to Active Runs."
+    )
     request_route(st_module, "active_runs")
     st_module.rerun()
 
@@ -1555,6 +2156,13 @@ def render_new_study(st_module=st, *, roots: Mapping[str, Any]) -> None:
                 del st_module.session_state[key]
         st_module.session_state[_ACTIVE_DRAFT_KEY] = draft.draft_id
     draft_root = Path(roots["draft_root"])
+    try:
+        resolution = _resolve_for_draft(draft, roots)
+    except Exception as error:  # noqa: BLE001 — sanitized surface only
+        st_module.error(f"Purpose could not be resolved: {sanitize_error(error)}")
+        return
+    _purpose_card(st_module, draft, draft_root, resolution)
+    purpose_roots = resolution.roots
     step = min(max(int(draft.step_index), 0), len(WIZARD_STEP_TITLES) - 1)
     st_module.progress(
         (step + 1) / len(WIZARD_STEP_TITLES),
@@ -1578,15 +2186,15 @@ def render_new_study(st_module=st, *, roots: Mapping[str, Any]) -> None:
     elif step == 2:
         fields = _step_search_space(st_module, draft)
     elif step == 3:
-        fields = _step_prop(st_module, draft, roots)
+        fields = _step_prop(st_module, draft, purpose_roots)
     elif step == 4:
         fields = _step_risk(st_module, draft)
     elif step == 5:
         fields = _step_benchmarks(st_module, draft)
     elif step == 6:
-        fields = _step_validation(st_module, draft, roots)
+        fields = _step_validation(st_module, draft, purpose_roots, resolution)
     else:
-        fields = _step_review(st_module, draft, roots)
+        fields = _step_review(st_module, draft, purpose_roots, resolution)
 
     errors = _STEP_VALIDATORS[step](fields)
     for field, message in errors.items():
@@ -1630,6 +2238,11 @@ def render_new_study(st_module=st, *, roots: Mapping[str, Any]) -> None:
                 key=f"{_W}freeze",
                 disabled=bool(errors),
                 type="primary",
+                help=(
+                    "Freezes the immutable charter into the purpose's store, "
+                    "resolves the registered executor before any spawn, and "
+                    "reports the launch only after the worker persisted state."
+                ),
             ):
                 draft.steps[_STEP_KEY_BY_INDEX[step]] = dict(fields)
                 save_draft(draft_root, draft)
@@ -1647,4 +2260,4 @@ def render_new_study(st_module=st, *, roots: Mapping[str, Any]) -> None:
             save_draft(draft_root, draft)
             from ifvg_pipeline_tab import render_pipeline_run  # noqa: PLC0415
 
-            render_pipeline_run(st_module, roots=roots, draft=draft)
+            render_pipeline_run(st_module, roots=purpose_roots, draft=draft)

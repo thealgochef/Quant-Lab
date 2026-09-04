@@ -68,9 +68,6 @@ def _run(monkeypatch, tmp_path, *, phase: str | None = None, draft=True):
     )
     seeded = _seed_mode5_draft(roots) if draft else None
     at = apptest.AppTest.from_function(_app, default_timeout=120)
-    at.session_state[study_tab.NAMESPACE_KEY] = (
-        "Verification / synthetic (search_test/v1)"
-    )
     if phase:
         at.session_state[f"{_PIPE}phase_radio"] = phase
     at.run()
@@ -115,13 +112,40 @@ def _run_over_completed(monkeypatch, completed, *, phase: str):
         pipeline_tab, "PIPELINE_STATE_ROOT", completed["state_root"]
     )
     at = apptest.AppTest.from_function(_app, default_timeout=120)
-    at.session_state[study_tab.NAMESPACE_KEY] = (
-        "Verification / synthetic (search_test/v1)"
-    )
     at.session_state[f"{_PIPE}phase_radio"] = phase
     at.run()
     assert not at.exception
     return at
+
+
+def _state_writing_spawn(spawned: list[list[str]], *, pid: int = 4242):
+    """A fake detached spawn that persists the worker's first state file —
+    the honest launch reports success only once it exists."""
+
+    import json
+
+    def _spawn(command: list[str]) -> int:
+        spawned.append(command)
+        pipeline_id = command[command.index("--pipeline-id") + 1]
+        state_root = Path(command[command.index("--state-root") + 1])
+        directory = state_root / pipeline_id
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "pipeline_state.json").write_text(
+            json.dumps(
+                {
+                    "pipeline_semantic_id": pipeline_id,
+                    "run_scope": "verification_5d",
+                    "current_stage": "00_validate_inputs",
+                    "stages": {},
+                    "attempts": [],
+                    "children": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return pid
+
+    return _spawn
 
 
 # ── FUX-PIPE-001 — Configure: complete fields, capability-scoped entries ─────
@@ -140,8 +164,12 @@ def test_configure_renders_capability_scoped_fields(monkeypatch, tmp_path) -> No
     assert "spectral_clustering_train_only_v1" in dump
     assert "post-V1" in dump
     assert "ifvg_context_gam_v1" in dump
-    # worker limit is present and labeled operational
-    assert any("operational" in (slider.label or "") for slider in at.slider)
+    # UI-1 / HARDENING-BACKEND §4.6: no operative worker control; the
+    # sequential V1 runtime truth is stated
+    assert not at.slider
+    captions = _caption_text(at)
+    assert "sequential_children_v1" in captions
+    assert "effective workers: 1" in captions
 
 
 def test_full_plan_exposes_available_bundle_and_model_selectors(
@@ -225,12 +253,11 @@ def test_render_and_import_never_launch(monkeypatch, tmp_path) -> None:
 
 def test_launch_button_freezes_and_spawns_exactly_once(monkeypatch, tmp_path) -> None:
     spawned: list[list[str]] = []
-    monkeypatch.setattr(
-        pipeline_tab,
-        "_spawn_pipeline_job",
-        lambda command: spawned.append(command) or 4242,
-    )
+    monkeypatch.setattr(pipeline_tab, "_spawn_pipeline_job", _state_writing_spawn(spawned))
     at, roots, _draft = _run(monkeypatch, tmp_path, phase="Launch")
+    captions = _caption_text(at)
+    assert "Purpose **Implementation Verification**" in captions
+    assert "namespace class `test`" in captions
     launch = next(
         b for b in at.button if b.label == "Freeze Pipeline Specification and Launch"
     )
@@ -242,8 +269,52 @@ def test_launch_button_freezes_and_spawns_exactly_once(monkeypatch, tmp_path) ->
     assert command[command.index("--runner-entry-key") + 1] == (
         "pipeline_synthetic_fixture_v1"
     )
+    # the purpose's store (Implementation Verification → the test store) and
+    # the sequential V1 worker count — never a namespace radio, never > 1
+    assert command[command.index("--store-root") + 1] == str(roots["verification"])
+    assert command[command.index("--max-workers") + 1] == "1"
     success = " ".join(str(s.value) for s in at.success)
     assert "launched detached" in success
+    assert "state persisted" in success
+
+
+def test_pipeline_launch_refuses_unregistered_runner_and_silent_worker(
+    monkeypatch, tmp_path
+) -> None:
+    """Plan F-02 at the pipeline level: an unregistered executor is refused
+    BEFORE any spawn; a spawned worker that never persists state is the typed
+    launch_not_started state, never a success."""
+
+    from alpha_lab.agents.data_infra.ifvg.search import runner_registry
+
+    spawned: list[list[str]] = []
+    monkeypatch.setattr(pipeline_tab, "_spawn_pipeline_job", _state_writing_spawn(spawned))
+    monkeypatch.setattr(runner_registry, "_DEVELOPMENT_ENTRIES", {})
+    at, _roots, _draft = _run(monkeypatch, tmp_path / "unregistered", phase="Launch")
+    next(
+        b for b in at.button if b.label == "Freeze Pipeline Specification and Launch"
+    ).click().run()
+    assert not at.exception
+    assert spawned == []
+    headings = " ".join(str(h.value) for h in at.subheader)
+    assert "No registered executor is available in this process" in headings
+    assert not at.success
+
+    monkeypatch.undo()
+    silent: list[list[str]] = []
+    monkeypatch.setattr(
+        pipeline_tab, "_spawn_pipeline_job", lambda command: silent.append(command) or 7
+    )
+    monkeypatch.setattr(pipeline_tab, "LAUNCH_STATE_WAIT_SECONDS", 0.4)
+    at, _roots, _draft = _run(monkeypatch, tmp_path / "silent", phase="Launch")
+    next(
+        b for b in at.button if b.label == "Freeze Pipeline Specification and Launch"
+    ).click().run()
+    assert not at.exception
+    assert len(silent) == 1
+    headings = " ".join(str(h.value) for h in at.subheader)
+    assert "Launch requested — no persisted state yet" in headings
+    assert not at.success
 
 
 def test_verification_scope_shows_the_nondismissible_badge(
@@ -401,11 +472,17 @@ def test_resume_retry_offers_operational_clone_and_new_attempt(
     at = _run_over_completed(monkeypatch, completed_pipeline, phase="Resume / Retry")
     captions = _caption_text(at)
     assert "SAME" in captions and "new pipeline specification" in captions
+    assert not at.slider  # no operative worker control (sequential V1)
+    assert "effective workers: 1" in captions
     retry = next(b for b in at.button if b.label == "Resume / Retry (new attempt)")
     retry.click().run()
     assert not at.exception
     assert len(spawned) == 1
     assert "resume" in spawned[0]
+    assert spawned[0][spawned[0].index("--max-workers") + 1] == "1"
+    assert spawned[0][spawned[0].index("--store-root") + 1] == str(
+        completed_pipeline["store_root"]
+    )
 
 
 # ── FUX-PIPE-006 — Publish: gates first; verification cannot activate ───────
@@ -418,6 +495,10 @@ def test_publish_runs_gates_and_refuses_verification_activation(
     captions = _caption_text(at)
     assert "prepared_not_published" in captions
     assert "never activate" in captions
+    # UI-1: the run's store namespace is read from the artifact's own store
+    # (an unmarked tmp store is reported as such — never guessed)
+    assert "Store namespace: **unmarked**" in captions
+    assert "verification-only artifact" in captions
     gates_button = next(b for b in at.button if b.label == "Run Publication Gates")
     gates_button.click().run()
     assert not at.exception
@@ -429,6 +510,16 @@ def test_publish_runs_gates_and_refuses_verification_activation(
         "control_flow_gates_passed",
     ):
         assert gate in dump
+    # the gate cache is bound to the pipeline id, the store namespace and the
+    # state digest (plan F-03)
+    pipeline_id = completed_pipeline["result"].pipeline_semantic_id
+    cache_keys = [
+        key
+        for key in at.session_state.filtered_state
+        if str(key).startswith(f"{_PIPE}gate_results_")
+    ]
+    assert len(cache_keys) == 1
+    assert pipeline_id in cache_keys[0] and "_unmarked_" in cache_keys[0]
     activate = next(
         b for b in at.button if b.label == "Publish and Activate Catalog Entry"
     )
@@ -474,9 +565,6 @@ def test_fragment_fallback_preserves_monitor_semantics(
         )
 
     at = apptest.AppTest.from_function(_app_no_fragment, default_timeout=120)
-    at.session_state[study_tab.NAMESPACE_KEY] = (
-        "Verification / synthetic (search_test/v1)"
-    )
     at.session_state[f"{_PIPE}phase_radio"] = "Monitor"
     at.run()
     assert not at.exception
@@ -505,9 +593,6 @@ def test_wizard_mode5_step8_renders_the_pipeline_surface(
 
     at = apptest.AppTest.from_function(_wizard_app, default_timeout=120)
     at.session_state[_DRAFT_KEY] = draft.draft_id
-    at.session_state[study_tab.NAMESPACE_KEY] = (
-        "Verification / synthetic (search_test/v1)"
-    )
     at.run()
     assert not at.exception
     headings = " ".join(str(h.value) for h in at.subheader)
@@ -964,7 +1049,6 @@ def _preset_run(monkeypatch, tmp_path, *, phase: str, preset: dict):
     monkeypatch.setattr(pipeline_tab, "PIPELINE_STATE_ROOT", tmp_path / "pipeline_jobs")
     _seed_mode5_draft(roots)
     at = apptest.AppTest.from_function(_app, default_timeout=120)
-    at.session_state[study_tab.NAMESPACE_KEY] = "Verification / synthetic (search_test/v1)"
     at.session_state[f"{_PIPE}phase_radio"] = phase
     for key, value in preset.items():
         at.session_state[key] = value

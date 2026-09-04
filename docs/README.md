@@ -131,7 +131,14 @@ stale-lock reclamation, atomic recoverable namespace initialization, the public
 source-kind boundary, exact regime provenance with native validation, fail-closed
 manifests with exact label / executed-trade evidence, central seed
 canonicalization, the bounded event-detail partition, and the complete
-authority-chain proof at every real seam)
+authority-chain proof at every real seam), and UI-1 (Phase 1 of the
+owner-approved UI/UX redesign: the presentation-only run purpose that
+derives scope / namespace / evidence / authorization class, the removal
+of the namespace selector, `Start` and `Verify Implementation` routes,
+charter satisfiability before freeze, typed authorization readiness, the
+honest launch outcome, namespace-bound publication, the sequential-V1
+runtime truth, direction-aware colorscales and evaluated-gate banners —
+`ifvg/presentation/{run_purpose,charter_satisfiability,status_vocabulary}.py`)
 implementations are complete;
 **R1 acceptance is blocked pending the owner-approved verification fixture**
 (`VerificationAuthorizationRef`; owner decisions 21/R-5) — no real five-day

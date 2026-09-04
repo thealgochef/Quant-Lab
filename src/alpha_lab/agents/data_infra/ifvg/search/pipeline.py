@@ -2943,10 +2943,50 @@ def _publication_gates(state: dict[str, Any], store_root: Path) -> dict[str, Any
     }
 
 
+def store_namespace_id_or_none(store_root: Path) -> str | None:
+    """The store's VERIFIED semantic namespace id, ``None`` for an unmarked
+    store; a corrupt or incoherent namespace is a typed refusal (UI-1)."""
+
+    from .store_namespace import (  # noqa: PLC0415
+        StoreNamespaceError,
+        assert_namespace_deployment_coherent,
+        load_store_namespace,
+    )
+
+    try:
+        namespace = load_store_namespace(Path(store_root))
+        assert_namespace_deployment_coherent(Path(store_root), namespace)
+    except StoreNamespaceError as error:
+        if error.reason == "store_namespace_missing":
+            return None
+        raise PublicationError(
+            f"the store namespace cannot be trusted ({error.reason}); publication is refused"
+        ) from error
+    return namespace.store_namespace_id
+
+
+def publication_state_sha256(state: Mapping[str, Any]) -> str:
+    """The digest of the attempt-bearing state the publication gates ran
+    over (stages, attempts, children — never the publication record itself)."""
+
+    from ..manifest import canonical_sha256  # noqa: PLC0415
+
+    return canonical_sha256(
+        {
+            "stages": state.get("stages"),
+            "attempts": state.get("attempts"),
+            "children": state.get("children"),
+        }
+    )
+
+
 def run_publication_gates(
     state_root: Path, pipeline_semantic_id: str, *, store_root: Path
 ) -> dict[str, Any]:
-    """Evaluate the publication checklist and record it in the state file."""
+    """Evaluate the publication checklist and record it in the state file —
+    together with the verified namespace id of the store the gates ran
+    under and the digest of the state they ran over (UI-1 / plan F-03): an
+    activation under another namespace or over a changed state refuses."""
 
     with _search_lock(
         Path(state_root), pipeline_semantic_id, stale_lock_seconds=86_400.0
@@ -2957,6 +2997,8 @@ def run_publication_gates(
         gates = _publication_gates(state, Path(store_root))
         publication = state.get("publication") or {}
         publication["gates"] = gates
+        publication["gates_store_namespace_id"] = store_namespace_id_or_none(Path(store_root))
+        publication["gates_state_sha256"] = publication_state_sha256(state)
         publication["state"] = (
             "gates_passed" if all(gates.values()) else "prepared_not_published"
         )
@@ -2968,7 +3010,11 @@ def run_publication_gates(
 
 
 def activate_pipeline_result(
-    state_root: Path, pipeline_semantic_id: str, *, store_root: Path
+    state_root: Path,
+    pipeline_semantic_id: str,
+    *,
+    store_root: Path,
+    expected_store_namespace_id: str | None = None,
 ) -> str:
     """Activate the published research catalog entry (development scope only).
 
@@ -2976,7 +3022,10 @@ def activate_pipeline_result(
     the refusal is scope-based and has no override. R6.1-FIX (review B-04):
     the gates are RE-DERIVED from the latest attempt's state at activation
     time — a recorded all-true checklist from an earlier attempt never
-    authorizes an activation after a later attempt failed closed.
+    authorizes an activation after a later attempt failed closed. UI-1
+    (plan F-03): the activation is bound to the SAME verified store namespace
+    the gates ran under (``expected_store_namespace_id`` is the namespace
+    the caller believes it acts on) and to the same state digest.
     """
 
     with _search_lock(
@@ -2985,6 +3034,16 @@ def activate_pipeline_result(
         state = read_pipeline_state(state_root, pipeline_semantic_id)
         if state is None:
             raise PublicationError("no pipeline state exists for this semantic id")
+        current_namespace_id = store_namespace_id_or_none(Path(store_root))
+        if (
+            expected_store_namespace_id is not None
+            and expected_store_namespace_id != current_namespace_id
+        ):
+            raise PublicationError(
+                "activation refused: the activation was requested under store namespace "
+                f"{expected_store_namespace_id[:12]}… but this store's verified namespace is "
+                f"{(current_namespace_id or 'unmarked')[:12]}"
+            )
         if state["run_scope"] == PipelineRunScope.VERIFICATION_5D.value:
             raise PublicationError(
                 "verification-only artifacts can never activate a research "
@@ -2996,6 +3055,19 @@ def activate_pipeline_result(
             raise PublicationError(
                 "activation requires every publication gate to pass first — "
                 "run the publication gates"
+            )
+        if "gates_store_namespace_id" in publication and (
+            publication.get("gates_store_namespace_id") != current_namespace_id
+        ):
+            raise PublicationError(
+                "activation refused: the publication gates ran under another store "
+                "namespace; rerun the gates in this store"
+            )
+        recorded_digest = publication.get("gates_state_sha256")
+        if recorded_digest is not None and recorded_digest != publication_state_sha256(state):
+            raise PublicationError(
+                "activation refused: the pipeline state changed since the publication gates "
+                "ran (a later attempt); rerun the gates"
             )
         gates = _publication_gates(state, Path(store_root))
         if not all(gates.values()):

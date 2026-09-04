@@ -179,16 +179,43 @@ def adapt_feature_coverage_report(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _gate_status(flag: Any) -> str:
+    """UI-1 (plan F-07): PASS only for an evaluated ``True``; ``False`` FAIL;
+    anything else (absent / not evaluated) is UNAVAILABLE — never green."""
+
+    if flag is True:
+        return "pass"
+    if flag is False:
+        return "fail"
+    return "unavailable"
+
+
+def _counter_status(name: str, value: Any) -> str:
+    """Access counters: the ``protected_*`` counters are policy-enforced
+    zeros written before any path is constructed (not measured evidence) and
+    every other counter is a descriptive count — informational, never PASS."""
+
+    if name.startswith("protected_"):
+        return "informational"
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return "unavailable"
+    return "informational"
+
+
 def adapt_reconciliation_report(report: dict[str, Any]) -> dict[str, Any]:
     reports = report.get("reports") if isinstance(report.get("reports"), dict) else {}
     gates = []
     for name, payload in sorted(reports.items()):
         if not isinstance(payload, dict):
             continue
+        flag = payload.get("passed")
+        evaluated = isinstance(flag, bool)
         gates.append(
             {
                 "gate": name.removesuffix("_report.json").removesuffix(".json"),
-                "passed": payload.get("passed"),
+                "passed": flag if evaluated else None,
+                "evaluated": evaluated,
+                "status": _gate_status(flag if evaluated else None),
                 "violation_count": len(payload.get("violations", {}) or {}),
             }
         )
@@ -197,9 +224,31 @@ def adapt_reconciliation_report(report: dict[str, Any]) -> dict[str, Any]:
     if isinstance(access, dict):
         for name, value in sorted(access.items()):
             if isinstance(value, (int, float, bool)):
-                access_rows.append({"counter": name, "value": value})
+                access_rows.append(
+                    {
+                        "counter": name,
+                        "value": value,
+                        "status": _counter_status(name, value),
+                        "note": (
+                            "policy-enforced zero before path construction (not a "
+                            "measured count)"
+                            if name.startswith("protected_")
+                            else "descriptive count"
+                        ),
+                    }
+                )
+    flag = report.get("passed")
+    passed = flag if isinstance(flag, bool) else None
+    evaluated_gates = [gate for gate in gates if gate["evaluated"]]
     return {
-        "passed": bool(report.get("passed", False)),
+        "passed": passed,
+        "evaluated": bool(report.get("evaluated", bool(evaluated_gates))),
+        "status": _gate_status(passed),
+        "evaluated_gate_count": len(evaluated_gates),
+        "unevaluated_reports": tuple(
+            report.get("unevaluated_reports")
+            or [gate["gate"] for gate in gates if not gate["evaluated"]]
+        ),
         "identities": pd.DataFrame(
             [
                 {"artifact": "v2", **(report.get("v2") or {})},

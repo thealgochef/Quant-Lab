@@ -96,6 +96,7 @@ def test_wizard_shape_is_exact() -> None:
         "Full Pipeline Run",
     ]
     assert list(RESEARCH_QUESTIONS.values()) == [
+        "Evaluate one configuration",
         "Compare one configuration with the baseline",
         "Find a robust FSM configuration",
         "Test repeat-payout feasibility",
@@ -343,8 +344,42 @@ def test_remaining_step_validators_units() -> None:
     assert validate_benchmarks({"strategy_gates": {"max_drawdown_r": 15.0}}) == {}
 
 
+def test_validation_step_enforces_sequential_v1_and_development_dates() -> None:
+    """UI-1: no worker value above one is accepted (HARDENING-BACKEND §4.6)
+    and full-scope evidence dates follow the backend logical-day contract."""
+
+    from alpha_lab.agents.data_infra.ifvg.development_access import FROZEN_WARMUP_DATES
+
+    base = {"run_scope": "verification_5d", "seed": 7, "worker_limit": 1}
+    assert "worker_limit" in validate_validation_step({**base, "worker_limit": 4})
+    assert "effective workers: 1" in validate_validation_step(
+        {**base, "worker_limit": 2}
+    )["worker_limit"]
+    full = {
+        "run_scope": "full_authorized_development",
+        "seed": 7,
+        "worker_limit": 1,
+        "warmup_dates": FROZEN_WARMUP_DATES,
+    }
+    assert validate_validation_step({**full, "real_dates": ("2026-01-13", "2026-01-14")}) == {}
+    assert "real_dates" in validate_validation_step({**full, "real_dates": ()})
+    weekend = validate_validation_step({**full, "real_dates": ("2026-01-17",)})
+    assert "not a logical trading day" in weekend["real_dates"]
+    protected = validate_validation_step({**full, "real_dates": ("2026-06-11",)})
+    assert "outside the development evidence window" in protected["real_dates"]
+    unordered = validate_validation_step(
+        {**full, "real_dates": ("2026-01-14", "2026-01-13")}
+    )
+    assert "chronological" in unordered["real_dates"]
+    no_prefix = validate_validation_step(
+        {**full, "real_dates": ("2026-01-13",), "warmup_dates": ()}
+    )
+    assert "frozen ten-date warmup prefix" in no_prefix["warmup_dates"]
+    assert "evidence_class" in validate_validation_step({**base, "evidence_class": "maybe"})
+
+
 def test_validation_step_enforces_the_five_day_budget() -> None:
-    base = {"run_scope": "verification_5d", "seed": 7, "worker_limit": 4}
+    base = {"run_scope": "verification_5d", "seed": 7, "worker_limit": 1}
     ok = validate_validation_step(
         {**base, "real_dates": ("2026-06-04", "2026-06-05")}
     )

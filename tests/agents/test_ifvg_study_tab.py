@@ -1,5 +1,7 @@
-"""FUX-IA-001..003: shell order, exact sub-navigation, single-route
-execution, unchanged Context Research delegation (TEST_MATRIX §3.11)."""
+"""FUX-IA-001..003 (as amended by UI-1): shell order, exact sub-navigation
+(Start · Verify Implementation · New Study · Active Runs · Results · History ·
+Context Research), single-route execution, unchanged Context Research
+delegation, the namespace radio GONE, Start cards deriving the purpose."""
 
 from __future__ import annotations
 
@@ -15,6 +17,18 @@ if str(_REPO / "scripts") not in sys.path:
     sys.path.insert(0, str(_REPO / "scripts"))
 
 import ifvg_study_tab as study_tab  # noqa: E402
+
+from alpha_lab.agents.data_infra.ifvg.study_drafts import load_draft  # noqa: E402
+
+_ROUTES = [
+    "Start",
+    "Verify Implementation",
+    "New Study",
+    "Active Runs",
+    "Results",
+    "History",
+    "Context Research",
+]
 
 
 def _app() -> None:
@@ -33,24 +47,51 @@ def _patched_roots(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(study_tab, "DRAFT_ROOT", tmp_path / "drafts")
 
 
+def _text(at) -> str:
+    return "\n".join(
+        [str(b.value) for b in at.markdown]
+        + [str(c.value) for c in at.caption]
+        + [str(h.value) for h in at.subheader]
+        + [str(w.value) for w in at.warning]
+        + [str(e.value) for e in at.error]
+    )
+
+
 def test_subnav_is_the_exact_horizontal_radio(monkeypatch, tmp_path) -> None:
-    """FUX-IA-002: New Study / Active Runs / Results / History / Context
-    Research, session-state-backed, horizontal."""
+    """FUX-IA-002 as amended: Start first, Verify Implementation second."""
 
     _patched_roots(monkeypatch, tmp_path)
     at = apptest.AppTest.from_function(_app, default_timeout=60)
     at.run()
     assert not at.exception
     nav = at.radio[0]
-    assert nav.options == [
-        "New Study",
-        "Active Runs",
-        "Results",
-        "History",
-        "Context Research",
-    ]
-    assert nav.value == "New Study"
-    assert at.session_state[study_tab.ROUTE_KEY] == "New Study"
+    assert nav.options == _ROUTES
+    assert nav.value == "Start"
+    assert at.session_state[study_tab.ROUTE_KEY] == "Start"
+
+
+def test_namespace_radio_is_gone(monkeypatch, tmp_path) -> None:
+    """UI-1 (plan F-01 / owner Q1): no mutable namespace selector exists on
+    any route; the namespace derives from the purpose."""
+
+    _patched_roots(monkeypatch, tmp_path)
+    assert not hasattr(study_tab, "NAMESPACE_KEY")
+    for route in ("Start", "Verify Implementation", "New Study", "Results", "History"):
+        at = apptest.AppTest.from_function(_app, default_timeout=120)
+        at.session_state[study_tab.ROUTE_KEY] = route
+        at.run()
+        assert not at.exception, route
+        labels = [radio.label for radio in at.radio]
+        assert "Artifact namespace" not in labels, route
+        assert all("namespace" not in (label or "").lower() for label in labels), route
+    roots = study_tab.workspace_roots()
+    assert set(roots["store_roots"]) == {"research", "test"}
+    verification = study_tab.roots_for_purpose(roots, "implementation_verification")
+    assert verification["store_root"] == tmp_path / "verification"
+    assert verification["namespace_class"] == "test"
+    research = study_tab.roots_for_purpose(roots, "development_research")
+    assert research["store_root"] == tmp_path / "research"
+    assert research["namespace_class"] == "research"
 
 
 def test_only_the_selected_route_executes(monkeypatch, tmp_path) -> None:
@@ -78,6 +119,8 @@ def test_only_the_selected_route_executes(monkeypatch, tmp_path) -> None:
     )
     at = apptest.AppTest.from_function(_app, default_timeout=60)
     at.run()
+    assert calls == []  # Start renders the task cards only
+    at.radio[0].set_value("New Study").run()
     assert calls == ["wizard"]
     calls.clear()
     at.radio[0].set_value("Results").run()
@@ -110,7 +153,7 @@ def test_context_research_delegates_verbatim(monkeypatch, tmp_path) -> None:
         "m0m3-panel-marker" in str(getattr(block, "value", ""))
         for block in at.get("text")
     )
-    # the namespace selector belongs to the study routes, not Context Research
+    # no other selector belongs to Context Research
     assert len(at.radio) == 1
     assert seen == []
 
@@ -145,6 +188,87 @@ def test_programmatic_route_request_applies_next_run(monkeypatch, tmp_path) -> N
     at.session_state[f"{study_tab.STATE_PREFIX}pending_route"] = "Active Runs"
     at.run()
     assert at.session_state[study_tab.ROUTE_KEY] == "Active Runs"
+
+
+def test_start_cards_derive_purpose_namespace_and_create_annotated_drafts(
+    monkeypatch, tmp_path
+) -> None:
+    """Plan §5.2: nine task cards; each derives purpose, family and namespace;
+    a card creates a draft carrying the purpose annotation and routes to New
+    Study; the full-scope card is visible-disabled until readiness is ready."""
+
+    _patched_roots(monkeypatch, tmp_path)
+    at = apptest.AppTest.from_function(_app, default_timeout=120)
+    at.run()
+    assert not at.exception
+    text = _text(at)
+    assert [card.card_id for card in study_tab.TASK_CARDS] == [
+        "verify_implementation",
+        "review_setups",
+        "evaluate_one",
+        "compare_with_baseline",
+        "fsm_search",
+        "feature_model_evidence",
+        "prop_feasibility",
+        "advanced_end_to_end",
+        "inspect_health",
+    ]
+    for card in study_tab.TASK_CARDS:
+        assert card.title in text, card.card_id
+    assert "namespace class `test`" in text
+    assert "namespace class `research`" in text
+    assert "Store namespace: **unmarked**" in text  # never guessed from the path
+    buttons = {button.key: button for button in at.button}
+    full = buttons[f"{study_tab._START}advanced_end_to_end"]
+    assert full.disabled is False  # visible; readiness gates the freeze, not the draft
+    assert "authorization readiness: store_unmarked" in text
+    prop = buttons[f"{study_tab._START}prop_feasibility"]
+    assert prop.disabled  # no first_party_verified contract exists
+    compare = buttons[f"{study_tab._START}compare_with_baseline"]
+    compare.click().run()
+    assert not at.exception
+    draft_id = at.session_state[f"{study_tab.STATE_PREFIX}draft_id"]
+    draft = load_draft(tmp_path / "drafts", draft_id)
+    assert draft.mode_id == "single_configuration"
+    assert draft.purpose_annotation["purpose"] == "development_research"
+    assert draft.purpose_annotation["derivation"] == "card_selected"
+    assert draft.steps["objective"]["question_id"] == "compare_one_with_baseline"
+    assert draft.steps["validation"]["run_scope"] == "full_authorized_development"
+    assert draft.steps["validation"]["evidence_class"] == "real"
+    assert draft.steps["validation"]["worker_limit"] == 1
+    assert at.session_state[study_tab.ROUTE_KEY] == "New Study"
+
+
+def test_verify_implementation_renders_typed_readiness(monkeypatch, tmp_path) -> None:
+    """The Verification Center surface renders the verified-namespace state
+    and the TYPED VerificationAuthorizationRef readiness — never a Boolean —
+    and starts an Implementation Verification draft in the test namespace."""
+
+    _patched_roots(monkeypatch, tmp_path)
+    at = apptest.AppTest.from_function(_app, default_timeout=120)
+    at.session_state[study_tab.ROUTE_KEY] = "Verify Implementation"
+    at.run()
+    assert not at.exception
+    text = _text(at)
+    assert "Verification Center" in text
+    assert "VERIFICATION ONLY" in text
+    assert "Semantic store namespace: **unmarked**" in text
+    assert "(VerificationAuthorizationRef): **store_unmarked**" in text
+    assert "21/R-5:verification_fixture_authorization" in text
+    assert "Verification authorization missing" in text
+    labels = [button.label for button in at.button]
+    assert "Start a verification draft" in labels
+    assert not any(
+        word in label.lower()
+        for label in labels
+        for word in ("sign", "produce seed", "publish", "activate")
+    )
+    next(b for b in at.button if b.label == "Start a verification draft").click().run()
+    assert not at.exception
+    draft = load_draft(tmp_path / "drafts", at.session_state[f"{study_tab.STATE_PREFIX}draft_id"])
+    assert draft.purpose_annotation["purpose"] == "implementation_verification"
+    assert draft.steps["validation"]["run_scope"] == "verification_5d"
+    assert draft.steps["validation"]["evidence_class"] == "synthetic_fixture"
 
 
 def test_top_level_shell_order_is_unchanged(monkeypatch, tmp_path) -> None:

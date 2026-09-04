@@ -22,6 +22,7 @@ from ifvg_verifier_charts import (
     to_display_timezone,
 )
 
+from alpha_lab.agents.data_infra.ifvg.search.charter import OBJECTIVE_DIRECTIONS
 from alpha_lab.agents.data_infra.ifvg.study_status import (
     HEATMAP_GLYPHS,
     TIMELINE_MARKERS,
@@ -29,6 +30,7 @@ from alpha_lab.agents.data_infra.ifvg.study_status import (
 
 __all__ = [
     "STUDY_LAYER_BUDGETS",
+    "direction_colorscale",
     "build_funnel_figure",
     "build_funnel_delta_figure",
     "build_frontier_figure",
@@ -53,6 +55,22 @@ STUDY_LAYER_BUDGETS: Mapping[str, int] = {
 }
 
 _DASH_CYCLE = ("solid", "dash", "dot", "dashdot", "longdash", "longdashdot")
+
+
+def direction_colorscale(metric_key: str | None) -> tuple[str, str]:
+    """UI-1 (plan F-05): the colorscale follows the metric's REGISTERED
+    optimization direction — ``RdYlGn_r`` for a ``minimize`` metric (worst
+    drawdown / highest breach probability never render green) — with the
+    direction spelled out for the colorbar title. An unregistered key is
+    treated as descriptive: the neutral maximize scale with an explicit
+    "direction unregistered" note rather than a silent assumption."""
+
+    direction = OBJECTIVE_DIRECTIONS.get(metric_key or "")
+    if direction == "minimize":
+        return "RdYlGn_r", "lower is better"
+    if direction == "maximize":
+        return "RdYlGn", "higher is better"
+    return "RdYlGn", "direction unregistered"
 
 #: Plotly marker symbols matching the FUX §28 glyphs (shape ≠ color-only).
 _TIMELINE_SYMBOLS = {
@@ -213,13 +231,15 @@ def build_sensitivity_heatmap(
     row_axis: str,
     col_axis: str,
     metric_label: str,
+    metric_key: str | None = None,
 ) -> tuple[go.Figure, OmissionReport]:
     """The parameter-sensitivity heatmap with glyph classes (FUX §20).
 
     Cell fields: ``row_value``, ``col_value``, ``value`` (float | None),
     ``cell_class`` (a ``HEATMAP_GLYPHS`` key), ``sample_count``. The glyph
     is drawn as a text annotation on every cell so color never carries the
-    class alone; the table twin renders the same records.
+    class alone; the table twin renders the same records. ``metric_key``
+    selects the direction-aware colorscale (plan F-05).
     """
 
     omissions = OmissionReport()
@@ -257,6 +277,7 @@ def build_sensitivity_heatmap(
                 )
         z.append(z_row)
         text.append(text_row)
+    colorscale, direction_note = direction_colorscale(metric_key)
     figure = go.Figure(
         go.Heatmap(
             z=z,
@@ -264,8 +285,8 @@ def build_sensitivity_heatmap(
             y=row_values,
             text=text,
             texttemplate="%{text}",
-            colorscale="RdYlGn",
-            colorbar=dict(title=metric_label),
+            colorscale=colorscale,
+            colorbar=dict(title=f"{metric_label} ({direction_note})"),
             hoverongaps=False,
         )
     )
@@ -282,6 +303,7 @@ def build_firm_matrix_figure(
     cells: Sequence[Mapping[str, Any]],
     *,
     metric_label: str,
+    metric_key: str | None = None,
 ) -> tuple[go.Figure, OmissionReport]:
     """Strategy-configuration × firm matrix (FUX §21).
 
@@ -316,6 +338,7 @@ def build_firm_matrix_figure(
                 text_row.append(f"{marker}{float(cell['value']):.2f}")
         z.append(z_row)
         text.append(text_row)
+    colorscale, direction_note = direction_colorscale(metric_key)
     figure = go.Figure(
         go.Heatmap(
             z=z,
@@ -323,8 +346,8 @@ def build_firm_matrix_figure(
             y=rows,
             text=text,
             texttemplate="%{text}",
-            colorscale="RdYlGn",
-            colorbar=dict(title=metric_label),
+            colorscale=colorscale,
+            colorbar=dict(title=f"{metric_label} ({direction_note})"),
             hoverongaps=False,
         )
     )

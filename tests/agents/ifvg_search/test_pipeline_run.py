@@ -634,3 +634,55 @@ def test_mbp1_plan_without_the_evidence_seam_fails_s00(tmp_path):
     s00 = state["stages"][QuantLabPipelineStage.S00_VALIDATE_INPUTS.value]
     assert s00["status"] == StageStatus.FAILED.value
     assert "mbp1_evidence_source" in s00["explanation"]
+
+
+def test_publish_gate_record_is_namespace_and_state_bound(completed, tmp_path):
+    """UI-1 (plan F-03): the gates record the store namespace they ran under
+    (``None`` for an unmarked store) and the state digest; an activation
+    requested under another namespace, or after the state changed, refuses
+    with a typed reason — before any catalog event."""
+
+    import json
+
+    from alpha_lab.agents.data_infra.ifvg.search.pipeline import (
+        publication_state_sha256,
+    )
+
+    state_root = completed["state_root"]
+    pipeline_id = completed["result"].pipeline_semantic_id
+    gates = run_publication_gates(state_root, pipeline_id, store_root=completed["store_root"])
+    assert all(gates.values()), gates
+    state = read_pipeline_state(state_root, pipeline_id)
+    publication = state["publication"]
+    assert "gates_store_namespace_id" in publication
+    assert publication["gates_store_namespace_id"] is None  # an unmarked tmp store
+    assert publication["gates_state_sha256"] == publication_state_sha256(state)
+    # the caller believes it acts under namespace A; the store is unmarked
+    with pytest.raises(PublicationError, match="requested under store namespace"):
+        activate_pipeline_result(
+            state_root,
+            pipeline_id,
+            store_root=completed["store_root"],
+            expected_store_namespace_id="a" * 64,
+        )
+    # a research-scope state whose gates ran under another namespace refuses
+    # BEFORE the charter / catalog are touched (an isolated copy of the state)
+    copy_root = tmp_path / "state_copy"
+    (copy_root / pipeline_id).mkdir(parents=True)
+    forged = json.loads(json.dumps(state))
+    forged["run_scope"] = "full_authorized_development"
+    forged["publication"]["gates_store_namespace_id"] = "b" * 64
+    (copy_root / pipeline_id / "pipeline_state.json").write_text(
+        json.dumps(forged), encoding="utf-8"
+    )
+    with pytest.raises(PublicationError, match="ran under another store namespace"):
+        activate_pipeline_result(copy_root, pipeline_id, store_root=completed["store_root"])
+    # a later attempt (a changed state digest) invalidates the recorded checklist
+    stale = json.loads(json.dumps(state))
+    stale["run_scope"] = "full_authorized_development"
+    stale["attempts"] = list(stale.get("attempts") or []) + [{"attempt": "later"}]
+    (copy_root / pipeline_id / "pipeline_state.json").write_text(
+        json.dumps(stale), encoding="utf-8"
+    )
+    with pytest.raises(PublicationError, match="state changed since the publication gates"):
+        activate_pipeline_result(copy_root, pipeline_id, store_root=completed["store_root"])

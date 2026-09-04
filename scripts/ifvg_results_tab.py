@@ -225,14 +225,18 @@ def render_results(st_module=st, *, roots: Mapping[str, Any]) -> None:
     state_root = Path(roots["state_root"])
     runs = [
         run
-        for run in list_search_runs(state_root, store_root)
+        for run in list_search_runs(
+            state_root, store_root, store_roots=_known_store_roots(roots)
+        )
         if not run.archived
     ]
     if not runs:
+        # UI-1 (plan §6.7): an empty job root is the NO_RUNS state — nothing
+        # is missing or corrupt
         render_empty_state(
             st_module,
-            "artifact_unavailable",
-            detail="no completed or running searches exist in this namespace",
+            "no_runs",
+            detail="no completed or running searches exist in the job root",
         )
         return
     labels = {f"{run.display_name} · {run.search_id[:12]}…": run for run in runs}
@@ -252,11 +256,15 @@ def render_results(st_module=st, *, roots: Mapping[str, Any]) -> None:
     run = labels[chosen]
     identity_block(st_module, "Full search identity", run.search_id)
     level = disclosure_level(st_module, key=f"{_RES}disclosure")
+    # UI-1 (plan F-01): the run's OWN store (located by its exact charter id)
+    # is the read location, and the verification badge keys on the ARTIFACT
+    # (a synthetic-marker or verification charter), never on a selector
+    run_store = Path(run.store_root) if run.store_root else store_root
     bundle = load_results_bundle(
-        store_root=store_root, state_root=state_root, search_id=run.search_id
+        store_root=run_store, state_root=state_root, search_id=run.search_id
     )
-    if roots.get("namespace") == "verification":
-        verification_badge(st_module)
+    _artifact_scope_caption(st_module, run)
+    roots = {**roots, "store_root": run_store}
 
     _render_overview(st_module, bundle)
     if level in ("analyst", "audit"):
@@ -277,6 +285,35 @@ def render_results(st_module=st, *, roots: Mapping[str, Any]) -> None:
         render_comparison(st_module, roots=roots, bundle=bundle)
         render_insights_for_bundle(st_module, bundle)
         render_account_timeline(st_module, roots=roots)
+
+
+def _known_store_roots(roots: Mapping[str, Any]) -> list[Path]:
+    """The default read root plus every deployed store by class (the run's
+    charter is located by exact id across them; the stores are never listed)."""
+
+    known: list[Path] = [Path(roots["store_root"])]
+    for root in dict(roots.get("store_roots") or {}).values():
+        if Path(root) not in known:
+            known.append(Path(root))
+    return known
+
+
+def _artifact_scope_caption(st_module, run) -> None:
+    """The artifact-derived scope: the store's verified namespace class and
+    whether the artifact is verification-only (badge from the artifact)."""
+
+    if run.verification_only:
+        verification_badge(st_module)
+    namespace = run.namespace_class or "unmarked"
+    scope = (
+        "verification-only artifact (a synthetic fixture or the verification "
+        "slice) — never research evidence"
+        if run.verification_only
+        else "owner-authorized development artifact"
+        if run.verification_only is False
+        else "artifact scope unresolved (charter not located in a known store)"
+    )
+    st_module.caption(f"Artifact scope: store namespace class `{namespace}` · {scope}")
 
 
 def _render_overview(st_module, bundle: Mapping[str, Any]) -> None:
@@ -563,6 +600,7 @@ def _render_heatmap(st_module, bundle: Mapping[str, Any]) -> None:
         row_axis=row_axis,
         col_axis=col_axis if col_axis != "(single axis)" else "—",
         metric_label=metric_label,
+        metric_key=attribute,
     )
     st_module.plotly_chart(figure, width="stretch", key=f"{_RES}heat_fig")
     for note in aggregated_notes:
@@ -631,7 +669,9 @@ def _render_firm_views(st_module, bundle: Mapping[str, Any]) -> None:
                     "universal": True,  # one universal strategy per charter
                 }
             )
-    figure, omissions = build_firm_matrix_figure(cells, metric_label=metric_label)
+    figure, omissions = build_firm_matrix_figure(
+        cells, metric_label=metric_label, metric_key=attribute
+    )
     st_module.plotly_chart(figure, width="stretch", key=f"{_RES}firm_fig")
     for line in omissions.summary_lines():
         st_module.caption(f"Omission: {line}")
@@ -971,9 +1011,12 @@ def render_history(st_module=st, *, roots: Mapping[str, Any]) -> None:
     for draft in drafts:
         columns = st_module.columns([3, 1, 1, 1])
         with columns[0]:
+            purpose = (draft.purpose_annotation or {}).get("purpose")
+            purpose_note = f" · purpose {purpose}" if purpose else " · purpose unresolved"
             st_module.write(
                 f"✎ **{draft.display_name}** · step "
                 f"{draft.step_index + 1}/8 · updated {draft.updated_at_utc}"
+                f"{purpose_note}"
             )
         with columns[1]:
             if st_module.button("Open", key=f"{_RES}open_{draft.draft_id[:8]}"):
@@ -1004,7 +1047,7 @@ def render_history(st_module=st, *, roots: Mapping[str, Any]) -> None:
         for d in list_drafts(draft_root)
         if d.status == "frozen" and d.frozen_search_id
     }
-    runs = list_search_runs(state_root, store_root)
+    runs = list_search_runs(state_root, store_root, store_roots=_known_store_roots(roots))
     running = [
         run for run in runs if run.phase not in ("search_complete",) and not run.archived
     ]
@@ -1027,9 +1070,17 @@ def render_history(st_module=st, *, roots: Mapping[str, Any]) -> None:
             reuse_note = (
                 f" · {reused} verified reuse hit(s)" if reused else ""
             )
+            scope_note = (
+                " · verification-only"
+                if run.verification_only
+                else " · development"
+                if run.verification_only is False
+                else ""
+            )
             st_module.write(
                 f"🔒 **{run.display_name}** · {run.phase} · "
-                f"{run.child_count} children{reuse_note}"
+                f"{run.child_count} children{reuse_note} · store namespace "
+                f"`{run.namespace_class or 'unmarked'}`{scope_note}"
             )
             st_module.code(run.search_id, language=None)
         with columns[1]:
@@ -1069,7 +1120,7 @@ def render_history(st_module=st, *, roots: Mapping[str, Any]) -> None:
                 "Rename", key=f"{_RES}hist_rn_{run.search_id[:8]}"
             ):
                 append_catalog_event(
-                    store_root,
+                    Path(run.store_root) if run.store_root else store_root,
                     kind="display_name",
                     artifact_id=run.search_id,
                     payload={"display_name": new_name},

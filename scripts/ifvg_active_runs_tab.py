@@ -30,6 +30,7 @@ from ifvg_ui_common import (
     sanitize_error,
     sanitize_select,
     status_badge,
+    verification_badge,
 )
 
 from alpha_lab.agents.data_infra.ifvg.search.orchestrator import (
@@ -63,14 +64,28 @@ _CHECKLIST_PHASES = tuple(
 )
 
 
+def _known_store_roots(roots: Mapping[str, Any]) -> list[Path]:
+    known: list[Path] = [Path(roots["store_root"])]
+    for root in dict(roots.get("store_roots") or {}).values():
+        if Path(root) not in known:
+            known.append(Path(root))
+    return known
+
+
 def render_active_runs(st_module=st, *, roots: Mapping[str, Any]) -> None:
     dev_only_badge(st_module)
-    runs = list_search_runs(Path(roots["state_root"]), Path(roots["store_root"]))
+    runs = list_search_runs(
+        Path(roots["state_root"]),
+        Path(roots["store_root"]),
+        store_roots=_known_store_roots(roots),
+    )
     if not runs:
+        # UI-1 (plan §6.7): an empty job root is the NO_RUNS state — nothing
+        # is missing or corrupt
         render_empty_state(
             st_module,
-            "artifact_unavailable",
-            detail="no search jobs exist under this namespace yet",
+            "no_runs",
+            detail="no search jobs exist in the job root yet",
         )
         cli_escape_hatch(
             st_module,
@@ -93,18 +108,39 @@ def render_active_runs(st_module=st, *, roots: Mapping[str, Any]) -> None:
     chosen = st_module.selectbox(
         "Active search", options, index=index, key=f"{_MON}run"
     )
-    search_id = labels[chosen].search_id
+    selected_run = labels[chosen]
+    search_id = selected_run.search_id
+    # UI-1: the run's OWN store (exact charter location) is the read root and
+    # the artifact decides the scope badge — never a session selector
+    run_roots = {
+        **roots,
+        "store_root": Path(selected_run.store_root)
+        if selected_run.store_root
+        else Path(roots["store_root"]),
+    }
+    if selected_run.verification_only:
+        verification_badge(st_module)
+    st_module.caption(
+        f"Artifact scope: store namespace class `{selected_run.namespace_class or 'unmarked'}`"
+        + (
+            " · verification-only artifact"
+            if selected_run.verification_only
+            else " · owner-authorized development artifact"
+            if selected_run.verification_only is False
+            else " · scope unresolved (charter not located in a known store)"
+        )
+    )
     st_module.button("Refresh", key=f"{_MON}refresh", help="Manual poll fallback")
     fragment = getattr(st_module, "fragment", None)
     if callable(fragment):
 
         @fragment(run_every="5s")
         def _auto_body() -> None:
-            _render_monitor_body(st_module, roots=roots, search_id=search_id)
+            _render_monitor_body(st_module, roots=run_roots, search_id=search_id)
 
         _auto_body()
     else:
-        _render_monitor_body(st_module, roots=roots, search_id=search_id)
+        _render_monitor_body(st_module, roots=run_roots, search_id=search_id)
 
 
 def _render_monitor_body(
@@ -119,7 +155,7 @@ def _render_monitor_body(
     if state is None:
         render_empty_state(
             st_module,
-            "artifact_unavailable",
+            "artifact_missing",
             detail="the job status file is missing or unreadable",
         )
         cli_escape_hatch(

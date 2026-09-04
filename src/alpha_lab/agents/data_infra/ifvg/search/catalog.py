@@ -32,7 +32,7 @@ __all__ = [
 CATALOG_EVENTS_FILENAME = "catalog_events.jsonl"
 _LOCK_FILENAME = "catalog_events.lock"
 
-CatalogEventKind = Literal["display_name", "note", "star", "archive"]
+CatalogEventKind = Literal["display_name", "note", "star", "archive", "purpose"]
 
 
 class CatalogLockTimeoutError(TimeoutError):
@@ -86,7 +86,7 @@ def append_catalog_event(
     writer is broken once its mtime is older than ``stale_lock_seconds``.
     """
 
-    if kind not in ("display_name", "note", "star", "archive"):
+    if kind not in ("display_name", "note", "star", "archive", "purpose"):
         raise ValueError(f"unknown catalog event kind {kind!r}")
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
@@ -182,6 +182,7 @@ def rebuild_catalog_index(
                 "note": None,
                 "starred": False,
                 "archived": False,
+                "purpose": None,
                 "last_event_id": None,
             },
         )
@@ -194,6 +195,10 @@ def rebuild_catalog_index(
             entry["starred"] = bool(event["payload"])
         elif kind == "archive":
             entry["archived"] = bool(event["payload"])
+        elif kind == "purpose":
+            # UI-1 (plan §5.6): the MUTABLE presentation-only run-purpose
+            # annotation of a frozen charter / pipeline — never an identity
+            entry["purpose"] = event["payload"]
         else:
             raise ValueError(f"unknown catalog event kind {kind!r}")
         entry["last_event_id"] = event["event_id"]
