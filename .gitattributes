@@ -1,0 +1,5 @@
+# Preserve the original bytes of retained design/evidence packages. Several
+# carry SHA256 manifests; automatic CRLF conversion would change those inputs.
+QL-FSM-PROP-SEARCH-DASHBOARD/** -text whitespace=cr-at-eol
+# Archived Markdown also retains its original hard breaks and final blank lines.
+QL-FSM-PROP-SEARCH-DASHBOARD/**/*.md whitespace=cr-at-eol,-blank-at-eol,-blank-at-eof

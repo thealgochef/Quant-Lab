@@ -1,0 +1,109 @@
+{
+  "coverage_matrix_id": "a4a4835a97e1e35bca3082ad6b5be777c7459a31f17c6769212485a4ed20e51e",
+  "payload": {
+    "candidate_allowlist": [
+      "2026-06-04",
+      "2026-06-05",
+      "2026-06-08",
+      "2026-06-09",
+      "2026-06-10"
+    ],
+    "candidate_allowlist_hash": "5f38151793b638bae7ad94c0c2f262285e82944d92a0b40f157432c6121910cd",
+    "evidence_source_dataset_id": "143b510f8a73896072f44e08f331ef5156e85eb8e5124d25bdf441c4fb6b2ac7",
+    "evidence_source_manifest_sha256": "b089dfadf44253b7071882cc9577feeacd97e532f4fd7086fe2fcbac39e60c22",
+    "lifecycle_paths_covered": [
+      [
+        "audit_events",
+        true
+      ],
+      [
+        "candidate_labeling",
+        false
+      ],
+      [
+        "eligible_decision",
+        false
+      ],
+      [
+        "entry_candidate",
+        false
+      ],
+      [
+        "execution_resolution",
+        false
+      ],
+      [
+        "replay_chart",
+        false
+      ],
+      [
+        "setup_activation",
+        true
+      ]
+    ],
+    "rows": [
+      {
+        "audit_event_rows": 3,
+        "candidate_label_rows": 0,
+        "eligible_decision_rows": 0,
+        "entry_candidate_rows": 0,
+        "executed_trade_rows": 0,
+        "mbp1_coverage": "not_evaluated",
+        "replay_chart_available": null,
+        "setup_lifecycle_rows": 0,
+        "source_partition_recorded": true,
+        "trading_day": "2026-06-04"
+      },
+      {
+        "audit_event_rows": 3,
+        "candidate_label_rows": 0,
+        "eligible_decision_rows": 0,
+        "entry_candidate_rows": 0,
+        "executed_trade_rows": 0,
+        "mbp1_coverage": "not_evaluated",
+        "replay_chart_available": null,
+        "setup_lifecycle_rows": 0,
+        "source_partition_recorded": true,
+        "trading_day": "2026-06-05"
+      },
+      {
+        "audit_event_rows": 3,
+        "candidate_label_rows": 0,
+        "eligible_decision_rows": 0,
+        "entry_candidate_rows": 0,
+        "executed_trade_rows": 0,
+        "mbp1_coverage": "not_evaluated",
+        "replay_chart_available": null,
+        "setup_lifecycle_rows": 0,
+        "source_partition_recorded": true,
+        "trading_day": "2026-06-08"
+      },
+      {
+        "audit_event_rows": 3,
+        "candidate_label_rows": 0,
+        "eligible_decision_rows": 0,
+        "entry_candidate_rows": 0,
+        "executed_trade_rows": 0,
+        "mbp1_coverage": "not_evaluated",
+        "replay_chart_available": null,
+        "setup_lifecycle_rows": 0,
+        "source_partition_recorded": true,
+        "trading_day": "2026-06-09"
+      },
+      {
+        "audit_event_rows": 3,
+        "candidate_label_rows": 0,
+        "eligible_decision_rows": 0,
+        "entry_candidate_rows": 0,
+        "executed_trade_rows": 0,
+        "mbp1_coverage": "not_evaluated",
+        "replay_chart_available": null,
+        "setup_lifecycle_rows": 1,
+        "source_partition_recorded": true,
+        "trading_day": "2026-06-10"
+      }
+    ],
+    "uncovered_paths_note": "synthetic fixtures must cover: candidate_labeling, eligible_decision, entry_candidate, execution_resolution, replay_chart",
+    "verification_policy_id": "verification_fixed_allowlist_max5_v1"
+  }
+}

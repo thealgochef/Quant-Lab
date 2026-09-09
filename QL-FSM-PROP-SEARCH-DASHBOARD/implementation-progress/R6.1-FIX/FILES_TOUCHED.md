@@ -1,0 +1,69 @@
+# R6.1-FIX — Files Touched
+
+Reconciled against the release commit's `git show --name-status`
+(**`0c8d528`**, parent `6c0b60a` = R6.1; tree `6e084715…`; 51 files:
+11 added, 40 modified; +6,949 / −643), including the adversarial-fix
+round: **51 files** — 1 new src module + 10 new test files; 23
+modified src modules + 1 modified script + 12 modified test files;
+`docs/DECISIONS.md` (D-049 + the reservation note) + the three staged
+shared docs (`ARCHITECTURE.md`, `docs/README.md`, `docs/pipeline_state.yaml`
+— HEAD + R6.1-FIX lane transforms via `stage_shared_docs.py`;
+`docs/ML_TRAINING_WORKBENCH.md` never committed). The commit is path-scoped
+to this list.
+
+## New source module (1)
+
+| File | Content |
+|---|---|
+| `src/.../ifvg/search/executed_trade_table.py` | the immutable executed-trade table artifact (F-06, §3.7): `EXECUTED_TRADE_TABLE_SCHEMA_V1` (the exact ordered 42-column Arrow projection `core_executed_trade_exact_v1`, declared — never inferred; typed as the v2 capture types it), `ExecutedTradeTablePayload` / `Envelope` (`executed_trade_table_sha256`, `source_core_table_hash`, `row_count`, `byte_size`), `project_executed_trades` (missing column refuses; sorted by `trade_id`), `executed_trade_table_id_for` (identity DERIVED from the core replay — no listing), `build_` / `save_` / `probe_` / `load_executed_trade_table` (store `executed_trade_tables`; identical bytes reuse, different bytes refuse; the probe maps only `store_entry_missing` to "absent" and classifies every other state by the typed `SidecarLoadError` — no text heuristics, review B-02 / B-08), the identity-pair registration |
+
+## Modified source (23) + script (1)
+
+| File | Change |
+|---|---|
+| `src/.../ifvg/ml/regime_contracts.py` | `FIT_ASSIGNMENT_SCHEMA` (exactly `RegimeAssignmentColumns` in order) + `FIT_ASSIGNMENT_SCHEMA_HASH`; `ASSIGNMENT_ROW_KINDS` / `AssignmentRowKind`; `FitAssignmentRef`; `fit_assignment_table_bytes` / `fit_assignment_frame_from_bytes`; `validate_assignment_rows` — the §3.4 invariants plus (review RA-06) the linkage key on every row, lawful non-null partition / fit id / fold on invalid rows, and `assigned_distance == distances[local] == min` with `assignment_margin == d2 − d1 ≥ 0` (`_ASSIGNMENT_TOLERANCE = 1e-9`) on valid rows |
+| `src/.../ifvg/ml/regime_store.py` | the sidecar is serialized under the ENFORCED schema; `_bound_assignments` validates the fit kind (the arithmetic check fires before the estimator-reproduction check); `VerifiedFitAssignments`; `persist_regime_fit` reuses only on byte-for-byte equality with the stored sidecar; `load_regime_fit_assignments` → `VerifiedFitAssignments` (fold index, protocol column and row invariants re-checked) |
+| `src/.../ifvg/ml/regime_executor.py` | `verified_fit_assignments_for_run`; `RegimeExecutionResult.verified_fit_assignments` + `consulted_assignments`; the descriptive artifact is built from the verified frames ONLY and records `candidate_as_of_stage` (review RA-07) |
+| `src/.../ifvg/ml/regime_oos_assignment.py` | formula `regime_oos_assignment_v2`; `regime_fit_assignment_refs` (+ `regime_fit_ids` validated as its projection), `resolved_cluster_count`, `candidate_as_of_stage` (required; equals the panel context's stage on the panel grain); `consulted_assignments_hash` over EVERY consulted value; `consulted_assignment_frame`; `build_regime_oos_assignment_artifact(verified_fit_assignments=…, candidate_as_of_stage=…)`; the loader re-checks the schema hash and the invariants; `_as_of_ns` → `(instants, missing_mask)` and `candidate_as_of_source_hash` routes through it (unparseable non-null → hard error); `candidate_as_of_missing` (F-04); every value column required (F-05) |
+| `src/.../ifvg/ml/regime_fold_features.py` | `FoldFitRef` binds the sidecar + schema hashes (all-or-none); `build_regime_fold_features(fit_assignments=Mapping[int, VerifiedFitAssignments])`; `validate_fold_feature_rows`; `verify_fold_fit_refs_against_store` on every load; typed errors instead of `assert` |
+| `src/.../ifvg/ml/regime_supervised_stage.py` | S09b passes `execution.verified_fit_assignments` |
+| `src/.../ifvg/features/context_bar_panel_contract.py` | `candidate_as_of_missing` registered |
+| `src/.../ifvg/ml/regime_stratified_contracts.py` | `RegimeAssignmentEvidenceRef.assignment_table_sha256` + `assignment_schema_hash`; `RegimeNetRAccounting` (plan §3.5 verbatim; `assigned_regime_count`; a validator that RECOMPUTES every derived value from `net_r_by_regime` — review RA-02); `CohortDescriptiveBody.net_r_accounting`, `executed_trade_table_id` + `executed_trade_table_artifact_sha256` (together or neither — review RA-01), regime strata tied to the accounting's counts |
+| `src/.../ifvg/ml/regime_stratified_strategy.py` | `normalized_executed_trades` (the one frame for joins / strata / metrics / the binding hash — F-10B); `regime_net_r_accounting` (raw sums over EVERY valid assigned trade; FALSE when the assigned side refutes the claim, NULL only when unassigned trades prevent a supported claim — review RA-03) |
+| `src/.../ifvg/search/strategy_metrics.py` | `per_trade_net_r` |
+| `src/.../ifvg/ml/regime_stratification_service.py` | the evidence ref pins the loaded artifact's hashes; `_verified_child_tables` exact-loads every child's persisted table, refuses another core replay's table or a caller frame that does not reproduce the artifact bytes, and the LOADED frame feeds every class (review RA-01); `ChildStratificationInputs.executed_trade_table_id` into the body and the `source_metric_refs` |
+| `src/.../ifvg/ml/regime_report_stage.py` | S14 iterates the CHARTER child set; `_child_table_evidence` verified-loads by exact id and re-checks S02's hash; `CHILD_SKIP_REASONS` + typed `children_skipped` / `children_evidence`; the panel assigner verifies every fit's sidecar against the bound ref; the prior-reports recovery branch and `_prior_reports_record` DELETED (review B-03); `_delivered_by_s09c` uses `load_json_sidecar` |
+| `src/.../ifvg/ml/comparison_rows.py` | `LABEL_CONSUMED_COLUMNS`, `LABEL_ARTIFACT_FORMULA_VERSION`, `label_artifact_content_id` |
+| `src/.../ifvg/ml/controlled_feature_study.py` | `label_artifact_id` mandatory + `label_identity_source` REQUIRED (review RA-05); the helper run is `content_hash_unpersisted` and `save_controlled_feature_study` refuses it; the arms' ladders receive the study's source |
+| `src/.../ifvg/ml/supervised_ladder.py` | helper default `label_artifact_content_id(None, …)`; `SupervisedLadderRun.label_identity_source` (`label_artifact` / `content_hash_unpersisted`; `run_supervised_ladder(label_identity_source=)`) — review RA-05 |
+| `src/.../ifvg/ml/catboost_bundle_model.py`, `logistic_model.py` | helper default `label_artifact_content_id(None, …)` (review RA-05) |
+| `src/.../ifvg/search/pipeline.py` | S02 persists the executed-trade table after a fresh completion and after verified reproduction, exact-loads it back and computes EVERY costed evaluation from the loaded projection inside per-child containment (`_persist_and_load_executed_trade_table`, `_child_costed_evaluation`, `FailureReason.INVARIANT` — review B-01); `_reuse_child_with_regime_tables` requires projection bytes AND `source_core_table_hash` to reproduce (review B-05); `_record_schema_version_for` (a bare core id → `PipelineWiringError`, review B-07); `ExecutedTradeEvidence` / `executed_trades_by_child`; S07 mints `label_artifact_content_id`; the five wiring `assert`s → `PipelineWiringError`; prior-stage recoveries via `load_json_sidecar`; S15 records `reload_failures` and `PipelineResultPayload.reload_failure_reasons` (review B-09); `_mark_downstream_not_run` + `_reset_publication_block` on every halt / cancel with S15; `_publication_gates` re-run by `activate_pipeline_result` (review B-04) |
+| `src/.../ifvg/search/pipeline_regime.py` | S10's evidence as-of reads the verified frames; `s15_regime_reload_failures` (store/id → sanitized reason; reloads every executed-trade table and stratified report the S14 record names — review B-03) |
+| `src/.../ifvg/search/store.py` | `SIDECAR_NOT_PRODUCED_FOR_PATH`, `SIDECAR_LOAD_FAILURE_REASONS` (NINE reasons incl. `manifest_missing_for_existing_entry` — review B-02), `SidecarLoadError`; `_verified_manifest`, `probe_sidecar`, `has_sidecar`, `load_optional_sidecar_bytes`, `load_json_sidecar`; `load_verified_envelope` / `load_sidecar_bytes` / `has_envelope` raise the typed reason at the detection point (review B-08); store name `executed_trade_tables` |
+| `src/.../ifvg/search/failure.py` | `PipelineWiringError` |
+| `src/.../ifvg/search/identities.py` | `FrozenContract.model_copy` guards scalar AND sequence-of-enum fields through `_enum_field_shape` (review RA-04) |
+| `src/.../ifvg/features/mbp1_coverage_evidence.py` | FULL scope equality; a positive claim requires EQUALITY with the complete partition-content refs (F-10C) |
+| `scripts/ifvg_regime_panels.py` | the Assignment view unpacks `VerifiedFitAssignments` (type adaptation only) |
+
+## New tests (10)
+
+| File | Covers |
+|---|---|
+| `tests/agents/data_infra/ifvg/test_regime_assignment_evidence.py` (12) | the enforced sidecar schema on save / load; valid descriptive rows carry every value; the model-facing kind; reuse refuses differing stored values; the OOS identity binds every fit sidecar hash; the executor builds from verified bytes; `candidate_as_of_missing` on both grains; invalid-row linkage + valid-row arithmetic (RA-06); the loader refuses another protocol's sidecar; the strict as-of hash and the recorded stage (RA-07) |
+| `tests/agents/data_infra/ifvg/test_regime_fold_feature_evidence.py` (4) | fold-feature identity binds each fit's sidecar hash; model-facing rows validated on build and load; unverified frames refused; the loader re-checks every ref |
+| `tests/agents/data_infra/ifvg/test_regime_stratification_evidence.py` (7) | the evidence ref binds table + schema hashes; thin regimes in concentration but not reportability; the works-only claim (complete accounting; FALSE when refuted — RA-03); impossible accounting bodies refused (RA-02); the normalized table; a caller frame that does not reproduce the bound table is refused (RA-01) |
+| `tests/agents/ifvg_search/test_executed_trade_table.py` (4 + parametrized) | the projection schema is exact and never inferred; identity derives from the core replay and binds the bytes; the costed evaluation from the persisted projection equals the raw evaluation (dicts) and the SERIALIZED bytes are provenance-independent over the int-typed and v2-typed frames (B-01 / B-10); typed probe reasons (B-02) |
+| `tests/agents/ifvg_search/test_store_sidecar_probe.py` (4) | lawful absence is the only optional state; every corruption state is typed; a manifest-less entry is corrupt, never absent (B-02); `load_verified_envelope` raises the typed reason at detection (B-08) |
+| `tests/agents/data_infra/ifvg/test_label_identity.py` (2) | the label artifact id binds every consumed column; persisted studies require the exact label artifact id |
+| `tests/agents/ifvg_search/test_pipeline_evidence_integrity.py` (15) | S02 persists the table and S14 verified-loads it; reused children verify against the persisted table and never vanish from S14; a tampered table is refused; typed `children_skipped`; prior-attempt sidecar tamper fails closed (downstream PENDING); lineage tamper; S15 `reload_failures`; wiring gaps typed; provenance-independent costed evaluations across run orders (B-01); a manifest-less table entry is a typed child failure (B-02); `_delivered_by_s09c` on a tampered S09 record (B-03/B-06); the publication block resets and activation re-derives the gates (B-04); a drifted runner cannot reproduce the persisted table (B-05/B-06); a disagreeing neutrality hash fails the child; a REAL regime-artifact tamper is recorded and the publication gates fail (B-06) |
+| `tests/agents/ifvg_search/test_mbp1_scope_equality.py` (2) | full scope + exact ref equality; enum-typed window specs serialize without warnings |
+| `tests/agents/ifvg_search/test_r61_fix_goldens.py` (1) | the seven golden identities of `PRE_R6_1_FIX_BASELINE.md` are unchanged |
+| `tests/agents/data_infra/ifvg/test_r61_fix_review_fixes.py` (7) | the enum copy guard's shapes, acceptance and refusals, the structural walk over every registered payload's sequence-of-enum field (RA-04); helper ladders bind the full consumed-column hash and are stamped; the bundle-path ladder identity; `label_identity_source` required (RA-05) |
+
+## Modified tests (12)
+
+`test_regime_oos_assignment.py` (verified-source design; `candidate_as_of_stage` in every builder call / `_payload_fields`), `test_regime_fold_features.py` (`fit_assignments=` verified evidence; the in-memory run frame proven INERT), `test_regime_store.py` (the verified evidence carries the exact hashes; either refusal message for a forged local id), `test_regime_service.py` (the panel-PIT frame carries the complete value set — the midpoint failure), `test_regime_stratification.py` (evidence ref hashes), `test_regime_supervised_studies.py` (`_verified_fits`), `test_controlled_feature_study.py` (the exact label artifact id), `test_catboost_bundle_model.py` (the helper default is the full consumed-column hash — RA-05), `test_mbp1_coverage_evidence.py` (`_coverage` passes the certified refs), `test_mbp1_materializer.py` (enum members in `model_copy`), `test_pipeline_regime.py` (S02 reproduction over the persisted table; the parked-table branch; `replay_invocations == 1` per reused child under stratified reporting), `test_pipeline_run.py` (`replay_invocations == 0` for every reused child of the non-stratified double run).
+
+## Docs
+
+`docs/DECISIONS.md` — D-049 (R6.1-FIX; amended after the round) + the reservation note; the three shared docs via `stage_shared_docs.py`; `../DECISIONS_TAKEN.md` #101–#114 (+ the #98 amended pointer).

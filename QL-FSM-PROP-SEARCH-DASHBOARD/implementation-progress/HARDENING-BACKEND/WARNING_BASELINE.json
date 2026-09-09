@@ -1,0 +1,57 @@
+{
+  "policy_id": "hardening_warning_policy_v1",
+  "plan_reference": "R6.1-FIX-HARDENING-READINESS-PLAN/IMPLEMENTATION_PLAN.md revision 3, section 4.5 (F-18)",
+  "recorded_at": "2026-09-02",
+  "pytest_filterwarnings": [
+    "error",
+    "ignore:scipy\\.optimize\\x3a The `disp` and `iprint` options of the L-BFGS-B solver are deprecated and will be removed in SciPy 1\\.18\\.0\\.:DeprecationWarning:sklearn\\.linear_model\\._logistic"
+  ],
+  "project_owned_warnings_remaining": 0,
+  "project_owned_warnings_fixed": [
+    {
+      "location": "src/alpha_lab/agents/data_infra/ifvg/dataset.py:813 (assemble_fsm_audit_tables, the per-day audit-channel frame concat)",
+      "category": "FutureWarning",
+      "message": "The behavior of DataFrame concatenation with empty or all-NA entries is deprecated. In a future version, this will no longer exclude empty or all-NA columns when determining the result dtypes.",
+      "count_in_baseline": 5,
+      "fix": "concat_schema_aligned: explicit per-column dtypes (the common dtype of the non-all-NA entries; absent columns widened as pandas' ensure_dtype_can_hold_na; an all-NA present entry joining a numpy int/bool column takes the common type of the raw value concatenation) reproducing the pre-deprecation result exactly; every all-null column is preserved",
+      "proof": "tests/agents/test_hardening_warning_policy.py::test_real_audit_frames_concat_is_byte_identical_to_the_old_path and the synthetic shape tests; tests/agents/test_ifvg_fsm_audit_contracts.py, tests/agents/ifvg_search/test_child_audit_companion.py, tests/agents/test_ifvg_dataset.py, tests/agents/test_ifvg_v2_replay_reconciliation.py unchanged and green under warnings-as-errors"
+    },
+    {
+      "location": "tests/agents/test_ifvg_context_experiment_engine.py:260 (test_fold_setup_boundary_is_detected_before_censoring_exclusion, `frame.loc[len(frame)] = censored`)",
+      "category": "FutureWarning",
+      "message": "The behavior of DataFrame concatenation with empty or all-NA entries is deprecated ...",
+      "count_in_baseline": 1,
+      "fix": "append_censored_row: the censored row is appended through a TYPED one-row frame (object binary_target because an int column receives None; tz-aware NaT resolution) — the old loc-enlargement result exactly",
+      "proof": "tests/agents/test_hardening_warning_policy.py::test_typed_row_append_replaces_loc_enlargement_without_a_warning"
+    }
+  ],
+  "third_party_rules": [
+    {
+      "message_regex": "scipy\\.optimize\\x3a The `disp` and `iprint` options of the L-BFGS-B solver are deprecated and will be removed in SciPy 1\\.18\\.0\\.",
+      "message_literal": "scipy.optimize: The `disp` and `iprint` options of the L-BFGS-B solver are deprecated and will be removed in SciPy 1.18.0.",
+      "category": "DeprecationWarning",
+      "module_regex": "sklearn\\.linear_model\\._logistic",
+      "issued_from": "sklearn/linear_model/_logistic.py:456 (optimize.minimize(..., method=\"L-BFGS-B\", options={..., \"disp\", \"iprint\"}))",
+      "package": "scikit-learn",
+      "package_version": "1.7.0",
+      "triggering_package": "scipy",
+      "triggering_package_version": "1.16.0",
+      "count_in_baseline": 429,
+      "reason": "scikit-learn 1.7.0's lbfgs logistic solver still passes the SciPy 1.16 L-BFGS-B `disp`/`iprint` options that SciPy deprecates for removal in 1.18.0; the warning is emitted by every logistic fit (the R5 supervised ladder, the R6/R6.1 regime studies and the pipeline S09/S10 stages). It is third-party code the repository cannot change without forking scikit-learn.",
+      "owner": "WS-C / HARDENING-BACKEND (F-18)",
+      "expiry_or_removal_condition": "Remove the rule when the installed scikit-learn stops passing `disp`/`iprint` to scipy.optimize.minimize (scikit-learn >= 1.8 is expected to drop them) or when SciPy >= 1.18.0 is installed (the options are gone and the warning can no longer fire). The rule is exact: a different message, category, or module is NOT suppressed and fails the suite.",
+      "note_on_colon": "pytest splits an ini filterwarnings rule on ':' (action:message:category:module:lineno), so the literal colon after 'scipy.optimize' is written as the regex hex escape \\x3a (TOML `\\\\x3a`); the regex is matched at the start of the message, case-insensitively, by the warnings module."
+    }
+  ],
+  "baseline_before": {
+    "total": 435,
+    "third_party": 429,
+    "project_owned": 6,
+    "source": "../R6.1-FIX/_final_pytest.txt (R6.1-FIX release-final suite: 1993 passed, 435 warnings)"
+  },
+  "verification": {
+    "policy_test": "tests/agents/test_hardening_warning_policy.py::test_registered_pytest_warning_policy_is_error_with_one_exact_third_party_rule",
+    "suites_run_under_error_mode_by_ws_c": "see _ws_C_pytest_*.txt (core set, tests/agents/ifvg_search, tests/agents/data_infra/ifvg, tests/propsim + the IFVG tab/contract modules + test_ml_pipeline)",
+    "full_suite_runs": "the release gate (main agent) runs the full repository suite twice under this policy (as-is and with provider keys cleared)"
+  }
+}
