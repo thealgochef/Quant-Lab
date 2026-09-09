@@ -127,17 +127,42 @@ def run_supervised_substeps(context) -> tuple[list[str], dict[str, Any], str]:
     classes = set(request.comparison_classes_requested)
     record["S09c"] = {"activated_block_resolution_id": activation.resolved_feature_block_id}
     if "feature_only" in classes:
-        study = run_controlled_regime_study(
-            context.view,
-            context.labeled,
-            context.folds,
-            activation=activation,
-            challenger_bundle_key=_challenger_bundle_for(request.supervised_bundle_key),
-            fold_features=fold_features,
-            candidate_fold_set=regime["candidate_fold_set"],
-            label_artifact_id=context.label_artifact_id,
-            label_policy_id=spec.label_policy_id,
-        )
+        kwargs = {
+            "activation": activation,
+            "challenger_bundle_key": _challenger_bundle_for(request.supervised_bundle_key),
+            "fold_features": fold_features,
+            "candidate_fold_set": regime["candidate_fold_set"],
+            "label_artifact_id": context.label_artifact_id,
+            "label_policy_id": spec.label_policy_id,
+        }
+        research_id = None
+        study = None
+        if getattr(context.wiring, "research_subject", None) is not None:
+            from .research_evidence import (  # noqa: PLC0415
+                load_research_run,
+                save_research_inputs,
+                save_research_run,
+            )
+
+            research_id = save_research_inputs(
+                store_root, context.view, context.labeled, context.folds,
+                runner="regime_feature", run_kwargs=kwargs,
+            )
+            from ..search.research_artifacts import checkpoint_research_model_input  # noqa: PLC0415
+
+            checkpoint_research_model_input(context, research_id)
+            study = load_research_run(store_root, research_id)
+        if study is None:
+            study = run_controlled_regime_study(
+                context.view, context.labeled, context.folds, **kwargs
+            )
+            if research_id is not None:
+                save_research_run(store_root, research_id, study)
+                study = load_research_run(store_root, research_id)
+        if research_id is not None:
+            context.research_model_run_ids.append(research_id)
+            outputs.append(research_id)
+            record["S09c"]["research_model_run_id"] = research_id
         save_regime_controlled_study(store_root, study)
         study_id = study.envelope.regime_controlled_study_id
         study_ids.append(study_id)

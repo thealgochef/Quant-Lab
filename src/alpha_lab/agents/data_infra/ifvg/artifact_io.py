@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
+from collections.abc import Collection
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -42,6 +44,7 @@ __all__ = [
     "VerifiedIfvgPair",
     "resolve_artifact_directory",
     "load_verified_v2_artifact",
+    "load_verified_v2_configuration",
     "load_verified_v3_artifact",
     "load_verified_ifvg_pair",
     "load_verified_label_source_bars",
@@ -94,6 +97,8 @@ def _read_manifest(exploration: Path, artifact_id: str) -> dict[str, Any]:
         manifest = json.loads((exploration / "manifest.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise ArtifactVerificationError("artifact manifest is unreadable") from error
+    if not isinstance(manifest, dict):
+        raise ArtifactVerificationError("artifact manifest must be an object")
     if manifest.get("dataset_id") != artifact_id:
         raise ArtifactVerificationError("artifact manifest dataset ID mismatch")
     claimed = manifest.get("manifest_payload_sha256")
@@ -196,6 +201,80 @@ def load_verified_v2_artifact(root: Path, artifact_id: str) -> VerifiedIfvgArtif
         tables=tables,
         reports=_report_files(paths),
     )
+
+
+def load_verified_v2_configuration(
+    root: Path,
+    artifact_id: str,
+    *,
+    expected_manifest_hash: str,
+    expected_profile_hash: str | None = None,
+    supported_strategy_source_trees: Collection[str] | None = None,
+) -> dict[str, Any]:
+    """Read the exact saved strategy section without opening any trade tables.
+
+    This verifies the manifest and configuration, not the complete replay.
+    Its result must never be used as evidence that trade tables are valid.
+    """
+    exploration = resolve_artifact_directory(root, artifact_id)
+    manifest = _read_manifest(exploration, artifact_id)
+    if manifest.get("manifest_schema_version") != 2:
+        raise ArtifactVerificationError("unsupported configuration manifest schema")
+    if manifest["manifest_payload_sha256"] != expected_manifest_hash:
+        raise ArtifactVerificationError("configuration manifest differs from its exact reference")
+    identity = manifest.get("identity")
+    if not isinstance(identity, dict) or canonical_sha256(identity) != artifact_id:
+        raise ArtifactVerificationError("configuration dataset identity mismatch")
+    if supported_strategy_source_trees is not None:
+        repositories = identity.get("repositories")
+        if not isinstance(repositories, list):
+            raise ArtifactVerificationError("configuration source evidence is missing")
+        strategy_sources = [
+            item
+            for item in repositories
+            if isinstance(item, dict) and item.get("name") == "strategy-core"
+        ]
+        if (
+            len(strategy_sources) != 1
+            or strategy_sources[0].get("source_tree_hash") not in supported_strategy_source_trees
+        ):
+            raise ArtifactVerificationError("configuration uses unreviewed strategy semantics")
+    entries = manifest.get("artifacts")
+    if not isinstance(entries, list):
+        raise ArtifactVerificationError("configuration manifest artifacts must be a list")
+    paths: set[str] = set()
+    matches = []
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
+            raise ArtifactVerificationError("invalid configuration artifact entry")
+        relative = entry["path"]
+        if relative in paths:
+            raise ArtifactVerificationError("duplicate configuration artifact entry")
+        paths.add(relative)
+        path = _artifact_path(exploration, relative)
+        if relative == "exploration/effective_config.json":
+            matches.append((entry, path))
+    if len(matches) != 1:
+        raise ArtifactVerificationError("saved effective configuration is missing")
+    entry, path = matches[0]
+    try:
+        data = path.read_bytes()
+        if len(data) != entry.get("bytes") or hashlib.sha256(data).hexdigest() != entry.get(
+            "sha256"
+        ):
+            raise ArtifactVerificationError("saved effective configuration was modified")
+        section = json.loads(data)["section"]
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise ArtifactVerificationError("saved effective configuration is unreadable") from error
+    if not isinstance(section, dict):
+        raise ArtifactVerificationError("saved effective section is not an object")
+    # Hash the SAVED mapping, never fill absent fields from today's model defaults.
+    section_hash = canonical_sha256(section)
+    if section_hash != identity.get("resolved_profile_hash") or (
+        expected_profile_hash is not None and section_hash != expected_profile_hash
+    ):
+        raise ArtifactVerificationError("saved effective section identity mismatch")
+    return section
 
 
 def load_verified_v3_artifact(root: Path, artifact_id: str) -> VerifiedIfvgArtifact:

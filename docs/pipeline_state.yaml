@@ -1,6 +1,89 @@
 current_phase: "STRATEGY_CORE_V3_DASHBOARD_UTILITY"
-last_updated: "2026-06-04"
+last_updated: "2026-09-08"
 repo_role: "ml_training_workbench_with_strategy_core_v3_dashboard_utility_path"
+
+application_workspaces:
+  router: "streamlit.st.navigation / st.Page; selected page only"
+  default: "IFVG Lab"
+  pages: ["IFVG Lab", "ML Training", "Dashboard Compatibility", "Strategy Analysis"]
+  developer:
+    startup_environment: "QUANT_LAB_DEVELOPER_MODE=1"
+    default_enabled: false
+    ui_toggle: false
+    query_override: false
+    grants_execution_authority: false
+    technical_rendering: "Developer route context only, including collapsed panels"
+  ifvg:
+    destinations: ["My studies", "Trade review"]
+    draft_store_schema: "unchanged (schema 2)"
+    scientific_schemas_and_computation: "raw replay unchanged; search metrics corrected to post-warmup, zero-origin drawdown"
+    verification_visibility: "Developer only; frozen scope derives from charter"
+    legacy_scope: "unresolved unless existing evidence establishes purpose"
+    progress: "persisted status; selected running detail refreshes every 5 seconds"
+    replay_selection: ["candidate", "setup", "empty", "unavailable"]
+    replay_fallback: false
+    review_save: "explicit Save Review only"
+    search_review: "exact saved child executions and hash-verified original bars; no fabricated context pair"
+    metrics_policy: "post_warmup_zero_peak_v2; corrected evaluations are new immutable artifacts"
+    parent_staleness_audit: "reports/parent_staleness_audit/20260908/REVIEW.md"
+    implementation_status: "delivered; regression verification recorded in completion report"
+    visual_acceptance: "desktop browser flows reviewed; full live execution lifecycle remains open"
+    acceptance_scope: "desktop layout and actual screen/actions; mobile excluded by user"
+    desktop_evidence_viewports: ["1440x900", "1280x720"]
+    browser_report: "reports/ifvg_browser_acceptance/20260907/DESKTOP_FLOW_REPORT.md"
+    browser_followup_checks: "97 focused + 55 chart/provider tests passed; CI Ruff passed"
+    live_execution_limits: "research approval is study-specific; verified prop contracts and model labels remain required for their paths"
+    feature_model_research:
+      entry: "New study / More study types / Feature and model study"
+      api: "search.research_runs"
+      worker: "scripts/ifvg_research_job.py"
+      runner: "pipeline_real_research_v1"
+      source_identity: "exact saved core replay, v2 dataset and effective configuration section hashes"
+      profile_names: "display only; generated configurations load from verified saved sections"
+      subjects: "separate pipeline context per selected child; target R and cost inherited per child"
+      evaluation: "explicit logical calendar within common saved evaluation dates"
+      outcome_cutoff: "final selected evaluation date at 17:00 America/New_York, capped protected boundary; exact UTC in preflight"
+      cohort: "all_candidates; stamped warmup and out-of-window rows excluded"
+      execution_cohort: "exact included candidate IDs and resolution before cutoff; cutoff-censored/unresolved IDs explicit"
+      authorization: "new exact-plan research_approvals; namespace and authority witness bound"
+      preflight_launches_work: false
+      stage_indices: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 14, 15]
+      grants_live_or_prop_scope: false
+      r5_bases: ["B0_CORE", "B1_CORE_STRUCTURE", "B4_CORE_STRUCTURE_LIQUIDITY"]
+      mbp_comparisons: ["B0_CORE -> B2_CORE_ORDER_FLOW", "B1_CORE_STRUCTURE -> B3_CORE_STRUCTURE_ORDER_FLOW"]
+      mbp_coverage: "unknown when source completeness is not evidenced"
+      mbp_receipt_import: "explicit reviewed JSON receipt; subject/window/physical hash validated; preview saves nothing"
+      default_regimes: "completed numeric 5m bars; KMeans K3; 50 requested bootstrap refits; descriptive"
+      candidate_regimes: "entry-decision grain; numeric selected-bundle features; registered 150 training observations per fold"
+      linked_regime_features: "B0 -> B7 feature_only; exact decision, owner authorization and assessment required"
+      linked_protocol: "preserve exact precursor grain/stage/numeric inputs/clipping/bootstrap/algorithm/K"
+      regime_eligibility_approval: "explicit separate review of saved gates, inputs, requested/applied bootstrap and sample floors; bound review ID; no fitting"
+      fit_scope: "fold-local; paired comparison arms share candidate, label and fold evidence"
+      inputs_persist_before_fit: true
+      model_reload: "verify manifests, file membership and predictions without fitting"
+      regime_reload: "research_regime_executions; completed S09a only; incomplete attempts recompute"
+      mbp_memory: "one day retained at a time; physical source hashes verified on each reload"
+      fold_purge_boundary: "first logical test day at preceding civil day 18ET, including empty first test day"
+      descriptive_trade_scope: "all scoped trades with selection-gate flags; frontier 30-trade floor unchanged"
+      incomplete_results: "per-cell status/reasons plus exact labels, cohorts, executions and model inputs"
+      context_progress: "selected running S02 refreshes completed/total days and current trading date every 5s; reuse/replay explicit"
+      research_evidence_status: "separate from execution completion; verified report or labeled operational advisory; evaluable does not imply positive lift"
+      panels: ["Overview", "Trades and cohorts", "Research chart", "Order flow", "Market regimes", "Artifacts"]
+      research_charts: "exact verified custom-store charts/forward source, configured-label overlays and scoped ranges/partial counts"
+      chart_catalog: "selected search store/research_replay_chart_catalog.json"
+      stores: ["research_subjects", "research_groups", "research_approvals", "research_context_companions", "research_cohorts", "research_labels", "research_model_inputs", "research_model_runs", "research_regime_executions", "research_replay_charts"]
+      historical_artifacts_mutated: false
+      real_run_acceptance: "not established by implementation tests or these documentation updates"
+    strategy_search_approval:
+      scope: "exact resolved strategy-only charter, namespace and current authority chain"
+      runner: "search_strategy_development_v1"
+      save_launches_work: false
+      parent_staleness_study: "completed by owner; audited and re-evaluated 2026-09-08; 3 of 4 pass gates"
+      data_preflight: "117 cached dates verified by metadata: 107 research + 10 warmup"
+      verification_acceptance: "not inferred from owner approval or data readiness"
+      verification_report: "reports/ifvg_browser_acceptance/STRATEGY_APPROVAL_REPORT.md"
+      documentation: "docs/IFVG_STRATEGY_SEARCH_APPROVAL.md"
+    report: "QL-FSM-PROP-SEARCH-DASHBOARD/implementation-progress/UI-UX-REDESIGN-PLAN/FOCUSED_WORKSPACE/COMPLETION_REPORT.md"
 
 training_modes:
   extrema_rebound_crossing:
@@ -76,6 +159,48 @@ training_modes:
         - "asia_london_only"
         - "all_sessions_all_gates"
     runtime_consumer_status: "Trade-Lab not v3-compatible yet"
+
+ifvg_v2_correctness_repair:
+  status: "OFFLINE_EXECUTABLE_FRESH_PROFILE"
+  purpose: "Correctness-only sequential replay; no profitability or edge claim"
+  strategy_version: "2"
+  record_schema_version: 2
+  capture_schema_version: 2
+  dataset_schema_version: 2
+  report_schema_version: 2
+  active_profile: "ifvg_v2_doc_default_fresh_static_1r"
+  qualification_mode: "doc_default"
+  entry_family: "fresh_fvg_continuation"
+  executable_stream: "resolved executed_trade rows only"
+  candidate_stream: "counterfactual; never executable PnL"
+  resolver_policy: "next_1m_bar_stop_first_v1"
+  anchor_policy: "trading_day_18et_elapsed_v1"
+  sessions_et:
+    asia: "16:00-01:45"
+    london: "02:00-07:00"
+    ny: "08:00-14:00"
+  data_access:
+    policy: "explicit_allowlist_before_path_v1"
+    dates: "2026-01-01, 01-02, 01-04..01-09, 01-11..01-16, 01-18..01-23, 01-25..01-30"
+    warmup_days: 10
+    invariant_evidence_start: "2026-01-13"
+    exposed_validation_access: "DENIED"
+    june_11_access: "DENIED"
+    sealed_access_from_2026_06_12: "DENIED"
+  immutable_output: "data/ifvg_datasets/v2/{dataset_id}/exploration/"
+  disabled_actions:
+    - "search"
+    - "threshold_sweeps"
+    - "CatBoost"
+    - "feature_selection"
+    - "validation"
+    - "sealed_evaluation"
+  non_runnable_profiles:
+    - "ifvg_v2_ict_clean_fresh_static_1r"
+    - "ifvg_v2_ict_clean_pure_retest_static_1r"
+    - "ifvg_v2_weak_counter_displacement_research"
+    - "ifvg_v1_legacy_candidate_stream"
+  live_trade_lab_routing: "OUT_OF_SCOPE"
 
 primary_workflow:
   status: "ACTIVE"

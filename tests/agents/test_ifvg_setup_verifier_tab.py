@@ -16,6 +16,8 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
+pytestmark = pytest.mark.usefixtures("developer_presentation")
+
 _SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
@@ -415,4 +417,4 @@ def test_candidate_mode_stays_default_and_untouched(monkeypatch) -> None:
     at.run()
     assert not at.exception
     assert at.radio(key=f"{tab._STATE_PREFIX}selection_mode").value == "candidate"
-    assert any("No replay-chart artifact" in str(i.value) for i in at.info)
+    assert any("Charts are not prepared" in str(i.value) for i in at.info)

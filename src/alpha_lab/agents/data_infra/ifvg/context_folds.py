@@ -51,6 +51,7 @@ def build_context_folds(
     step_days: int = 5,
     embargo_days: int = 2,
     minimum_train_candidates: int = 30,
+    purge_from_logical_test_start: bool = False,
 ) -> ContextFoldSet:
     required = {
         "candidate_id",
@@ -76,9 +77,7 @@ def build_context_folds(
     if not set(frame["trading_day"].astype(str)).issubset(days):
         raise ValueError("fold input contains an unauthorized trading day")
     frame["_entry"] = pd.to_datetime(frame["entry_ts_utc"], utc=True, errors="coerce")
-    frame["_resolution"] = pd.to_datetime(
-        frame["resolution_ts_utc"], utc=True, errors="coerce"
-    )
+    frame["_resolution"] = pd.to_datetime(frame["resolution_ts_utc"], utc=True, errors="coerce")
     available = (
         frame["entry_available"].fillna(False).astype(bool)
         & frame["resolution_available"].fillna(False).astype(bool)
@@ -98,12 +97,8 @@ def build_context_folds(
     while test_start_index + test_days <= len(days):
         train_day_values = days[:test_start_index]
         test_day_values = days[test_start_index : test_start_index + test_days]
-        raw_train = eligible[
-            eligible["trading_day"].astype(str).isin(train_day_values)
-        ].copy()
-        raw_test = eligible[
-            eligible["trading_day"].astype(str).isin(test_day_values)
-        ].copy()
+        raw_train = eligible[eligible["trading_day"].astype(str).isin(train_day_values)].copy()
+        raw_test = eligible[eligible["trading_day"].astype(str).isin(test_day_values)].copy()
 
         # Setup grouping is determined before censoring/availability exclusions.
         # Otherwise a censored sibling candidate can hide that a setup crosses the
@@ -117,7 +112,18 @@ def build_context_folds(
         test = raw_test[~raw_test["setup_id"].astype(str).isin(boundary_setups)].copy()
 
         purged_ids: tuple[str, ...] = ()
-        if not test.empty:
+        if purge_from_logical_test_start:
+            from .features.mbp1_coverage_evidence import (  # noqa: PLC0415
+                authorized_session_span_ns,
+            )
+
+            # The first logical test day starts at the previous civil day's
+            # 18:00 ET, even when no candidate is emitted on that test day.
+            boundary_ns, _end_ns = authorized_session_span_ns(test_day_values[0])
+            overlap = train["_resolution"] >= pd.Timestamp(boundary_ns, tz="UTC")
+            purged_ids = _ids(train.loc[overlap])
+            train = train.loc[~overlap].copy()
+        elif not test.empty:
             test_interval_start = test["_entry"].min()
             test_interval_end = test["_resolution"].max()
             overlap = (train["_entry"] <= test_interval_end) & (

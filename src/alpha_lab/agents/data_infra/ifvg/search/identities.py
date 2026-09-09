@@ -458,6 +458,7 @@ def registered_identity_pairs() -> tuple[RegisteredIdentityPair, ...]:
         pipeline,
         seed_production,
         store_namespace,
+        strategy_approval,
         supersession_chain,
         verification,
     )
@@ -684,6 +685,7 @@ QL_REPLAY_SOURCE_SCOPE: tuple[str, ...] = (
     "src/alpha_lab/agents/data_infra/ifvg/profiles.py",
     "src/alpha_lab/agents/data_infra/ifvg/search/child_replay.py",
     "src/alpha_lab/agents/data_infra/ifvg/search/identities.py",
+    "src/alpha_lab/agents/data_infra/ifvg/search/strategy_executor.py",
 )
 
 

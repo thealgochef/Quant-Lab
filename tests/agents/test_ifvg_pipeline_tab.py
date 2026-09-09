@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("developer_presentation")
+
 apptest = pytest.importorskip("streamlit.testing.v1")
 _REPO = Path(__file__).resolve().parents[2]
 if str(_REPO / "scripts") not in sys.path:

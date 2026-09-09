@@ -284,6 +284,7 @@ def run_logistic_fold_models(
     features: tuple[str, ...],
     manual_feature_overrides: dict[str, Any] | None = None,
     fitted_fold_sink: dict[int, Pipeline] | None = None,
+    prediction_input_sink: dict[int, pd.DataFrame] | None = None,
     fold_local_features: RegimeFoldFeatureSource | None = None,
     fold_schedule_id: str | None = None,
     label_artifact_id: str | None = None,
@@ -373,6 +374,8 @@ def run_logistic_fold_models(
         pipeline.fit(train_x, train_y)
         if fitted_fold_sink is not None:
             fitted_fold_sink[fold.fold_index] = pipeline
+        if prediction_input_sink is not None:
+            prediction_input_sink[fold.fold_index] = test_x.copy()
         probabilities = pipeline.predict_proba(test_x)[:, 1]
         for candidate_id, probability in zip(test.index.astype(str), probabilities, strict=True):
             source = test.loc[candidate_id]

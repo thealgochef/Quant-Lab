@@ -20,6 +20,20 @@ from .identities import FrozenContract, ImmutableMap
 __all__ = ["StrategyMetrics", "compute_strategy_metrics", "per_trade_net_r"]
 
 
+def research_trades(trades: pd.DataFrame) -> pd.DataFrame:
+    """Keep capture history intact, but exclude explicitly marked warmup rows.
+
+    Projected execution tables without this column already define their cohort.
+    An ambiguous flag must not silently admit a warmup observation.
+    """
+    if "is_warmup" not in trades:
+        return trades
+    flags = trades["is_warmup"]
+    if flags.isna().any() or not flags.isin([True, False]).all():
+        raise ValueError("executed-trade warmup flags must be non-null booleans")
+    return trades.loc[~flags.astype(bool)].copy()
+
+
 def per_trade_net_r(
     trades: pd.DataFrame, *, cost_points: float, tick_size: float = 0.25
 ) -> pd.Series:
@@ -29,7 +43,7 @@ def per_trade_net_r(
     ``net_expectancy_r`` (R6.1-FIX §3.5: the raw accounting basis of the
     regime concentration facts)."""
 
-    ordered = _validate_and_normalize_executed_trades(trades, tick_size=tick_size)
+    ordered = _validate_and_normalize_executed_trades(research_trades(trades), tick_size=tick_size)
     if ordered.empty:
         return pd.Series(dtype=float, name="net_r")
     realized = pd.to_numeric(ordered["_realized_pts"], errors="coerce")
@@ -96,7 +110,7 @@ def compute_strategy_metrics(
     tick_size: float = 0.25,
     tp_r_multiple: float = 1.0,
 ) -> StrategyMetrics:
-    trades = tables.get(RecordTable.EXECUTED_TRADE, pd.DataFrame())
+    trades = research_trades(tables.get(RecordTable.EXECUTED_TRADE, pd.DataFrame()))
     stats = compute_trade_stats(
         trades,
         cost_points=cost_points,
@@ -122,7 +136,8 @@ def compute_strategy_metrics(
     net = ordered["_net_r"].astype(float)
     gross = ordered["_gross_r"].astype(float)
     equity = net.cumsum()
-    drawdown = equity.cummax() - equity
+    # Initial losses draw down from zero, before the first closed trade.
+    drawdown = equity.cummax().clip(lower=0.0) - equity
     max_drawdown = float(drawdown.max()) if len(drawdown) else 0.0
 
     # time under water: the longest run of distinct trading days spent below

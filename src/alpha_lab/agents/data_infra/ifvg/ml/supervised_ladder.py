@@ -45,7 +45,6 @@ from .comparison_rows import (
     comparison_row_id,
     default_fold_schedule_id,
     label_artifact_content_id,
-    label_content_hash,
     with_comparison_row_ids,
 )
 from .fold_set_artifact import fold_set_id as _fold_set_hash
@@ -108,6 +107,11 @@ class LadderRung:
     fold_reports: tuple[dict[str, Any], ...]
     feature_importance: pd.DataFrame
     prediction_report: dict[str, Any]
+    fitted_models: dict[int, Any] = field(default_factory=dict, repr=False, compare=False)
+    resolved_protocol: Any = field(default=None, repr=False, compare=False)
+    prediction_inputs: dict[int, pd.DataFrame] = field(
+        default_factory=dict, repr=False, compare=False
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,6 +132,7 @@ class SupervisedLadderRun:
     #: helper form: the FULL consumed-column content hash; such a run can
     #: never feed a persisted study).
     label_identity_source: str = "label_artifact"
+    research_identity: dict[str, Any] = field(default_factory=dict)
 
     def rung(self, protocol_id: str) -> LadderRung:
         for rung in self.rungs:
@@ -475,6 +480,9 @@ def run_supervised_ladder(
     rungs: list[LadderRung] = []
     frames: dict[str, pd.DataFrame] = {}
     for protocol_id in protocols:
+        fitted_models: dict[int, Any] = {}
+        prediction_inputs: dict[int, pd.DataFrame] = {}
+        resolved_protocol = None
         if protocol_id == PREVALENCE_PROTOCOL_ID:
             predictions, fold_reports = _run_prevalence_reference(
                 view,
@@ -502,8 +510,11 @@ def run_supervised_ladder(
                 fold_local_features=fold_local_features,
                 fold_schedule_id=schedule_id,
                 label_artifact_id=label_id,
+                fitted_fold_sink=fitted_models,
+                prediction_input_sink=prediction_inputs,
             )
             predictions = run.predictions
+            resolved_protocol = run.protocol
             fold_reports = run.fold_reports
             resolved_hash = run.protocol.resolved_hash
             importance = run.feature_importance
@@ -519,8 +530,11 @@ def run_supervised_ladder(
                 fold_schedule_id=schedule_id,
                 label_artifact_id=label_id,
                 manual_feature_overrides=manual_feature_overrides,
+                fitted_fold_sink=fitted_models,
+                prediction_input_sink=prediction_inputs,
             )
             predictions = bundle_run.predictions
+            resolved_protocol = bundle_run.protocol
             fold_reports = bundle_run.fold_reports
             resolved_hash = bundle_run.protocol.resolved_hash
             importance = bundle_run.feature_importance
@@ -531,8 +545,11 @@ def run_supervised_ladder(
                 folds,
                 tier=tier,
                 manual_feature_overrides=manual_feature_overrides,
+                fitted_fold_sink=fitted_models,
+                prediction_input_sink=prediction_inputs,
             )
             predictions = context_run.predictions
+            resolved_protocol = context_run.protocol
             fold_reports = context_run.fold_reports
             resolved_hash = context_run.protocol.resolved_hash
             importance = context_run.feature_importance
@@ -564,6 +581,9 @@ def run_supervised_ladder(
                 predictions=predictions,
                 fold_reports=fold_reports,
                 feature_importance=importance,
+                fitted_models=fitted_models,
+                resolved_protocol=resolved_protocol,
+                prediction_inputs=prediction_inputs,
                 prediction_report=binary_prediction_report(
                     predictions
                     if not predictions.empty
@@ -605,7 +625,7 @@ def run_supervised_ladder(
 
     # adversarial m-9: the ladder id binds the LABELS and FOLDS it ran on,
     # not just the view/protocols — two labelings can never share one id
-    labels_hash = label_content_hash(labeled_candidates)
+    labels_hash = label_artifact_content_id(None, labeled_candidates)
     # R6.1: the ONE legacy row-population hash (``fold_set_artifact.fold_set_id``)
     fold_set_hash = _fold_set_hash(folds)
     feature_source: dict[str, Any] = (
@@ -632,8 +652,32 @@ def run_supervised_ladder(
             "label_artifact_id": label_id,
         }
     )
+    # New identities bind the complete consumed label/economic population,
+    # observed cohort values and explicit calendar, including the frozen tier
+    # path. Historical stored summaries remain readable without these fields.
+    from .research_evidence import frame_content_hash  # noqa: PLC0415
+
+    research_identity = {
+        "identity_version": "supervised_research_inputs_v2",
+        "label_artifact_id": label_id,
+        "label_values_hash": label_artifact_content_id(None, labeled_candidates),
+        "cohort_values_hash": frame_content_hash(view.frame),
+        "fold_schedule_id": schedule_id,
+        "fold_set_hash": fold_set_hash,
+        "fold_feature_values": (
+            {
+                str(fold.fold_index): frame_content_hash(
+                    fold_local_features.frame_for_fold(fold.fold_index)
+                )
+                for fold in folds.folds
+            }
+            if fold_local_features is not None
+            else {}
+        ),
+    }
     ladder_id = canonical_contract_sha256(
         {
+            "research_identity": research_identity,
             "view_id": view.view_id,
             "feature_source": feature_source,
             "calibration_policy_id": calibration_policy_id,
@@ -654,4 +698,5 @@ def run_supervised_ladder(
         paired_deltas=paired_deltas,
         feature_source=feature_source,
         label_identity_source=resolved_label_source,
+        research_identity=research_identity,
     )

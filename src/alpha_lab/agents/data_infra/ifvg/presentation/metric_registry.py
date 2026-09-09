@@ -277,7 +277,9 @@ _SPECS: tuple[MetricSpec, ...] = (
     _spec(
         "time_under_water_days",
         "Time under water",
-        "The longest span of trading days spent below the prior cumulative-net-R peak.",
+        "The largest count of distinct days with executions in one stretch below the "
+        "cumulative-net-R peak, including the initial zero peak. Days without executions "
+        "are not counted.",
         _STRATEGY,
         "days",
         reference=_gate_ref("max_time_under_water_days", _GATE),
@@ -288,7 +290,9 @@ _SPECS: tuple[MetricSpec, ...] = (
     _spec(
         "time_block_sign_consistency",
         "Time-block sign consistency",
-        "The share of time blocks whose net R has the same sign as the overall net R.",
+        "The larger share of positive or negative net-R blocks across three chronological "
+        "groups of days with executions. Zero-PnL blocks count in the denominator; this "
+        "measures majority-sign agreement, not profitability.",
         _STRATEGY,
         "fraction",
         reference=_gate_ref("min_time_block_sign_consistency", _GATE),

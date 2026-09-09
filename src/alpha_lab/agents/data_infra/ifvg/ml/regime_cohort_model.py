@@ -53,7 +53,7 @@ from ..search.store import (
 )
 from .comparison_rows import (
     COMPARISON_ROW_IDENTITY_KEY,
-    label_content_hash,
+    label_artifact_content_id,
     with_comparison_row_ids,
 )
 from .fold_set_artifact import FoldSetArtifactEnvelope
@@ -446,7 +446,7 @@ def run_regime_cohort_model_study(
         resolved_feature_bundle_id=bundle_env.resolved_feature_bundle_id,
         view_id=view.view_id,
         label_artifact_id=label_artifact_id,
-        label_content_hash=label_content_hash(labeled_candidates),
+        label_content_hash=label_artifact_content_id(None, labeled_candidates),
         fold_schedule_id=schedule_id,
         candidate_fold_set_id=candidate_fold_set.fold_set_artifact_id,
         fold_set_hash=pooled_hash,

@@ -1,6 +1,6 @@
 # Architecture — Quant-Lab
 
-Updated: 2026-06-04.
+Updated: 2026-09-08.
 
 Quant-Lab is the research/training workbench for NQ/ES futures ML models. Its current production-aligned path is the **dashboard-utility** workflow, which is now single-sourced to **Strategy-Core v3** for the decision semantics that must match runtime execution.
 
@@ -23,6 +23,186 @@ Older historical reports and scaffold prompt documents were pruned from the work
 ---
 
 ## Workflows
+
+### Application workspaces and IFVG research presentation
+
+`scripts/dashboard.py` uses Streamlit `st.navigation` / `st.Page` for **IFVG Lab**
+(default), **ML Training**, **Dashboard Compatibility**, and **Strategy Analysis**.
+Only the selected page executes. Strategy Analysis owns the former shared pipeline
+sidebar; those controls do not appear around IFVG or the other workspaces.
+
+IFVG opens `scripts/ifvg_workspace.py`: **My studies** combines saved drafts,
+search and pipeline progress, results, and history. **Trade review** is its other
+destination. The `ifvg_research_*` modules provide guided configuration, concise
+results, context-model research, progress/recovery, and chart-centered review.
+Presentation view models in `ifvg/presentation/workspace.py` join records by their
+existing exact identities. Names are display annotations; they never replace an
+identity in a scientific join. Corrupt progress stays unavailable and cannot hide
+other saved studies. Verification scope derives from the frozen charter; ambiguous
+legacy records remain explicitly unresolved.
+
+`QUANT_LAB_DEVELOPER_MODE=1` must be set before startup to register the **Developer**
+page. The flag is captured once by `presentation/workspace_mode.py`; there is no
+UI or query-parameter override. Technical rendering is additionally scoped to that
+page, so normal IFVG screens remain concise even in a Developer-enabled process.
+The retained UI-1–UI-3 diagnostic screens, Verification Center, raw data reports,
+identities, commands, and audit help live there. This is a presentation boundary,
+not an execution authorization. Existing backend authorization checks still apply.
+
+Page selection does not launch workers. Only explicit Run/Resume handlers use the
+existing runner seams, and cancellation uses their safe-boundary requests. Running
+study progress refreshes every five seconds while that detail view is selected;
+completion is read from persisted state. Feature/model research has its own exact
+source preflight, authorization and worker path described below; unresolved data,
+authority or stage dependencies block that path before launch.
+
+Replay returns a `ReplaySelection` distinguishing candidate, setup, empty, and
+unavailable evidence. The parent never opens a second inspector or substitutes a
+candidate for an unresolved setup/link. Chart presentation copies remove technical
+hover metadata while retaining prices and point-in-time gating. Research table/CSV
+alternatives omit identity columns. Reviewer judgment is saved only by **Save Review**.
+Filtered-out selections receive an explicit valid widget value so the browser label
+and provider evidence agree. Save Review updates one status placeholder immediately.
+Replay charts retain a readable light theme independent of the app's dark theme.
+
+The original presentation redesign preserved scientific schemas and execution
+policies. The separate research workflow below adds immutable research artifacts
+and a scoped authorization. This section supersedes older IFVG tab and disclosure
+descriptions below. Earlier desktop browser flows were reviewed;
+mobile acceptance was removed by the user. Live execution lifecycle acceptance
+remains limited by existing prerequisites. See the
+[desktop flow report](reports/ifvg_browser_acceptance/20260907/DESKTOP_FLOW_REPORT.md).
+
+### Exact-source IFVG feature and model research (2026-09-08)
+
+**New study → More study types → Feature and model study** opens
+`scripts/ifvg_research_pipeline.py`. It selects exact saved `core_replay_id`
+children, displays each child's inherited target R and round-trip cost, and freezes
+an evaluation window within the common saved evaluation dates. Each subject has
+its own pipeline context and result cells. The default population is all
+candidates in that window after excluding stamped warmup rows; executed trades
+remain a separate scoped table. Children with different targets or costs are not
+pooled into one model population.
+
+`search/research_runs.py` exposes metadata listing, preflight, freeze, launch and
+group readers. `research_subject.py` binds the exact saved replay, v2 dataset,
+effective configuration sections and their recorded hashes. A named profile or a
+display label does not replace the generated child's saved configuration. The
+preflight reports source/context reuse or preparation, input dependencies,
+supported model work, exact subjects and planned stages. Viewing the form or
+preflight does not capture data or fit models.
+
+An explicit reviewer statement authorizes a new immutable plan. The
+`research_approvals` record binds that plan to the store namespace and current
+authority witness; historical strategy-search approvals grant no research scope.
+`research_groups` and `research_subjects` retain the frozen group and subjects.
+`scripts/ifvg_research_job.py` runs the authorized cells sequentially through the
+registered `pipeline_real_research_v1` runner. Group status lives separately under
+the pipeline state root at `groups/<group_id>/group_state.json`. Resume rechecks
+the saved authority and dependencies; stop requests use safe stage boundaries.
+The research preset includes S00–S10, S14 and S15. It grants no model-gated replay,
+prop simulation, live execution or feature promotion.
+
+`research_data.py` prepares or verifies immutable `research_context_companions`
+for the exact effective configuration, including forward bars and neutrality
+evidence. Existing v2/v3 artifacts remain unchanged. Saved forward evidence drives
+configured-R research labels with inherited transaction costs; historical version
+1 captured labels retain their own policy. Each selected subject's outcome horizon
+ends at 17:00 America/New_York on its final evaluation date, capped by the protected
+data boundary; preflight exposes that exact UTC cutoff. `research_cohorts`, `research_labels`,
+scope-bearing `executed_trade_tables`, fold schedules and fold sets record the
+candidate population, excluded warmup/window rows, labels and logical calendar.
+Executed trades join the exact included candidate IDs and must resolve before
+the study cutoff; the Core trade's original resolution-day field is preserved.
+Cutoff-censored and unresolved execution IDs remain explicit cohort exclusions.
+Real research purging starts at the first logical test day's boundary (18:00 ET
+on the preceding civil day), including an empty first test day. Source preflight
+also verifies the loaded Strategy-Core package against the intended checkout.
+
+Research chart artifacts and their discovery catalog live under the selected
+search store at `research_replay_charts/` and `research_replay_chart_catalog.json`.
+They bind both v2/v3 identities and manifest hashes, the verified forward source,
+research subject/calendar and outcome cutoff. Candidate ranges exclude warmup and
+out-of-window candidates and carry geometry spans; configured outcome annotations
+come separately from verified `research_labels`. The context-bar panel filters
+rows, validity evidence and partial-bar counts to the same research calendar.
+
+Supported supervised bases are B0 core, B1 core plus structure and B4 core plus
+structure/liquidity. Controlled MBP-1 comparisons use B0→B2 or B1→B3 with identical
+candidate/label/fold evidence. `research_mbp1.py` supplies the local source compiler
+and evidence adapter. Coverage remains unknown where source completeness is not
+evidenced; the feature lane remains offline research. The real MBP reader holds
+one day at a time and verifies its physical hashes on every reload, rather than
+retaining all study-day event frames. The default regime request
+uses completed numeric 5-minute bars, KMeans K=3 and descriptive reporting, fitted
+within each training fold. Candidate entry-decision observations are also
+available, using numeric members of the selected bundle and the unchanged
+registered 150-observation training-fold floor. A linked feature-only follow-up requires the exact
+saved regime decision, owner authorization and assessment. It requests B0 as the
+supervised base; the existing private activation builds the B7 challenger. The
+precursor's grain, stage, numeric inputs, clipping, bootstrap budget, algorithm
+and cluster count remain frozen in the follow-up. Combined
+MBP/regime and cohort-model variants are outside this preset.
+
+The MBP form can preview and explicitly import a reviewed completeness receipt.
+The compiler verifies its exact subject/window, physical partition hash, source
+declaration and owner review before saving it; preview saves nothing. A receipt
+is evidence about coverage, not permission to launch a study. In **Market regimes**,
+**Review regime feature eligibility** reads the selected saved assessment,
+protocol inputs, requested/applied bootstrap refits, sample floors and gates.
+Only a ready review exposes **Approve regime feature use**. That separate owner
+decision binds the reviewed evidence and creates the linked feature-only request;
+the follow-up still requires its own research plan authorization before fitting.
+Insufficient regime evidence cannot be approved through this control.
+
+`ml/research_evidence.py` commits `research_model_inputs` before fitting, including
+candidate features, labels, fold assignments and definitions. Completed
+`research_model_runs` retain every model arm/rung's OOS predictions, models,
+preprocessing and prediction inputs. Reload verifies file membership and hashes
+before model loading and reproduces recorded probabilities without fitting.
+The real-research opt-in `ml/regime_execution_cache.py` persists completed S09a
+executions in `research_regime_executions`, reusing their KMeans fits, bootstrap
+assessment and OOS assignment evidence. This is whole-execution reuse: an
+incomplete S09a attempt still recomputes on retry.
+S15 checks the durable research evidence. Missing/zero-fold evidence remains
+insufficient; a successful artifact check does not establish predictive skill.
+
+The group view shows status and reasons per subject/cell, including incomplete
+runs. Execution status is separate from evaluable/insufficient research evidence;
+the latter uses the verified S09 report when present and labels operational-only
+advisories. Evaluable evidence does not imply positive model lift.
+While S02 captures context, the selected cell refreshes its completed/total day
+counter and current trading date every five seconds. It distinguishes verified
+Core/context reuse from a new context replay.
+**Trades and cohorts** exposes verified labels, scoped executions and exact
+saved execution chart links. **Research chart** opens the selected cell's exact
+custom-store chart with configured-target label overlays. **Artifacts** exposes persisted model input tables
+even after a fit fails. **Order flow** and **Market regimes** reuse the existing
+coverage, comparison and regime panels with references from the selected cell.
+Descriptive regime reports retain all scoped executed trades and record their
+strategy-selection gate flags, including failed gates. The original frontier
+promotion requirements, including the 30-trade floor, remain unchanged.
+This implementation and its focused tests do not establish acceptance of a real
+research run; no study launch is implied by these documentation updates.
+
+### IFVG search evaluation correction (2026-09-08)
+
+Search strategy metrics exclude rows stamped `is_warmup` before all statistics,
+bootstrap intervals and gates. Raw replay and FSM audit tables retain the full
+chain. Drawdown includes the initial zero-equity peak. New costed evaluations bind
+`metrics_policy_id=post_warmup_zero_peak_v2` as well as replay and cost policy;
+legacy evaluations remain readable but are not reused as corrected evidence.
+`scripts/audit_ifvg_search.py` verifies saved evidence and can publish new scoped
+reports, retaining originals and backing up the operational state before advancing
+its frontier pointer. This is an explicit re-evaluation, never a page-load action.
+
+Results show uncertainty even when exclusion of zero is not a required gate, and
+show every failed criterion. A saved search child opens directly in Trade review
+using its exact core replay, v2 manifest and original input-bar hashes. The existing
+append-only review ledger records those references without inventing a v3 pair or
+a separately prepared chart identity. Original generic reports describe the full
+replay; corrected costed-evaluation reports describe post-warmup research.
+Strategy-Core execution semantics are unchanged.
 
 ### 1. Extrema Rebound/Crossing mode — research only
 
@@ -84,6 +264,74 @@ Session-scope experiments are explicit research config. The default is to train/
 ### 2b. Prop-firm evaluation walker (`alpha_lab.propsim`) — model-selection consumer
 
 Purpose: pass-probability for prop-firm evaluations (TopStep 50K is preset one) from per-trade equity paths — the PROP-SIM window's barrier-options walker. Pure simulation core (no Strategy-Core dependency): `models.py` (TradePath/Ruleset/WalkResult), `presets.py` (registry; presets are data), `engine.py` (the EOD-ratcheted trailing floor with real-time breach, soft/hard daily-loss limit, consistency rule; breach modes `realized_only` and `unrealized_adverse_first` are both always computed), `bootstrap.py` (seeded day-level block bootstrap Monte Carlo), `loaders.py` (Trade-Lab executions+journal join / journal-outcomes evidence mode / bundle `oos_predictions.parquet`), `report.py` + CLI `python -m alpha_lab.propsim`. OOS parquets predating PROP-SIM P1 (no `max_mfe_pts`/`max_mae_pts`) degrade the unrealized mode to realized-only with a stated reason (D-038).
+
+### 2c. IFVG v2 correctness replay — executable simulation, not ML
+
+Purpose: reproduce the source-defined fresh-continuation IFVG profile through
+one sequential Strategy-Core reducer and preserve the distinction between a
+counterfactual trigger and an execution.
+
+```text
+allowlisted local market data
+  -> logical-close 1m/3m/5m/10m/15m/30m/1H/4H bars
+  -> Strategy-Core IFVG v2 reducer
+  -> setup_lifecycle_event
+  -> entry_candidate
+  -> eligible_decision
+  -> executed_trade
+  -> candidate_label (separate counterfactual research stream)
+  -> immutable content-addressed exploration dataset
+```
+
+The active offline profile is
+`ifvg_v2_doc_default_fresh_static_1r`. It is long-enabled, short-disabled,
+fresh-continuation-only, static 1R, and uses
+`next_1m_bar_stop_first_v1`. Pure-retest and ICT-clean profiles are declared
+but non-runnable until their unresolved semantics are ratified. The legacy v1
+wide stream remains candidate-only and cannot enter v2 performance functions.
+
+Correctness boundaries:
+
+- The exact January exploration allowlist is authorized before any path,
+  metadata, or file access. Exposed validation (`2026-05-01..2026-06-10`),
+  June 11, and sealed dates beginning June 12 are outside the repair lane.
+- A candidate never carries executable P&L. Only validated, resolved
+  `executed_trade` rows enter win rate, expectancy, PF, drawdown, equity, or
+  realized-P&L reports. Dataset-exhausted open trades remain unresolved.
+- Geometry is immutable and keyed by candidate/decision/trade identity; v2
+  code has no `setup_id` keep-last fallback.
+- Execution caps are reducer controls. `max_candidates_per_day` is an
+  evaluator-only view limit and changes only the evaluation hash.
+- The named HTF anchor is `trading_day_18et_elapsed_v1`; Q-40 remains open,
+  so this repair tests and stamps the as-built anchor without changing it.
+- Search, threshold sweeps, CatBoost, feature selection, exposed validation,
+  sealed evaluation, and live Trade-Lab routing are not part of this replay.
+
+Entrypoint:
+
+```text
+python scripts/run_ifvg_repair_verification.py
+```
+
+Outputs are immutable under
+`data/ifvg_datasets/v2/<dataset-id>/exploration/`. The dataset identity includes
+the record/capture/dataset/report schema versions, three repository
+HEAD/status/source-tree hashes, authoritative strategy blob, resolved section
+and evaluation hashes, exact allowlist, and permitted source-file hashes.
+
+### 2d. IFVG context v3 — measurement-only companion capture
+
+The separate context path runs the same Strategy-Core IFVG replay once, proves
+the v2 emissions against the accepted immutable v2 dataset, and normalizes only
+new structure, displacement, equal-level, validity, and exact-link records. It
+does not widen or duplicate v2 tables and does not call training or evaluation.
+
+The fixed January 2026 allowlist is authorized before any filesystem operation;
+the first ten dates through January 12 are warmup and January 13-30 are evidence.
+Validity, coverage, reconciliation, capacity, identity, and performance are the
+only reports. See
+[`docs/IFVG_CONTEXT_CAPTURE_V3.md`](docs/IFVG_CONTEXT_CAPTURE_V3.md) for table,
+identity, immutable-save, and future M0-M3 handoff contracts.
 
 ### 3. Retained legacy compatibility/export path
 
@@ -151,10 +399,21 @@ Generated/local outputs, not source-of-truth docs/code:
 
 - `models/`
 - `catboost_info/`
+- `data/ifvg_datasets/v2/`
+- IFVG v2 per-day bar/level caches under allowlisted `data/databento/` dates
 - `*.cbm`
 - cached parquet/csv files under `data/`
 - scratch chart HTML files
 - local imported Databento data
+
+`.gitignore` also covers all local IFVG dataset/experiment stores, saved profiles,
+job state, drafts, visual-review ledgers, search outputs and generated report/test
+workspaces. Keep prior studies, approvals and audit artifacts on disk; ignored
+does not mean disposable or backed up. Reusable fixtures live under `tests/`.
+Curated archives and governing plan documents remain versioned. The retained
+plan/evidence package disables Git line-ending conversion to preserve its
+checksum-bound original bytes; generated bundles, transcripts and screenshots
+remain local. Local agent permission settings are excluded from version control.
 
 The roadmap item "identify canonical data/model bundle location and verify file presence/checksums" is deliberately deferred until AlgoChef's local data zip is available.
 
@@ -163,6 +422,8 @@ The roadmap item "identify canonical data/model bundle location and verify file 
 ## Verification expectations
 
 - For code changes, run focused tests and update relevant docs in the same change.
+- For IFVG v2, run Strategy-Core plus Quant-Lab IFVG contract/reconciliation
+  tests and require a zero-violation invariant audit before saving a dataset.
 - For dashboard-utility semantics, run Strategy-Core tests and Quant-Lab contract/no-drift tests before claiming v3 alignment.
 - For any model/backtest claim, report date range, data source, fees/slippage assumptions, trade count, return/expectancy, drawdown, and limitations.
 - Do not claim Trade-Lab runtime readiness until Trade-Lab is repointed to Strategy-Core v3 and end-to-end parity is proven.
@@ -441,10 +702,17 @@ ladder; capability-scoped operator availability per V3 P1-5):
   names the real baseline-verification search/pipeline executors — their
   factories fail closed at CONSTRUCTION without the owner's persisted
   `VerificationRunEnvelope` (registration unblocks the launch surface,
-  never the data) — and full-development charters keep NO registered
-  entry (the operator full run stays a separate authorized action). The
+  never the data). Exact owner-approved strategy-only development searches
+  now dispatch through `search_strategy_development_v1`
+  (`search/strategy_approval.py`, `search/strategy_executor.py`); other
+  full-development workflows remain separate authorized actions. Saving
+  approval does not execute work. The
   detached pipeline shim mirrors the search shim (registry-gated worker,
   atomic status, safe-boundary cancel, `publish-gates`/`activate` CLI).
+  The strategy executor uses existing trusted day artifacts, independently
+  resolves each approved configuration and retains the fixed warmup,
+  sequential replay, neutrality gates and immutable publications. See
+  `docs/IFVG_STRATEGY_SEARCH_APPROVAL.md` for the exact authorization boundary.
 - **Full Pipeline Run surface** (`scripts/ifvg_pipeline_tab.py`, session
   namespace `ifvg_pipeline_v1_*`): the complete §30 workflow — Configure
   (capability-scoped stage plans; planned/blocked feature + model entries

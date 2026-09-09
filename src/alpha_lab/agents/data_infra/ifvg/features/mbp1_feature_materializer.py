@@ -193,6 +193,7 @@ def _verify_events_against_source(
                 "the artifact's evidence (refused; provenance is verified, "
                 "never asserted)"
             )
+        del frame
     withheld = sorted((anchor_days & set(coverage_by_day)) - set(events_by_day))
     if withheld:
         raise ValueError(
@@ -404,7 +405,9 @@ def materialize_mbp1_features(
     )
     feature_rows: list[dict] = []
     evidence_rows: list[dict] = []
-    for _, anchor_row in anchors.sort_values("candidate_id").iterrows():
+    # Keep lazy source adapters on one day; restore historical candidate order
+    # below before serializing either output artifact.
+    for _, anchor_row in anchors.sort_values(["trading_day", "candidate_id"]).iterrows():
         candidate_id = str(anchor_row["candidate_id"])
         day = str(anchor_row["trading_day"])
         row: dict = {
@@ -527,17 +530,23 @@ def materialize_mbp1_features(
                 }
             )
         feature_rows.append(row)
+        day_events = None
+        admitted = None
 
     ordered_columns = [field.name for field in MBP1_FEATURE_TABLE_SCHEMA]
     feature_frame = pd.DataFrame(feature_rows)
     if feature_frame.empty:
         feature_frame = pd.DataFrame(columns=ordered_columns)
-    feature_frame = feature_frame.loc[:, ordered_columns]
+    feature_frame = feature_frame.loc[:, ordered_columns].sort_values(
+        "candidate_id", kind="stable"
+    ).reset_index(drop=True)
     evidence_columns = [field.name for field in MBP1_STAGE_WINDOW_EVIDENCE_SCHEMA]
     evidence_frame = pd.DataFrame(evidence_rows)
     if evidence_frame.empty:
         evidence_frame = pd.DataFrame(columns=evidence_columns)
-    evidence_frame = evidence_frame.loc[:, evidence_columns]
+    evidence_frame = evidence_frame.loc[:, evidence_columns].sort_values(
+        "candidate_id", kind="stable"
+    ).reset_index(drop=True)
 
     payload = Mbp1FeatureArtifactPayload(
         mbp1_source_artifact_id=source.mbp1_source_artifact_id,

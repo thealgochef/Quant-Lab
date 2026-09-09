@@ -103,6 +103,7 @@ from alpha_lab.agents.data_infra.ifvg.presentation.run_purpose import (
     resolve_draft_purpose,
     resolve_purpose,
 )
+from alpha_lab.agents.data_infra.ifvg.presentation.workspace_mode import technical_details_enabled
 from alpha_lab.agents.data_infra.ifvg.profiles import resolve_profile_config
 from alpha_lab.agents.data_infra.ifvg.search.authorization import (
     SyntheticAuthorizationMarker,
@@ -604,10 +605,26 @@ def _resolve_for_draft(draft: StudyDraft, roots: Mapping[str, Any]) -> DraftReso
                     allowlist=tuple(validation.get("real_dates") or ()) or None,
                 )
             else:
+                from alpha_lab.agents.data_infra.ifvg.search.strategy_approval import (
+                    charter_intent_hash,
+                )
+
+                preview_resolution = DraftResolution(
+                    resolution,
+                    resolve_purpose(purpose, evidence_class=evidence, namespace=namespace),
+                    purpose_roots, None, requirement_set, flow=flow,
+                )
+                try:
+                    intent_hash = charter_intent_hash(
+                        _charter_fields(draft, purpose_roots, preview_resolution)
+                    )
+                except (ValueError, KeyError, TypeError):
+                    intent_hash = None  # incomplete drafts cannot match a saved approval
                 readiness = owner_authorization_readiness(
                     store_root,
                     requirement_set,
                     expected_class=PURPOSE_NAMESPACE_CLASS[purpose],
+                    charter_intent_sha256=intent_hash,
                 )
         except Exception as error:  # noqa: BLE001 — typed, sanitized at render
             readiness = AuthorizationReadiness(
@@ -1975,11 +1992,11 @@ def _strategy_core_root() -> Path:
     return _REPO_ROOT.parent / "strategy-core"
 
 
-def _assemble_charter(
+def _charter_fields(
     draft: StudyDraft,
     roots: Mapping[str, Any],
     resolution: DraftResolution | None = None,
-) -> SearchCharterPayload:
+) -> dict:
     """Assemble the charter for the draft's RESOLVED purpose: the objective
     is never rewritten, the date policy follows the backend contract for the
     run scope, and the authorization is the class the ACTUAL path requires
@@ -2066,49 +2083,6 @@ def _assemble_charter(
             ).items()
         )
     )
-    # Authorization by the ACTUAL computation path (plan F-01 / F-13): the
-    # typed marker for a fully synthetic fixture only; the real ≤5-day slice
-    # carries the bundle assembled from the persisted, verified
-    # VerificationAuthorizationRef; research scopes carry the
-    # computation-path-scoped owner bundle — each bound to THIS store's
-    # verified namespace and current supersession head, or the freeze refuses.
-    store_root = Path(resolution.roots["store_root"])
-    owner_authorization: Any
-    if resolved.authorization_class == "synthetic_marker":
-        owner_authorization = SyntheticAuthorizationMarker()
-    elif resolved.authorization_class == "verification_authorization_ref":
-        bundle = (
-            verification_owner_bundle(
-                store_root, resolution.readiness, resolution.requirement_set
-            )
-            if resolution.readiness is not None and resolution.requirement_set is not None
-            else None
-        )
-        if bundle is None:
-            raise CharterValidationError(
-                "the real verification slice requires a ready "
-                "VerificationAuthorizationRef (readiness: "
-                f"{resolved.authorization_readiness}): "
-                f"{resolved.authorization_detail or 'no ready evidence'}"
-            )
-        owner_authorization = bundle
-    else:
-        bundle = (
-            owner_authorization_bundle_from_store(
-                store_root,
-                resolution.requirement_set,
-                expected_class=PURPOSE_NAMESPACE_CLASS[resolved.purpose],
-            )
-            if resolution.requirement_set is not None
-            else None
-        )
-        if bundle is None:
-            raise CharterValidationError(
-                "owner authorization is not ready for this computation path "
-                f"(readiness: {resolved.authorization_readiness}): "
-                f"{resolved.authorization_detail or 'no ready evidence'}"
-            )
-        owner_authorization = bundle
     measured_only = tuple(
         key
         for key, spec in SEARCH_AXIS_REGISTRY_V1.items()
@@ -2120,7 +2094,11 @@ def _assemble_charter(
         if spec.classification is AxisClassification.BLOCKED
     )
     search_mode = _search_mode_for(draft, bool(axes))
-    return SearchCharterPayload(
+    return dict(
+        contract_name="ifvg_prop_robust_config_search_v1",
+        schema_version=1,
+        search_algorithm="deterministic_exhaustive_v1",
+        declared_contrast_ids=(),
         search_mode=search_mode,
         baseline_profile_name=str(baseline.get("baseline_profile_name")),
         baseline_section_config_hash=str(
@@ -2161,8 +2139,60 @@ def _assemble_charter(
         strategy_core_commit=_commit_of(_strategy_core_root()),
         quant_lab_commit=_commit_of(_REPO_ROOT),
         source_artifact_ids=(),
-        owner_authorization=owner_authorization,
     )
+
+
+def _assemble_charter(draft, roots, resolution=None) -> SearchCharterPayload:
+    from alpha_lab.agents.data_infra.ifvg.search.strategy_approval import charter_intent_hash
+
+    resolution = resolution or _resolve_for_draft(draft, roots)
+    resolved = resolution.resolved
+    fields = _charter_fields(draft, roots, resolution)
+    # Authorization by the ACTUAL computation path (plan F-01 / F-13): the
+    # typed marker for a fully synthetic fixture only; the real ≤5-day slice
+    # carries the bundle assembled from the persisted, verified
+    # VerificationAuthorizationRef; research scopes carry the
+    # computation-path-scoped owner bundle — each bound to THIS store's
+    # verified namespace and current supersession head, or the freeze refuses.
+    store_root = Path(resolution.roots["store_root"])
+    owner_authorization: Any
+    if resolved.authorization_class == "synthetic_marker":
+        owner_authorization = SyntheticAuthorizationMarker()
+    elif resolved.authorization_class == "verification_authorization_ref":
+        bundle = (
+            verification_owner_bundle(
+                store_root, resolution.readiness, resolution.requirement_set
+            )
+            if resolution.readiness is not None and resolution.requirement_set is not None
+            else None
+        )
+        if bundle is None:
+            raise CharterValidationError(
+                "the real verification slice requires a ready "
+                "VerificationAuthorizationRef (readiness: "
+                f"{resolved.authorization_readiness}): "
+                f"{resolved.authorization_detail or 'no ready evidence'}"
+            )
+        owner_authorization = bundle
+    else:
+        bundle = (
+            owner_authorization_bundle_from_store(
+                store_root,
+                resolution.requirement_set,
+                expected_class=PURPOSE_NAMESPACE_CLASS[resolved.purpose],
+                charter_intent_sha256=charter_intent_hash(fields),
+            )
+            if resolution.requirement_set is not None
+            else None
+        )
+        if bundle is None:
+            raise CharterValidationError(
+                "owner authorization is not ready for this computation path "
+                f"(readiness: {resolved.authorization_readiness}): "
+                f"{resolved.authorization_detail or 'no ready evidence'}"
+            )
+        owner_authorization = bundle
+    return SearchCharterPayload(**fields, owner_authorization=owner_authorization)
 
 
 def _wait_for_search_state(state_root: Path, search_id: str) -> dict[str, Any] | None:
@@ -2204,6 +2234,15 @@ def _annotate_purpose(store_root: Path, search_id: str, resolved: ResolvedPurpos
     )
 
 
+def launch_error(error):
+    return (
+        sanitize_error(error)
+        if technical_details_enabled()
+        else "Required study evidence or authorization could not be verified. "
+        "Restore readiness and try again."
+    )
+
+
 def _freeze_and_launch(st_module, draft: StudyDraft, roots: Mapping[str, Any]) -> None:
     """The explicit launch-button handler — the only place work starts."""
 
@@ -2214,7 +2253,7 @@ def _freeze_and_launch(st_module, draft: StudyDraft, roots: Mapping[str, Any]) -
     try:
         resolution = _resolve_for_draft(draft, roots)
     except Exception as error:  # noqa: BLE001 — sanitized surface only
-        st_module.error(f"Purpose could not be resolved: {sanitize_error(error)}")
+        st_module.error(f"Purpose could not be resolved: {launch_error(error)}")
         return
     resolved = resolution.resolved
     if resolved is None:
@@ -2237,6 +2276,9 @@ def _freeze_and_launch(st_module, draft: StudyDraft, roots: Mapping[str, Any]) -
         st_module.error(
             "Charter cannot freeze (fail-closed): "
             + "; ".join(f"{rule.rule_id} — {rule.detail}" for rule in report.failures)
+            if technical_details_enabled()
+            else "The saved settings no longer meet this study's requirements. "
+            "Review the configuration before running."
         )
         return
     try:
@@ -2259,16 +2301,16 @@ def _freeze_and_launch(st_module, draft: StudyDraft, roots: Mapping[str, Any]) -
         envelope = SearchCharterEnvelope.from_payload(payload)
         save_charter(store_root, envelope)
     except CharterValidationError as error:
-        st_module.error(f"Charter cannot freeze (fail-closed): {sanitize_error(error)}")
+        st_module.error(f"Charter cannot freeze (fail-closed): {launch_error(error)}")
         return
     except Exception as error:  # noqa: BLE001 — sanitized surface only
-        st_module.error(f"Freeze failed: {sanitize_error(error)}")
+        st_module.error(f"Freeze failed: {launch_error(error)}")
         return
     mark_frozen(draft_root, draft, search_id=envelope.search_id)
     try:
         _annotate_purpose(store_root, envelope.search_id, resolved)
     except Exception as error:  # noqa: BLE001 — annotation is non-semantic
-        st_module.caption(f"purpose annotation not recorded: {sanitize_error(error)}")
+        st_module.caption(f"purpose annotation not recorded: {launch_error(error)}")
     identity_block(st_module, "Frozen search charter id", envelope.search_id)
     entry_key = runner_entry_key_for_charter(envelope)
     if entry_key is None:
@@ -2299,7 +2341,7 @@ def _freeze_and_launch(st_module, draft: StudyDraft, roots: Mapping[str, Any]) -
         render_empty_state(
             st_module,
             "runner_unavailable",
-            detail=f"runner-entry key {entry_key!r}: {sanitize_error(error)}",
+            detail=f"runner-entry key {entry_key!r}: {launch_error(error)}",
         )
         cli_escape_hatch(
             st_module,
@@ -2326,7 +2368,7 @@ def _freeze_and_launch(st_module, draft: StudyDraft, roots: Mapping[str, Any]) -
     try:
         pid = _spawn_search_job(command)
     except Exception as error:  # noqa: BLE001 — sanitized surface only
-        st_module.error(f"Detached launch failed: {sanitize_error(error)}")
+        st_module.error(f"Detached launch failed: {launch_error(error)}")
         cli_escape_hatch(
             st_module,
             " ".join(
@@ -2361,10 +2403,13 @@ def _freeze_and_launch(st_module, draft: StudyDraft, roots: Mapping[str, Any]) -
             reason="check whether the worker persisted state",
         )
         return
-    st_module.success(
-        f"Search launched detached (pid {pid}); state persisted "
-        f"(phase {state.get('phase', 'unknown')}). Routing to Active Runs."
-    )
+    if technical_details_enabled():
+        st_module.success(
+            f"Search launched detached (pid {pid}); state persisted "
+            f"(phase {state.get('phase', 'unknown')}). Routing to Active Runs."
+        )
+    else:
+        st_module.success("The study has saved its startup status. Opening progress.")
     request_route(st_module, "active_runs")
     st_module.rerun()
 

@@ -33,6 +33,7 @@ from alpha_lab.agents.data_infra.ifvg.presentation.status_vocabulary import (
     UiStatus,
     status_chip,
 )
+from alpha_lab.agents.data_infra.ifvg.presentation.workspace_mode import technical_details_enabled
 from alpha_lab.agents.data_infra.ifvg.study_status import (
     DEV_BADGE_TEXT,
     EMPTY_STATE_PRESENTATIONS,
@@ -191,6 +192,8 @@ def disclosure_level(st_module, *, key: str = f"{STATE_PREFIX}disclosure") -> st
 def identity_block(st_module, label: str, value: str) -> None:
     """A copyable full technical identity (FUX §5.5). Never truncated."""
 
+    if not technical_details_enabled():
+        return
     st_module.caption(label)
     st_module.code(value or "—", language=None)
 
@@ -248,6 +251,8 @@ def glossary_expander(st_module, *, expanded: bool = False) -> None:
 def cli_escape_hatch(st_module, command: str, *, reason: str) -> None:
     """Show the exact project-relative CLI command; never executes (FUX §16.7)."""
 
+    if not technical_details_enabled():
+        return
     st_module.caption(f"CLI fallback — {reason}. Run from the repository root:")
     st_module.code(command, language="text")
 
@@ -257,6 +262,40 @@ def render_empty_state(
 ) -> None:
     """One §31 intentional empty/blocked/failure state, fully sanitized."""
 
+    if not technical_details_enabled():
+        st_module.warning(
+            {
+                "purpose_unresolved": (
+                    "This study's research scope is unresolved. Confirm its intended scope "
+                    "before continuing."
+                ),
+                "authorization_not_ready": (
+                    "Required research authorization is not ready. Save the study and return "
+                    "when authorization is available."
+                ),
+                "store_namespace_unverified": (
+                    "Research storage could not be verified. Running is unavailable until "
+                    "the storage evidence is restored."
+                ),
+                "runner_unavailable": (
+                    "The required research runner is unavailable. Your saved study can be "
+                    "resumed when that dependency is ready."
+                ),
+                "runner_executor_planned": (
+                    "This workflow's research runner is not available. "
+                    "Its saved settings are retained."
+                ),
+                "launch_not_started": (
+                    "The worker has not saved a startup status. The study is not confirmed "
+                    "as running; refresh progress before trying again."
+                ),
+            }.get(
+                state_id,
+                "Required evidence is unavailable. Restore the missing evidence and refresh "
+                "to continue.",
+            )
+        )
+        return
     presentation = EMPTY_STATE_PRESENTATIONS[state_id]
     st_module.subheader(presentation.heading)
     st_module.write(presentation.explanation)
@@ -339,8 +378,10 @@ def queue_replay_drilldown(
         st_module.warning(f"Exact jump unavailable: {sanitize_error(error)}")
         return False
     notify = toast if toast is not None else getattr(st_module, "toast", None)
+    st_module.session_state["ifvg_study_v1_open_review"] = True
     if notify is not None:
         notify(
             f"Loaded {kind} {value[:12]}… — open the Replay / Verifier tab."
+            if technical_details_enabled() else "Supporting case selected in Trade review."
         )
     return True

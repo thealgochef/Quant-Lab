@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("developer_presentation")
+
 apptest = pytest.importorskip("streamlit.testing.v1")
 
 _REPO = Path(__file__).resolve().parents[2]
@@ -282,7 +284,7 @@ def test_verify_implementation_renders_typed_readiness(monkeypatch, tmp_path) ->
     assert draft["steps"]["validation"]["evidence_class"] == "synthetic_fixture"
 
 
-def test_top_level_shell_order_is_unchanged(monkeypatch, tmp_path) -> None:
+def test_top_level_shell_uses_focused_research_navigation(monkeypatch, tmp_path) -> None:
     """FUX-IA-001 — the lab shell keeps Experiments · Replay / Verifier ·
     Data & Audit, with Experiments now delegating to the study workspace."""
 
@@ -304,8 +306,6 @@ def test_top_level_shell_order_is_unchanged(monkeypatch, tmp_path) -> None:
     at = apptest.AppTest.from_function(_shell, default_timeout=60)
     at.run()
     assert not at.exception
-    assert [tab.label for tab in at.tabs[:3]] == [
-        "Experiments",
-        "Replay / Verifier",
-        "Data & Audit",
-    ]
+    assert not at.tabs
+    assert at.radio[0].options == ["My studies", "Trade review"]
+    assert not at.code and not at.json

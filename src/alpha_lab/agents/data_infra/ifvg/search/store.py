@@ -105,6 +105,7 @@ SEARCH_STORE_NAMES: tuple[str, ...] = (
     "regime_oos_assignments",
     "regime_fold_features",
     "owner_decisions",
+    "strategy_search_approvals",
     "regime_stratified_reports",
     "regime_controlled_studies",
     "regime_cohort_model_studies",
@@ -121,6 +122,14 @@ SEARCH_STORE_NAMES: tuple[str, ...] = (
     # release-specific bounded control-flow report (verification-only)
     "r1_baseline_gate_reports",
     "bounded_release_control_flow_reports",
+    # Real R5–R6 research: immutable subject/authority and scoped evidence.
+    "research_subjects",
+    "research_groups",
+    "research_approvals",
+    "research_context_companions",
+    "research_cohorts",
+    "research_labels",
+    "research_regime_executions",
 )
 
 _ENVELOPE_FILE = "envelope.json"

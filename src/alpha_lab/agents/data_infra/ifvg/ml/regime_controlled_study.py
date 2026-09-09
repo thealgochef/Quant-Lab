@@ -50,7 +50,7 @@ from ..search.store import (
     load_verified_envelope,
     save_or_reuse_envelope,
 )
-from .comparison_rows import COMPARISON_ROW_IDENTITY_KEY, label_content_hash
+from .comparison_rows import COMPARISON_ROW_IDENTITY_KEY, label_artifact_content_id
 from .fold_set_artifact import FoldSetArtifactEnvelope
 from .fold_set_artifact import fold_set_id as _legacy_fold_set_id
 from .model_protocols import PREVALENCE_PROTOCOL_ID
@@ -552,7 +552,7 @@ def run_controlled_regime_study(
         challenger_resolved_bundle_id=challenger_env.resolved_feature_bundle_id,
         view_id=view.view_id,
         label_artifact_id=label_artifact_id,
-        label_content_hash=label_content_hash(labeled_candidates),
+        label_content_hash=label_artifact_content_id(None, labeled_candidates),
         fold_schedule_id=schedule_id,
         candidate_fold_set_id=candidate_fold_set.fold_set_artifact_id,
         fold_set_hash=candidate_fold_set.payload.fold_set_id,

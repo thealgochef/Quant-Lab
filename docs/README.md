@@ -1,6 +1,6 @@
 # Quant-Lab documentation index
 
-Updated: 2026-06-04.
+Updated: 2026-09-08.
 
 Use this index to avoid treating old reports as current architecture. The current production-aligned path is **dashboard-utility training through Strategy-Core v3**. Bundle presence/checksum verification is deferred until the local data/model zip is available.
 
@@ -9,17 +9,30 @@ Use this index to avoid treating old reports as current architecture. The curren
 | Doc | Status | Use for |
 |---|---|---|
 | `../ARCHITECTURE.md` | **Canonical current architecture** | Repo purpose, v3 semantics, current workflows, generated outputs. |
-| `ML_TRAINING_WORKBENCH.md` | **Current workflow guide** | Streamlit ML tab, dashboard-utility build/train/save path. |
+| `ML_TRAINING_WORKBENCH.md` | **Current workflow guide** | Streamlit ML tab, dashboard-utility build/train/save, exact-source IFVG R5–R6 research and separate authorization. |
 | `pipeline_state.yaml` | **Current machine-readable summary** | Quick state for agents/scripts; v3 fields and known gaps. |
+| [Saved strategy-search approval](IFVG_STRATEGY_SEARCH_APPROVAL.md) | **Current approval and execution contract** | Enable Run for an exact approved strategy-only configuration without launching it. |
+| [Focused IFVG workspace report](../QL-FSM-PROP-SEARCH-DASHBOARD/implementation-progress/UI-UX-REDESIGN-PLAN/FOCUSED_WORKSPACE/COMPLETION_REPORT.md) | **Current presentation implementation** | Page routing, My studies, startup Developer boundary, Replay selection and test evidence. |
+| `reports/ifvg_browser_acceptance/20260907/DESKTOP_FLOW_REPORT.md` (local repository root) | **Saved local browser evidence** | Historical desktop acceptance report; generated reports are ignored and are not shipped with a clean clone. |
 | `DECISIONS.md` | **Decision log** | Architectural decisions and why they changed. |
-| `../../Strategy-Core/README.md` | **Shared engine truth** | Strategy-Core v3 constants/semantics/tests. |
-| `../../Strategy-Core/V3_COMPATIBILITY_MATRIX.md` | **Cross-repo matrix** | Quant-Lab / Strategy-Core / Trade-Lab compatibility state. |
-| `../../Strategy-Core/MIGRATION.md` | **Remaining migration work** | Trade-Lab repoint sequence and deferred bundle checks. |
+| `IFVG_CONTEXT_CAPTURE_V3.md` | **Current measurement contract** | Separate IFVG v3 context tables, fixed nonsealed access, immutable identity, and future M0-M3 inputs. |
+| `../../Strategy-Core/README.md` | **Shared engine guide** | Code pointers for Strategy-Core contracts, mechanics and tests. Verify the checkout used by the run. |
+| `../../Strategy-Core/V3_COMPATIBILITY_MATRIX.md` | **Historical compatibility matrix** | Recorded migration evidence; current compatibility requires code and bundle verification. |
+| `../../Strategy-Core/MIGRATION.md` | **Historical migration checklist** | Migration rationale and recorded checks; not current Trade-Lab certification. |
 
 ## Current source files that define behavior
 
 | Path | Why it matters |
 |---|---|
+| `../scripts/dashboard.py` | Executes the selected page: IFVG Lab, ML Training, Dashboard Compatibility, Strategy Analysis, or startup-enabled Developer. |
+| `../scripts/ifvg_workspace.py` and `../scripts/ifvg_research_*.py` | Current research-facing IFVG workflow; replaces the former top-level IFVG tabs. |
+| `../src/alpha_lab/agents/data_infra/ifvg/search/research_runs.py` | Exact-source research preflight, new namespace-bound approval, group lifecycle and registered worker dispatch. |
+| `../src/alpha_lab/agents/data_infra/ifvg/search/research_regimes.py` | Read-only eligibility review and explicit evidence-bound owner decision for linked B0→B7 feature research. |
+| `../src/alpha_lab/agents/data_infra/ifvg/search/research_subject.py`, `research_data.py`, `research_mbp1.py` | Saved effective configuration binding, source/context preparation and neutrality, configured-R labels and MBP-1 source evidence. |
+| `../src/alpha_lab/agents/data_infra/ifvg/search/research_artifacts.py` and `../src/alpha_lab/agents/data_infra/ifvg/ml/research_evidence.py` | Scoped cohorts/labels and durable inputs, models, OOS predictions and verified reload without fitting. |
+| `../src/alpha_lab/agents/data_infra/ifvg/ml/regime_execution_cache.py` | Opt-in completed real S09a KMeans/bootstrap/assignment reuse; incomplete attempts recompute. |
+| `../src/alpha_lab/agents/data_infra/ifvg/replay_chart_store.py` | Exact custom-store research charts/forward-source verification and scoped geometry; configured labels are separate annotations. |
+| `../src/alpha_lab/agents/data_infra/ifvg/presentation/workspace_mode.py` | Startup-only Developer flag and route-scoped technical presentation. |
 | `../scripts/ml_training_tab.py` | Orchestrates dataset build, walk-forward training, model save, and `strategy.json` emission. |
 | `../scripts/run_dashboard_session_experiment.py` | Non-Streamlit CLI for Databento-backed dashboard-utility session experiments. |
 | `../src/alpha_lab/agents/data_infra/ml/dashboard_utility_builder.py` | Builds dashboard-utility datasets from local parquet; feeds Strategy-Core. |
@@ -27,6 +40,28 @@ Use this index to avoid treating old reports as current architecture. The curren
 | `../src/alpha_lab/agents/data_infra/ml/strategy_contract.py` | Emits Strategy-Core-stamped `strategy.json`. |
 | `../src/alpha_lab/agents/data_infra/ml/config.py` | Config, session-experiment presets, and cache hash; includes engine version in utility cache identity. |
 | `../src/alpha_lab/agents/data_infra/tick_store.py` | DuckDB/parquet data access. |
+| `../src/alpha_lab/agents/data_infra/ifvg/context_contracts.py` | Separate normalized v3 table contracts and exact-link validation. |
+| `../src/alpha_lab/agents/data_infra/ifvg/verification.py` | Fixed allowlist, one-replay verification, reports, and immutable v3 save. |
+
+## Completed study audits
+
+The exact-source R5–R6 workflow adds generated artifact families
+`research_subjects`, `research_groups`, `research_approvals`,
+`research_context_companions`, `research_cohorts`, `research_labels`,
+`research_model_inputs`, `research_model_runs`, `research_regime_executions` and
+`research_replay_charts` under the selected search store. Research chart discovery
+uses that store's `research_replay_chart_catalog.json`.
+Existing replay/context artifacts and prior approvals remain immutable. Current
+source code and exact verified manifests establish behavior and saved evidence;
+documentation or old implementation/verification reports alone do not establish
+completion of a real feature/model research run.
+
+The local `reports/parent_staleness_audit/20260908/REVIEW.md` (repository root)
+records the completed study's corrected evaluation and UI trade reviews.
+Its `files.jsonl`, `json_fields.jsonl`, `parquet_columns.jsonl` and `trades.jsonl`
+provide exhaustive file, JSON-field, column and execution check inventories.
+Search evaluation corrections use new immutable costed-evaluation IDs under
+`post_warmup_zero_peak_v2`; original run artifacts remain forensic evidence.
 
 ## Pruned stale docs
 
@@ -61,98 +96,46 @@ When code behavior changes, update the matching docs in the same change:
 - Cache/model-bundle output changes -> `../ARCHITECTURE.md`, `pipeline_state.yaml`, and `AGENTS.md` / `CLAUDE.md` if agent start points change.
 - Do not recreate historical reports as current-state docs. If old audit context is needed, extract only the still-valid lessons into the canonical docs after code/test verification.
 
-## IFVG robust FSM configuration search & prop realization lane
+## IFVG implementation and retained plan package
 
-`ifvg_prop_robust_config_search_v1` (additive; zero Strategy-Core changes in
-v1). Authority: the approved plan package under
-`QL-FSM-PROP-SEARCH-DASHBOARD/FINAL-IMPLEMENTATION-PLAN-DOCS/`. Code:
-`src/alpha_lab/agents/data_infra/ifvg/{search,study,features}/`; suites:
-`tests/agents/ifvg_search/`. Decisions D-039 through D-046 (D-044's
-supervised-ladder half and D-045's pipeline half landed with R5; the
-MBP-1 activation D-046 landed with R5B; D-044's KMeans regime half lands
-with R6). R1, R2 (multi-child search, lineage, exact deltas, verifier
-integration, `scripts/ifvg_search_job.py`), R3 (prop lifecycle:
-fidelity-first trade paths, typed calendars, field-level contract
-evidence, the full account walk, portfolio/stress/simulation identities,
-and prop-gate/worst-firm frontier wiring — `alpha_lab.propsim` lifecycle
-modules + `tests/propsim/`), and R4 (trader workspace UI: the Experiments
-sub-navigation, eight-step five-mode wizard with disk drafts, registry-
-gated launch, Active Runs monitor, Results/History/comparison/insights/
-account-timeline surfaces — `scripts/ifvg_study_*.py`,
-`ifvg_active_runs_tab.py`, `ifvg_results_*.py`, `ifvg_ui_common.py` +
-`ifvg/study_{status,presentation,drafts,providers}.py`), and R5 (pipeline
-runner + MBP-1 contract readiness + supervised model ladder:
-`ifvg/search/pipeline.py` with the semantic/attempt split and 16-stage
-executors, `ifvg/ml/` ladder + decision/calibration registries + core
-drift builders, `ifvg/features/bundle_feature_view.py`, the real
-baseline-verification executors in `ifvg/search/executors.py`, and the
-Full Pipeline Run surface `scripts/ifvg_pipeline_tab.py` +
-`ifvg_pipeline_job.py`), and R5B (offline MBP-1 feature activation,
-research-only: `ifvg/features/mbp1_{arrow_schemas,source_artifact,
-stage_windows,feature_materializer,coverage,feature_join}.py`, the
-versioned `IFVG_ORDER_FLOW_MBP1_V1` activation in `feature_blocks.py`,
-the controlled Baseline vs Baseline+MBP-1 study
-`ifvg/ml/controlled_feature_study.py`, and the MBP-1 dashboard panels
-`scripts/ifvg_mbp1_panels.py`; R5B.1 replaced the withdrawn
-sequence-jump gap rule with the evidence-based coverage policy v2 —
-`ifvg/features/mbp1_coverage_{evidence,diagnostic}.py`, block re-resolution
-v3, `scripts/ifvg_mbp1_coverage_diagnostic.py`), and R6 (the V1 KMeans regime lane:
-`ifvg/ml/regime_{contracts,algorithms,preprocessing,service,alignment,
-diagnostics,store}.py`, ML fixtures 2 + 4-KMeans, and the Regime Lane
-panel `scripts/ifvg_regime_panels.py` — kmeans_v1 only; the
-GMM/minibatch/spectral/Nyström implementations are the post-V1
-regime-expansion release), and R6.1 (the regime-lane correction: the
-5m/15m context-bar panel materializer + `IFVG_CONTEXT_BAR_PANEL_V1` /
-`BP0_CONTEXT_BAR_PANEL`, fold schedules + fold-set artifacts, the verified
-observation seam + executor, the descriptive OOS-assignment and fold-local
-feature artifacts, the regime study inside the 16-stage pipeline
-(`ifvg/ml/regime_study.py`, `ifvg/search/pipeline_regime.py`), verified
-owner-decision evidence `ifvg/search/owner_decisions.py` + the
-`ifvg_regime_promotion.py` CLI, the five stratification classes
-`ifvg/ml/regime_strat*.py`, the bundle-aware CatBoost rung
-`ifvg/ml/catboost_bundle_model.py` + D13 comparison rows, the D15 prop-event
-detail `alpha_lab/propsim/event_detail.py`, per-fold stability + grain
-transition policies, and the regime surfaces of the pipeline tab), and
-R6.1-FIX (verified per-fit assignment evidence with an enforced sidecar
-schema, fold-feature source refs, the typed `candidate_as_of_missing`
-reason, raw thin-regime net-R accounting, the exact label artifact id, the
-immutable `executed_trade_tables` store consumed by S02/S14, the typed
-sidecar probe with fail-closed prior-stage recoveries, and the
-`PipelineWiringError` / MBP-1 scope-equality / enum-copy corrections), and
-HARDENING-BACKEND (the semantic store namespace, the immutable supersession
-record chain with head witnesses, the liveness-aware owner-decision lock,
-the streaming event-detail writer and the external DuckDB event-regime
-summary under measured capacity gates, the warnings-as-errors policy, the
-sequential-execution truth of the V1 executor, the logical trading-day
-calendar with the rebuilt verification-window shortlist, the seed-production
-authorization/run contracts, and the bounded-verification preflight and
-reports), and HARDENING-BACKEND-FIX (the compact backend correction: token-safe
-stale-lock reclamation, atomic recoverable namespace initialization, the public
-source-kind boundary, exact regime provenance with native validation, fail-closed
-manifests with exact label / executed-trade evidence, central seed
-canonicalization, the bounded event-detail partition, and the complete
-authority-chain proof at every real seam), and UI-1 (Phase 1 of the
-owner-approved UI/UX redesign: the presentation-only run purpose that
-derives scope / namespace / evidence / authorization class, the removal
-of the namespace selector, `Start` and `Verify Implementation` routes,
-charter satisfiability before freeze, typed authorization readiness, the
-honest launch outcome, namespace-bound publication, the sequential-V1
-runtime truth, direction-aware colorscales and evaluated-gate banners —
-`ifvg/presentation/{run_purpose,charter_satisfiability,status_vocabulary}.py`),
-and UI-2 (Phase 2: the complete Verification Center — fixture, seed,
-final authorization, review / run, monitor — with no spawn seam, the
-goal-derived conditional flows, session-only drafts with archive /
-restore / typed delete, the explicit reviewer verdicts and the seed CLI
-receipt seams — `ifvg/presentation/{flows,review_vocabulary}.py`,
-`scripts/ifvg_verification_center.py`),
-and UI-3 (Phase 3: the metric metadata registry, the deterministic
-section roll-ups, the helper-text registry with the glossary and explicit
-exemptions, the human-label registry, the three detail levels, the
-decision-summary-first Context Research and Results presentation and the
-summary-first MBP-1 / regime panels —
-`ifvg/presentation/{metric_registry,rollups,help_registry,labels,context_research,results_presentation}.py`)
-implementations are complete;
-**R1 acceptance is blocked pending the owner-approved verification fixture**
-(`VerificationAuthorizationRef`; owner decisions 21/R-5) — no real five-day
-slice runs until it exists, and no research interpretation attaches to any
-verification output (`verification_only=true`, `full_pipeline_not_run=true`).
+The current research UI is `scripts/ifvg_workspace.py` and the
+`ifvg_research_*.py` pages. The research runner is registered through
+`search/runner_registry.py`; `search/research_runs.py` freezes exact subjects,
+checks sources and authorization, and coordinates per-subject execution. The
+S00–S10/S14/S15 preset uses the existing R5 ladder, controlled R5B comparisons and
+fold-local R6 stages. Read the workbench guide for supported options and blockers.
+S11 model-guided replay, full prop realization and combined MBP/regime features
+have separate requirements; research-run completion does not establish their
+availability or scientific improvement.
+
+The approved package in
+`QL-FSM-PROP-SEARCH-DASHBOARD/FINAL-IMPLEMENTATION-PLAN-DOCS/` is retained as
+versioned design and decision history. It contains contracts cited in code/tests;
+its authority records and checksums must not be silently rewritten to make an
+old plan look current. The phase reports under `implementation-progress/` record
+their revision's implementation and verification evidence, not present launch
+readiness. The kickoff-prompt link in the package README and the retired UI-map
+citation in its FSM plan are historical references. Use the current workbench
+instead of those earlier UI instructions.
+
+`IFVG_PLUGIN_DESIGN_ict_amended_ml_research_revised.md` is also retained as
+historical design and owner-ruling provenance. It is not a current behavior
+guide. Current context measurements are documented in `IFVG_CONTEXT_CAPTURE_V3.md`
+and `ifvg/IFVG_CONTEXT_FORMULA_V2_CONTRACT.md` and implemented by the Core observer
+and Quant-Lab companion readers.
+
+## Local artifacts and repository housekeeping
+
+`.gitignore` excludes IFVG data stores, job state, user profiles, drafts, review
+ledgers, search outputs and generated reports/test workspaces. These are retained
+on the local machine; ignoring them does not archive or back them up. In
+particular, keep completed studies, approvals, market data and audit evidence.
+Do not use `git clean -X` to remove repository noise. Reusable source fixtures
+belong under `tests/`, and curated documents remain trackable.
+
+The September cleanup removes the two completed root Codex prompts, the duplicate
+UI-1 root patch (the original remains in the UI-1 evidence package), and the
+obsolete `docs/ifvg/IFVG_LAB_UI_RESTORATION_MAP.md`. The current workbench replaces
+the old three-tab UI map. Historical audit archives, governing contracts and
+owner-decision records remain intact. The local agent entry point `CLAUDE.md`
+now points to `AGENTS.md` rather than repeating stale engine/workflow claims.

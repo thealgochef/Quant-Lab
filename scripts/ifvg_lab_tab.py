@@ -35,7 +35,6 @@ from alpha_lab.agents.data_infra.ifvg.artifact_io import (  # noqa: E402
     ArtifactVerificationError,
     VerifiedIfvgPair,
     load_verified_ifvg_pair,
-    load_verified_label_source_bars,
 )
 from alpha_lab.agents.data_infra.ifvg.config import (  # noqa: E402
     V2_DATASET_DIR,
@@ -79,7 +78,6 @@ from alpha_lab.agents.data_infra.ifvg.context_run_store import (  # noqa: E402
 from alpha_lab.agents.data_infra.ifvg.context_statistics import (  # noqa: E402
     paired_tier_delta_report,
 )
-from alpha_lab.agents.data_infra.ifvg.contracts import RecordTable  # noqa: E402
 from alpha_lab.agents.data_infra.ifvg.experiment import (  # noqa: E402
     list_experiments as list_legacy_experiments,
 )
@@ -99,13 +97,16 @@ from alpha_lab.agents.data_infra.ifvg.presentation.context_research import (  # 
     reconciliation_readings,
     sample_adequacy_readings,
 )
-from alpha_lab.agents.data_infra.ifvg.presentation.help_registry import help_text  # noqa: E402
+from alpha_lab.agents.data_infra.ifvg.presentation.research_help import help_text  # noqa: E402
 from alpha_lab.agents.data_infra.ifvg.presentation.rollups import (  # noqa: E402
     RollupSection,
     rollup_section,
 )
 from alpha_lab.agents.data_infra.ifvg.presentation.status_vocabulary import (  # noqa: E402
     UiStatus,
+)
+from alpha_lab.agents.data_infra.ifvg.presentation.workspace_mode import (  # noqa: E402
+    technical_details_enabled,
 )
 from alpha_lab.agents.data_infra.ifvg.study_status import ResultScope  # noqa: E402
 
@@ -119,6 +120,8 @@ _SECRET = re.compile(r"(?i)(token|secret|api[_-]?key)\s*[:=]\s*[^\s,}]+")
 
 
 def _sanitize_error(error: BaseException) -> str:
+    if not technical_details_enabled():
+        return "Restore the selected evidence and refresh to continue."
     value = _WINDOW_PATH.sub("[path redacted]", str(error))
     return _SECRET.sub(r"\1=[redacted]", value)[:800]
 
@@ -151,6 +154,7 @@ def _ready_pair_options() -> dict[str, dict[str, Any]]:
             r"[0-9a-f]{64}", v3_id
         ):
             continue
+        # Preserve the catalog selection value across presentation modes.
         label = f"{profile} · v2 {v2_id[:12]} · v3 {v3_id[:12]}"
         result[label] = {"profile_name": profile, **entry}
     return result
@@ -177,7 +181,19 @@ def _cached_pair(
 
 
 def _load_selected_pair(st_module, *, key: str) -> tuple[VerifiedIfvgPair, dict] | None:
-    options = _ready_pair_options()
+    try:
+        options = _ready_pair_options()
+    except Exception:
+        st_module.error(
+            "The available data could not be verified. Restore the research catalog and refresh."
+        )
+        return None
+    if not options and not technical_details_enabled():
+        st_module.info(
+            "No prepared trade evidence is available. Return after the selected research data "
+            "has been prepared."
+        )
+        return None
     if not options:
         profile = "ifvg_v2_doc_default_fresh_static_1r"
         state = None
@@ -208,9 +224,30 @@ def _load_selected_pair(st_module, *, key: str) -> tuple[VerifiedIfvgPair, dict]
             language="powershell",
         )
         return None
+    if st_module.session_state.get(key) not in options:
+        if st_module.session_state.get(key) and key == "ifvg_context_v1_replay_pair":
+            st_module.warning(
+                "The selected study's exact data is no longer available. Choose another study "
+                "or restore that evidence before reviewing it."
+            )
+            if st_module.button(
+                "Choose available research data",
+                help="Leave the missing study link and choose from currently prepared data.",
+            ):
+                st_module.session_state.pop(key, None)
+                st_module.session_state.pop("ifvg_context_v1_pending_jump", None)
+                st_module.session_state.pop("ifvg_context_v1_setup_jump", None)
+                st_module.rerun()
+            return None
+        st_module.session_state.pop(key, None)
+    from alpha_lab.agents.data_infra.ifvg.presentation.workspace import profile_name
+
+    labels = {value: f"{index + 1}. {profile_name(entry['profile_name'])}"
+              for index, (value, entry) in enumerate(options.items())}
     selected = st_module.selectbox(
-        "Verified artifact pair",
+        "Research configuration",
         tuple(options),
+        format_func=lambda value: value if technical_details_enabled() else labels[value],
         key=key,
         help=help_text("context.artifact_pair"),
     )
@@ -1129,156 +1166,23 @@ def _exact_rows(frame: pd.DataFrame, column: str, value: str) -> pd.DataFrame:
     return frame.loc[frame[column].astype(str) == value].copy()
 
 
-def render_ifvg_replay_tab(st_module=st) -> None:
-    st_module.subheader("IFVG Lab — Replay / Verifier")
-    st_module.caption("Candidate selection and every downstream object use exact IDs only.")
+def render_ifvg_replay_tab(st_module=st):
+    from ifvg_verifier_tab import render_verifier_section
+
+    from alpha_lab.agents.data_infra.ifvg.presentation.replay_selection import ReplaySelection
+
+    st_module.subheader("Trade review")
     selected = _load_selected_pair(st_module, key=f"{_STATE_PREFIX}replay_pair")
     if selected is None:
-        return
-    pair, _entry = selected
-    links = pair.v3.tables[ContextRecordTable.CANDIDATE_CONTEXT_LINK]
-    if links.empty:
-        st_module.info("The verified pair contains no candidate-stage links.")
-        return
-    # The visual verifier owns the shared candidate selection when its
-    # replay-chart artifact is available; otherwise fall back to the plain
-    # exact-ID selector so the inspectors below always work.
-    candidate_id = None
+        return ReplaySelection("unavailable", evidence_available=False)
+    pair, entry = selected
     try:
-        from ifvg_verifier_tab import render_verifier_section
-
-        candidate_id = render_verifier_section(st_module, pair, _entry)
+        # Setup mode must run even when the pair has no candidate links.
+        # The verifier owns selection; there is no lower fallback inspector.
+        return render_verifier_section(st_module, pair, entry)
     except Exception as error:
-        st_module.error(f"Visual verifier unavailable: {_sanitize_error(error)}")
-    if candidate_id is None:
-        candidate_id = st_module.selectbox(
-            "Exact candidate ID",
-            tuple(sorted(links["candidate_id"].astype(str))),
-            key=f"{_STATE_PREFIX}candidate",
-            help=help_text("replay.exact_candidate_id"),
-        )
-    st_module.markdown("**Exact evidence inspectors**")
-    link = _exact_rows(links, "candidate_id", candidate_id)
-    if len(link) != 1:
-        st_module.error("Exact candidate link is missing or duplicated.")
-        return
-    link_row = link.iloc[0]
-    capture_id = str(link_row["context_capture_id"])
-    state_id = str(link_row["context_state_id"])
-    captures = _exact_rows(
-        pair.v3.tables[ContextRecordTable.CONTEXT_CAPTURE],
-        "context_capture_id",
-        capture_id,
-    )
-    states = _exact_rows(
-        pair.v3.tables[ContextRecordTable.CONTEXT_STATE],
-        "context_state_id",
-        state_id,
-    )
-    if len(captures) != 1 or len(states) != 1:
-        st_module.error("Exact capture/state reconciliation failed.")
-        return
-    candidate = _exact_rows(
-        pair.v2.tables[RecordTable.ENTRY_CANDIDATE],
-        "candidate_id",
-        candidate_id,
-    )
-    decisions = _exact_rows(
-        pair.v2.tables[RecordTable.ELIGIBLE_DECISION],
-        "candidate_id",
-        candidate_id,
-    )
-    trades = _exact_rows(
-        pair.v2.tables[RecordTable.EXECUTED_TRADE],
-        "candidate_id",
-        candidate_id,
-    )
-    setup_id = str(link_row["setup_id"])
-    lifecycle = pair.v2.tables[RecordTable.SETUP_LIFECYCLE]
-    setup_column = (
-        "envelope_setup_id" if "envelope_setup_id" in lifecycle else "setup_id"
-    )
-    lifecycle = _exact_rows(lifecycle, setup_column, setup_id)
-    if "trace_ordinal" in lifecycle:
-        lifecycle = lifecycle.sort_values("trace_ordinal", kind="mergesort")
-    geometry = _exact_rows(
-        pair.v2.tables[RecordTable.GEOMETRY_DOSSIER],
-        "candidate_id",
-        candidate_id,
-    )
-    summary, context_tab, displacement_tab, pools_tab = st_module.tabs(
-        ["Geometry & FSM", "Context snapshot", "Displacement", "Pools & sweeps"]
-    )
-    with summary:
-        st_module.json(
-            candidate.to_dict("records")[0] if len(candidate) == 1 else {},
-            expanded=False,
-        )
-        if len(geometry) == 1:
-            st_module.markdown("**Exact geometry dossier**")
-            st_module.json(geometry.to_dict("records")[0], expanded=False)
-        st_module.markdown("**FSM transitions**")
-        st_module.dataframe(
-            lifecycle,
-            hide_index=True,
-            width="stretch",
-        )
-        st_module.markdown("**Exact actual linkage**")
-        st_module.json(
-            {
-                "candidate_id": candidate_id,
-                "decision_ids": decisions.get(
-                    "decision_id", pd.Series(dtype=str)
-                ).astype(str).tolist(),
-                "trade_ids": trades.get("trade_id", pd.Series(dtype=str)).astype(str).tolist(),
-                "geometry_evidence_id": link_row["geometry_evidence_id"],
-                "geometry_evidence_cursor": link_row["geometry_evidence_cursor"],
-            },
-            expanded=False,
-        )
-        with suppress(Exception):
-            bars = load_verified_label_source_bars(pair.v2)
-            entry_ts = pd.Timestamp(link_row["feature_as_of_ts"])
-            close = pd.to_datetime(bars["close_ts_utc"], utc=True)
-            visible = bars.loc[
-                (close >= entry_ts - pd.Timedelta(hours=2))
-                & (close <= entry_ts + pd.Timedelta(hours=2))
-            ].copy()
-            if not visible.empty:
-                visible = visible.set_index(pd.to_datetime(visible["close_ts_utc"], utc=True))
-                st_module.line_chart(visible[["high_ticks", "low_ticks", "close_ticks"]])
-    with context_tab:
-        st_module.json(
-            {
-                "link": link.to_dict("records")[0],
-                "capture": captures.to_dict("records")[0],
-                "state": states.to_dict("records")[0],
-            },
-            expanded=False,
-        )
-    capture = captures.iloc[0]
-    with displacement_tab:
-        ids = capture.get("displacement_window_ids")
-        ids = ids.tolist() if hasattr(ids, "tolist") else list(ids or ())
-        windows = pair.v3.tables[ContextRecordTable.CONTEXT_DISPLACEMENT_WINDOW]
-        st_module.dataframe(
-            windows.loc[windows["displacement_window_id"].astype(str).isin(map(str, ids))],
-            hide_index=True,
-            width="stretch",
-        )
-    with pools_tab:
-        sweep_ids = capture.get("opposing_leg_sweep_link_ids")
-        sweep_ids = (
-            sweep_ids.tolist()
-            if hasattr(sweep_ids, "tolist")
-            else list(sweep_ids or ())
-        )
-        sweeps = pair.v3.tables[ContextRecordTable.EQUAL_LEVEL_SWEEP_LINK]
-        st_module.dataframe(
-            sweeps.loc[sweeps["sweep_link_id"].astype(str).isin(map(str, sweep_ids))],
-            hide_index=True,
-            width="stretch",
-        )
+        st_module.error(f"Trade evidence is unavailable. {_sanitize_error(error)}")
+        return ReplaySelection("unavailable", evidence_available=False)
 
 
 def render_ifvg_data_audit_tab(st_module=st) -> None:
@@ -1355,17 +1259,6 @@ def _cached_entry_dataset(path: str) -> pd.DataFrame | None:
 
 
 def render_ifvg_lab_tab() -> None:
-    tab_experiments, tab_replay, tab_audit = st.tabs(
-        ["Experiments", "Replay / Verifier", "Data & Audit"]
-    )
-    with tab_experiments:
-        # R4: the Experiments surface is the study-workspace sub-navigation
-        # (New Study | Active Runs | Results | History | Context Research);
-        # Context Research delegates back to the unchanged M0–M3 panel.
-        from ifvg_study_tab import render_ifvg_study_tab  # noqa: PLC0415
+    from ifvg_workspace import render_workspace
 
-        render_ifvg_study_tab(st, context_research=render_ifvg_experiments_tab)
-    with tab_replay:
-        render_ifvg_replay_tab(st)
-    with tab_audit:
-        render_ifvg_data_audit_tab(st)
+    render_workspace(st)

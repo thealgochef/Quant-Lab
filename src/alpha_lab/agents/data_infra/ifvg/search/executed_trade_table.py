@@ -155,11 +155,28 @@ class ExecutedTradeTablePayload(FrozenContract):
     source_table_name: Literal["executed_trade"] = "executed_trade"
 
 
+class ResearchExecutedTradeTablePayload(FrozenContract):
+    """A projection scoped to one immutable research population.
+
+    Kept separate from the legacy payload so old table identities and readers
+    retain their exact serialization.
+    """
+
+    core_replay_id: str = Field(pattern=SHA256_PATTERN)
+    source_record_schema_version: int = Field(ge=1)
+    table_projection_id: Literal["research_scoped_executed_trade_v2"] = (
+        "research_scoped_executed_trade_v2"
+    )
+    executed_trade_arrow_schema_hash: str = Field(pattern=SHA256_PATTERN)
+    source_table_name: Literal["executed_trade"] = "executed_trade"
+    research_subject_id: str = Field(pattern=SHA256_PATTERN)
+
+
 class ExecutedTradeTableEnvelope(EnvelopeBase):
     _ID_FIELD: ClassVar[str] = "executed_trade_table_id"
 
     executed_trade_table_id: str = Field(pattern=SHA256_PATTERN)
-    payload: ExecutedTradeTablePayload
+    payload: ResearchExecutedTradeTablePayload | ExecutedTradeTablePayload
     #: post-materialization facts binding the exact projection bytes
     executed_trade_table_sha256: str = Field(pattern=SHA256_PATTERN)
     #: the RAW core table's content hash (``dataset.table_content_hash``) —
@@ -254,6 +271,69 @@ def build_executed_trade_table(
         byte_size=int(len(table_bytes)),
     )
     return envelope, table_bytes
+
+
+def build_research_executed_trade_table(
+    core_replay_id: str,
+    raw_trades: pd.DataFrame,
+    *,
+    record_schema_version: int,
+    research_subject_id: str,
+    evaluation_dates: tuple[str, ...],
+    candidate_ids: tuple[str, ...],
+    cutoff_ts_utc: str,
+) -> tuple[ExecutedTradeTableEnvelope, bytes]:
+    """Exclude initialization/history before the lossy trade projection.
+
+    The raw source hash remains the hash used by Core neutrality; the produced
+    table has its own scope-bearing identity and can coexist with the old one.
+    """
+
+    masks = research_trade_cohort_masks(
+        raw_trades, candidate_ids=candidate_ids, cutoff_ts_utc=cutoff_ts_utc,
+    )
+    scoped = raw_trades.loc[masks["included"]].copy()
+    legacy, table_bytes = build_executed_trade_table(
+        core_replay_id, scoped, record_schema_version=record_schema_version
+    )
+    payload = ResearchExecutedTradeTablePayload(
+        core_replay_id=core_replay_id,
+        source_record_schema_version=record_schema_version,
+        executed_trade_arrow_schema_hash=EXECUTED_TRADE_TABLE_SCHEMA_HASH,
+        research_subject_id=research_subject_id,
+    )
+    return ExecutedTradeTableEnvelope.from_payload(
+        payload,
+        executed_trade_table_sha256=legacy.executed_trade_table_sha256,
+        source_core_table_hash=table_content_hash(RecordTable.EXECUTED_TRADE, raw_trades),
+        row_count=legacy.row_count,
+        byte_size=legacy.byte_size,
+    ), table_bytes
+
+
+def research_trade_cohort_masks(raw_trades, *, candidate_ids, cutoff_ts_utc):
+    """Exact entry-candidate cohort; Core's resolution-day stamp stays untouched."""
+    required = {"candidate_id", "is_warmup", "status", "resolution_ts_utc"}
+    if required - set(raw_trades):
+        raise ValueError("research trades lack exact candidate, warmup or resolution evidence")
+    flags = raw_trades["is_warmup"]
+    if flags.isna().any() or not flags.isin([True, False]).all():
+        raise ValueError("research trades require explicit non-null boolean warmup provenance")
+    cutoff = pd.Timestamp(cutoff_ts_utc)
+    if cutoff.tzinfo is None:
+        raise ValueError("research trade cutoff must be timezone-aware")
+    warmup = flags.astype(bool)
+    candidate = raw_trades["candidate_id"].astype(str).isin(set(candidate_ids))
+    resolution = pd.to_datetime(raw_trades["resolution_ts_utc"], utc=True, errors="raise")
+    resolved = raw_trades["status"].eq("resolved") & resolution.notna()
+    in_cohort = candidate & ~warmup
+    return {
+        "included": in_cohort & resolved & resolution.lt(cutoff),
+        "warmup": warmup,
+        "out_of_cohort": ~warmup & ~candidate,
+        "cutoff_censored": in_cohort & resolved & resolution.ge(cutoff),
+        "unresolved": in_cohort & ~resolved,
+    }
 
 
 def _assert_bound(envelope: ExecutedTradeTableEnvelope, table_bytes: bytes) -> None:

@@ -212,11 +212,18 @@ class ContextBarPanelArtifactPayload(FrozenContract):
         return self
 
 
+class ResearchContextBarPanelPayload(ContextBarPanelArtifactPayload):
+    """A scoped panel derived from a complete, verified replay chart."""
+
+    research_subject_id: str = Field(pattern=SHA256_PATTERN)
+    evaluation_dates: tuple[str, ...]
+
+
 class ContextBarPanelArtifactEnvelope(EnvelopeBase):
     _ID_FIELD: ClassVar[str] = "context_bar_panel_artifact_id"
 
     context_bar_panel_artifact_id: str = Field(pattern=SHA256_PATTERN)
-    payload: ContextBarPanelArtifactPayload
+    payload: ResearchContextBarPanelPayload | ContextBarPanelArtifactPayload
     #: post-materialization facts (produced-table binding, never pre-run identity)
     panel_table_sha256: str = Field(pattern=SHA256_PATTERN)
     validity_table_sha256: str = Field(pattern=SHA256_PATTERN)
@@ -477,6 +484,8 @@ def materialize_context_bar_panel(
     panel_interval_seconds: int,
     lookback_bars: int = LOOKBACK_BARS,
     resolved_block=None,
+    research_subject_id: str | None = None,
+    evaluation_dates: tuple[str, ...] | None = None,
 ) -> tuple[ContextBarPanelArtifactEnvelope, pd.DataFrame, pd.DataFrame]:
     """The ONLY input is a verified replay-chart artifact; the bars are
     re-read from its directory and rehashed against the manifest."""
@@ -514,7 +523,22 @@ def materialize_context_bar_panel(
     panel, validity = compute_context_bar_panel_features(
         bars, interval_seconds=interval, lookback_bars=lookback_bars
     )
+    if (research_subject_id is None) != (evaluation_dates is None):
+        raise ValueError("a scoped panel requires both a research subject and its calendar")
+    if evaluation_dates is not None:
+        if tuple(sorted(set(evaluation_dates))) != evaluation_dates or not evaluation_dates:
+            raise ValueError("panel research dates must be nonempty, unique and ordered")
+        panel = panel.loc[panel["trading_day"].astype(str).isin(evaluation_dates)].copy()
+        # Validity is keyed by observation id; it must describe exactly the
+        # retained panel, including its typed missing rows.
+        validity = validity.loc[
+            validity["row_id"].isin(panel["row_id"])
+        ].copy()
     all_interval = bars[bars["timeframe_seconds"].astype(int) == interval]
+    if evaluation_dates is not None:
+        all_interval = all_interval.loc[
+            all_interval["trading_day"].astype(str).isin(evaluation_dates)
+        ]
     excluded_partial = int(all_interval["is_final_partial"].astype(bool).sum())
     pair = replay.source_pair
     payload = ContextBarPanelArtifactPayload(
@@ -547,6 +571,12 @@ def materialize_context_bar_panel(
         panel_table_schema_hash=CONTEXT_BAR_PANEL_SCHEMA_HASH,
         panel_validity_schema_hash=CONTEXT_BAR_PANEL_VALIDITY_SCHEMA_HASH,
     )
+    if research_subject_id is not None:
+        payload = ResearchContextBarPanelPayload(
+            **payload.model_dump(mode="python"),
+            research_subject_id=research_subject_id,
+            evaluation_dates=evaluation_dates,
+        )
     panel_bytes = panel_table_bytes(panel)
     validity_bytes = validity_table_bytes(validity)
     envelope = ContextBarPanelArtifactEnvelope.from_payload(

@@ -226,7 +226,12 @@ def list_search_runs(
     for child in state_root.iterdir():
         if len(child.name) != _HEX64 or not child.is_dir():
             continue
-        state = read_search_state(state_root, child.name)
+        try:
+            state = read_search_state(state_root, child.name)
+        except (OSError, ValueError, TypeError):
+            # A corrupt job stays visible as unresolved; it must not hide other
+            # saved studies. Exact immutable evidence is still checked below.
+            state = {}
         if state is None:
             continue
         located = locate_charter_store(child.name, roots)
@@ -646,7 +651,10 @@ def list_pipeline_runs(
     for entry in root.iterdir():
         if not entry.is_dir() or len(entry.name) != _HEX64:
             continue
-        state = read_pipeline_state(root, entry.name)
+        try:
+            state = read_pipeline_state(root, entry.name)
+        except (OSError, ValueError, TypeError):
+            state = {}
         if state is None:
             continue
         stages = dict(state.get("stages") or {})
@@ -668,7 +676,7 @@ def list_pipeline_runs(
             (
                 mtime,
                 PipelineRunSummary(
-                    pipeline_semantic_id=str(state.get("pipeline_semantic_id")),
+                    pipeline_semantic_id=entry.name,
                     run_scope=str(state.get("run_scope") or "unknown"),
                     current_stage=state.get("current_stage"),
                     attempt_count=len(state.get("attempts") or ()),
@@ -794,8 +802,24 @@ def mbp1_stage_evidence_defaults(
         defaults["feature_artifact_id"] = str(evidence["feature_artifact_id"])
     s09 = dict((state.get("stages") or {}).get("09_train_models") or {})
     outputs = list(s09.get("output_artifact_ids") or ())
-    if evidence and outputs:
-        defaults["controlled_study_id"] = str(outputs[0])
+    if evidence and s09.get("stage_result_id"):
+        from .search.store import load_json_sidecar  # noqa: PLC0415
+
+        try:
+            controlled = load_json_sidecar(
+                Path(store_root), "pipeline_stage_results", str(s09["stage_result_id"]),
+                "controlled_feature_study.json",
+            )
+            if controlled is not None:
+                identity = controlled["controlled_feature_study_id"]
+                if not isinstance(identity, str) or not re.fullmatch(r"[0-9a-f]{64}", identity):
+                    raise ValueError("invalid controlled study identity")
+                defaults["controlled_study_id"] = identity
+            elif outputs:
+                # Historical stages had no typed sidecar and emitted this ID first.
+                defaults["controlled_study_id"] = str(outputs[0])
+        except (ValueError, KeyError, TypeError, OSError):
+            return defaults, "the selected run's controlled MBP-1 study failed verification"
     return defaults, None
 
 
@@ -1255,7 +1279,9 @@ def verification_owner_bundle(
     )
 
 
-def _owner_decision_evidence(store_root: Path, namespace_id: str):
+def _owner_decision_evidence(
+    store_root: Path, namespace_id: str, *, charter_intent_sha256=None, requirement_set_id=None
+):
     """decision key → (artifact id, evidence ref) for every CATALOGUED,
     verified owner decision artifact of THIS namespace (exact-id loads)."""
 
@@ -1275,11 +1301,32 @@ def _owner_decision_evidence(store_root: Path, namespace_id: str):
             continue
         for key in (envelope.payload.decision_id, *envelope.payload.decision_keys):
             found.setdefault(str(key), (artifact_id, envelope.evidence_ref()))
+    if charter_intent_sha256 is not None:
+        from .search.strategy_approval import (  # noqa: PLC0415
+            DECISION_KEYS,
+            STORE,
+            load_strategy_approval,
+        )
+
+        for artifact_id, _display in list_catalogued_envelope_ids(Path(store_root), STORE):
+            try:
+                approval = load_strategy_approval(Path(store_root), artifact_id)
+            except Exception:  # noqa: BLE001 — invalid approval is never evidence
+                continue
+            if (
+                approval.payload.charter_intent_sha256 == charter_intent_sha256
+                and approval.payload.requirement_set_id == requirement_set_id
+                and approval.payload.store_namespace_id == namespace_id
+            ):
+                for key in DECISION_KEYS:
+                    found[key] = (artifact_id, approval.evidence_ref())
+                break
     return found
 
 
 def owner_authorization_readiness(
-    store_root: Path, requirement_set, *, expected_class: str | None = "research"
+    store_root: Path, requirement_set, *, expected_class: str | None = "research",
+    charter_intent_sha256: str | None = None,
 ) -> AuthorizationReadiness:
     """Typed readiness of the computation-path-scoped owner bundle for a
     research purpose: the store must be a verified namespace of the expected
@@ -1304,7 +1351,11 @@ def owner_authorization_readiness(
             return blocked
         namespace = resolve_store_namespace(root, expected_class=expected_class)
         assert namespace.store_namespace_id is not None
-        evidence = _owner_decision_evidence(root, namespace.store_namespace_id)
+        evidence = _owner_decision_evidence(
+            root, namespace.store_namespace_id,
+            charter_intent_sha256=charter_intent_sha256,
+            requirement_set_id=requirement_set.requirement_set_id,
+        )
     except Exception as error:  # noqa: BLE001
         return AuthorizationReadiness(
             authorization_class,
@@ -1341,7 +1392,8 @@ def owner_authorization_readiness(
 
 
 def owner_authorization_bundle_from_store(
-    store_root: Path, requirement_set, *, expected_class: str | None = "research"
+    store_root: Path, requirement_set, *, expected_class: str | None = "research",
+    charter_intent_sha256: str | None = None,
 ):
     """The bundle for a ``ready`` research readiness (``None`` otherwise):
     the persisted evidence refs bound to the store's verified namespace and
@@ -1351,12 +1403,17 @@ def owner_authorization_bundle_from_store(
     from .search.supersession_chain import current_supersession_head_witness  # noqa: PLC0415
 
     readiness = owner_authorization_readiness(
-        store_root, requirement_set, expected_class=expected_class
+        store_root, requirement_set, expected_class=expected_class,
+        charter_intent_sha256=charter_intent_sha256,
     )
     if readiness.status != "ready" or readiness.store_namespace_id is None:
         return None
     root = Path(store_root)
-    evidence = _owner_decision_evidence(root, readiness.store_namespace_id)
+    evidence = _owner_decision_evidence(
+        root, readiness.store_namespace_id,
+        charter_intent_sha256=charter_intent_sha256,
+        requirement_set_id=requirement_set.requirement_set_id,
+    )
     witness = current_supersession_head_witness(root)
     return OwnerAuthorizationBundle(
         requirement_set_id=requirement_set.requirement_set_id,

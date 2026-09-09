@@ -512,6 +512,7 @@ def build_mbp1_source_artifact(
     authorized_date_set_id: str,
     events_stored: bool = True,
     coverage_evidence: Mapping[str, tuple[Mbp1PartitionEvidence, ...]] | None = None,
+    retain_event_bytes: bool = True,
 ) -> tuple[Mbp1SourceArtifactEnvelope, dict[str, bytes]]:
     """Freeze coverage over already-normalized per-day frames.
 
@@ -525,6 +526,8 @@ def build_mbp1_source_artifact(
     so byte-identical evidence reuses one artifact.
     """
 
+    if events_stored and not retain_event_bytes:
+        raise ValueError("stored MBP-1 events require retained canonical event bytes")
     partitions: list[Mbp1PartitionCoverage] = []
     event_bytes: dict[str, bytes] = {}
     evidence_map = dict(coverage_evidence or {})
@@ -547,8 +550,10 @@ def build_mbp1_source_artifact(
                 f"normalized frame for {day} lacks pinned columns: {missing}"
             )
         data = _canonical_event_bytes(normalized)
-        event_bytes[day] = data
+        if retain_event_bytes:
+            event_bytes[day] = data
         content = _bytes_sha256(data)
+        del data
         content_refs = (content,) + tuple(
             ref for ref in (attrs.get("source_file_sha256"),) if ref
         )
@@ -575,6 +580,7 @@ def build_mbp1_source_artifact(
                     **counters,
                 )
             )
+            del normalized
             continue
         keys = [evidence.scope.physical_partition_key for evidence in day_evidence]
         if len(set(keys)) != len(keys):
@@ -604,6 +610,7 @@ def build_mbp1_source_artifact(
                     **counters,
                 )
             )
+        del normalized
     payload = Mbp1SourceArtifactPayload(
         source_contract=contract,
         authorized_date_set_id=authorized_date_set_id,

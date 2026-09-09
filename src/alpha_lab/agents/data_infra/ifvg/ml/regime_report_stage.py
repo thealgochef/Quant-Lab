@@ -202,10 +202,14 @@ def build_reports(context) -> tuple[tuple[str, ...], dict[str, Any], str]:
             # is unavailable could never be gated this run
             skipped[core_replay_id] = str(reason)
             continue
-        if core_replay_id not in context.gates_passed:
+        subject = getattr(context.wiring, "research_subject", None)
+        # A research cohort can describe an unpromoted strategy. Selection
+        # gates still govern its frontier; they must not hide its behavior.
+        if core_replay_id not in context.gates_passed and subject is None:
             skipped[core_replay_id] = "strategy_gates_not_passed"
             continue
-        evaluation = _child_evaluation_envelope(core_replay_id, cost_policy)
+        scope = {"research_subject_id": subject.subject_id} if subject is not None else {}
+        evaluation = _child_evaluation_envelope(core_replay_id, cost_policy, **scope)
         evidence_by_child[core_replay_id] = {
             "executed_trade_table_id": loaded.envelope.executed_trade_table_id,
             "executed_trade_table_sha256": loaded.envelope.executed_trade_table_sha256,
@@ -219,6 +223,7 @@ def build_reports(context) -> tuple[tuple[str, ...], dict[str, Any], str]:
                 {
                     "core_replay_id": core_replay_id,
                     "cost_policy": cost_policy.model_dump(mode="json"),
+                    **scope,
                 }
             ),
             costed_evaluation_id=evaluation.costed_evaluation_id,
@@ -271,6 +276,10 @@ def build_reports(context) -> tuple[tuple[str, ...], dict[str, Any], str]:
         "children_skipped": dict(sorted(skipped.items())),
         "fitting_performed": False,
     }
+    if getattr(context.wiring, "research_subject", None) is not None:
+        record["strategy_selection_gates"] = {
+            core: core in context.gates_passed for core in children
+        }
     note = (
         f"; {len(outcome.report_ids)} stratified regime report(s) persisted from persisted "
         f"artifacts only ({len(outcome.refusals)} class refusal(s) recorded; "

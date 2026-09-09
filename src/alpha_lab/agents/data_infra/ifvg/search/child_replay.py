@@ -509,6 +509,10 @@ class ChildReplayResult:
         self.neutrality = neutrality
         self.gross_trade_stream_hash = gross_trade_stream_hash
 
+    @property
+    def tables(self):
+        return self.capture.tables
+
 
 def run_child_replay(
     *,
@@ -958,10 +962,24 @@ def verify_exact_drill_targets(
     }
 
 
-def build_slice_companions(
+def build_slice_companions(*, run: VerificationRunEnvelope, **kwargs) -> dict:
+    """Backward-compatible publisher for the zero-warmup verification slice."""
+    return build_child_companions(
+        replay_dates=tuple(run.payload.allowlist), warmup_days=0,
+        request_reference=run.verification_run_id, access_policy_id=VERIFICATION_POLICY_ID,
+        reference_field="verification_run_id",
+        **kwargs,
+    )
+
+
+def build_child_companions(
     *,
     result: ChildReplayResult,
-    run: VerificationRunEnvelope,
+    replay_dates: tuple[str, ...],
+    warmup_days: int,
+    request_reference: str,
+    access_policy_id: str,
+    reference_field: str = "search_id",
     core: CoreStrategyReplayIdentity,
     bundle,
     store_root: Path,
@@ -970,7 +988,7 @@ def build_slice_companions(
     authoritative_source_blob: str | None = None,
     cost_points: float | None = None,
 ) -> dict:
-    """The R2 companion builder for the Path-A vertical slice (DEV-R1-6 seam).
+    """Publish the existing child evidence for explicit dates and warmup.
 
     Builds and immutably publishes, in order: the per-child neutrality-gated
     FSM-audit companion (parity-EXEMPT — gated by the dual-drive
@@ -1029,9 +1047,8 @@ def build_slice_companions(
         core_replay_id=core.core_replay_id,
         audit_capture=result.audit_capture,
         neutrality=result.neutrality,
-        chain_dates=tuple(run.payload.allowlist),
-        warmup_days=0,  # Path A: 0 real warmup days; the slice cfg agrees and
-        # build_child_fsm_audit fail-closes on any stamp disagreement (B-M1)
+        chain_dates=replay_dates,
+        warmup_days=warmup_days,
     )
     reconciliation_passed = bool(audit_build.reconciliation_report.get("passed", True))
 
@@ -1054,7 +1071,7 @@ def build_slice_companions(
         ),
         resolved_profile_hash=resolved.section_config_hash,
         evaluation_config_hash=evaluation_config_hash,
-        date_allowlist=tuple(run.payload.allowlist),
+        date_allowlist=replay_dates,
         permitted_source_hashes=tuple(
             (f"{ref.trading_day}/{ref.artifact_kind}", ref.manifest_payload_sha256)
             for ref in bundle.payload.ordered_day_artifacts
@@ -1069,15 +1086,15 @@ def build_slice_companions(
             base_dir=v2_base,
             identity=identity,
             raw_config={
-                "verification_run_id": run.verification_run_id,
+                reference_field: request_reference,
                 "core_replay_id": core.core_replay_id,
-                "allowlist": list(run.payload.allowlist),
+                "allowlist": list(replay_dates),
                 "audit_capture_mode": "dual_drive_ab_v1",
             },
             effective_config={
                 "section": resolved.effective_config,
                 "evaluator": resolved.evaluator_config,
-                "source_access_policy": VERIFICATION_POLICY_ID,
+                "source_access_policy": access_policy_id,
             },
             tables=tables,
             candidate_report=build_candidate_report(

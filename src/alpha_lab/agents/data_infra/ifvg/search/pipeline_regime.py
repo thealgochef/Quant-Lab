@@ -239,8 +239,18 @@ def s05_regime_observation(context) -> tuple[tuple[str, ...], dict[str, Any], st
             dict(context.regime.get("charts_by_child", {}))
         )
         replay = _verified_panel_chart(context, chart_id)
+        research_subject = getattr(context.wiring, "research_subject", None)
+        scope_kwargs = (
+            {
+                "research_subject_id": research_subject.subject_id,
+                "evaluation_dates": tuple(research_subject.evaluation_dates),
+            }
+            if research_subject is not None
+            else {}
+        )
         envelope, panel, validity = materialize_context_bar_panel(
-            replay, panel_interval_seconds=int(request.panel_interval_seconds or 0)
+            replay, panel_interval_seconds=int(request.panel_interval_seconds or 0),
+            **scope_kwargs,
         )
         if envelope.payload.replay_chart_artifact_id != chart_id:  # pragma: no cover
             raise ValueError("the materialized panel does not bind the selected chart")
@@ -377,7 +387,12 @@ def s08_regime_folds(context) -> tuple[tuple[str, ...], dict[str, Any], str]:
         return (), {}, ""
     store_root = context.store_root
     view_frame = context.view.frame
-    days = tuple(sorted(set(view_frame["trading_day"].astype(str))))
+    research_subject = getattr(context.wiring, "research_subject", None)
+    days = (
+        tuple(research_subject.evaluation_dates)
+        if research_subject is not None
+        else tuple(sorted(set(view_frame["trading_day"].astype(str))))
+    )
     schedule = derive_fold_schedule(days)
     persist_fold_schedule(store_root, schedule)
     labeled = context.folds is not None
@@ -412,7 +427,10 @@ def s08_regime_folds(context) -> tuple[tuple[str, ...], dict[str, Any], str]:
         # F7: the schedule's days are the candidate view's OBSERVED trading
         # days (charter allowlist ∩ observed) — the one day source of S08
         "authorized_trading_days": list(days),
-        "trading_days_source": "candidate_view_observed_days",
+        "trading_days_source": (
+            "frozen_research_logical_calendar_v1"
+            if research_subject is not None else "candidate_view_observed_days"
+        ),
         "days_without_labels": (
             sorted(set(days) - set(context.labeled["trading_day"].astype(str)))
             if context.labeled is not None
@@ -495,6 +513,10 @@ def s09_regime_fit(context) -> tuple[tuple[str, ...], dict[str, Any], str]:
         candidate_as_of_source=candidate_as_of,
         candidate_as_of_stage=request.observation_stage,
         bootstrap_refits=request.bootstrap_refits,
+        **(
+            {"reuse_completed": True}
+            if getattr(context.wiring, "research_subject", None) is not None else {}
+        ),
     )
     regime["execution"] = result
     assessment_id = result.regime_capability_assessment_id
@@ -525,6 +547,9 @@ def s09_regime_fit(context) -> tuple[tuple[str, ...], dict[str, Any], str]:
             "gate_failures": list(result.run.assessment.payload.gate_failures),
         }
     }
+    if getattr(result, "regime_execution_request_id", None) is not None:
+        outputs.append(result.regime_execution_request_id)
+        record["S09a"]["regime_execution_request_id"] = result.regime_execution_request_id
     gate_note = (
         "passed"
         if record["S09a"]["gates_passed"]
@@ -689,6 +714,13 @@ def s15_regime_reload_failures(context) -> dict[str, str]:
         ("regime_protocols", regime["protocol"].resolved_regime_protocol_id, load_regime_protocol)
     ]
     if execution is not None:
+        if getattr(execution, "regime_execution_request_id", None) is not None:
+            from ..ml.regime_execution_cache import verify_cached_execution  # noqa: PLC0415
+
+            checks.append(
+                ("research_regime_executions", execution.regime_execution_request_id,
+                 verify_cached_execution)
+            )
         checks.extend(
             [
                 (

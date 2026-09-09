@@ -1264,10 +1264,53 @@ def main() -> None:
         page_title="Alpha Signal Research Lab",
         page_icon="📊",
         layout="wide",
-        initial_sidebar_state="expanded",
+        initial_sidebar_state="auto",
     )
 
-    # ── Sidebar ───────────────────────────────────────────────
+    from alpha_lab.agents.data_infra.ifvg.presentation.workspace_mode import DEVELOPER_MODE
+
+    pages = [
+        st.Page(_ifvg_workspace, title="IFVG Lab", url_path="ifvg", default=True),
+        st.Page(_ml_workspace, title="ML Training", url_path="ml-training"),
+        st.Page(
+            _compatibility_workspace, title="Dashboard Compatibility", url_path="compatibility"
+        ),
+        st.Page(_strategy_workspace, title="Strategy Analysis", url_path="strategy-analysis"),
+    ]
+    if DEVELOPER_MODE:
+        pages.append(st.Page(_developer_workspace, title="Developer", url_path="developer"))
+    st.navigation(pages).run()
+
+
+def _ifvg_workspace() -> None:
+    from ifvg_workspace import render_workspace
+
+    render_workspace(st)
+
+
+def _ml_workspace() -> None:
+    from ml_training_tab import render_ml_training_tab
+
+    render_ml_training_tab()
+
+
+def _compatibility_workspace() -> None:
+    from experiment_tab import render_experiment_tab
+
+    render_experiment_tab()
+
+
+def _developer_workspace() -> None:
+    from alpha_lab.agents.data_infra.ifvg.presentation.workspace_mode import developer_area
+
+    with developer_area():
+        from ifvg_workspace import render_developer
+
+        render_developer(st)
+
+
+def _strategy_workspace() -> None:
+    # Strategy controls belong only to this workspace.
     with st.sidebar:
         st.title("⚙️ Pipeline Config")
         mode = st.radio("Data Source", ["Synthetic", "Local (Databento)", "Live (Polygon.io)"])
@@ -1374,36 +1417,9 @@ def main() -> None:
     # TAB LAYOUT — primary extrema workflow + retained compatibility path
     # ══════════════════════════════════════════════════════════
 
-    tab_ml, tab_ifvg, tab_exp, tab_chart, tab_trades, tab_val, tab_exec, tab_mon = st.tabs(
-        [
-            "🧠 ML Training",
-            "🧪 IFVG Lab",
-            "🔬 Dashboard Compatibility",
-            "📈 Price & Signals",
-            "📋 Trade Log",
-            "✅ Validation",
-            "💰 Execution",
-            "🖥️ Monitoring",
-        ]
+    tab_chart, tab_trades, tab_val, tab_exec, tab_mon = st.tabs(
+        ["Price & Signals", "Trade Log", "Validation", "Execution", "Monitoring"]
     )
-
-    # ── Primary ML training tab (always available) ────────────
-    with tab_ml:
-        from ml_training_tab import render_ml_training_tab
-
-        render_ml_training_tab()
-
-    # ── IFVG Lab: experiments + replay/verifier (always available) ──
-    with tab_ifvg:
-        from ifvg_lab_tab import render_ifvg_lab_tab
-
-        render_ifvg_lab_tab()
-
-    # ── Secondary dashboard-compatibility tab (always available) ──
-    with tab_exp:
-        from experiment_tab import render_experiment_tab
-
-        render_experiment_tab()
 
     # ── Pipeline-dependent tabs ───────────────────────────────
     if run_btn:

@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Literal
 
+from .charter import OBJECTIVE_DIRECTIONS
 from .identities import FrozenContract, ImmutableMap
 
 __all__ = ["ObjectiveSpec", "FrontierResult", "build_frontier"]
@@ -112,10 +113,12 @@ def build_frontier(
             if any(value is None for value in values.values()):
                 trace.append(f"tie-break {tie_break}: unavailable, skipped")
                 continue
-            best_value = max(values.values())
+            direction = OBJECTIVE_DIRECTIONS[tie_break]
+            select_best = min if direction == "minimize" else max
+            best_value = select_best(values.values())
             pool = sorted(cid for cid, value in values.items() if value == best_value)
             trace.append(
-                f"tie-break {tie_break}: max={best_value:g}, remaining={len(pool)}"
+                f"tie-break {tie_break}: {direction}={best_value:g}, remaining={len(pool)}"
             )
         if len(pool) > 1:
             pool.sort()

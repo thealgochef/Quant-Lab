@@ -1,6 +1,6 @@
 # Alpha Signal Research Lab - Agent Notes
 
-Updated: 2026-07-28.
+Updated: 2026-09-08.
 
 ## Start points
 
@@ -11,6 +11,9 @@ Updated: 2026-07-28.
 - Session experiment CLI: `scripts/run_dashboard_session_experiment.py`.
 - Strategy-Core v3 cross-repo matrix: `../Strategy-Core/V3_COMPATIBILITY_MATRIX.md`.
 - For model-training changes, start with `scripts/ml_training_tab.py` and `src/alpha_lab/agents/data_infra/ml/`, not the older generic multi-agent scaffold.
+- IFVG exact-source R5–R6 research: `scripts/ifvg_research_pipeline.py`,
+  `src/alpha_lab/agents/data_infra/ifvg/search/research_runs.py`, and
+  `src/alpha_lab/agents/data_infra/ifvg/ml/research_evidence.py`.
 
 ## Commands
 
@@ -18,9 +21,16 @@ Run from the repo root (`C:\Users\gonza\Documents\Claude-Quant-Lab`, Windows; sy
 
 ```bash
 python -m pytest -q
-python -m ruff check src tests    # matches CI exactly; scripts/ is not linted by CI
+python -m ruff check src tests scripts    # matches .github/workflows/ci.yml
 streamlit run scripts/dashboard.py
 ```
+
+Choose tests according to the change's actual impact. Do not run the full
+regression suite by default, especially for isolated UI or presentation changes.
+Run focused tests for the affected behavior and dependencies, plus applicable
+lint checks. Run the full suite only when it is necessary to establish correctness
+and targeted checks cannot cover the affected behavior. Once relevant checks pass,
+do not broaden testing without a concrete unresolved correctness concern.
 
 Project metadata requires Python `>=3.13` (`pyproject.toml`); `.python-version` pins `3.13.1`; CI runs 3.13. Do not hardcode other interpreter versions in docs or scripts.
 
@@ -73,9 +83,51 @@ models/{model_name}/oos_predictions.parquet  # when OOS rows are available
 
 Treat `models/`, `catboost_info/`, `*.cbm`, cached `*.parquet`/`*.csv`, local imported data, and scratch chart HTML as generated local outputs unless a task explicitly says otherwise.
 
+Repository ignore rules also cover local IFVG stores, job state, saved profiles,
+drafts, review ledgers, and generated report/test workspaces. Ignoring them does
+not make them disposable: preserve previous studies, approvals and audit evidence
+on disk. Do not use `git clean -X` as repository housekeeping. Keep reusable test
+fixtures under `tests/`, outside the ignored local stores. Archived documentation
+and approved IFVG contracts remain versioned; local agent permissions do not.
+
+IFVG source-based research also writes immutable generated families under its
+selected search store: `research_subjects`, `research_groups`,
+`research_approvals`, `research_context_companions`, `research_cohorts`,
+`research_labels`, `research_model_inputs`, `research_model_runs`,
+`research_regime_executions`, and `research_replay_charts`. Preserve
+historical replay/context artifacts and approvals. Each subject binds the exact
+saved child and effective configuration sections; profile names and documentation
+are not substitutes for those hashes. Targets/costs remain per subject, warmup is
+excluded, and model inputs persist before fitting. Inspect these artifacts through
+verified readers, including incomplete runs; do not infer success from file
+presence. Real launches require the new exact-plan research authorization, which
+does not inherit strategy-search scope. Implementation tests/preflight readiness
+do not establish a completed real research run.
+
+MBP completeness receipts require an explicit reviewed import; dry-run preview
+saves nothing and cannot infer missing completeness. Regime feature eligibility
+is a separate, review-ID-bound owner decision over saved assessment gates,
+bootstrap evidence and sample floors. It configures a linked B0→B7 study but
+grants no fitting until that new research plan is separately authorized.
+Linked regime studies preserve the exact precursor numerical protocol. Research
+candidate charts use their selected store and separately verified configured
+labels; legacy fixed-1R annotations do not define research labels. MBP source
+loading stays bounded to one day. Completed real S09a executions may be reused;
+incomplete S09a fitting attempts recompute. Real folds purge from the first logical
+test-day boundary even if that day has no candidates. Descriptive reports retain
+all scoped trades with selection-gate flags; frontier promotion floors stay fixed.
+
 The old `data/models/dashboard_3feature_v1.cbm` exporter is retained compatibility tooling, not automatically a v3 bundle. Canonical bundle location/checksum verification is deferred until the incoming local zip is available.
 
 ## Documentation maintenance
+
+IFVG search evaluation corrections (2026-09-08): exclude stamped warmup trades
+before metrics/gates and include the initial zero-equity drawdown peak. Current
+costed evaluations use `metrics_policy_id=post_warmup_zero_peak_v2`. Legacy
+artifacts remain immutable; `scripts/audit_ifvg_search.py` publishes scoped
+replacement reports and backs up the operational state before updating its
+frontier pointer. Search trade reviews join exact core/v2/input-bar references
+and append only to the existing visual review ledger.
 
 When code behavior changes, update docs in the same change. At minimum:
 

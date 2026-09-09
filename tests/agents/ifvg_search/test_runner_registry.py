@@ -29,7 +29,9 @@ def test_production_registry_never_resolves_into_the_tests_package() -> None:
 
     assert set(REGISTERED_RUNNER_ENTRIES) == {
         "search_baseline_verification_v1",
+        "search_strategy_development_v1",
         "pipeline_baseline_verification_v1",
+        "pipeline_real_research_v1",
     }
     for key, entry in REGISTERED_RUNNER_ENTRIES.items():
         assert not entry.startswith("tests."), (key, entry)
@@ -101,8 +103,10 @@ def test_registry_is_immutable_with_the_r5_executor_set() -> None:
     assert set(registered_runner_entries()) == {
         "synthetic_search_job_fixture_v1",
         "search_baseline_verification_v1",
+        "search_strategy_development_v1",
         "pipeline_synthetic_fixture_v1",
         "pipeline_baseline_verification_v1",
+        "pipeline_real_research_v1",
     }
     # the real entries resolve into src, never into user-shaped strings
     assert REGISTERED_RUNNER_ENTRIES["search_baseline_verification_v1"].startswith(

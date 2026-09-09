@@ -302,6 +302,8 @@ def _label_source_sha256(pair: VerifiedIfvgPair) -> str:
 def build_candidate_bar_ranges(
     pair: VerifiedIfvgPair,
     bars_1m: pd.DataFrame,
+    *,
+    research_subject=None,
 ) -> pd.DataFrame:
     """One row per candidate: range anchors, separated end times, exact refs."""
     candidates = pair.v2.tables[RecordTable.ENTRY_CANDIDATE]
@@ -310,6 +312,19 @@ def build_candidate_bar_ranges(
     executed = pair.v2.tables[RecordTable.EXECUTED_TRADE]
     labels = pair.v2.tables[RecordTable.CANDIDATE_LABEL]
     links = pair.v3.tables[ContextRecordTable.CANDIDATE_CONTEXT_LINK]
+    cutoff = pd.Timestamp(
+        research_subject.cutoff_ts_utc if research_subject is not None else AUTHORIZED_CUTOFF_UTC
+    )
+    if research_subject is not None:
+        if "is_warmup" not in candidates or candidates["is_warmup"].isna().any():
+            raise ReplayChartStoreError("research chart candidates require warmup provenance")
+        included = candidates["trading_day"].astype(str).isin(research_subject.evaluation_dates)
+        included &= ~candidates["is_warmup"].astype(bool)
+        included &= pd.to_datetime(candidates["envelope_ts_utc"], utc=True) < cutoff
+        candidates = candidates.loc[included]
+        # Original fixed-1R labels may resolve beyond this research window.
+        # Configured research outcomes are loaded separately by the renderer.
+        labels = labels.iloc[:0]
 
     bar_close = pd.to_datetime(bars_1m["close_ts_utc"], utc=True, errors="raise")
     bar_order = bar_close.sort_values(kind="mergesort")
@@ -336,7 +351,6 @@ def build_candidate_bar_ranges(
         raise ReplayChartStoreError("primary label family has duplicate candidate labels")
     label_index = primary.set_index("candidate_id", verify_integrity=True)
     label_bar_close = dict(zip(bars_1m["bar_id"].astype(str), bar_close, strict=True))
-    cutoff = pd.Timestamp(AUTHORIZED_CUTOFF_UTC)
 
     def _bar_span(start: pd.Timestamp, end: pd.Timestamp) -> tuple[str | None, str | None]:
         first = int(np.searchsorted(ordered_close_ns, start.value, "left"))
@@ -398,6 +412,8 @@ def build_candidate_bar_ranges(
             display_end, display_source = pd.Timestamp(setup_end), "setup_end"
         else:
             display_end, display_source = candidate_ts, "setup_end"
+        if research_subject is not None and display_end > cutoff:
+            display_end, display_source = cutoff, "authorized_cutoff_censor"
 
         has_setup_start = setup_start is not None and pd.notna(setup_start)
         span_start = setup_start if has_setup_start else candidate_ts
@@ -447,6 +463,11 @@ def build_candidate_bar_ranges(
         )
 
     frame = pd.DataFrame(rows)
+    if frame.empty:
+        return pd.DataFrame(columns=(
+            "candidate_id", "setup_id", "trading_day", "display_end_source",
+            "first_bar_id_1m", "last_bar_id_1m",
+        ))
     if frame["candidate_id"].duplicated().any():
         raise ReplayChartStoreError("candidate bar ranges must be unique per candidate")
     unknown = set(frame["display_end_source"]) - set(DISPLAY_END_SOURCES)
@@ -530,21 +551,66 @@ def build_replay_chart_artifact(
     base_dir: Path | None = None,
     data_dir: Path = DEFAULT_DATA_DIR,
     corroborate: bool = True,
+    research_label_source: tuple[Path, str] | None = None,
 ) -> Path:
     """Build (or idempotently re-verify) the replay-chart artifact for a pair."""
     repo_root = Path(repo_root).resolve()
     base = Path(base_dir) if base_dir is not None else repo_root / REPLAY_CHART_STORE
     pair_ref = ArtifactPairRef.from_verified_pair(pair)
+    research_source = None
+    if research_label_source is not None:
+        from .search.research_data import load_research_context_companion  # noqa: PLC0415
+
+        source_root, source_id = research_label_source
+        research_source = load_research_context_companion(Path(source_root), source_id)
+        subject = research_source.envelope.payload.subject
+        if (subject.v2_dataset_id, subject.v2_manifest_hash) != (
+            pair_ref.v2_dataset_id, pair_ref.v2_manifest_hash
+        ) or (
+            source_id, research_source.manifest_payload_sha256
+        ) != (pair_ref.v3_dataset_id, pair_ref.v3_manifest_hash):
+            raise ReplayChartStoreError(
+                "research chart source belongs to another exact capture pair"
+            )
     effective_config = replay_chart_effective_config(
-        pair_ref, label_source_sha256=_label_source_sha256(pair)
+        pair_ref,
+        label_source_sha256=(
+            research_source.forward_bars_sha256 if research_source is not None
+            else _label_source_sha256(pair)
+        ),
+    )
+    if research_source is not None:
+        effective_config["label_source_companion_id"] = (
+            research_source.envelope.research_context_companion_id
+        )
+        effective_config["label_source_companion_manifest_sha256"] = (
+            research_source.manifest_payload_sha256
+        )
+        effective_config["label_source_policy"] = "verified_research_forward_bars_v1"
+        effective_config["development_cutoff_utc"] = subject.cutoff_ts_utc
+        effective_config["candidate_range_policy"] = "research_candidate_geometry_scope_v1"
+        effective_config["label_annotation_policy"] = "configured_research_labels_separate_v1"
+        effective_config["research_subject_id"] = subject.subject_id
+        effective_config["evaluation_dates"] = list(subject.evaluation_dates)
+    catalog_path = (
+        Path(research_label_source[0]) / "research_replay_chart_catalog.json"
+        if research_label_source is not None else repo_root / REPLAY_CHART_CATALOG
     )
     artifact_id = replay_chart_identity(effective_config)
     destination = Path(base).resolve() / artifact_id
     if destination.exists():
-        load_verified_replay_chart_artifact(base, artifact_id, expected_pair=pair_ref)
+        existing = load_verified_replay_chart_artifact(base, artifact_id, expected_pair=pair_ref)
+        update_replay_chart_catalog(
+            artifact_id, pair_ref,
+            manifest_payload_sha256=existing.manifest["manifest_payload_sha256"],
+            catalog_path=catalog_path,
+        )
         return destination
 
-    bars_1m = load_verified_label_source_bars(pair.v2)
+    bars_1m = (
+        research_source.bars_1m if research_source is not None
+        else load_verified_label_source_bars(pair.v2)
+    )
     bars_tf = pd.concat(
         [resample_label_bars(bars_1m, timeframe) for timeframe in REPLAY_TIMEFRAMES_SECONDS],
         ignore_index=True,
@@ -556,7 +622,10 @@ def build_replay_chart_artifact(
         )
     else:
         corroboration = {"oracle": "skipped", "corroborated_days": [], "uncorroborated_days": []}
-    candidate_ranges = build_candidate_bar_ranges(pair, bars_1m)
+    candidate_ranges = build_candidate_bar_ranges(
+        pair, bars_1m,
+        research_subject=research_source.envelope.payload.subject if research_source else None,
+    )
 
     base.mkdir(parents=True, exist_ok=True)
     temporary = Path(base).resolve() / f".{artifact_id}.tmp-{uuid.uuid4().hex}"
@@ -609,7 +678,7 @@ def build_replay_chart_artifact(
         artifact_id,
         pair_ref,
         manifest_payload_sha256=manifest["manifest_payload_sha256"],
-        catalog_path=repo_root / REPLAY_CHART_CATALOG,
+        catalog_path=catalog_path,
     )
     return destination
 
@@ -686,6 +755,51 @@ def load_verified_replay_chart_artifact(
         candidate_ranges=frames["candidate_bar_range.parquet"],
         anchor_240m_status=str(effective_config["anchor_240m_status"]),
     )
+
+
+def load_verified_research_replay_chart(
+    store_root: Path,
+    artifact_id: str,
+    *,
+    research_subject_id: str,
+    core_replay_id: str,
+):
+    """Exact selected-cell chart and forward source; no global catalog or v2 labels."""
+    from .search.research_data import load_research_context_companion  # noqa: PLC0415
+
+    if not _FULL_SHA256.fullmatch(str(artifact_id)):
+        raise ReplayChartStoreError("research chart identity must be a full SHA-256")
+    root = Path(store_root)
+    base = root / "research_replay_charts"
+    try:
+        metadata = json.loads((base / artifact_id / "manifest.json").read_text(encoding="utf-8"))
+        pair = ArtifactPairRef(**metadata["source_pair"])
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise ReplayChartStoreError("research chart source reference is unavailable") from error
+    chart = load_verified_replay_chart_artifact(base, artifact_id, expected_pair=pair)
+    source = load_research_context_companion(root, pair.v3_dataset_id)
+    subject = source.envelope.payload.subject
+    effective = chart.manifest["effective_config"]
+    expected = {
+        "label_source_companion_id": pair.v3_dataset_id,
+        "label_source_companion_manifest_sha256": source.manifest_payload_sha256,
+        "source_label_table_sha256": source.forward_bars_sha256,
+        "label_source_policy": "verified_research_forward_bars_v1",
+        "candidate_range_policy": "research_candidate_geometry_scope_v1",
+        "label_annotation_policy": "configured_research_labels_separate_v1",
+        "research_subject_id": research_subject_id,
+        "evaluation_dates": list(subject.evaluation_dates),
+        "development_cutoff_utc": subject.cutoff_ts_utc,
+    }
+    if (
+        subject.subject_id != research_subject_id
+        or subject.core_replay_id != core_replay_id
+        or (subject.v2_dataset_id, subject.v2_manifest_hash, source.manifest_payload_sha256)
+        != (pair.v2_dataset_id, pair.v2_manifest_hash, pair.v3_manifest_hash)
+        or any(effective.get(key) != value for key, value in expected.items())
+    ):
+        raise ReplayChartStoreError("research chart differs from its exact subject or source")
+    return chart, source
 
 
 def read_replay_chart_catalog(catalog_path: Path) -> dict[str, dict[str, str]]:

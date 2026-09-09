@@ -10,8 +10,9 @@ user-shaped string can reach ``importlib``.
 R5 registered the REAL executors: the baseline-verification search/pipeline
 entries (``search/executors.py``) fail closed at CONSTRUCTION without the
 owner's persisted verification authorization, so registration unblocks the
-launch surface, never the data. Full-development execution has no registered
-entry — the operator run stays a separate, explicitly authorized action.
+launch surface, never the data. Exact owner-approved strategy searches use
+``search_strategy_development_v1``; its factory verifies the persisted approval
+before any source read. Other full-development workflows remain separate actions.
 
 R5-FIX (gate finding 3): the PRODUCTION registry no longer names any
 ``tests.*`` module. Synthetic fixture wiring is DEVELOPMENT-side: the tests
@@ -50,6 +51,14 @@ class RunnerEntryError(PermissionError):
 #: never resolves into the ``tests`` package (R5-FIX finding 3).
 REGISTERED_RUNNER_ENTRIES: Mapping[str, str] = MappingProxyType(
     {
+        "pipeline_real_research_v1": (
+            "alpha_lab.agents.data_infra.ifvg.search.research_executor:"
+            "pipeline_real_research_entry"
+        ),
+        "search_strategy_development_v1": (
+            "alpha_lab.agents.data_infra.ifvg.search.strategy_executor:"
+            "search_strategy_development_entry"
+        ),
         "search_baseline_verification_v1": (
             "alpha_lab.agents.data_infra.ifvg.search.executors:"
             "search_baseline_verification_entry"
@@ -155,8 +164,9 @@ def runner_entry_key_for_charter(charter_envelope) -> str | None:
     verification-fixture charters resolve to the R5 baseline-verification
     executor — whose factory still fails closed (before any source path)
     until the owner's persisted verification authorization exists. Real
-    full-development charters have no registered executor: the operator
-    full run is a separate, explicitly authorized action.
+    strategy-only development charters with an exact strategy approval resolve
+    to the development search executor; its factory verifies that approval.
+    Other full-development charters have no registered search executor.
     """
 
     authorization = charter_envelope.payload.owner_authorization
@@ -166,6 +176,13 @@ def runner_entry_key_for_charter(charter_envelope) -> str | None:
     date_policy = charter_envelope.payload.date_policy
     if date_policy.access_policy_id == "verification_fixed_allowlist_max5_v1":
         return "search_baseline_verification_v1"
+    from .strategy_approval import DECISION_ID  # noqa: PLC0415
+
+    if any(
+        ref.decision_id == DECISION_ID
+        for ref in getattr(authorization, "decision_refs", {}).values()
+    ):
+        return "search_strategy_development_v1"
     return None
 
 
@@ -188,4 +205,9 @@ def pipeline_entry_key_for_charter(charter_envelope) -> str | None:
     date_policy = charter_envelope.payload.date_policy
     if date_policy.access_policy_id == "verification_fixed_allowlist_max5_v1":
         return "pipeline_baseline_verification_v1"
+    if any(
+        ref.decision_id == "ifvg_real_research_approval_v1"
+        for ref in getattr(authorization, "decision_refs", {}).values()
+    ):
+        return "pipeline_real_research_v1"
     return None

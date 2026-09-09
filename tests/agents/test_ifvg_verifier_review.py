@@ -106,6 +106,12 @@ def test_review_opens_unreviewed_and_persists_nothing_without_save(review_app) -
     assert record["notes"] == "notes"
     success = " ".join(str(s.value) for s in at.success)
     assert "Saved" in success
+    status = " ".join(str(m.value) for m in at.markdown)
+    assert "✓ Saved" in status
+    assert "Unsaved" not in status
+    at.text_area(key=f"{tab._STATE_PREFIX}review_notes_{_CANDIDATE_A}").input("edited notes").run()
+    assert "Unsaved" in " ".join(str(m.value) for m in at.markdown)
+    assert len(log["reviews"]) == 1
 
 
 def test_detail_verdicts_and_not_applicable_map_onto_the_ledger_keys(review_app) -> None:

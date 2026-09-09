@@ -21,7 +21,9 @@ env/
 .ruff_cache/
 .pytest_cache/
 .coverage
+.coverage.*
 htmlcov/
+/.claude/settings.local.json
 # Generated ML artifacts
 catboost_info/
 models/
@@ -38,6 +40,41 @@ test-chart/*.html
 test_chart_output.html
 data/raw/
 data/processed/
+
+# Local IFVG stores, saved studies and user state. Keep these on disk; never
+# clean them with git clean -X. Committed fixtures belong under tests/.
+/data/experiment/
+/data/ifvg_datasets/
+/data/ifvg_experiments/
+/data/ifvg_preparation_jobs/
+/data/ifvg_search_jobs/
+/data/ifvg_study_drafts/
+/data/ifvg_visual_review/
+/data/ifvg_profiles.json
+/ifvg_search_runs/
+
+# Generated reports and acceptance-test workspaces (including nested stores).
+# Historical studies/audits are retained locally; curated docs remain trackable.
+/reports/ifvg_browser_acceptance/
+/reports/ifvg_final_review/
+/reports/ifvg_fsm_audit/
+/reports/ifvg_tf_variants/
+/reports/parent_staleness_audit/
+/reports/IFVG_WORK_COMPLETION_SUMMARY.docx
+/IFVG_FUNNEL.md
+/IFVG_LABELS.md
+
+# Generated delivery bundles, test transcripts and screenshots stay local.
+# Retain the plan contracts, decision records, validators and runtime scan JSON.
+/QL-FSM-PROP-SEARCH-DASHBOARD/implementation-progress/**/*.bundle*
+/QL-FSM-PROP-SEARCH-DASHBOARD/implementation-progress/**/*.patch*
+/QL-FSM-PROP-SEARCH-DASHBOARD/implementation-progress/**/_*.txt
+/QL-FSM-PROP-SEARCH-DASHBOARD/implementation-progress/**/*PYTEST*.txt
+/QL-FSM-PROP-SEARCH-DASHBOARD/implementation-progress/**/junit*.xml
+/QL-FSM-PROP-SEARCH-DASHBOARD/implementation-progress/**/gates.done
+/QL-FSM-PROP-SEARCH-DASHBOARD/implementation-progress/**/gates.progress
+/QL-FSM-PROP-SEARCH-DASHBOARD/implementation-progress/**/browser-smoke/
+/QL-FSM-PROP-SEARCH-DASHBOARD/implementation-progress/**/CAPACITY_BENCHMARKS.json
 .idea/
 .vscode/
 *.swp

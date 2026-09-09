@@ -282,6 +282,7 @@ def run_catboost_bundle_fold_models(
     label_artifact_id: str | None = None,
     manual_feature_overrides: dict[str, Any] | None = None,
     fitted_fold_sink: dict[int, CatBoostClassifier] | None = None,
+    prediction_input_sink: dict[int, pd.DataFrame] | None = None,
 ) -> CatBoostBundleModelRun:
     """The same loop shape as ``run_logistic_fold_models``: fit on TRAINING
     rows only, predict the test rows, typed invalid folds.
@@ -369,6 +370,8 @@ def run_catboost_bundle_fold_models(
         )
         if fitted_fold_sink is not None:
             fitted_fold_sink[fold.fold_index] = model
+        if prediction_input_sink is not None:
+            prediction_input_sink[fold.fold_index] = test_x.copy()
         probabilities = model.predict_proba(test_x)[:, 1]
         for candidate_id, probability in zip(test.index.astype(str), probabilities, strict=True):
             source = test.loc[candidate_id]

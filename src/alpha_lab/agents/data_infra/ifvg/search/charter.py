@@ -355,6 +355,15 @@ def validate_charter(
         )
 
     synthetic = isinstance(payload.owner_authorization, SyntheticAuthorizationMarker)
+    if not synthetic:
+        from .strategy_approval import ratified_registry_for_charter  # noqa: PLC0415
+
+        try:
+            axis_registry = ratified_registry_for_charter(
+                payload, store_root, axis_registry, as_of_utc=as_of_utc
+            )
+        except PermissionError as error:
+            raise CharterValidationError(str(error)) from error
     for axis_key, value_ids in sorted(payload.axes.items()):
         if not value_ids:
             raise CharterValidationError(f"axis {axis_key!r} registers no values")
@@ -576,6 +585,14 @@ def save_charter(root, envelope: SearchCharterEnvelope):
                 "the research store refuses them (P0-4)"
             )
     else:
+        from .strategy_approval import DECISION_ID  # noqa: PLC0415
+
+        if any(ref.decision_id == DECISION_ID for ref in authorization.decision_refs.values()):
+            from datetime import UTC, datetime  # noqa: PLC0415
+
+            validate_charter(
+                envelope.payload, as_of_utc=datetime.now(UTC).isoformat(), store_root=root
+            )
         try:
             assert_authorization_bound_to_store(
                 Path(root),

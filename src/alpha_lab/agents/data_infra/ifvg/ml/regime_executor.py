@@ -21,7 +21,7 @@ gate failures and no fit exists.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pandas as pd
@@ -129,6 +129,7 @@ class RegimeExecutionResult:
     #: R6.1-FIX §3.1: fold index → the VERIFIED per-fit assignment evidence
     #: (exact store loads) every downstream artifact must consume
     verified_fit_assignments: Mapping[int, VerifiedFitAssignments]
+    regime_execution_request_id: str | None = None
 
     @property
     def consulted_assignments(self) -> pd.DataFrame:
@@ -146,6 +147,7 @@ def execute_regime_protocol(
     candidate_as_of_source: RegimeObservationSourceRef | None = None,
     candidate_as_of_stage: AvailabilityStage = AvailabilityStage.ENTRY_DECISION,
     bootstrap_refits: int = 50,
+    reuse_completed: bool = False,
 ) -> RegimeExecutionResult:
     """Persist → load fold set → load observations → run → persist fits and
     assessment → exact-load the fits' assignment sidecars → descriptive OOS
@@ -157,6 +159,9 @@ def execute_regime_protocol(
     provenance line is stamped from the loaded envelope. The candidate grain
     derives the as-of instants from the loaded observations themselves and
     refuses the parameter.
+
+    ``reuse_completed`` opts real research into exact completed-request model
+    reload. Incomplete executions retain the legacy fitting path.
     """
 
     root = Path(store_root)
@@ -176,6 +181,27 @@ def execute_regime_protocol(
         raise ValueError(
             "the fold set was built over a different observation source than the one loaded"
         )
+    cache_request = None
+    if reuse_completed:
+        from .regime_execution_cache import (  # noqa: PLC0415
+            load_completed_regime_execution,
+            regime_execution_request,
+        )
+
+        cache_request = regime_execution_request(
+            root,
+            protocol=protocol,
+            observations=observations,
+            fold_set=fold_set,
+            candidate_as_of_source=candidate_as_of_source,
+            candidate_as_of_stage=candidate_as_of_stage,
+            bootstrap_refits=bootstrap_refits,
+        )
+        cached = load_completed_regime_execution(
+            root, cache_request, protocol=protocol, observations=observations, fold_set=fold_set
+        )
+        if cached is not None:
+            return cached
     run = run_regime_protocol_from_source(
         observations, folds, protocol, bootstrap_refits=bootstrap_refits
     )
@@ -244,7 +270,7 @@ def execute_regime_protocol(
         panel_context=context,
     )
     save_regime_oos_assignment(root, envelope, table)
-    return RegimeExecutionResult(
+    result = RegimeExecutionResult(
         protocol=protocol,
         run=run,
         fold_set_artifact_id=fold_set.fold_set_artifact_id,
@@ -258,3 +284,12 @@ def execute_regime_protocol(
         fits_reused=tuple(reused),
         verified_fit_assignments=verified,
     )
+    if cache_request is not None:
+        from .regime_execution_cache import persist_completed_regime_execution  # noqa: PLC0415
+
+        persist_completed_regime_execution(root, cache_request, result)
+        restored = load_completed_regime_execution(
+            root, cache_request, protocol=protocol, observations=observations, fold_set=fold_set
+        )
+        return replace(restored, fits_reused=result.fits_reused)
+    return result

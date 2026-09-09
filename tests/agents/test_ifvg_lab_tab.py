@@ -422,15 +422,13 @@ def test_tab_smoke_apptest(monkeypatch) -> None:
     at = apptest.AppTest.from_function(_app, default_timeout=60)
     at.run()
     assert not at.exception
-    assert [tab.label for tab in at.tabs[:3]] == [
-        "Experiments",
-        "Replay / Verifier",
-        "Data & Audit",
-    ]
-    code_values = [element.value for element in at.code]
-    assert any("ifvg_preparation_job.py start" in value for value in code_values)
-    assert any("ifvg_preparation_job.py status" in value for value in code_values)
-    assert any("Preparation status: failed" in item.value for item in at.caption)
+    assert not at.tabs
+    assert at.radio[0].options == ["My studies", "Trade review"]
+    assert not at.code and not at.json
+    at.radio[0].set_value("Trade review").run()
+    assert not at.exception
+    assert any("No prepared trade evidence" in item.value for item in at.info)
+    assert not at.code and not at.json
     button_labels = {button.label.lower() for button in at.button}
     assert not any(
         unsafe in label

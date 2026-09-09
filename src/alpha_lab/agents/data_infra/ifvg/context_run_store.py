@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -33,6 +34,7 @@ __all__ = [
     "load_candidate_feature_view_frame",
     "save_context_experiment_run",
     "load_context_experiment_run",
+    "load_context_experiment_configuration",
     "update_context_run_catalog",
     "list_context_run_catalog",
     "reconcile_context_runs",
@@ -137,6 +139,8 @@ def _manifest(directory: Path, identity_key: str, identity: str) -> dict[str, An
         manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise ImmutableContextStoreError("immutable object manifest is unreadable") from error
+    if not isinstance(manifest, dict):
+        raise ImmutableContextStoreError("immutable object manifest must be an object")
     if manifest.get(identity_key) != identity:
         raise ImmutableContextStoreError("immutable object manifest identity mismatch")
     core = {key: value for key, value in manifest.items() if key != "manifest_payload_sha256"}
@@ -365,6 +369,47 @@ def load_context_experiment_run(
         predictions=predictions,
         feature_importance=tables.get("feature_importance.parquet", pd.DataFrame()),
     )
+
+
+def load_context_experiment_configuration(
+    run_id: str, *, base_dir: Path = CONTEXT_RUN_STORE
+) -> IfvgContextExperimentConfig:
+    """Verify only a run's saved configuration, without loading OOS tables.
+
+    This is a presentation reader, not verification of the run's results.
+    """
+    directory = _content_directory(base_dir, run_id)
+    manifest = _manifest(directory, "run_id", run_id)
+    entries = manifest.get("artifacts")
+    if not isinstance(entries, list):
+        raise ImmutableContextStoreError("immutable run artifacts must be a list")
+    paths: set[str] = set()
+    selected = None
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ImmutableContextStoreError("invalid immutable run artifact")
+        relative = entry.get("path")
+        path = _child_artifact(directory, relative)
+        if relative in paths:
+            raise ImmutableContextStoreError("immutable run has duplicate artifact paths")
+        paths.add(relative)
+        if relative == "config.json":
+            selected = (entry, path)
+    if selected is None:
+        raise ImmutableContextStoreError("immutable run is missing its configuration")
+    entry, path = selected
+    try:
+        data = path.read_bytes()
+        if len(data) != entry.get("bytes") or hashlib.sha256(data).hexdigest() != entry.get(
+            "sha256"
+        ):
+            raise ImmutableContextStoreError("immutable run configuration was modified")
+        config = IfvgContextExperimentConfig.model_validate_json(data)
+    except (OSError, ValueError) as error:
+        raise ImmutableContextStoreError("immutable run configuration is invalid") from error
+    if config.identity != manifest.get("config_hash"):
+        raise ImmutableContextStoreError("immutable run configuration identity mismatch")
+    return config
 
 
 def update_context_run_catalog(

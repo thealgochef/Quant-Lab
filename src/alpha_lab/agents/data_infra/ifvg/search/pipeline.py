@@ -563,7 +563,9 @@ def derive_stage_plan_readiness(
             bundle_block_reason = sanitize_failure_message(str(error))
             break
     model_block_reason: str | None = None
-    bundle_parametrized = bool(_mbp1_bearing_bundles(spec.feature_bundle_ids))
+    bundle_parametrized = bool(_mbp1_bearing_bundles(spec.feature_bundle_ids)) or (
+        spec.warmup_policy_id == "research_scoped_post_warmup_v1"
+    )
     if (
         bundle_block_reason is None
         and spec.model_protocol_id == CATBOOST_PROTOCOL_ID
@@ -728,6 +730,12 @@ class PipelineWiring:
     #: ``chart_id → VerifiedReplayChartArtifact`` (the panel is materialized
     #: from the artifact's rehashed ``bars_tf.parquet`` only; never a frame).
     context_bar_source: Callable[[str], Any] | None = None
+    #: Real research is one exact, immutable subject per execution context.
+    #: The source reference is inside the semantic spec's source_artifact_ids.
+    research_subject: Any = None
+    child_specs_source: Callable[[], tuple[Any, ...]] | None = None
+    research_preparation: Any = None
+    research_authorization_check: Callable[[], None] | None = None
 
 
 @dataclass
@@ -766,6 +774,9 @@ class _RunContext:
     ladder: Any = None
     mbp1_evidence: dict[str, Any] = field(default_factory=dict)
     controlled_study: Any = None
+    research_model_run_ids: list[str] = field(default_factory=list)
+    research_label_store_id: str | None = None
+    research_cohort_id: str | None = None
     prop_vectors: dict[str, dict[str, Any]] = field(default_factory=dict)
     frontier_id: str | None = None
     insight_ids: tuple[str, ...] = ()
@@ -879,6 +890,7 @@ def _initial_state(semantic: PipelineSemanticIdentity) -> dict[str, Any]:
         "full_pipeline_not_run": (
             semantic.payload.run_scope
             is not PipelineRunScope.FULL_AUTHORIZED_DEVELOPMENT
+            or planned != set(CANONICAL_STAGE_ORDER)
         ),
     }
 
@@ -906,6 +918,13 @@ def _resolve_core_id(context: _RunContext, spec_child) -> tuple[str, object | No
 
 def _ensure_specs(context: _RunContext) -> tuple[Any, ...]:
     if context.specs is None:
+        if context.wiring.child_specs_source is not None:
+            if context.wiring.research_subject is None:
+                raise PipelineWiringError("exact child selection requires a research subject")
+            context.specs = tuple(context.wiring.child_specs_source())
+            if len(context.specs) != 1:
+                raise PipelineWiringError("a real research context must contain exactly one child")
+            return context.specs
         context.specs = enumerate_children(
             context.charter,
             identity_resolver=lambda spec_child: _resolve_core_id(context, spec_child)[0],
@@ -985,6 +1004,14 @@ def _stage_s00_validate(context: _RunContext) -> tuple[tuple[str, ...], str]:
         )
     planned = set(spec.stage_plan)
     wiring = context.wiring
+    if wiring.research_subject is not None:
+        subject = wiring.research_subject
+        if subject.subject_id not in spec.source_artifact_ids:
+            problems.append("research subject is not frozen into the source identities")
+        if wiring.research_authorization_check is None:
+            problems.append("real research requires its own exact authorization check")
+        else:
+            wiring.research_authorization_check()
     for stage, attribute in (
         (QuantLabPipelineStage.S03_BUILD_OR_REUSE_FSM_AUDIT, "audit_builder"),
         (QuantLabPipelineStage.S04_BUILD_OR_REUSE_REPLAY_CHARTS, "chart_builder"),
@@ -1348,7 +1375,10 @@ def _reuse_child_with_regime_tables(
 
 
 def _stage_s02_replays(context: _RunContext) -> tuple[tuple[str, ...], str]:
+    if context.wiring.research_subject is not None:
+        from .research_executor import run_research_source_stage  # noqa: PLC0415
 
+        return run_research_source_stage(context)
     specs = _ensure_specs(context)
     charter_payload = context.charter.payload
     cost = (
@@ -1751,6 +1781,10 @@ def _stage_s05_feature_views(context: _RunContext) -> tuple[tuple[str, ...], str
             )
         else:
             envelope, frame = resolve_available_bundle_view(context.view, bundle_key)
+        if context.wiring.research_subject is not None:
+            from ..features.bundle_feature_view import save_bundle_feature_view  # noqa: PLC0415
+
+            envelope = save_bundle_feature_view(context.store_root, envelope, frame)
         context.bundle_views[bundle_key] = envelope
         context.bundle_frames[bundle_key] = frame
         outputs.append(envelope.bundle_feature_view_id)
@@ -1828,6 +1862,28 @@ def _stage_s07_labels(context: _RunContext) -> tuple[tuple[str, ...], str]:
     from ..ml.comparison_rows import label_artifact_content_id  # noqa: PLC0415
 
     context.label_artifact_id = label_artifact_content_id(label_policy_id, labeled)
+    if context.wiring.research_subject is not None:
+        from .research_artifacts import save_research_labels  # noqa: PLC0415
+
+        envelope = save_research_labels(
+            context.store_root,
+            subject=context.wiring.research_subject,
+            view=context.view,
+            labels=labeled,
+            label_policy_id=label_policy_id,
+        )
+        context.research_label_store_id = envelope.research_label_id
+        context.stage_sidecars["research_labels.json"] = _regime.canonical_json_bytes(
+            {
+                "research_label_id": envelope.research_label_id,
+                "label_artifact_id": context.label_artifact_id,
+                "research_subject_id": context.wiring.research_subject.subject_id,
+                "candidate_count": len(labeled),
+            }
+        )
+        return (context.label_artifact_id, envelope.research_label_id), (
+            f"{len(labeled)} real outcome labels persisted with scope and source provenance"
+        )
     return (context.label_artifact_id,), (
         f"labels derived for {len(labeled)} candidates under {label_policy_id}"
     )
@@ -1855,12 +1911,19 @@ def _stage_s08_folds(context: _RunContext) -> tuple[tuple[str, ...], str]:
     # observed) drive BOTH the labeled candidate folds and the persisted
     # fold schedule, so a label/view day divergence is a typed fold fact
     # (a thinner fold), never a schedule/window mismatch at S08
-    days = (
+    subject = context.wiring.research_subject
+    days = tuple(subject.evaluation_dates) if subject is not None else (
         tuple(sorted(set(context.view.frame["trading_day"].astype(str))))
         if regime_request is not None
         else tuple(sorted(set(context.labeled["trading_day"].astype(str))))
     )
-    context.folds = build_context_folds(context.labeled, authorized_trading_days=days)
+    research_fold_options = (
+        {"purge_from_logical_test_start": True}
+        if context.wiring.research_subject is not None else {}
+    )
+    context.folds = build_context_folds(
+        context.labeled, authorized_trading_days=days, **research_fold_options
+    )
     valid = sum(1 for fold in context.folds.folds if fold.valid)
     # HARDENING-BACKEND (adversarial B-03): the fold outcome is a TYPED stage
     # fact, never parsed back from the sanitized explanation
@@ -1899,6 +1962,38 @@ def _stage_s08_folds(context: _RunContext) -> tuple[tuple[str, ...], str]:
         if invalid_reasons:
             explanation += f"; invalid reasons: {', '.join(invalid_reasons)}"
     if regime_request is None:
+        if subject is not None:
+            from ..fold_schedules import derive_fold_schedule  # noqa: PLC0415
+            from ..ml.fold_set_artifact import (  # noqa: PLC0415
+                build_fold_set_artifact,
+                persist_fold_schedule,
+                persist_fold_set_artifact,
+            )
+            from ..ml.regime_contracts import ObservationGranularity  # noqa: PLC0415
+
+            schedule = derive_fold_schedule(days)
+            persist_fold_schedule(context.store_root, schedule)
+            primary = context.semantic.payload.feature_bundle_ids[0]
+            fold_set, definitions = build_fold_set_artifact(
+                context.folds,
+                schedule=schedule,
+                observation_grain=ObservationGranularity.CANDIDATE_STAGE_ROW,
+                observation_source_artifact_id=context.bundle_views[primary].bundle_feature_view_id,
+                minimum_train_observations=30,
+                labeled=True,
+            )
+            persist_fold_set_artifact(context.store_root, fold_set, definitions)
+            context.regime["schedule"] = schedule
+            context.regime["candidate_fold_set"] = fold_set
+            context.stage_sidecars["research_folds.json"] = _regime.canonical_json_bytes(
+                {
+                    "fold_schedule_id": schedule.fold_schedule_id,
+                    "fold_set_artifact_id": fold_set.fold_set_artifact_id,
+                    "authorized_trading_days": list(days),
+                    "trading_days_source": "frozen_research_logical_calendar_v1",
+                }
+            )
+            return (schedule.fold_schedule_id, fold_set.fold_set_artifact_id), explanation
         return (), explanation
     regime_outputs, regime_record, regime_note = _regime.s08_regime_folds(context)
     context.stage_sidecars["fold_sample_adequacy.json"] = _regime.canonical_json_bytes(
@@ -1915,7 +2010,14 @@ def _stage_s09_train(context: _RunContext) -> tuple[tuple[str, ...], str]:
     spec = context.semantic.payload
     regime_request = _regime.regime_request(spec)
     outputs: list[str] = []
-    if spec.model_protocol_id is not None:
+    controlled_regime_only = (
+        context.wiring.research_subject is not None
+        and regime_request is not None
+        and regime_request.requires_supervision
+    )
+    if controlled_regime_only:
+        explanation = "R5 ladder runs once per arm inside the requested B0→B7 comparison"
+    elif spec.model_protocol_id is not None:
         ladder_outputs, explanation = _stage_s09_supervised_ladder(context)
         outputs.extend(ladder_outputs)
     elif regime_request is None:
@@ -1929,12 +2031,36 @@ def _stage_s09_train(context: _RunContext) -> tuple[tuple[str, ...], str]:
                 outputs.append(artifact_id)
         context.stage_sidecars["regime_run.json"] = _regime.canonical_json_bytes(regime_record)
         explanation += regime_note
+        if controlled_regime_only:
+            study = context.regime["controlled_study"]
+            context.ladder = study.challenger
+            outputs.extend((study.baseline.ladder_id, study.challenger.ladder_id))
+            context.stage_sidecars["research_model_runs.json"] = _regime.canonical_json_bytes(
+                {
+                    "request_ids": list(context.research_model_run_ids),
+                    "input_store": "research_model_inputs",
+                    "run_store": "research_model_runs",
+                }
+            )
+    if context.wiring.research_subject is not None:
+        from .research_artifacts import research_evidence_status  # noqa: PLC0415
+
+        evidence_status = research_evidence_status(context)
+        context.state["research_evidence"] = evidence_status
+        context.stage_sidecars["research_evidence_status.json"] = _regime.canonical_json_bytes(
+            evidence_status
+        )
     return tuple(outputs), explanation
 
 
 def _stage_s09_supervised_ladder(context: _RunContext) -> tuple[tuple[str, ...], str]:
     from ..features.bundle_feature_view import frozen_tier_for_bundle  # noqa: PLC0415
     from ..ml.supervised_ladder import run_supervised_ladder  # noqa: PLC0415
+
+    if context.wiring.research_subject is not None:
+        from .research_artifacts import run_durable_supervised_stage  # noqa: PLC0415
+
+        return run_durable_supervised_stage(context)
 
     if context.folds is None or context.labeled is None:
         raise ValueError("training requires labels and folds (run 07/08)")
@@ -2622,6 +2748,10 @@ def _stage_s15_verify_publish(context: _RunContext) -> tuple[tuple[str, ...], st
             reload_failures[f"insights/{insight_id}"] = sanitize_failure_message(str(error))
     # R6.1: every regime artifact of the run must reload through the stores
     reload_failures.update(_regime.s15_regime_reload_failures(context))
+    if context.wiring.research_subject is not None:
+        from .research_artifacts import research_reload_failures  # noqa: PLC0415
+
+        reload_failures.update(research_reload_failures(context))
     reload_ok = not reload_failures
     chart_entry = stages[QuantLabPipelineStage.S04_BUILD_OR_REUSE_REPLAY_CHARTS.value]
     verifier_link = bool(chart_entry["in_plan"]) and bool(

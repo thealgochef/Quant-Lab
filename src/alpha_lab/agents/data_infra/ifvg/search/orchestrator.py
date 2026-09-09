@@ -123,10 +123,22 @@ class SearchChildMembershipEnvelope(EnvelopeBase):
     payload: SearchChildMembership
 
 
+class ResearchEvaluationIdentity(CostedEvaluationIdentity):
+    """Version the metric semantics without rewriting legacy evaluations."""
+
+    metrics_policy_id: Literal["post_warmup_zero_peak_v2"]
+
+
+class ScopedResearchEvaluationIdentity(ResearchEvaluationIdentity):
+    """A research-window evaluation never aliases a whole-replay evaluation."""
+
+    research_subject_id: str = Field(pattern=SHA256_PATTERN)
+
+
 class CostedEvaluationEnvelope(EnvelopeBase):
     """Deterministic lookup key for one replay's costed evaluation (§1.5).
 
-    The envelope id hashes (core_replay_id, cost_policy_sha256) ONLY, so any
+    New envelope ids bind the replay, cost policy and metric-policy version. Any
     later run of any study can locate the published evaluation from its
     inputs; the study-independent ``StrategyMetrics`` ride as a manifest
     sidecar (post-materialization facts). Gate reports are charter-scoped and
@@ -137,7 +149,9 @@ class CostedEvaluationEnvelope(EnvelopeBase):
     _ID_FIELD: ClassVar[str] = "costed_evaluation_id"
 
     costed_evaluation_id: str = Field(pattern=SHA256_PATTERN)
-    payload: CostedEvaluationIdentity
+    payload: (
+        ScopedResearchEvaluationIdentity | ResearchEvaluationIdentity | CostedEvaluationIdentity
+    )
 
 
 class SearchFrontierPayload(FrozenContract):
@@ -158,12 +172,22 @@ class SearchFrontierEnvelope(EnvelopeBase):
 
 
 def _child_evaluation_envelope(
-    core_replay_id: str, cost_policy
+    core_replay_id: str, cost_policy, *, research_subject_id: str | None = None
 ) -> CostedEvaluationEnvelope:
+    if research_subject_id is not None:
+        return CostedEvaluationEnvelope.from_payload(
+            ScopedResearchEvaluationIdentity(
+                core_replay_id=core_replay_id,
+                cost_policy_sha256=canonical_contract_sha256(cost_policy),
+                metrics_policy_id="post_warmup_zero_peak_v2",
+                research_subject_id=research_subject_id,
+            )
+        )
     return CostedEvaluationEnvelope.from_payload(
-        CostedEvaluationIdentity(
+        ResearchEvaluationIdentity(
             core_replay_id=core_replay_id,
             cost_policy_sha256=canonical_contract_sha256(cost_policy),
+            metrics_policy_id="post_warmup_zero_peak_v2",
         )
     )
 
@@ -344,6 +368,7 @@ def enumerate_children(
     axis_registry=AXIS_VALUE_REGISTRY_V1,
     axis_specs=SEARCH_AXIS_REGISTRY_V1,
     registry_hash: str | None = None,
+    store_root: Path | None = None,
 ) -> tuple[ChildSpec, ...]:
     """Deterministic (core replay, membership) enumeration, deduped on the
     resolved replay identity (§16.9). The baseline combination is the child
@@ -361,6 +386,10 @@ def enumerate_children(
         registry_hash = registry_sha256(axes=axis_specs, values=axis_registry)
     payload = charter.payload
     synthetic = _is_synthetic(payload)
+    if not synthetic:
+        from .strategy_approval import ratified_registry_for_charter  # noqa: PLC0415
+
+        axis_registry = ratified_registry_for_charter(payload, store_root, axis_registry)
     axes = sorted(payload.axes.items())
     axis_keys = [axis for axis, _values in axes]
     value_lists = [values for _axis, values in axes]
@@ -627,9 +656,20 @@ def run_search(
         with suppress(OSError):
             os.unlink(_state_dir(state_root, search_id) / _CANCEL_SENTINEL)
         phase = "charter_frozen"
-        specs = enumerate_children(
-            charter, identity_resolver=lambda spec: _resolve_identity(spec)[0]
-        )
+        # Real input verification can outlast the UI's startup wait. Persist
+        # startup before resolving inputs so a live worker never looks absent.
+        _checkpoint(state_root, search_id, phase, [], heartbeat=lock_path)
+        try:
+            specs = enumerate_children(
+                charter, identity_resolver=lambda spec: _resolve_identity(spec)[0],
+                store_root=store_root,
+            )
+        except Exception as error:
+            _checkpoint(
+                state_root, search_id, "failed", [], heartbeat=lock_path,
+                phase_notes={"input_verification": sanitize_failure_message(str(error))},
+            )
+            raise
         if len(specs) > payload.max_child_count:
             raise ValueError("enumerated children exceed the charter ceiling")
         outcomes = [
@@ -779,17 +819,24 @@ def run_search(
             if report.passed:
                 objective_values: dict[str, float] = {}
                 missing_objectives: list[str] = []
-                for objective in payload.objective_policy.pareto_objectives:
+                for objective in dict.fromkeys((
+                    *payload.objective_policy.pareto_objectives,
+                    *payload.objective_policy.lexicographic_tie_breaks,
+                )):
+                    if objective == "core_replay_id":
+                        continue
                     if hasattr(metrics, objective):
                         value = getattr(metrics, objective)
                         if value is None:
-                            missing_objectives.append(objective)
+                            if objective in payload.objective_policy.pareto_objectives:
+                                missing_objectives.append(objective)
                         else:
                             objective_values[objective] = value
                     elif prop_simulator is None:
                         # a prop-owned objective with no simulator wired can
                         # never be supplied; exclude explicitly, never silently
-                        missing_objectives.append(objective)
+                        if objective in payload.objective_policy.pareto_objectives:
+                            missing_objectives.append(objective)
                     # else: prop-owned objective — the prop phase merges it
                     # from the child's simulations (worst value across firms)
                 if missing_objectives:

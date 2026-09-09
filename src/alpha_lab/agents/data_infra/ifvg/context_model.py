@@ -200,6 +200,8 @@ def run_context_fold_models(
     *,
     tier: ContextFeatureTier,
     manual_feature_overrides: dict[str, Any] | None = None,
+    fitted_fold_sink: dict[int, CatBoostClassifier] | None = None,
+    prediction_input_sink: dict[int, pd.DataFrame] | None = None,
 ) -> ContextModelRun:
     features = features_for_tier(tier)
     protocol = resolve_context_model_protocol(
@@ -252,6 +254,10 @@ def run_context_fold_models(
             train_y,
             cat_features=list(protocol.categorical_features),
         )
+        if fitted_fold_sink is not None:
+            fitted_fold_sink[fold.fold_index] = model
+        if prediction_input_sink is not None:
+            prediction_input_sink[fold.fold_index] = test_x.copy()
         probabilities = model.predict_proba(test_x)[:, 1]
         for candidate_id, probability in zip(test.index.astype(str), probabilities, strict=True):
             source = test.loc[candidate_id]

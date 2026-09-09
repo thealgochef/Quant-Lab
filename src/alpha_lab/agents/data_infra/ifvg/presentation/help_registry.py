@@ -716,15 +716,6 @@ _ENTRIES: tuple[HelpEntry, ...] = (
         requires=("refit",),
     ),
     _h(
-        "replay.exact_candidate_id",
-        "The exact candidate id the evidence inspectors load when the visual verifier is "
-        "unavailable",
-        _EXACT_ID,
-        default="the first candidate",
-        availability="only when the visual verifier cannot render",
-    ),
-    # ── Replay / Verifier (UI-4 regroups these controls; the entries stay) ──
-    _h(
         "verifier.outcome_filter",
         "Keeps only the candidates in the selected outcome states",
         "executed, blocked and censored candidates are different evidence classes",

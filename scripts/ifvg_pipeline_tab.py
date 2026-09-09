@@ -35,6 +35,7 @@ from ifvg_ui_common import (
 from alpha_lab.agents.data_infra.ifvg.presentation.help_registry import help_text
 from alpha_lab.agents.data_infra.ifvg.presentation.labels import label_for
 from alpha_lab.agents.data_infra.ifvg.presentation.metric_registry import describe
+from alpha_lab.agents.data_infra.ifvg.presentation.workspace_mode import technical_details_enabled
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT / "src") not in sys.path:
@@ -98,6 +99,17 @@ def _stage_plan(full: bool):
         Stage.S13_RUN_BOOTSTRAP_AND_STRESS,
         Stage.S14_BUILD_FRONTIER_AND_INSIGHTS,
         Stage.S15_VERIFY_AND_PUBLISH,
+    )
+
+
+def _research_stage_plan():
+    """Feature/model research has no model-gated replay or prop stages."""
+    from alpha_lab.agents.data_infra.ifvg.search.pipeline import QuantLabPipelineStage
+
+    return tuple(
+        stage for stage in QuantLabPipelineStage
+        if int(stage.value.split("_", 1)[0]) <= 10
+        or int(stage.value.split("_", 1)[0]) >= 14
     )
 
 
@@ -203,6 +215,15 @@ def _panel_numeric_inputs() -> tuple[str, ...]:
         for name in CONTEXT_BAR_PANEL_FEATURES
         if name not in CONTEXT_BAR_PANEL_CATEGORICAL_FEATURES
     )
+
+
+def _regime_candidate_numeric_inputs(bundle: str) -> tuple[str, ...]:
+    from alpha_lab.agents.data_infra.ifvg.context_model import categorical_features_for
+    from alpha_lab.agents.data_infra.ifvg.features.feature_bundles import resolve_bundle
+
+    names = resolve_bundle(bundle).payload.resolved_feature_names
+    categorical = set(categorical_features_for(names))
+    return tuple(name for name in names if name not in categorical)
 
 
 def _regime_request_from_fields(fields: Mapping[str, Any], *, primary_bundle: str):
@@ -522,16 +543,8 @@ def _regime_configure_fields(
     else:
         options = list(_REGIME_CANDIDATE_INPUT_DEFAULT)
         if bundle:
-            from alpha_lab.agents.data_infra.ifvg.context_model import (  # noqa: PLC0415
-                categorical_features_for,
-            )
-            from alpha_lab.agents.data_infra.ifvg.features.feature_bundles import (  # noqa: PLC0415
-                resolve_bundle,
-            )
-
             try:
-                names = resolve_bundle(str(bundle)).payload.resolved_feature_names
-                options = [n for n in names if n not in categorical_features_for(names)]
+                options = list(_regime_candidate_numeric_inputs(str(bundle)))
             except Exception:  # noqa: BLE001 — the default pair stays
                 options = list(_REGIME_CANDIDATE_INPUT_DEFAULT)
         default = [name for name in _REGIME_CANDIDATE_INPUT_DEFAULT if name in options]
@@ -1047,6 +1060,15 @@ def _wait_for_pipeline_state(pipeline_id: str) -> dict[str, Any] | None:
         time.sleep(_LAUNCH_POLL_SECONDS)
 
 
+def launch_error(error):
+    return (
+        sanitize_error(error)
+        if technical_details_enabled()
+        else "Required study evidence or authorization could not be verified. "
+        "Restore readiness and try again."
+    )
+
+
 def _freeze_and_launch_pipeline(st_module, roots: Mapping[str, Any], draft, fields) -> None:
     """Freeze the pipeline spec and spawn the detached job — strictly
     inside the Launch button handler (FUX-PIPE-003; the Resume phase's
@@ -1080,7 +1102,7 @@ def _freeze_and_launch_pipeline(st_module, roots: Mapping[str, Any], draft, fiel
     try:
         resolution = wizard._resolve_for_draft(draft, roots)
     except Exception as error:  # noqa: BLE001 — sanitized surface only
-        st_module.error(f"Purpose could not be resolved: {sanitize_error(error)}")
+        st_module.error(f"Purpose could not be resolved: {launch_error(error)}")
         return
     resolved = resolution.resolved
     if resolved is None:
@@ -1126,22 +1148,22 @@ def _freeze_and_launch_pipeline(st_module, roots: Mapping[str, Any], draft, fiel
         semantic = PipelineSemanticIdentity.from_payload(spec)
         save_or_reuse_envelope(store_root, "pipeline_specs", semantic)
     except CharterValidationError as error:
-        st_module.error(f"Cannot freeze (fail-closed): {sanitize_error(error)}")
+        st_module.error(f"Cannot freeze (fail-closed): {launch_error(error)}")
         return
     except PermissionError as error:
-        st_module.error(f"Launch refused: {sanitize_error(error)}")
+        st_module.error(f"Launch refused: {launch_error(error)}")
         return
     except Exception as error:  # noqa: BLE001 — sanitized surface only
-        st_module.error(f"Freeze failed: {sanitize_error(error)}")
+        st_module.error(f"Freeze failed: {launch_error(error)}")
         return
     try:
         mark_frozen(Path(roots["draft_root"]), draft, search_id=charter.search_id)
     except Exception as error:  # noqa: BLE001 — draft linkage is non-fatal
-        st_module.caption(f"draft could not be marked frozen: {sanitize_error(error)}")
+        st_module.caption(f"draft could not be marked frozen: {launch_error(error)}")
     try:
         wizard._annotate_purpose(store_root, charter.search_id, resolved)
     except Exception as error:  # noqa: BLE001 — annotation is non-semantic
-        st_module.caption(f"purpose annotation not recorded: {sanitize_error(error)}")
+        st_module.caption(f"purpose annotation not recorded: {launch_error(error)}")
     identity_block(st_module, "Frozen pipeline semantic id", semantic.pipeline_semantic_id)
     entry_key = pipeline_entry_key_for_charter(charter)
     if entry_key is None:
@@ -1160,7 +1182,7 @@ def _freeze_and_launch_pipeline(st_module, roots: Mapping[str, Any], draft, fiel
         render_empty_state(
             st_module,
             "runner_unavailable",
-            detail=f"runner-entry key {entry_key!r}: {sanitize_error(error)}",
+            detail=f"runner-entry key {entry_key!r}: {launch_error(error)}",
         )
         cli_escape_hatch(
             st_module,
@@ -1187,7 +1209,7 @@ def _freeze_and_launch_pipeline(st_module, roots: Mapping[str, Any], draft, fiel
     try:
         pid = _spawn_pipeline_job(command)
     except Exception as error:  # noqa: BLE001 — sanitized surface only
-        st_module.error(f"Detached launch failed: {sanitize_error(error)}")
+        st_module.error(f"Detached launch failed: {launch_error(error)}")
         cli_escape_hatch(
             st_module,
             "python scripts/ifvg_pipeline_job.py start --pipeline-id "
@@ -1213,10 +1235,13 @@ def _freeze_and_launch_pipeline(st_module, roots: Mapping[str, Any], draft, fiel
             reason="check whether the worker persisted state",
         )
         return
-    st_module.success(
-        f"Pipeline launched detached (pid {pid}); state persisted "
-        f"(stage {state.get('current_stage') or 'starting'})."
-    )
+    if technical_details_enabled():
+        st_module.success(
+            f"Pipeline launched detached (pid {pid}); state persisted "
+            f"(stage {state.get('current_stage') or 'starting'})."
+        )
+    else:
+        st_module.success("The workflow has saved its startup status. Opening progress.")
     st_module.session_state[_PHASE_KEY] = "Monitor"
 
 

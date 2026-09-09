@@ -83,7 +83,7 @@ def test_sanitize_error_redacts_paths_and_secrets() -> None:
     assert "abc123" not in message
 
 
-def test_sanitize_select_drops_stale_state() -> None:
+def test_sanitize_select_synchronizes_stale_state() -> None:
     class _State(dict):
         pass
 
@@ -91,10 +91,12 @@ def test_sanitize_select_drops_stale_state() -> None:
         session_state = _State({"key": "gone"})
 
     tab._sanitize_select(_Stub, "key", ("a", "b"))
-    assert "key" not in _Stub.session_state
-    _Stub.session_state["key"] = "a"
-    tab._sanitize_select(_Stub, "key", ("a", "b"))
     assert _Stub.session_state["key"] == "a"
+    _Stub.session_state["key"] = "b"
+    tab._sanitize_select(_Stub, "key", ("a", "b"))
+    assert _Stub.session_state["key"] == "b"
+    tab._sanitize_select(_Stub, "key", ())
+    assert "key" not in _Stub.session_state
 
 
 def test_stage_order_matches_provider() -> None:

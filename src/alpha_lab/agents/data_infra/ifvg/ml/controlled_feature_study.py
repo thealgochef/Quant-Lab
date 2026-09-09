@@ -47,7 +47,6 @@ from ..search.identities import (
     EnvelopeBase,
     FrozenContract,
     ImmutableMap,
-    canonical_contract_sha256,
     register_identity_pair,
 )
 from ..search.store import (
@@ -184,18 +183,7 @@ def _summary(run: SupervisedLadderRun, protocol_id: str = LOGISTIC_PROTOCOL_ID) 
 
 
 def _label_hash(labeled_candidates: pd.DataFrame) -> str:
-    return canonical_contract_sha256(
-        {
-            "labeled_pairs": sorted(
-                (str(cid), None if pd.isna(target) else int(target))
-                for cid, target in zip(
-                    labeled_candidates["candidate_id"],
-                    labeled_candidates["binary_target"],
-                    strict=True,
-                )
-            )
-        }
-    )
+    return label_artifact_content_id(None, labeled_candidates)
 
 
 def _fold_hash(folds: ContextFoldSet) -> str:

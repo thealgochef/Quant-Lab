@@ -31,12 +31,18 @@ from ifvg_verifier_charts import (  # noqa: E402
     to_display_timezone,
 )
 
-from alpha_lab.agents.data_infra.ifvg.presentation.help_registry import help_text  # noqa: E402
+from alpha_lab.agents.data_infra.ifvg.presentation.replay_selection import (  # noqa: E402
+    ReplaySelection,
+)
+from alpha_lab.agents.data_infra.ifvg.presentation.research_help import help_text  # noqa: E402
 from alpha_lab.agents.data_infra.ifvg.presentation.review_vocabulary import (  # noqa: E402
     VERDICT_DEFINITIONS,
     label_for_verdict,
     verdict_for_label,
     verdict_options,
+)
+from alpha_lab.agents.data_infra.ifvg.presentation.workspace_mode import (  # noqa: E402
+    technical_details_enabled,
 )
 from alpha_lab.agents.data_infra.ifvg.replay_chart_provider import (  # noqa: E402
     MissingEvidenceError,
@@ -85,14 +91,21 @@ _STAGE_ORDER = ("tap", "parent", "lock", "opposing", "inversion", "entry", "reso
 
 
 def _sanitize_error(error: BaseException) -> str:
+    if not technical_details_enabled():
+        return "The selected evidence could not be loaded. Refresh after it is restored."
     value = _WINDOW_PATH.sub("[path redacted]", str(error))
     return _SECRET.sub(r"\1=[redacted]", value)[:800]
 
 
 def _sanitize_select(st_module, key: str, options: tuple) -> None:
-    """Drop a stale selection when the option list no longer contains it."""
+    """Synchronize the visible selection when filters remove the current case."""
     if key in st_module.session_state and st_module.session_state[key] not in options:
-        del st_module.session_state[key]
+        if options:
+            # An explicit value also updates the browser widget. Deleting the
+            # key can leave its old label visible over a different case's evidence.
+            st_module.session_state[key] = options[0]
+        else:
+            del st_module.session_state[key]
 
 
 def jump_to_candidate(candidate_id: str) -> None:
@@ -126,17 +139,21 @@ def _route_pending_setup_jump(st_module) -> None:
     multi- or zero-candidate setup.
     """
     pending = st.session_state.get(_PENDING_JUMP_KEY)
-    if not pending or pending[0] != "setup_id":
+    if not pending:
+        return
+    if pending[0] != "setup_id":
+        st.session_state[f"{_STATE_PREFIX}selection_mode"] = "candidate"
         return
     st.session_state.pop(_PENDING_JUMP_KEY, None)
     st.session_state[f"{_STATE_PREFIX}selection_mode"] = "setup"
     st.session_state[f"{_STATE_PREFIX}setup_jump"] = str(pending[1])
 
 
-def _apply_pending_jump(st_module, ctx: ReplayContext) -> None:
-    pending = st.session_state.pop(_PENDING_JUMP_KEY, None)
+def _apply_pending_jump(st_module, ctx: ReplayContext) -> bool | None:
+    """Return False for an unresolved exact link; never substitute another case."""
+    pending = st.session_state.get(_PENDING_JUMP_KEY)
     if not pending:
-        return
+        return None
     kind, value = pending
     try:
         from alpha_lab.agents.data_infra.ifvg.replay_chart_provider import (
@@ -146,8 +163,9 @@ def _apply_pending_jump(st_module, ctx: ReplayContext) -> None:
         candidate_id = resolve_selection(ctx, **{kind: value})
     except Exception as error:
         st_module.warning(f"Jump not resolved: {_sanitize_error(error)}")
-        return
+        return False
     st.session_state[_CANDIDATE_KEY] = candidate_id
+    return True
 
 
 @st.cache_resource(show_spinner="Opening verified replay context (first load is slow)…")
@@ -266,19 +284,12 @@ def _filtered_candidates(st_module, frame: pd.DataFrame) -> pd.DataFrame:
             mask |= filtered["resolution"] == "stop"
         filtered = filtered[mask]
 
-    # A direct report-row jump must never be filtered away.
-    current = st.session_state.get(_CANDIDATE_KEY)
-    if current is not None and current not in set(filtered["candidate_id"]):
-        jumped = frame[frame["candidate_id"] == current]
-        if len(jumped):
-            filtered = pd.concat([filtered, jumped]).drop_duplicates("candidate_id")
-            filtered = filtered.sort_values(
-                ["trading_day", "entry_ts_utc", "candidate_id"], kind="mergesort"
-            )
     return filtered.reset_index(drop=True)
 
 
 def _candidate_label(row: pd.Series) -> str:
+    if not technical_details_enabled():
+        return f"{row['trading_day']} · {row['entry_session']} entry opportunity"
     state = "executed" if row["executed"] else ("blocked" if row["blocked"] else "candidate")
     warmup = " · warmup" if row["is_warmup"] else ""
     outcome = f" · {row['resolution']}" if row["resolution"] else ""
@@ -289,6 +300,11 @@ def _candidate_label(row: pd.Series) -> str:
 
 
 def _render_side_panel(st_module, ctx: ReplayContext, evidence, row: pd.Series) -> None:
+    if not technical_details_enabled():
+        from ifvg_research_review import candidate_panel
+
+        candidate_panel(st_module, ctx, evidence, row)
+        return
     point_in_time = evidence.mode == "point_in_time"
     with st_module.expander("Identity", expanded=False):
         st_module.json(evidence.identity, expanded=True)
@@ -497,9 +513,14 @@ def _review_form(
         st_module.caption(
             f"{len(existing)} prior review(s) for this case — immutable ledger rows "
             "(labels shown; they preselect nothing):"
+            if technical_details_enabled()
+            else f"{len(existing)} saved review(s) for this case. A new review starts unreviewed."
         )
         shown = existing[["reviewed_at", "reviewer", "overall_verdict", "tags", "notes"]].copy()
         shown["overall_verdict"] = shown["overall_verdict"].map(label_for_verdict)
+        if not technical_details_enabled():
+            shown["tags"] = shown["tags"].map(lambda value: str(value).replace("_", " "))
+            shown.columns = [name.replace("_", " ").capitalize() for name in shown.columns]
         st_module.dataframe(shown, hide_index=True, width="stretch")
     reviewer = st_module.text_input(
         "Reviewer",
@@ -513,7 +534,7 @@ def _review_form(
         key=f"{_STATE_PREFIX}{prefix}_overall_{key}",
         help=(
             "Opens Unreviewed: nothing is preselected and nothing is written until "
-            "Save Review. Unreviewed is a UI state only — never a ledger value."
+            "Save Review. Choose a verdict to save your judgment."
         ),
     )
     for verdict, definition in VERDICT_DEFINITIONS.items():
@@ -537,6 +558,7 @@ def _review_form(
     tags = st_module.multiselect(
         "Tags",
         REVIEW_TAGS,
+        format_func=lambda value: value.replace("_", " "),
         key=f"{_STATE_PREFIX}{prefix}_tags_{key}",
         help=help_text("verifier.review_tags"),
     )
@@ -553,10 +575,11 @@ def _review_form(
     )
     saved_key = f"{_STATE_PREFIX}{prefix}_saved_{key}"
     ready = overall is not None and bool(str(reviewer).strip())
+    save_status = st_module.empty()
     if st_module.session_state.get(saved_key) == signature:
-        st_module.markdown("**✓ Saved** — this review is appended to the ledger.")
+        save_status.markdown("**✓ Saved** — earlier reviews are retained.")
     else:
-        st_module.markdown(
+        save_status.markdown(
             "**● Unsaved** — nothing is written until Save Review"
             + ("" if ready else " (choose a verdict and name the reviewer to enable it)")
             + "."
@@ -566,7 +589,7 @@ def _review_form(
         key=f"{_STATE_PREFIX}{prefix}_save_{key}",
         disabled=not ready,
         type="primary",
-        help="Appends one immutable row to ifvg_visual_review_v1; nothing else changes.",
+        help="Saves your judgment for the selected case. Earlier reviews are retained.",
     ):
         try:
             record = on_save(
@@ -579,12 +602,16 @@ def _review_form(
             st_module.error(f"Review not saved: {_sanitize_error(error)}")
         else:
             st_module.session_state[saved_key] = signature
+            save_status.markdown("**✓ Saved** — earlier reviews are retained.")
             review_id = str((record or {}).get("review_id", ""))[:12]
-            st_module.success(f"Saved — review {review_id} appended to the ledger.")
+            st_module.success(
+                f"Saved — review {review_id} appended to the ledger."
+                if technical_details_enabled() else "Saved — review recorded for this case."
+            )
 
 
 def _render_review_section(st_module, ctx: ReplayContext, evidence, row: pd.Series) -> None:
-    with st_module.expander("Review (ifvg_visual_review_v1)", expanded=False):
+    with st_module.expander("Reviewer judgment", expanded=False):
         existing = pd.DataFrame()
         try:
             existing = list_reviews(repo_root=ROOT, candidate_id=evidence.candidate_id)
@@ -616,14 +643,31 @@ def _render_review_section(st_module, ctx: ReplayContext, evidence, row: pd.Seri
             on_save=_save,
         )
         try:
-            csv_payload = export_csv(repo_root=ROOT)
+            if technical_details_enabled():
+                csv_payload = export_csv(repo_root=ROOT)
+            else:
+                from alpha_lab.agents.data_infra.ifvg.presentation.review_vocabulary import (
+                    label_for_verdict,
+                )
+
+                reviews = list_reviews(repo_root=ROOT, candidate_id=evidence.candidate_id)
+                columns = [
+                    name
+                    for name in ("reviewed_at", "reviewer", "overall_verdict", "tags", "notes")
+                    if name in reviews
+                ]
+                display = reviews[columns].copy()
+                if "overall_verdict" in display:
+                    display["overall_verdict"] = display["overall_verdict"].map(label_for_verdict)
+                display.columns = [name.replace("_", " ").capitalize() for name in display.columns]
+                csv_payload = display.to_csv(index=False) if len(display) else ""
         except Exception:
             csv_payload = ""
         if csv_payload:
             st_module.download_button(
-                "Download review ledger CSV",
+                "Download saved reviews",
                 csv_payload,
-                file_name="ifvg_visual_review_v1.csv",
+                file_name="trade-reviews.csv",
                 mime="text/csv",
                 key=f"{_STATE_PREFIX}review_csv",
                 help=help_text("verifier.download_ledger"),
@@ -750,11 +794,15 @@ _PRESENT_BUT_EMPTY = "0 setups in this artifact (supported by contract; none obs
 
 
 def _filtered_setups(st_module, frame: pd.DataFrame) -> pd.DataFrame:
+    from ifvg_research_review import setup_phase_name
     left, middle, right = st_module.columns(3)
     with left:
         candidate_less = st_module.selectbox(
             "Candidate-less",
             _TRI_CANDIDATE_LESS,
+            format_func=lambda value: value.replace(
+                "candidate-less", "without entry opportunities"
+            ).replace("candidates", "entry opportunities"),
             key=f"{_STATE_PREFIX}setup_candidate_less",
             help=help_text("verifier.setup_candidate_less"),
         )
@@ -762,13 +810,17 @@ def _filtered_setups(st_module, frame: pd.DataFrame) -> pd.DataFrame:
             "Terminal reason",
             tuple(sorted(frame["terminal_reason"].dropna().astype(str).unique())),
             default=(),
+            format_func=lambda value: str(value).replace("_", " "),
             key=f"{_STATE_PREFIX}setup_terminal_reason",
             help=help_text("verifier.setup_terminal_reason"),
         )
         phases = st_module.multiselect(
-            "Phase at death",
+            "Last setup stage",
             tuple(sorted(frame["phase_at_death"].dropna().astype(str).unique())),
             default=(),
+            format_func=lambda value: (
+                str(value) if technical_details_enabled() else setup_phase_name(value)
+            ),
             key=f"{_STATE_PREFIX}setup_phase",
             help=help_text("verifier.setup_phase"),
         )
@@ -823,7 +875,10 @@ def _filtered_setups(st_module, frame: pd.DataFrame) -> pd.DataFrame:
             help=help_text("verifier.setup_session"),
         )
         q40 = st_module.selectbox(
-            "Q-40 exposure", _TRI_Q40, key=f"{_STATE_PREFIX}setup_q40",
+            "Previously inspected research",
+            _TRI_Q40,
+            format_func=lambda value: value.replace("Q-40 exposed", "previously inspected"),
+            key=f"{_STATE_PREFIX}setup_q40",
             help=help_text("verifier.setup_q40"),
         )
         parentless = st_module.selectbox(
@@ -926,6 +981,8 @@ def _filtered_setups(st_module, frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def _setup_label(row: pd.Series) -> str:
+    if not technical_details_enabled():
+        return f"Setup activated {row['activation_ts_utc']}"
     day = (
         str(pd.Timestamp(row["activation_ts_utc"]).date())
         if pd.notna(row["activation_ts_utc"])
@@ -951,6 +1008,11 @@ def _setup_candidate_ids(row: pd.Series) -> list[str]:
 
 
 def _render_setup_panel(st_module, ctx, bundle, evidence, row: pd.Series) -> None:
+    if not technical_details_enabled():
+        from ifvg_research_review import setup_panel
+
+        setup_panel(st_module, ctx, bundle, evidence, row)
+        return
     candidate_less = bool(row["candidate_less"])
     with st_module.expander("Setup summary", expanded=False):
         first, second = st_module.columns(2)
@@ -1047,7 +1109,10 @@ _SETUP_DETAIL_VERDICTS = (
 
 def _render_setup_review_section(st_module, ctx, bundle, evidence) -> None:
     with st_module.expander(
-        "Review (ifvg_visual_review_v1 — setup level)", expanded=False
+        "Review (ifvg_visual_review_v1 — setup level)"
+        if technical_details_enabled()
+        else "Reviewer judgment",
+        expanded=False,
     ):
         existing = pd.DataFrame()
         try:
@@ -1084,16 +1149,15 @@ def _render_setup_review_section(st_module, ctx, bundle, evidence) -> None:
         )
 
 
-def _render_setup_section(st_module, pair_ref: ArtifactPairRef) -> None:
+def _render_setup_section(st_module, pair_ref: ArtifactPairRef) -> ReplaySelection:
     """Setup-level review: every setup, including the candidate-less ones."""
     bundle = _discover_setup_bundle(pair_ref)
     if bundle is None:
         st_module.info(
-            "No setup-aware replay-chart (v2) bundle exists for this exact pair "
-            "yet. Build the fsm-audit and v2 replay-chart artifacts externally, "
-            "then reload."
+            "Setup charts are not prepared for this configuration. Setup review is unavailable "
+            "until its supporting evidence is ready."
         )
-        return
+        return ReplaySelection("unavailable", evidence_available=False)
     try:
         ctx = _cached_setup_context(
             bundle.profile_name,
@@ -1109,15 +1173,20 @@ def _render_setup_section(st_module, pair_ref: ArtifactPairRef) -> None:
         setups = _cached_setup_frame(bundle.replay_chart_artifact_id, ctx)
     except Exception as error:
         st_module.error(f"Setup bundle failed verification: {_sanitize_error(error)}")
-        return
+        return ReplaySelection("unavailable", evidence_available=False)
 
-    filtered = _filtered_setups(st_module, setups)
+    if setups.empty:
+        st_module.info("No setups are available for this selection.")
+        return ReplaySelection("empty")
+    with st_module.expander("Setup filters"):
+        filtered = _filtered_setups(st_module, setups)
     if filtered.empty:
         st_module.info("No setups match the current filters.")
-        return
+        return ReplaySelection("empty")
     options = list(filtered["setup_id"].astype(str))
     labels = {
-        str(row["setup_id"]): _setup_label(row) for _, row in filtered.iterrows()
+        str(row["setup_id"]): f"{index + 1}. {_setup_label(row)}"
+        for index, row in filtered.iterrows()
     }
     _sanitize_select(st_module, _SETUP_KEY, tuple(options))
 
@@ -1137,16 +1206,27 @@ def _render_setup_section(st_module, pair_ref: ArtifactPairRef) -> None:
         width="stretch",
     )
     with jump_col:
-        query = st_module.text_input(
-            "Jump to setup (exact ID or unique prefix)",
-            key=f"{_STATE_PREFIX}setup_jump",
-            help=help_text("verifier.setup_jump"),
-        )
+        query = st_module.session_state.get(f"{_STATE_PREFIX}setup_jump", "")
+        if technical_details_enabled():
+            query = st_module.text_input(
+                "Jump to setup (exact ID or unique prefix)",
+                key=f"{_STATE_PREFIX}setup_jump",
+                help=help_text("verifier.setup_jump"),
+            )
         if query:
             try:
                 resolved = resolve_setup_selection(ctx, query)
             except Exception as error:
                 st_module.warning(f"Jump not resolved: {_sanitize_error(error)}")
+                if st_module.button(
+                    "Choose another setup",
+                    key=f"{_STATE_PREFIX}clear_setup_jump",
+                    help="Leave the unavailable linked setup and return to the setup list.",
+                ):
+                    st.session_state.pop(f"{_STATE_PREFIX}setup_jump", None)
+                    st.session_state.pop(_SETUP_KEY, None)
+                    st_module.rerun()
+                return ReplaySelection("unavailable", evidence_available=False)
             else:
                 resolved_id = str(resolved["setup_id"])
                 if resolved_id in options:
@@ -1155,9 +1235,12 @@ def _render_setup_section(st_module, pair_ref: ArtifactPairRef) -> None:
                     st_module.warning(
                         "Resolved setup is excluded by the current filters."
                     )
+                    return ReplaySelection("empty")
+                if not technical_details_enabled():
+                    st.session_state.pop(f"{_STATE_PREFIX}setup_jump", None)
     with pick:
         setup_id = st_module.selectbox(
-            "Exact setup ID",
+            "Setup",
             options,
             format_func=lambda value: labels.get(value, value),
             key=_SETUP_KEY,
@@ -1190,7 +1273,7 @@ def _render_setup_section(st_module, pair_ref: ArtifactPairRef) -> None:
         )
     except Exception as error:
         st_module.error(f"Setup evidence unavailable: {_sanitize_error(error)}")
-        return
+        return ReplaySelection("unavailable", evidence_available=False)
     hidden = int(evidence.gating_report.get("hidden_events") or 0)
     if hidden > 0:
         st_module.warning(
@@ -1226,7 +1309,7 @@ def _render_setup_section(st_module, pair_ref: ArtifactPairRef) -> None:
             )
         except Exception as error:
             st_module.error(f"Bars unavailable: {_sanitize_error(error)}")
-            return
+            return ReplaySelection("unavailable", evidence_available=False)
 
     execution_pane_only = st_module.checkbox(
         "Execution pane only",
@@ -1236,7 +1319,11 @@ def _render_setup_section(st_module, pair_ref: ArtifactPairRef) -> None:
             "Show only the 1m execution pane; parent/HTF panes are hidden."
         ),
     )
-    chart_col, panel_col = st_module.columns([4.2, 1.0])
+    chart_col, panel_col = (
+        st_module.columns([4.2, 1.0])
+        if technical_details_enabled()
+        else (st_module.container(), st_module.container())
+    )
     with chart_col, st_module.container(border=True):
         figure, omissions = build_setup_figure(
             evidence=evidence,
@@ -1248,6 +1335,10 @@ def _render_setup_section(st_module, pair_ref: ArtifactPairRef) -> None:
         if execution_pane_only:
             figure = collapse_to_execution_pane(figure)
         figure = to_display_timezone(figure)
+        if not technical_details_enabled():
+            from ifvg_research_review import research_figure
+
+            figure = research_figure(figure, title="Selected trade evidence")
         # hold-left-drag pans; mouse wheel zooms (box-zoom stays in the modebar).
         figure.update_layout(dragmode="pan")
         st_module.caption(
@@ -1258,27 +1349,28 @@ def _render_setup_section(st_module, pair_ref: ArtifactPairRef) -> None:
             figure,
             width="stretch",
             key=f"{_STATE_PREFIX}setup_chart",
+            theme=None,
             config={
                 "scrollZoom": True,
                 "toImageButtonOptions": {
                     "format": "png",
-                    "filename": f"ifvg_setup_{setup_id[:12]}_{stage}",
+                    "filename": "setup-review",
                     "scale": 2,
                 }
             },
         )
         for line in omissions.summary_lines():
             st_module.caption(f"⚠ {line}")
+    from ifvg_research_review import bar_table
+    bar_table(st_module, bars_by_pane, key="ifvg_setup_bar_table")
     with panel_col:
         _render_setup_panel(st_module, ctx, bundle, evidence, row)
 
+    return ReplaySelection("setup", str(setup_id))
 
-def render_verifier_section(st_module, pair, entry: dict) -> str | None:
-    """The chart verifier; returns the selected candidate_id (shared selection).
 
-    Returns None when the replay-chart artifact is unavailable — the caller
-    then falls back to its own exact-ID selector.
-    """
+def render_verifier_section(st_module, pair, entry: dict) -> ReplaySelection:
+    """Return a typed selection; unavailable evidence never opens another case."""
     try:
         pair_ref = ArtifactPairRef(
             profile_name=str(entry["profile_name"]),
@@ -1289,7 +1381,7 @@ def render_verifier_section(st_module, pair, entry: dict) -> str | None:
         )
     except Exception as error:
         st_module.caption(f"Verifier unavailable: {_sanitize_error(error)}")
-        return None
+        return ReplaySelection("unavailable", evidence_available=False)
     # Selection mode: candidate mode also serves the decision/trade exact-ID
     # jumps (they resolve into a candidate); setup mode reviews every setup,
     # including the candidate-less ones the candidate verifier cannot show.
@@ -1299,33 +1391,32 @@ def render_verifier_section(st_module, pair, entry: dict) -> str | None:
         "Selection mode",
         ("candidate", "setup"),
         horizontal=True,
-        key=f"{_STATE_PREFIX}selection_mode",
-        help=(
-            "candidate mode serves candidate / decision / trade exact-ID "
-            "review; setup mode reviews every setup, including candidate-less "
-            "ones."
+        format_func=lambda value: (
+            "Entry opportunities and trades" if value == "candidate" else "Strategy setups"
         ),
+        key=f"{_STATE_PREFIX}selection_mode",
+        help="Review an entry opportunity or any setup, including those that produced no trade.",
     )
     if selection_mode == "setup":
-        _render_setup_section(st_module, pair_ref)
-        return None
+        return _render_setup_section(st_module, pair_ref)
     try:
         catalog = read_replay_chart_catalog(ROOT / REPLAY_CHART_CATALOG)
         replay_id = find_replay_artifact(catalog, pair_ref)
     except Exception as error:
         st_module.error(f"Replay-chart catalog error: {_sanitize_error(error)}")
-        return None
+        return ReplaySelection("unavailable", evidence_available=False)
     if replay_id is None:
         st_module.info(
-            "No replay-chart artifact exists for this exact artifact pair yet. "
-            "Build it externally, then reload:"
+            "Charts are not prepared for this selected configuration. Trade review is unavailable "
+            "until its supporting chart evidence is ready."
         )
-        st_module.code(
-            f"python scripts/ifvg_build_replay_chart.py build --profile "
-            f"{pair_ref.profile_name}",
-            language="powershell",
-        )
-        return None
+        if technical_details_enabled():
+            st_module.code(
+                "python scripts/ifvg_build_replay_chart.py build "
+                f"--profile {pair_ref.profile_name}",
+                language="powershell",
+            )
+        return ReplaySelection("unavailable", evidence_available=False)
     try:
         ctx = _cached_replay_context(
             pair_ref.profile_name,
@@ -1340,16 +1431,39 @@ def render_verifier_section(st_module, pair, entry: dict) -> str | None:
         candidates = _cached_candidate_frame(replay_id, ctx)
     except Exception as error:
         st_module.error(f"Verifier context failed verification: {_sanitize_error(error)}")
-        return None
+        return ReplaySelection("unavailable", evidence_available=False)
 
-    _apply_pending_jump(st_module, ctx)
-    filtered = _filtered_candidates(st_module, candidates)
+    jumped = _apply_pending_jump(st_module, ctx)
+    if jumped is False:
+        if st_module.button(
+            "Choose another opportunity",
+            key=f"{_STATE_PREFIX}clear_candidate_jump",
+            help="Leave the unavailable linked opportunity and return to the opportunity list.",
+        ):
+            st.session_state.pop(_PENDING_JUMP_KEY, None)
+            st.session_state.pop(_CANDIDATE_KEY, None)
+            st_module.rerun()
+        return ReplaySelection("unavailable", evidence_available=False)
+    if candidates.empty:
+        st_module.info("No candidates are available for this selection.")
+        return ReplaySelection("empty")
+    with st_module.expander("Trade filters"):
+        filtered = _filtered_candidates(st_module, candidates)
+    if jumped and st.session_state.get(_CANDIDATE_KEY) not in set(filtered["candidate_id"]):
+        st_module.warning(
+            "The linked opportunity is excluded by the current filters. "
+            "Clear the filters to inspect it."
+        )
+        return ReplaySelection("empty")
+    if jumped:
+        st.session_state.pop(_PENDING_JUMP_KEY, None)
     if filtered.empty:
         st_module.info("No candidates match the current filters.")
-        return None
+        return ReplaySelection("empty")
     options = list(filtered["candidate_id"])
     labels = {
-        row["candidate_id"]: _candidate_label(row) for _, row in filtered.iterrows()
+        row["candidate_id"]: f"{index + 1}. {_candidate_label(row)}"
+        for index, row in filtered.iterrows()
     }
     _sanitize_select(st_module, _CANDIDATE_KEY, tuple(options))
     executed_options = list(filtered.loc[filtered["executed"], "candidate_id"])
@@ -1387,7 +1501,7 @@ def render_verifier_section(st_module, pair, entry: dict) -> str | None:
     )
     with pick:
         candidate_id = st_module.selectbox(
-            "Exact candidate ID",
+            "Entry opportunity",
             options,
             format_func=lambda value: labels.get(value, value),
             key=_CANDIDATE_KEY,
@@ -1395,74 +1509,75 @@ def render_verifier_section(st_module, pair, entry: dict) -> str | None:
         )
     row = filtered[filtered["candidate_id"] == candidate_id].iloc[0]
 
-    mode_col, stage_col, range_col, layer_col = st_module.columns([1.2, 2.2, 1.6, 2.0])
-    with mode_col:
-        mode_label = st_module.radio(
-            "Mode",
-            ("Full audit", "Point-in-time"),
-            key=f"{_STATE_PREFIX}verifier_mode",
-            help=help_text("verifier.mode"),
-        )
-    point_in_time = mode_label == "Point-in-time"
-    try:
-        gates_probe = _cached_evidence(replay_id, candidate_id, "full_audit", None, ctx)
-    except Exception as error:
-        st_module.error(f"Evidence unavailable: {_sanitize_error(error)}")
-        return candidate_id
-    gateable = [name for name in _STAGE_ORDER if name in gates_probe.stage_gates]
-    stage = None
-    with stage_col:
-        if point_in_time:
-            stage = st_module.select_slider(
-                "Evidence as of stage",
-                options=gateable,
-                value=gateable[-1] if gateable else None,
-                key=f"{_STATE_PREFIX}verifier_stage",
-                help=help_text("verifier.stage_scrubber"),
+    with st_module.expander("Chart options and point-in-time review"):
+        mode_col, stage_col, range_col, layer_col = st_module.columns([1.2, 2.2, 1.6, 2.0])
+        with mode_col:
+            mode_label = st_module.radio(
+                "Mode",
+                ("Full history", "Point-in-time"),
+                key=f"{_STATE_PREFIX}verifier_mode",
+                help=help_text("verifier.mode"),
             )
-        else:
-            st_module.caption("Full audit shows all persisted evidence, outcome included.")
-    with range_col:
-        range_kind = st_module.radio(
-            "Range",
-            ("Setup", "Trade", "Formation", "Custom"),
-            key=f"{_STATE_PREFIX}verifier_range",
-            help=help_text("verifier.range"),
-        ).lower()
-    with layer_col:
-        layers = VerifierLayers(
-            structure=st_module.checkbox(
-                "Structure", key=f"{_STATE_PREFIX}verifier_layer_structure",
-                help=help_text("verifier.layer_structure"),
-            ),
-            displacement=st_module.checkbox(
-                "Displacement", key=f"{_STATE_PREFIX}verifier_layer_displacement",
-                help=help_text("verifier.layer_displacement"),
-            ),
-            pools=st_module.checkbox(
-                "EQH/EQL pools", key=f"{_STATE_PREFIX}verifier_layer_pools",
-                help=help_text("verifier.layer_pools"),
-            ),
-            sessions=st_module.checkbox(
-                "Sessions", value=True, key=f"{_STATE_PREFIX}verifier_layer_sessions",
-                help=help_text("verifier.layer_sessions"),
-            ),
-            zone_projection=st_module.checkbox(
-                "Project zones onto 1m",
+        point_in_time = mode_label == "Point-in-time"
+        try:
+            gates_probe = _cached_evidence(replay_id, candidate_id, "full_audit", None, ctx)
+        except Exception as error:
+            st_module.error(f"Evidence unavailable: {_sanitize_error(error)}")
+            return ReplaySelection("candidate", str(candidate_id), evidence_available=False)
+        gateable = [name for name in _STAGE_ORDER if name in gates_probe.stage_gates]
+        stage = None
+        with stage_col:
+            if point_in_time:
+                stage = st_module.select_slider(
+                    "Evidence as of stage",
+                    options=gateable,
+                    value=gateable[-1] if gateable else None,
+                    key=f"{_STATE_PREFIX}verifier_stage",
+                    help=help_text("verifier.stage_scrubber"),
+                )
+            else:
+                st_module.caption("Full history includes the final outcome.")
+        with range_col:
+            range_kind = st_module.radio(
+                "Range",
+                ("Setup", "Trade", "Formation", "Custom"),
+                key=f"{_STATE_PREFIX}verifier_range",
+                help=help_text("verifier.range"),
+            ).lower()
+        with layer_col:
+            layers = VerifierLayers(
+                structure=st_module.checkbox(
+                    "Structure", key=f"{_STATE_PREFIX}verifier_layer_structure",
+                    help=help_text("verifier.layer_structure"),
+                ),
+                displacement=st_module.checkbox(
+                    "Displacement", key=f"{_STATE_PREFIX}verifier_layer_displacement",
+                    help=help_text("verifier.layer_displacement"),
+                ),
+                pools=st_module.checkbox(
+                    "EQH/EQL pools", key=f"{_STATE_PREFIX}verifier_layer_pools",
+                    help=help_text("verifier.layer_pools"),
+                ),
+                sessions=st_module.checkbox(
+                    "Sessions", value=True, key=f"{_STATE_PREFIX}verifier_layer_sessions",
+                    help=help_text("verifier.layer_sessions"),
+                ),
+                zone_projection=st_module.checkbox(
+                    "Project zones onto 1m",
+                    value=True,
+                    key=f"{_STATE_PREFIX}verifier_layer_projection",
+                    help=help_text("verifier.layer_projection"),
+                ),
+            )
+            execution_pane_only = st_module.checkbox(
+                "Execution pane only",
                 value=True,
-                key=f"{_STATE_PREFIX}verifier_layer_projection",
-                help=help_text("verifier.layer_projection"),
-            ),
-        )
-        execution_pane_only = st_module.checkbox(
-            "Execution pane only",
-            value=True,
-            key=f"{_STATE_PREFIX}verifier_layer_execution_only",
-            help=(
-                "Show only the 1m execution pane; parent/HTF panes are "
-                "hidden (their zones stay visible via 1m projection)."
-            ),
-        )
+                key=f"{_STATE_PREFIX}verifier_layer_execution_only",
+                help=(
+                    "Show only the 1m execution pane; parent/HTF panes are "
+                    "hidden (their zones stay visible via 1m projection)."
+                ),
+            )
 
     custom_bounds = None
     if range_kind == "custom":
@@ -1477,7 +1592,7 @@ def render_verifier_section(st_module, pair, entry: dict) -> str | None:
         )
         if not raw_start or not raw_end:
             st_module.info("Enter both custom bounds (e.g. 2026-01-13T03:00:00Z).")
-            return candidate_id
+            return ReplaySelection("candidate", str(candidate_id), evidence_available=False)
         try:
             custom_bounds = (
                 pd.Timestamp(raw_start).tz_convert("UTC")
@@ -1489,7 +1604,7 @@ def render_verifier_section(st_module, pair, entry: dict) -> str | None:
             )
         except (ValueError, TypeError) as error:
             st_module.error(f"Custom bounds invalid: {_sanitize_error(error)}")
-            return candidate_id
+            return ReplaySelection("candidate", str(candidate_id), evidence_available=False)
 
     if point_in_time:
         st_module.warning(
@@ -1520,16 +1635,16 @@ def render_verifier_section(st_module, pair, entry: dict) -> str | None:
         }
     except RangeTooLargeError as error:
         st_module.error(f"Range refused: {_sanitize_error(error)}")
-        return candidate_id
+        return ReplaySelection("candidate", str(candidate_id), evidence_available=False)
     except ReplayAuthorizationError as error:
         st_module.error(f"Not authorized: {_sanitize_error(error)}")
-        return candidate_id
+        return ReplaySelection("candidate", str(candidate_id), evidence_available=False)
     except MissingEvidenceError as error:
         st_module.error(f"Missing evidence: {_sanitize_error(error)}")
-        return candidate_id
+        return ReplaySelection("candidate", str(candidate_id), evidence_available=False)
     except Exception as error:
         st_module.error(f"Verifier failed: {_sanitize_error(error)}")
-        return candidate_id
+        return ReplaySelection("candidate", str(candidate_id), evidence_available=False)
 
     if range_kind == "formation" and len(bars_by_pane.get(60, ())) == 0:
         st_module.caption(
@@ -1537,7 +1652,11 @@ def render_verifier_section(st_module, pair, entry: dict) -> str | None:
             "the day) — parent/HTF panes carry the formation context."
         )
 
-    chart_col, panel_col = st_module.columns([4.2, 1.0])
+    chart_col, panel_col = (
+        st_module.columns([4.2, 1.0])
+        if technical_details_enabled()
+        else (st_module.container(), st_module.container())
+    )
     with chart_col, st_module.container(border=True):
         figure, omissions = build_verifier_figure(
             evidence=evidence,
@@ -1551,6 +1670,10 @@ def render_verifier_section(st_module, pair, entry: dict) -> str | None:
         if execution_pane_only:
             figure = collapse_to_execution_pane(figure)
         figure = to_display_timezone(figure)
+        if not technical_details_enabled():
+            from ifvg_research_review import research_figure
+
+            figure = research_figure(figure, title="Selected trade evidence")
         # hold-left-drag pans; mouse wheel zooms (box-zoom stays in the modebar).
         figure.update_layout(dragmode="pan")
         st_module.caption(
@@ -1561,24 +1684,21 @@ def render_verifier_section(st_module, pair, entry: dict) -> str | None:
             figure,
             width="stretch",
             key=f"{_STATE_PREFIX}verifier_chart",
+            theme=None,
             config={
                 "scrollZoom": True,
                 "toImageButtonOptions": {
                     "format": "png",
-                    "filename": (
-                        f"ifvg_verifier_{candidate_id[:12]}_"
-                        f"{stage if point_in_time else 'full'}"
-                    ),
+                    "filename": "trade-review",
                     "scale": 2,
                 }
             },
         )
         for line in omissions.summary_lines():
             st_module.caption(f"⚠ {line}")
-        st_module.caption(
-            "Crosshair: unified hover spans all panes; a single spike line across "
-            "panes is not supported by the charting library."
-        )
+
+    from ifvg_research_review import bar_table
+    bar_table(st_module, bars_by_pane, key="ifvg_candidate_bar_table")
     with panel_col:
         if row["is_warmup"]:
             st_module.warning(
@@ -1586,4 +1706,4 @@ def render_verifier_section(st_module, pair, entry: dict) -> str | None:
                 "execution reports."
             )
         _render_side_panel(st_module, ctx, evidence, row)
-    return candidate_id
+    return ReplaySelection("candidate", str(candidate_id))
