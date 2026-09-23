@@ -1,5 +1,29 @@
 # Optional IFSM research engine
 
+## Supported Core pairing on main (2026-09-22)
+
+Quant-Lab and Strategy-Core merge together with two intentional runtime pins:
+
+| Quant-Lab entry point | Strategy-Core commit | Contract |
+|---|---|---|
+| Ordinary installation (`pyproject.toml`) | `a4e3303179ac6a1088aecaaa3482934cf1aec4d7` | Existing installed engine and saved-study semantics |
+| IFSM research launcher | `38825ed86f3e3940515cdc28d9df567ddccc0b70` | Frozen daily-close/gap-choice engine, source identity `9db57357b1702b7022592980644eb20f320d19fcf0e309a4431836717d6a1eb1` |
+
+Both commits are retained in Strategy-Core's main history. The IFSM commit is
+also published as `codex/daily-close-sessions`. Both package metadata versions
+remain `0.1.0`; exact commits and source identities establish this pairing.
+Merging the code does not migrate the ordinary dependency or Trade-Lab. Such a
+migration changes IFVG configuration identities and day-seed schemas (2 to 6)
+and needs separate compatibility work. Historical study identities stay frozen.
+
+The ordinary IFVG provenance check requires the imported source checkout, or a
+source-equivalent sibling `../Strategy-Core` for a wheel installation. Keep that
+sibling matched to the installed engine; inspect or update Core main in another
+worktree when it contains newer research code. The IFSM launcher independently
+selects and verifies its exact research checkout using the steps below.
+
+## Reproduce the frozen research engine
+
 This directory contains a 71 KB incremental Git bundle and a 16 KB source
 manifest. The bundle adds six commits to the published Strategy-Core prerequisite
 `a4e3303179ac6a1088aecaaa3482934cf1aec4d7`; it contains no complete repository,

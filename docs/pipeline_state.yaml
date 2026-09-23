@@ -2,6 +2,15 @@ current_phase: "STRATEGY_CORE_V3_DASHBOARD_UTILITY"
 last_updated: "2026-09-22"
 repo_role: "ml_training_workbench_with_strategy_core_v3_dashboard_utility_path"
 
+strategy_core_pairing:
+  repository: "https://github.com/thealgochef/Strategy-Core"
+  ordinary_dependency_commit: "a4e3303179ac6a1088aecaaa3482934cf1aec4d7"
+  ifsm_research_commit: "38825ed86f3e3940515cdc28d9df567ddccc0b70"
+  ifsm_research_source_identity: "9db57357b1702b7022592980644eb20f320d19fcf0e309a4431836717d6a1eb1"
+  history: "Both pinned commits retained in Strategy-Core main; research ref codex/daily-close-sessions"
+  version_policy: "Exact source pairing; package versions remain 0.1.0; installed and live pins unchanged"
+  source_checkout_policy: "Ordinary wheel requires source-equivalent sibling; keep newer Core main in a separate worktree"
+
 
 report_output_policy:
   versioned: false

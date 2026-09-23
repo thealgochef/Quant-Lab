@@ -2,6 +2,12 @@
 
 Updated: 2026-09-22.
 
+Main-branch runtime pairing is documented in [research/core/README.md](research/core/README.md):
+the ordinary dependency remains Strategy-Core `a4e3303`, while the IFSM launcher
+verifies frozen Core `38825ed` and its original source identity. Core main retains
+both commits. The shared package version `0.1.0` is not a source compatibility
+check; the merge preserves existing installed and historical study semantics.
+
 The offline IFVG geometry extension (`B0_GEOMETRY_CORE_ATR14_V1`) composes repaired
 B0 with three fixed, source-verified geometry ratios. It does not change
 Strategy-Core or runtime strategy semantics. Its denominator reuses Core's ATR14

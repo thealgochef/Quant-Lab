@@ -2,6 +2,11 @@
 
 Updated: 2026-09-22.
 
+The coordinated main merge retains the normal installed Core `a4e3303` and the
+IFSM launcher's exact research Core `38825ed`. Use the existing launcher command
+for the research screen; installing arbitrary Core main is not an equivalent
+setup. See [the supported pairing and preparation steps](../research/core/README.md).
+
 The research API also supports `geometry_comparison=True` with `B0_CORE`,
 `mbp1_comparison=False` and no regime request. This freezes the comparison
 `B0_CORE` versus `B0_GEOMETRY_CORE_ATR14_V1`; each arm runs the registered training
