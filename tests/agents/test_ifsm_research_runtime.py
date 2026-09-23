@@ -22,20 +22,19 @@ import prepare_ifsm_research_core as bootstrap  # noqa: E402
 import run_ifsm_research_ui as launcher  # noqa: E402
 
 
-def test_explicit_core_beats_environment_and_legacy_checkout(monkeypatch, tmp_path):
+def test_explicit_core_beats_environment(monkeypatch, tmp_path):
     monkeypatch.setenv("IFSM_RESEARCH_CORE", str(tmp_path / "environment"))
     assert runtime.select_core(tmp_path / "explicit") == tmp_path / "explicit"
     assert runtime.select_core() == tmp_path / "environment"
 
 
-def test_legacy_checkout_remains_available_until_external_default_exists(monkeypatch, tmp_path):
+def test_old_sibling_is_never_an_implicit_current_runtime(monkeypatch, tmp_path):
     monkeypatch.delenv("IFSM_RESEARCH_CORE", raising=False)
-    current, legacy = tmp_path / "external", tmp_path / "legacy"
+    current, legacy = tmp_path / "external", tmp_path / "Strategy-Core-daily-close"
     monkeypatch.setattr(runtime, "DEFAULT_CORE", current)
-    monkeypatch.setattr(runtime, "LEGACY_CORE", legacy)
     assert runtime.select_core() == current
     legacy.mkdir()
-    assert runtime.select_core() == legacy
+    assert runtime.select_core() == current
     current.mkdir()
     assert runtime.select_core() == current
 
@@ -97,16 +96,31 @@ def test_reports_alias_cannot_bypass_destination_policy(monkeypatch, tmp_path, r
     assert not requested.exists() and not resolved.exists()
 
 
-def test_changed_bundle_is_rejected_before_destination_creation(monkeypatch, tmp_path):
-    bundle = tmp_path / "delta.bundle"
-    bundle.write_bytes(b"changed")
-    expected = {"bundle_file": bundle.name, "bundle_sha256": "0" * 64}
-    monkeypatch.setattr(bootstrap, "manifest", lambda: expected)
-    monkeypatch.setattr(bootstrap, "MANIFEST_PATH", tmp_path / "manifest.json")
+def test_split_dependency_pin_is_rejected_before_destination_creation(monkeypatch, tmp_path):
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\ndependencies = ["strategy-core @ '
+        'git+https://github.com/thealgochef/Strategy-Core.git@' + "a" * 40 + '"]\n',
+        encoding="utf-8",
+    )
+    path = tmp_path / "current.json"
+    path.write_text(json.dumps({"target_commit": "b" * 40}), encoding="utf-8")
+    monkeypatch.setattr(runtime, "ROOT", tmp_path)
+    monkeypatch.setattr(runtime, "MANIFEST_PATH", path)
     destination = tmp_path / "destination"
-    with pytest.raises(ValueError, match="bundle checksum differs"):
+    with pytest.raises(ValueError, match="must pin one commit"):
         bootstrap.prepare(destination)
     assert not destination.exists()
+
+
+def test_current_pin_does_not_rewrite_frozen_historical_source():
+    historical = json.loads((runtime.ROOT / "research/core/manifest.json").read_text())
+    assert historical["target_commit"] == "38825ed86f3e3940515cdc28d9df567ddccc0b70"
+    assert historical["source_identity"] == (
+        "9db57357b1702b7022592980644eb20f320d19fcf0e309a4431836717d6a1eb1"
+    )
+    bundle = runtime.ROOT / "research/core" / historical["bundle_file"]
+    assert hashlib.sha256(bundle.read_bytes()).hexdigest() == historical["bundle_sha256"]
+    assert runtime.manifest()["target_commit"] != historical["target_commit"]
 
 
 def test_existing_destination_is_never_repaired_or_overwritten(monkeypatch, tmp_path):

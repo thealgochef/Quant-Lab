@@ -2,10 +2,14 @@
 
 Updated: 2026-09-22.
 
-The coordinated main merge retains the normal installed Core `a4e3303` and the
-IFSM launcher's exact research Core `38825ed`. Use the existing launcher command
-for the research screen; installing arbitrary Core main is not an equivalent
-setup. See [the supported pairing and preparation steps](../research/core/README.md).
+Ordinary Quant-Lab and the IFSM launcher use the same current Core,
+`7c7111e398c083cf8e966e2e0c5aac8a41cc12c0`, after the owner's September 22 upgrade.
+Install the pinned dependency and prepare its verified source checkout using
+[the current setup steps](../research/core/README.md). Restart existing study
+screens after upgrading. This supersedes the installed-pin policy in dated
+research notes below. Historical studies retain their original sources and
+identities; a new replay gets a new identity and must rebuild incompatible state
+from its authorized history. Trade-Lab is outside this upgrade.
 
 The research API also supports `geometry_comparison=True` with `B0_CORE`,
 `mbp1_comparison=False` and no regime request. This freezes the comparison

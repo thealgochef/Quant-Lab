@@ -10,19 +10,29 @@ The 74-trade configuration had the highest frequency, but only 6.1853R total net
 2. Select the fresh-entry static-1R baseline and edit the fields there. To reproduce ParentDistance160, choose parent retest **240 processed 1m bars**, opposing timeout **90 processed 1m bars**, and parent-to-HTF distance **160 ticks**. Keep HTF registry age **15 days** and other baseline values. The table below records the changes for every completed configuration. There is no home-screen replication component or preset picker.
 3. In the existing Strategy gates and Validation steps, review the original gates, 107 evaluation dates, ten excluded warmup dates and seed **7**. The evidence catalog preserves the complete dates and settings; setting the strategy fields alone does not select the historical evaluation scope. Review the costs and exact study request before saving the normal study approval and clicking **Run study**.
 
-For lifecycle fields implemented by the preserved repaired research engine, start the existing research runtime from the repository folder:
+Install the current pinned dependency and prepare its source checkout from the
+repository folder, then start the research screen:
 
 ```powershell
+python -m pip install -e ".[dev]"
+python -m pip install --force-reinstall --no-deps "strategy-core @ git+https://github.com/thealgochef/Strategy-Core.git@7c7111e398c083cf8e966e2e0c5aac8a41cc12c0"
 python scripts/prepare_ifsm_research_core.py
 python scripts/run_ifsm_research_ui.py
 ```
 
-Open [the IFSM research UI](http://localhost:8502). This process uses the preserved, verified research Core with current Quant-Lab UI code. It keeps output in `data/ifsm_ui_replication/`; the installed Core, global source pins, existing dashboard and historical studies remain unchanged. `--check` performs a read-only runtime/configuration check without starting the UI or creating a replay.
+Open [the IFSM research UI](http://localhost:8502). This process uses the verified
+current Core, the same exact commit as the ordinary Quant-Lab installation. It
+keeps output in `data/ifsm_ui_replication/`. Restart an already running screen
+after upgrading. `--check` performs a read-only runtime/configuration check
+without starting the UI or creating a replay.
 
-Preparation restores the exact Core outside the repository from the versioned
-incremental bundle and its public prerequisite. Existing preserved checkouts
-remain available. See [research Core setup](../research/core/README.md) for
-verification, custom locations and source review commands.
+Preparation fetches the exact public commit recorded in `research/core/current.json`
+into a verified checkout outside the repository. It does not fall back to the
+older `Strategy-Core-daily-close` sibling. Original source manifests, bundles,
+checkouts and study identities remain historical evidence. Reusing these settings
+on the current engine creates a new replay, not the original execution; incompatible
+checkpoints require rebuilding state from the authorized input history. See
+[current Core setup](../research/core/README.md) for verification and custom locations.
 
 Both runtimes use the same existing study Configuration screen. Optional lifecycle fields appear only when the loaded engine implements them. Saved unsupported values are refused rather than dropped. A new replay under current Quant-Lab code receives its own source-bound identity; the catalog's historical search IDs remain the identities of the original executions. Selecting or saving values does not launch a study.
 

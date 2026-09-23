@@ -5,8 +5,8 @@ name: ci
 # the editable/PYTHONPATH dev runs mask — e.g. a git+ssh strategy-core pin (no SSH
 # key on a fresh runner), a stale pin missing a symbol QL imports, or an undeclared
 # test dependency. Runs on pushes to main and on PRs.
-# The ordinary install retains the stable Core pin. The optional IFSM research
-# engine has its own exact-source preparation and test job below.
+# Both the ordinary install and IFSM use one current Core commit. Test installed
+# wheel provenance separately from the launcher's exact-source import below.
 on:
   push:
     # platform-refactor included so the 9.6-enforcing run fires on this branch's
@@ -44,6 +44,17 @@ jobs:
       - name: Install (cold)
         run: pip install -e ".[dev]"
 
+      - name: Prepare the matching current Core source
+        run: python scripts/prepare_ifsm_research_core.py
+
+      - name: Verify installed Core provenance
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from alpha_lab.agents.data_infra.ifvg.search.runtime_source import strategy_core_repository_root
+          print(strategy_core_repository_root(Path.cwd()))
+          PY
+
       - name: Lint (ruff)
         run: ruff check src tests scripts
 
@@ -51,7 +62,7 @@ jobs:
         run: pytest -q
 
   ifsm-research:
-    name: IFSM research (exact optional Core + focused contracts)
+    name: IFSM research (same current Core + focused contracts)
     runs-on: ubuntu-latest
     env:
       IFSM_REQUIRE_RESEARCH_CORE: "1"
@@ -76,7 +87,7 @@ jobs:
           PY
       - name: Install ordinary dependencies
         run: pip install -e ".[dev]"
-      - name: Prepare exact research Core outside the repository
+      - name: Prepare the same current Core outside the repository
         run: python scripts/prepare_ifsm_research_core.py --destination "$IFSM_RESEARCH_CORE"
       - name: Verify the actual launcher and all research choices
         run: python scripts/run_ifsm_research_ui.py --check

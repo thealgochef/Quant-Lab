@@ -4,12 +4,15 @@ repo_role: "ml_training_workbench_with_strategy_core_v3_dashboard_utility_path"
 
 strategy_core_pairing:
   repository: "https://github.com/thealgochef/Strategy-Core"
-  ordinary_dependency_commit: "a4e3303179ac6a1088aecaaa3482934cf1aec4d7"
-  ifsm_research_commit: "38825ed86f3e3940515cdc28d9df567ddccc0b70"
-  ifsm_research_source_identity: "9db57357b1702b7022592980644eb20f320d19fcf0e309a4431836717d6a1eb1"
-  history: "Both pinned commits retained in Strategy-Core main; research ref codex/daily-close-sessions"
-  version_policy: "Exact source pairing; package versions remain 0.1.0; installed and live pins unchanged"
-  source_checkout_policy: "Ordinary wheel requires source-equivalent sibling; keep newer Core main in a separate worktree"
+  ordinary_dependency_commit: "7c7111e398c083cf8e966e2e0c5aac8a41cc12c0"
+  ifsm_research_commit: "7c7111e398c083cf8e966e2e0c5aac8a41cc12c0"
+  ifsm_research_source_identity: "9247f16e223c9226f9afa17832c8810e31ce8853bfad9a0b5452e31845377bf3"
+  current_source_manifest: "research/core/current.json"
+  history: "a4e3303 and 38825ed retained for historical reproduction; original research manifest.json and bundle unchanged"
+  version_policy: "Owner-authorized September 22 upgrade to one current Quant-Lab Core pin; package versions remain 0.1.0; Trade-Lab unchanged"
+  source_checkout_policy: "Installed package and IFSM share the same verified external Core source and provenance; no older sibling launcher fallback"
+  checkpoint_policy: "Preserve historical identities; rebuild incompatible state from authorized history before a new replay"
+  historical_notes: "Dated research isolation notes below describe their original runs, not the current installed-pin policy"
 
 
 report_output_policy:
@@ -24,7 +27,7 @@ application_workspaces:
   ifsm_replication:
     launcher: "python scripts/run_ifsm_research_ui.py"
     url: "http://localhost:8502"
-    source: "process-local verified research Core 38825ed86f3e3940515cdc28d9df567ddccc0b70; current Quant-Lab; installed package unchanged"
+    source: "verified Core 7c7111e398c083cf8e966e2e0c5aac8a41cc12c0; same commit as the ordinary installed package"
     source_preflight: "exact Core scoped hash and all 13 recorded effective configurations"
     output_root: "data/ifsm_ui_replication"
     ui_entry: "My studies / New study / Evaluate / Configuration"

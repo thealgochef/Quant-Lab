@@ -34,7 +34,7 @@ dependencies = [
     "fastapi>=0.100",
     "uvicorn>=0.20",
     "python-multipart>=0.0.5",
-    "strategy-core @ git+https://github.com/thealgochef/Strategy-Core.git@a4e3303179ac6a1088aecaaa3482934cf1aec4d7",
+    "strategy-core @ git+https://github.com/thealgochef/Strategy-Core.git@7c7111e398c083cf8e966e2e0c5aac8a41cc12c0",
 ]
 
 [project.optional-dependencies]
@@ -42,6 +42,7 @@ dev = [
     "pytest>=7.4",
     "pytest-asyncio>=0.23",
     "pytest-cov>=4.1",
+    "pytz>=2025.2",  # explicit legacy-timezone test backend; pandas need not install it
     # Ceiling matches SC/TL: ruff 0.16.0's default-rule expansion reds cold installs. This
     # tree is clean under 0.16 today (the explicit lint.select below shields it), so the
     # ceiling is prophylactic — it keeps all three repos on one linter across cold runs.

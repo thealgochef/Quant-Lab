@@ -2,9 +2,11 @@
 
 Updated: 2026-09-22.
 
-The [supported Core pairing](../research/core/README.md) records the exact ordinary
-and IFSM research pins retained by the coordinated main merge, with preparation
-and provenance requirements for each workflow.
+The [current Core setup](../research/core/README.md) records one exact Core pin
+for ordinary Quant-Lab and IFSM, with installation and source verification steps.
+The September 22 upgrade supersedes the installed-pin policy in dated research
+notes below. Older study sources and identities remain available for historical
+reproduction.
 
 Use this index to avoid treating old reports as current architecture. The current production-aligned path is **dashboard-utility training through Strategy-Core v3**. Bundle presence/checksum verification is deferred until the local data/model zip is available.
 

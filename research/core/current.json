@@ -1,0 +1,399 @@
+{
+  "schema_version": 2,
+  "distribution": "published_git",
+  "repository_url": "https://github.com/thealgochef/Strategy-Core.git",
+  "target_commit": "7c7111e398c083cf8e966e2e0c5aac8a41cc12c0",
+  "source_identity": "9247f16e223c9226f9afa17832c8810e31ce8853bfad9a0b5452e31845377bf3",
+  "source_files": [
+    {
+      "path": "src/strategy_core/__init__.py",
+      "sha256": "c113a87efe3c2bcddcf9679eb9fb06631cf187e73dc97f51eb73748c260a8aad",
+      "bytes": 7822,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/candles/__init__.py",
+      "sha256": "2c38dba5430a7526ddd810ff7d9f22e4124c2440eeb9100d87b9099ece0c093e",
+      "bytes": 395,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/candles/_buckets.py",
+      "sha256": "06b9185e30b82b34cb8d7f9619ada0aa4a3cce5b5e03251aaa52a21c02cf8aab",
+      "bytes": 8435,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/candles/_ids.py",
+      "sha256": "2b8851a9e0753ebae159abf826c42a7921dccc567e95db6e01657db17c283fe6",
+      "bytes": 1595,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/candles/batch.py",
+      "sha256": "0705484841aad415a8307327ddcfb3aa5cd59905e8527f0a0de53d0e13120419",
+      "bytes": 8867,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/candles/exchange_calendar.py",
+      "sha256": "e54d245855d570bb3be8e113ca02039711de0538837a0ccd3cd3263f70bede41",
+      "bytes": 21630,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/candles/streaming.py",
+      "sha256": "4cd23903eee0fb30c954d9e2f239ce254ff6cec37536b9afb994f8ec35a1b540",
+      "bytes": 9554,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/candles/time_batch.py",
+      "sha256": "ab6877bca8b929b57a5413e9aae4d5bd8228a492a5a3f8e91416d829a9b8ffe0",
+      "bytes": 13499,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/candles/time_streaming.py",
+      "sha256": "9747a69060c0e086ff383afb32ff85420974c418fa1794f9c24e3d075d329ac4",
+      "bytes": 16418,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/constants.py",
+      "sha256": "2b385f5e83073fc07915ef59cdb93e12c9604163b5666b02e0e0f6b233bf68ce",
+      "bytes": 22574,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/contract/__init__.py",
+      "sha256": "a8e8e360ca07ad00061dab9d96e29d7c3342ecca61c798a39e634d6b73c68edd",
+      "bytes": 250,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/contract/loader.py",
+      "sha256": "1a9ac9205602fef961351b231c94480e8b7797b45e5832c75b118f9882faf47b",
+      "bytes": 5203,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/contract/schema.py",
+      "sha256": "db3c1f9323986d49ffe0752a11dab536bc85d521e77cf1b939621276b4165ebd",
+      "bytes": 14013,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/data/__init__.py",
+      "sha256": "e2f3ec7ba295f18ecab902052f6bdacf3fd035c0f9a81743fe84a585a47473c8",
+      "bytes": 413,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/data/databento_live.py",
+      "sha256": "0ed9b4509c05247c8557dae970a81465bfda2da522d624bb231580de799bef0f",
+      "bytes": 7580,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/data/databento_parquet.py",
+      "sha256": "90026aa6a8f2611cd45dd961f9496d36d76d408592890f6cdc03dfd91c83f9a5",
+      "bytes": 51759,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/data/events.py",
+      "sha256": "604744074c788e5ab43e3fe5be9d6951f56c0734303fbb9138e8f48fe070c822",
+      "bytes": 4095,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/data/ordering.py",
+      "sha256": "564047482be526606582c9d3d53d2cd190860e44a6b864a24b31b6048fbed812",
+      "bytes": 1839,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/data/prior_day.py",
+      "sha256": "aa4fca549b7517f2ec44860348f97c9a60306818dca434f17777c7134edc065b",
+      "bytes": 7917,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/decisions/__init__.py",
+      "sha256": "9c858e18c04aac972fc70fb73e14509dfbab1f02fd8f15ad2927986ef494539b",
+      "bytes": 750,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/decisions/dedup.py",
+      "sha256": "b6792e2f13c7e4f47a361ad9efc1424c0031926a7ddea2fe8bb85081c961dcae",
+      "bytes": 1269,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/decisions/features.py",
+      "sha256": "1a2259c86e203b7485f2929b0ab92ced5a43e8feb2931291708ae8e6f005a8ac",
+      "bytes": 8811,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/decisions/honest_entry.py",
+      "sha256": "c3bf17979ff9f568f6b7357368f4b4d16694434e8b803c740dcac1d463441764",
+      "bytes": 8678,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/decisions/outcomes.py",
+      "sha256": "ba08eaac808dec9eb98d85910c7470b65f02e5ba8a45eba5b16750facb4a0c2e",
+      "bytes": 8881,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/decisions/sessions.py",
+      "sha256": "c9a0d5ee818cfef74c49ae1bae69aedb0a0fa4f0a50cd6d329d0a2175a8301e1",
+      "bytes": 6286,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/decisions/streaming.py",
+      "sha256": "0d985596a4b653ad507f305f3dca120bc46c6ecc290a6d485ead1d1909344ef4",
+      "bytes": 17884,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/decisions/touch.py",
+      "sha256": "6d9384ed893ae1bf54681c1075f672044be6229bc582641e9120d10d2badc1aa",
+      "bytes": 5344,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/decisions/zones.py",
+      "sha256": "854a76dd375fb5570862ac8e4899181062dd99cd0cebfebe387fcdeeac603f94",
+      "bytes": 4894,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/py.typed",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/runtime/__init__.py",
+      "sha256": "a91bb63b097ada8aba67448c77e4d39c59eee51f7593c2b78258667012053484",
+      "bytes": 550,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/runtime/context.py",
+      "sha256": "f803acee4559410ca596cc3192b544adbef0d082616899d616a31ffc37c24dab",
+      "bytes": 5041,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/runtime/levels.py",
+      "sha256": "1bb9efef98411abc6a6fff2e5280f6a1fe391107bd91adecdbb9df161b116a55",
+      "bytes": 9243,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/runtime/live.py",
+      "sha256": "c29cd9a9c54bc15c7c1839f67a0c8e1a7ce7a36e29e1f869964d3eaf1aece2b4",
+      "bytes": 6732,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/runtime/replay.py",
+      "sha256": "fb2a5c10b406d5035b2e1dbd00f7133c4786441b2cab0da4057b11dc38bd7ad5",
+      "bytes": 9957,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/runtime/state.py",
+      "sha256": "0a109001101c0024a299d3f7e52b83b1ece0b20a240634a3e78b857f5f736e04",
+      "bytes": 21081,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/runtime/wiring.py",
+      "sha256": "77965f4f22f6d354f8ec97b738d9186158c4f101d5f5745be6fa7591fdbe0904",
+      "bytes": 1633,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/strategies/__init__.py",
+      "sha256": "1f9ad1c6489ce2d135156910c2bed854932c2a8635ca0b727c27f7fff2b8664a",
+      "bytes": 1227,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/strategies/ifvg_smc/__init__.py",
+      "sha256": "c83fcf832ebe9c82e6a0b0dd3bad1916b9556e1fd468a4f5865c77cc3b56b49f",
+      "bytes": 593,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/strategies/ifvg_smc/context_config.py",
+      "sha256": "6daf0e809487a5411f4808c253c5a7e30fc39977fda61f5718bd63716160c0f8",
+      "bytes": 19316,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/strategies/ifvg_smc/context_features.py",
+      "sha256": "5b8b9a10f29c08cb40ae7ab872f6b820d5a39bb5b669c8f184be7163672c7afe",
+      "bytes": 40299,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/strategies/ifvg_smc/context_records.py",
+      "sha256": "a7a334ce8e68150d5ace19c57a552815425e8f1498081858066def6c98065db0",
+      "bytes": 10806,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/strategies/ifvg_smc/daily_close.py",
+      "sha256": "fb23dcd48d551eee3c2cb6e7c561eddecfc0f407346340a26c86ad96a4d8525f",
+      "bytes": 14664,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/strategies/ifvg_smc/gap_validity.py",
+      "sha256": "191e0f81380171b226885dbf9954bf5784c419226ced39febb66b8f936b0faca",
+      "bytes": 10850,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/strategies/ifvg_smc/labels.py",
+      "sha256": "b1726ab6b0e6a1538c0633a7641bff3655fe58acdf1b7587c596fafafc776d56",
+      "bytes": 3954,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/strategies/ifvg_smc/plugin.py",
+      "sha256": "c2b6fed65a161c1109d152c74641dfbf99812b2d8e7a92aff452efd13220939c",
+      "bytes": 13316,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/strategies/ifvg_smc/records.py",
+      "sha256": "f22891dbd9844bb2454bb80d1c953be26035738b4f123ec66db44eceb20972b6",
+      "bytes": 18670,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/strategies/ifvg_smc/reducer.py",
+      "sha256": "865d50fbe0e51276258fccabd10d81780e76fb8c6aa1f6e9c975e4d10cd3d618",
+      "bytes": 119161,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/strategies/ifvg_smc/replay.py",
+      "sha256": "83d1ad66d61fd653c45ca069cd68dec9bb608a5a58c05fc707abec1891bfd50e",
+      "bytes": 43102,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/strategies/ifvg_smc/section.py",
+      "sha256": "8ee6a99fb28b4b56b8c39aefb2787a105700a71658441341e637b798c7b42c6f",
+      "bytes": 16742,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/strategies/ifvg_smc/selection_audit.py",
+      "sha256": "3973bf669ef881315aa85a205bd742d50ea0cb84fc84aedda8ebd9f22c0e3e9b",
+      "bytes": 5481,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/strategies/ifvg_smc/state.py",
+      "sha256": "9c7eafbbc5d1b89982c025b60691f85ed2f76bb86393c424a9bc501a50949d69",
+      "bytes": 3756,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/strategies/protocols.py",
+      "sha256": "3e04bbee57d7fcce532645e04a0bb59cf40b6c279367115cee812f7cac19da9a",
+      "bytes": 14492,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/strategies/registry.py",
+      "sha256": "9f8c85c1bd8efb73da1500b32b74d2890369f0f464ce62818324860097ffc7a7",
+      "bytes": 4858,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/strategies/touch_reversal/__init__.py",
+      "sha256": "53b7e7df980fb9179d1779cf7e60f053589fb7f8d3d4eb7e5f12a18b20bc3319",
+      "bytes": 838,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/strategies/touch_reversal/plugin.py",
+      "sha256": "8b15b8100cb3a64665ce4e0dc1953562e75626a4ba7aa16fcc3acc967b68cfde",
+      "bytes": 17970,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/strategies/touch_reversal/section.py",
+      "sha256": "98f1f136aa24be0681834aa3546717167c6760a85307bdbff8403031772a8e00",
+      "bytes": 9152,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/structures/__init__.py",
+      "sha256": "6b99235fc21e2b57678fa684e1bcb2026f209f866defc1efaacf1f3ab27ca07f",
+      "bytes": 560,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/structures/context.py",
+      "sha256": "512dfa742808d3a88a2325e03068c2195499d7b88b071fc61d6756dcc9e47e0a",
+      "bytes": 5362,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/structures/displacement.py",
+      "sha256": "207d497f5022c1b62a6f82be4a8a1456b08028b33b60d3e3b07713787167695e",
+      "bytes": 40362,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/structures/equal_levels.py",
+      "sha256": "ccfb8408ea2f0b4a963425fa8824fcc7018ba261f23e2eb4eb71eb03c345dfb2",
+      "bytes": 46681,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/structures/fvg.py",
+      "sha256": "009d9eee818820448add8833dbdad1f6791d3f252a8784d467f14a4d888cf9f0",
+      "bytes": 23321,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/structures/market_structure.py",
+      "sha256": "875309a2076fc0bc95ef95f4c55bb07006b559452efe74b06e49794753dbcd47",
+      "bytes": 32414,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/structures/sweeps.py",
+      "sha256": "85a027c6bfa0707be066fedb76acc5011f55b40d22308d6d98176969a700e1f6",
+      "bytes": 7279,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/structures/swings.py",
+      "sha256": "a6328b1b4c99b540a64bbdd80f9ae3f48ac1b993114ce9fcfdc37dc5cbe4db37",
+      "bytes": 5173,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/types.py",
+      "sha256": "8467e684960865ffd37a44949f2f073b10017458764c46b23e130ddf1eaa05af",
+      "bytes": 8700,
+      "line_endings": "git"
+    }
+  ]
+}

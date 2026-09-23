@@ -2,11 +2,15 @@
 
 Updated: 2026-09-22.
 
-Main-branch runtime pairing is documented in [research/core/README.md](research/core/README.md):
-the ordinary dependency remains Strategy-Core `a4e3303`, while the IFSM launcher
-verifies frozen Core `38825ed` and its original source identity. Core main retains
-both commits. The shared package version `0.1.0` is not a source compatibility
-check; the merge preserves existing installed and historical study semantics.
+The ordinary dependency and IFSM launcher now use the same Strategy-Core commit,
+`7c7111e398c083cf8e966e2e0c5aac8a41cc12c0`, following the owner's September 22
+upgrade request. [research/core/README.md](research/core/README.md) documents
+installation and source verification. `research/core/current.json` records the
+current source identity; package version `0.1.0` alone does not establish source
+compatibility. Older study identities, source archives and approval records
+remain immutable. An incompatible checkpoint requires fresh state rebuilt from
+the authorized history. Dated notes below retain the original research isolation;
+this guidance supersedes their old installed-pin policy. Trade-Lab is unchanged.
 
 The offline IFVG geometry extension (`B0_GEOMETRY_CORE_ATR14_V1`) composes repaired
 B0 with three fixed, source-verified geometry ratios. It does not change
@@ -44,17 +48,18 @@ Older historical reports and scaffold prompt documents were pruned from the work
 
 ### Application workspaces and IFVG research presentation
 
-The optional IFSM replication UI (`scripts/run_ifsm_research_ui.py`, port 8502)
-uses current Quant-Lab presentation and a process-local, source-verified preserved
-research Core; it does not replace the installed engine. Its studies, drafts,
+The IFSM replication UI (`scripts/run_ifsm_research_ui.py`, port 8502)
+uses current Quant-Lab presentation and the verified external source checkout of
+the same Core commit as the ordinary installed package. Its studies, drafts,
 jobs and context listings use `data/ifsm_ui_replication/`. Registered fixed values
 are editable within the existing Evaluate One Configuration step. The thirteen
 verified September 9 configurations remain a documentation/evidence catalog;
 there is no home-screen replication card or preset picker.
 Search grids retain their existing enumeration;
 fixed configurations enumerate one child. Approval and execution resolve Core
-provenance from the actual imported checkout, with source parity required for an
-installed-package/sibling fallback. Separate cache-preparation evidence supplies
+provenance from the actual imported checkout, with source parity required between
+an installed package and its prepared source checkout. The IFSM launcher does
+not fall back to an older sibling checkout. Separate cache-preparation evidence supplies
 only creation metadata, never new read or replay authority. See
 `docs/IFSM_UI_REPLICATION.md`.
 

@@ -46,13 +46,14 @@ def test_strategy_core_editable_provenance_uses_import_checkout(
     monkeypatch,
 ) -> None:
     from alpha_lab.agents.data_infra.ifvg import verification
+    from alpha_lab.agents.data_infra.ifvg.search import runtime_source
 
     checkout = tmp_path / "Strategy-core"
     (checkout / ".git").mkdir(parents=True)
     imported = checkout / "src" / "strategy_core" / "__init__.py"
     monkeypatch.setattr(verification.strategy_core, "__file__", str(imported))
     monkeypatch.setattr(
-        verification,
+        runtime_source,
         "distribution",
         lambda _name: (_ for _ in ()).throw(AssertionError("unexpected metadata read")),
     )
@@ -60,16 +61,38 @@ def test_strategy_core_editable_provenance_uses_import_checkout(
     assert verification._strategy_core_repository_root(tmp_path / "Quant-Lab") == checkout
 
 
-def test_strategy_core_vcs_install_must_match_sibling_checkout(
+@pytest.mark.parametrize("managed", [False, True])
+def test_strategy_core_vcs_install_must_match_source_checkout(
     tmp_path: Path,
     monkeypatch,
+    managed: bool,
 ) -> None:
     from alpha_lab.agents.data_infra.ifvg import verification
+    from alpha_lab.agents.data_infra.ifvg.search import runtime_source
 
     repo_root = tmp_path / "Claude-Quant-Lab"
     repo_root.mkdir()
-    checkout = tmp_path / "Strategy-core"
+    commit = "1" * 40
+    (repo_root / "pyproject.toml").write_text(
+        '[project]\ndependencies = ["strategy-core @ '
+        f'git+https://github.com/thealgochef/Strategy-Core.git@{commit}"]\n',
+        encoding="utf-8",
+    )
+    sibling = tmp_path / "Strategy-core"
+    if managed:
+        checkout = (
+            tmp_path / "Claude-Quant-Lab-Research-Artifacts" / "ifsm-research-core" / commit
+        )
+        (sibling / ".git").mkdir(parents=True)
+        stale_source = sibling / "src" / "strategy_core"
+        stale_source.mkdir(parents=True)
+        (stale_source / "__init__.py").write_text("VERSION = 0\n", encoding="utf-8")
+    else:
+        checkout = sibling
     (checkout / ".git").mkdir(parents=True)
+    source = checkout / "src" / "strategy_core"
+    source.mkdir(parents=True)
+    (source / "__init__.py").write_text("VERSION = 1\n", encoding="utf-8")
     imported = (
         tmp_path
         / "Python"
@@ -78,7 +101,8 @@ def test_strategy_core_vcs_install_must_match_sibling_checkout(
         / "strategy_core"
         / "__init__.py"
     )
-    commit = "1" * 40
+    imported.parent.mkdir(parents=True)
+    imported.write_text("VERSION = 1\n", encoding="utf-8")
 
     class Distribution:
         @staticmethod
@@ -87,12 +111,13 @@ def test_strategy_core_vcs_install_must_match_sibling_checkout(
             return f'{{"vcs_info": {{"commit_id": "{commit}"}}}}'
 
     monkeypatch.setattr(verification.strategy_core, "__file__", str(imported))
-    monkeypatch.setattr(verification, "distribution", lambda _name: Distribution())
-    monkeypatch.setattr(verification, "_git_head", lambda _root: commit)
+    monkeypatch.setattr(runtime_source, "distribution", lambda _name: Distribution())
+    monkeypatch.setattr(runtime_source, "_git_head", lambda _root: commit)
 
     assert verification._strategy_core_repository_root(repo_root) == checkout
-    monkeypatch.setattr(verification, "_git_head", lambda _root: "2" * 40)
-    with pytest.raises(RuntimeError, match="differs from source checkout HEAD"):
+    monkeypatch.setattr(runtime_source, "_git_head", lambda _root: "2" * 40)
+    error = "HEAD differs from the Quant-Lab" if managed else "differs from source checkout HEAD"
+    with pytest.raises(RuntimeError, match=error):
         verification._strategy_core_repository_root(repo_root)
 
 

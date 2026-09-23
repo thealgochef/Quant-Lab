@@ -10,12 +10,16 @@ Updated: 2026-09-22.
 - Streamlit ML tab workflow: `docs/ML_TRAINING_WORKBENCH.md`.
 - Session experiment CLI: `scripts/run_dashboard_session_experiment.py`.
 - Strategy-Core v3 cross-repo matrix: `../Strategy-Core/V3_COMPATIBILITY_MATRIX.md`.
-- Main-branch Core pairing: `research/core/README.md`. Ordinary installation stays
-  pinned to `a4e3303`; IFSM uses frozen `38825ed` and its verified source identity.
-  Both are preserved in Core main. Do not substitute the latest Core main for a
-  frozen study or change the installed dependency as a version-label cleanup.
-  Keep the ordinary wheel's sibling source checkout equivalent to that package;
-  merge newer Core main through a separate worktree when necessary.
+- Current Core pairing: `research/core/README.md`. The owner authorized upgrading
+  ordinary Quant-Lab and IFSM to the same current Core on September 22:
+  `7c7111e398c083cf8e966e2e0c5aac8a41cc12c0`, pinned in `pyproject.toml` and
+  `research/core/current.json`. Prepare its verified external source checkout
+  for provenance; the installed package must match that exact source. Historical
+  `a4e3303`/`38825ed` studies keep their original identities and source archives.
+  Never rehash old studies or resume incompatible checkpoints under the new pin.
+  Trade-Lab's dependency is outside this upgrade. Dated notes below record the
+  original research isolation; this current guidance supersedes their claims
+  that Quant-Lab's installed pin remains unchanged.
 - For model-training changes, start with `scripts/ml_training_tab.py` and `src/alpha_lab/agents/data_infra/ml/`, not the older generic multi-agent scaffold.
 - IFVG exact-source R5–R6 research: `scripts/ifvg_research_pipeline.py`,
   `src/alpha_lab/agents/data_infra/ifvg/search/research_runs.py`, and

@@ -1,36 +1,49 @@
-"""Portable location and byte-exact verification of the optional IFSM Core."""
+"""Portable location and byte-exact verification of Quant-Lab's current Core."""
 
 from __future__ import annotations
 
 import hashlib
 import json
 import os
+import re
 import subprocess
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-MANIFEST_PATH = ROOT / "research/core/manifest.json"
+MANIFEST_PATH = ROOT / "research/core/current.json"
 RESEARCH_ARTIFACTS = ROOT.parent / "Claude-Quant-Lab-Research-Artifacts"
 
 
 def manifest() -> dict:
-    return json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    expected = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    metadata = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    pins = [
+        match.group(1)
+        for dependency in metadata["project"]["dependencies"]
+        if (match := re.fullmatch(
+            r"strategy-core @ git\+https://github.com/thealgochef/Strategy-Core\.git@([0-9a-f]{40})",
+            dependency,
+        ))
+    ]
+    if pins != [expected["target_commit"]]:
+        raise ValueError(
+            "Installed dependency and current Core source manifest must pin one commit"
+        )
+    return expected
 
 
 CORE_COMMIT = manifest()["target_commit"]
 CORE_SOURCE = manifest()["source_identity"]
 DEFAULT_CORE = RESEARCH_ARTIFACTS / "ifsm-research-core" / CORE_COMMIT
-LEGACY_CORE = ROOT.parent / "Strategy-Core-daily-close"
 
 
 def select_core(explicit: Path | None = None) -> Path:
-    """Explicit selection wins; preserve the owner's existing research checkout."""
+    """Use the current pin; historical checkouts are never implicit fallbacks."""
     configured = explicit or os.environ.get("IFSM_RESEARCH_CORE")
     if configured:
         return Path(configured).expanduser().resolve()
-    if DEFAULT_CORE.exists() or not LEGACY_CORE.exists():
-        return DEFAULT_CORE
-    return LEGACY_CORE
+    return DEFAULT_CORE
 
 
 def git(core: Path, *args: str) -> bytes:

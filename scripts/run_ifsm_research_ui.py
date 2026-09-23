@@ -1,7 +1,8 @@
-"""Launch the IFSM study UI with a process-local, verified research engine.
+"""Launch the IFSM study UI with Quant-Lab's current verified Core pin.
 
-No installation, global source pin, historical study, or running dashboard is
-changed. Starting this UI initializes its separate empty store, never a replay.
+The launcher selects the same commit as the ordinary dependency. It does not
+install packages or rewrite historical studies. Starting this UI initializes
+its separate store, never a replay.
 """
 
 from __future__ import annotations
@@ -54,7 +55,7 @@ require(Path(alpha_lab.__file__).resolve().is_relative_to(launcher.ROOT / 'src')
         'Quant-Lab import is outside the current source checkout')
 commit, identity = strategy_core_source_identity(repository_root=launcher.CORE)
 require((commit, identity) == (launcher.CORE_COMMIT, launcher.CORE_SOURCE),
-        'Research Core commit or source identity differs from the frozen runtime')
+        'Core commit or source identity differs from the current pinned runtime')
 recipes = catalog()['recipes']
 for recipe in recipes:
     recipe_axis_values(recipe)

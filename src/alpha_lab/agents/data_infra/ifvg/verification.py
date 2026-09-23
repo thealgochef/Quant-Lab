@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import subprocess
 from dataclasses import asdict, replace
-from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
 
 import strategy_core
@@ -48,50 +47,16 @@ from .reporting import (
     build_context_reconciliation_report,
     build_context_validity_report,
 )
+from .search.runtime_source import strategy_core_repository_root
 
 __all__ = ["run_context_verification", "run_repair_verification"]
 
 _AUTHORITATIVE_SOURCE_BLOB = "9b5f6f163ae060030c5695dbc0aede94e0ebebcd"
 
 
-def _git_head(root: Path) -> str:
-    return subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=root,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-
-
 def _strategy_core_repository_root(repo_root: Path) -> Path:
-    """Resolve source provenance for editable or immutable VCS installations."""
-
-    imported_root = Path(strategy_core.__file__).resolve().parents[2]
-    if (imported_root / ".git").exists():
-        return imported_root
-
-    sibling_candidates = (
-        Path(repo_root).resolve().parent / "Strategy-Core",
-        Path(repo_root).resolve().parent / "Strategy-core",
-    )
-    strategy_root = next(
-        (candidate for candidate in sibling_candidates if (candidate / ".git").exists()),
-        None,
-    )
-    if strategy_root is None:
-        raise RuntimeError("Strategy-Core source checkout is unavailable for provenance")
-    try:
-        direct_url_text = distribution("strategy-core").read_text("direct_url.json")
-        direct_url = json.loads(direct_url_text or "{}")
-    except (PackageNotFoundError, json.JSONDecodeError) as error:
-        raise RuntimeError("installed Strategy-Core provenance is unreadable") from error
-    installed_commit = direct_url.get("vcs_info", {}).get("commit_id")
-    if not isinstance(installed_commit, str) or len(installed_commit) != 40:
-        raise RuntimeError("installed Strategy-Core lacks immutable VCS commit provenance")
-    if _git_head(strategy_root) != installed_commit:
-        raise RuntimeError("installed Strategy-Core pin differs from source checkout HEAD")
-    return strategy_root
+    """Use common current-pin discovery, retaining immutable commit proof."""
+    return strategy_core_repository_root(repo_root, require_installed_commit_match=True)
 
 
 def _metadata_snapshot(paths: list[Path]) -> dict[str, tuple[int, int]]:
