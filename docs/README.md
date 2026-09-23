@@ -17,6 +17,7 @@ Use this index to avoid treating old reports as current architecture. The curren
 | `../ARCHITECTURE.md` | **Canonical current architecture** | Repo purpose, v3 semantics, current workflows, generated outputs. |
 | `ML_TRAINING_WORKBENCH.md` | **Current workflow guide** | Streamlit ML tab, dashboard-utility build/train/save, exact-source IFVG R5–R6 research and separate authorization. |
 | `pipeline_state.yaml` | **Current machine-readable summary** | Quick state for agents/scripts; v3 fields and known gaps. |
+| [Current Strategy-Core setup](../research/core/README.md) | **Current dependency and source setup** | One exact pin for both screens, installation, source verification, and preservation of historical studies. |
 | [Saved strategy-search approval](IFVG_STRATEGY_SEARCH_APPROVAL.md) | **Current approval and execution contract** | Enable Run for an exact approved strategy-only configuration without launching it. |
 | [IFSM UI replication](IFSM_UI_REPLICATION.md) | **Completed-run configuration guide** | Thirteen tested configurations and their editable values in the existing study Configuration screen. |
 | [Focused IFVG workspace report](../QL-FSM-PROP-SEARCH-DASHBOARD/implementation-progress/UI-UX-REDESIGN-PLAN/FOCUSED_WORKSPACE/COMPLETION_REPORT.md) | **Current presentation implementation** | Page routing, My studies, startup Developer boundary, Replay selection and test evidence. |

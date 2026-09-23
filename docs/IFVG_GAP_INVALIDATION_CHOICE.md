@@ -1,15 +1,21 @@
 # One-hour / four-hour gap invalidation
 
-The IFSM study application started by `python scripts/run_ifsm_research_ui.py`
-uses the exact daily-close research Core in this process and its child workers
-only; that Core includes both gap-invalidation choices. On a clean checkout,
-first run `python scripts/prepare_ifsm_research_core.py`. This restores the
-preserved engine outside the repository from a small versioned delta. The
-launcher verifies its source identity. See [research Core setup](../research/core/README.md)
-for custom locations and the preserved legacy checkout fallback.
-The installed Strategy-Core package and running trading processes are unchanged.
-Restart the study application after updating this code; incompatible saved-job
-resumes are refused and their progress is preserved.
+As of September 22, 2026, ordinary Quant-Lab and the IFSM study application use
+the same Core commit, `7c7111e398c083cf8e966e2e0c5aac8a41cc12c0`, recorded in
+`pyproject.toml` and `research/core/current.json`. Both gap-invalidation choices
+are available in this engine. Follow [current Core setup](../research/core/README.md)
+to update the installed package, prepare its verified external source checkout
+and start `python scripts/run_ifsm_research_ui.py`. Preparation fetches the
+current public commit; the launcher does not fall back to an older sibling Core.
+Restart existing study screens and workers after upgrading. Incompatible saved-job
+resumes are refused and their progress is preserved. Trade-Lab's dependency is
+outside this upgrade.
+
+The original September 18 research used an isolated process-local Core and kept
+the ordinary installed pin unchanged. That installation arrangement is historical
+and superseded by the current shared pin. Original source identities, archived
+checkouts, approvals and study results remain immutable; the upgrade does not
+change an old configuration's selected invalidation policy.
 
 In **My studies → New study → Evaluate → Configuration**, beside the larger-chart
 selection limit, **One-hour / four-hour gap invalidation** offers:
@@ -73,5 +79,10 @@ input bundle `f3443d0de5c153da9b0ca8dffeb243b700887947fab24d8267a86a8f830d0816`.
 Only the invalidation policy changes between two profiles. The same 107
 evaluation dates, ten warmup dates and final cutoff of June 10, 2026,
 4:00 PM America/Chicago apply. No new inputs, holdout access, fitting or live
-promotion is included. Final measured outcomes and test receipts belong in
-`reports/ifvg_gap_invalidation_20260918/`.
+promotion is included. The light peer-review deliverable is
+`reports/IFVG_Gap_Invalidation_Audit_Light/`. The original working evidence was
+relocated to
+`../Claude-Quant-Lab-Research-Artifacts/archived-reports/ifvg_gap_invalidation_20260918/`;
+the former `reports/ifvg_gap_invalidation_20260918/` path is historical. Keep new
+working stores, raw dumps and verification outputs outside the repository, as
+described in [the report delivery policy](../AGENTS.md#report-delivery-and-working-artifacts-2026-09-22).

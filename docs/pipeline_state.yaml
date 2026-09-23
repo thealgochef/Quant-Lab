@@ -405,12 +405,14 @@ ifvg_prop_robust_config_search_v1:
 # from stored-resolution-day gates. No live pin, holdout, fitting or new-data scope.
 
 # IFSM gap invalidation choice — September 18, 2026
-# Process-local study Core: ../Strategy-Core-gap-invalidation; installed/live pin unchanged.
+# Historical September 18 study source: ../Strategy-Core-gap-invalidation.
+# Current installed and IFSM runtime both use strategy_core_pairing above.
 # Original default: execution_wick_full_fill_v1; optional own_timeframe_close_v1.
 # Policy-specific state/identities and gap_validity_events.parquet; see IFVG_GAP_INVALIDATION_CHOICE.md.
 
 # IFSM daily close and Chicago schedules — September 18, 2026
-# Research Core: ../Strategy-Core-daily-close; installed/live pins unchanged.
+# Historical September 18 study source: ../Strategy-Core-daily-close.
+# Current installed and IFSM runtime both use strategy_core_pairing above.
 # scheduled_daily_close_v1: proposed 3:55 PM Chicago buffer, earlier scheduled
 # close minus five minutes, legal-reopen lock; schema6/reducer4 persisted state.
 # Corrected morning_chicago_0700_1030_v1 excludes immutable legacy NY morning.

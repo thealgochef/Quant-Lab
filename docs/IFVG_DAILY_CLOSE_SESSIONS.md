@@ -4,6 +4,22 @@ Implemented September 18, 2026 for the bounded 32-profile research request in
 `../Claude-Quant-Lab-Research-Artifacts/archived-reports/ifvg_daily_close_sessions_20260918/owner_prompt.txt`. This is a historical
 research execution contract, not a broker integration or live deployment.
 
+## Current runtime (September 22, 2026)
+
+Ordinary Quant-Lab and the IFSM research screen now use the same Core commit,
+`7c7111e398c083cf8e966e2e0c5aac8a41cc12c0`, recorded in `pyproject.toml` and
+`research/core/current.json`. Follow [current Core setup](../research/core/README.md)
+for installation, the verified external source checkout and restart instructions.
+The engine code matches the September 18 daily-close engine; the current commit
+also includes the compatibility documentation updates.
+
+The isolated `38825ed` Core and unchanged installed pin described by the original
+research work are historical. Its saved source identity, approvals and results
+remain immutable. The upgrade does not turn legacy unrestricted holding into
+mandatory daily close: the explicit policy still selects that behavior. Do not
+resume incompatible checkpoints or assign the current identity to old studies.
+The sections below preserve the original bounded experiment's execution contract.
+
 ## Owner rules and research buffer
 
 The owner requires every position to close **before 4:00 PM Chicago time**, with
@@ -97,7 +113,9 @@ interval, source-bar prices, stop-first precedence, exactly-once costs, and full
 forced-event coverage. A Friday-to-Monday position fails even if its exit is
 before 4:00 PM. All eight morning profiles receive 107 explicit daily audit rows.
 
-The process-local research launcher `scripts/run_ifsm_research_ui.py` selects
-`../Strategy-Core-daily-close` with a verified source identity. Installed/live
-Core pins remain unchanged. The prior 154-trade own-chart-close study is a
-historical unrestricted-holding reference, not a compliant new control.
+The original September 18 run used the process-local research launcher and
+`../Strategy-Core-daily-close` with its verified historical source identity,
+while the ordinary installed Core pin stayed unchanged at that time. The current
+runtime above supersedes that installation arrangement. The prior 154-trade
+own-chart-close study remains a historical unrestricted-holding reference, not a
+compliant new control.

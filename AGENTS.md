@@ -238,6 +238,11 @@ new data, June 11/holdout access or live promotion.
 
 ## One-hour / four-hour gap choice (September 18, 2026)
 
+The following September 18 sections record the original isolated research
+implementation. For current installation and launch, use the single-pin setup
+in [research/core/README.md](research/core/README.md); the September 22 upgrade
+supersedes the installed-pin preservation statements in these historical notes.
+
 IFSM gap validity: docs/IFVG_GAP_INVALIDATION_CHOICE.md. The normal IFSM launcher uses the verified daily-close research Core only for the study process and workers; see docs/IFSM_UI_REPLICATION.md for reproducible setup. Original missing-policy defaults remain wick-based. New audit companions include gap_validity_events.parquet with independent source checks; do not interpret physical full traversal as policy invalidity under own_timeframe_close_v1. Incompatible policy/source seeds and resumes must be rejected; rebuild from authorized history. Preserve historical sources and installed/live pins.
 
 ### IFSM daily close and Chicago schedules (2026-09-18)
