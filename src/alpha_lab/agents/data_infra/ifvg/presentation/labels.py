@@ -66,6 +66,8 @@ PROFILE_LABELS: Mapping[str, str] = _frozen(
 BUNDLE_LABELS: Mapping[str, str] = _frozen(
     {
         "B0_CORE": "Core",
+        "B0_GEOMETRY_ATR20_V1": "Core + geometry (historical ATR20 preparation)",
+        "B0_GEOMETRY_CORE_ATR14_V1": "Core + geometry (Core ATR14)",
         "B1_CORE_STRUCTURE": "Core + structure",
         "B2_CORE_ORDER_FLOW": "Core + order flow",
         "B3_CORE_STRUCTURE_ORDER_FLOW": "Core + structure + order flow",
@@ -82,6 +84,8 @@ BUNDLE_LABELS: Mapping[str, str] = _frozen(
 BLOCK_LABELS: Mapping[str, str] = _frozen(
     {
         "IFVG_CORE_BASELINE_V1": "Core baseline",
+        "IFVG_GEOMETRY_ATR20_V1": "Selected geometry (historical ATR20 preparation)",
+        "IFVG_GEOMETRY_CORE_ATR14_V1": "Selected geometry (Core ATR14)",
         "IFVG_SESSION_CONTEXT_V1": "Session context",
         "IFVG_STRUCTURE_CONTEXT_V1": "Structure context",
         "IFVG_STRUCTURE_CONTEXT_240_V1": "Structure context (240m)",

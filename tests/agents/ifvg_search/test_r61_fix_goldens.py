@@ -1,6 +1,8 @@
 """R6.1-FIX golden identities (plan §3 / §3.10): the identities the fix
 release must NOT move — pinned from the R6.1 HEAD ``6c0b60a`` before any
-edit (``../R6.1-FIX/PRE_R6_1_FIX_BASELINE.md``). The regime fit id and the
+edit (``../R6.1-FIX/PRE_R6_1_FIX_BASELINE.md``). Historical contracts remain
+readable even though later B0 repair, added blocks and preprocessing V2 give
+new work different identities. The regime fit id and the
 frozen M0 CatBoost hash are pinned by their own suites
 (``test_regime_service.R6_GOLDEN_FOLD0_FIT_ID``,
 ``test_catboost_bundle_model._M0_GOLDEN_RESOLVED_HASH``).
@@ -8,10 +10,21 @@ frozen M0 CatBoost hash are pinned by their own suites
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from alpha_lab.agents.data_infra.ifvg.features.feature_blocks import (
+    FEATURE_BLOCK_REGISTRY,
+    FEATURE_BLOCK_RESOLUTION_REGISTRY,
+    FeatureBlockDefinition,
+    FeatureBlockResolutionEnvelope,
     feature_block_registry_hash,
 )
-from alpha_lab.agents.data_infra.ifvg.features.feature_bundles import resolve_bundle
+from alpha_lab.agents.data_infra.ifvg.features.feature_bundles import (
+    FeatureBundleDefinition,
+    resolve_bundle,
+)
+from alpha_lab.agents.data_infra.ifvg.ml.regime_contracts import RegimeProtocolEnvelope
 from alpha_lab.agents.data_infra.ifvg.ml.regime_service import resolve_kmeans_protocol
 from alpha_lab.agents.data_infra.ifvg.search.identities import (
     CoreStrategyReplayIdentity,
@@ -34,11 +47,34 @@ GOLDEN_FEATURE_BLOCK_REGISTRY_HASH = (
 
 
 def test_r61_fix_golden_identities() -> None:
-    assert resolve_bundle("B0_CORE").resolved_feature_bundle_id == GOLDEN_B0_BUNDLE_ID
-    protocol = resolve_kmeans_protocol(
-        input_feature_bundle_ref=GOLDEN_B0_BUNDLE_ID,
-        resolved_input_features=REGIME_INPUT_FEATURES,
+    historical = json.loads(
+        Path(__file__).with_name("fixtures").joinpath("r61_historical_contracts.json").read_text(
+            encoding="utf-8"
+        )
     )
+    # Keep original registry membership and restore only its superseded B0
+    # contract. The complete original hash still guards every unchanged member.
+    definitions = {key: FEATURE_BLOCK_REGISTRY[key] for key in historical["definition_keys"]}
+    resolutions = {
+        key: FEATURE_BLOCK_RESOLUTION_REGISTRY[key] for key in historical["resolution_keys"]
+    }
+    definitions.update({
+        key: FeatureBlockDefinition.model_validate(value)
+        for key, value in historical["definitions"].items()
+    })
+    resolutions.update({
+        key: FeatureBlockResolutionEnvelope.model_validate(value)
+        for key, value in historical["resolutions"].items()
+    })
+    bundle = resolve_bundle(
+        "B0_CORE", definitions=definitions, resolutions=resolutions,
+        bundle_registry={
+            "B0_CORE": FeatureBundleDefinition.model_validate(historical["bundle_definition"]),
+        },
+    )
+    assert bundle.resolved_feature_bundle_id == GOLDEN_B0_BUNDLE_ID
+    protocol = RegimeProtocolEnvelope.model_validate(historical["protocol"])
+    assert protocol.payload.input_feature_bundle_ref == bundle.resolved_feature_bundle_id
     assert protocol.resolved_regime_protocol_id == GOLDEN_CANDIDATE_PROTOCOL_ID
     core = CoreStrategyReplayIdentity.from_payload(
         CoreStrategyReplayPayload(
@@ -73,4 +109,17 @@ def test_r61_fix_golden_identities() -> None:
         )
     )
     assert simulation.account_simulation_id == GOLDEN_ACCOUNT_SIMULATION_ID
-    assert feature_block_registry_hash() == GOLDEN_FEATURE_BLOCK_REGISTRY_HASH
+    historical_registry_hash = feature_block_registry_hash(definitions, resolutions)
+    assert historical_registry_hash == GOLDEN_FEATURE_BLOCK_REGISTRY_HASH
+
+    # New work must truthfully bind the repaired bundle and current protocol;
+    # historical codec compatibility must not reset the runtime's defaults.
+    current_bundle = resolve_bundle("B0_CORE")
+    assert current_bundle.resolved_feature_bundle_id != GOLDEN_B0_BUNDLE_ID
+    current_protocol = resolve_kmeans_protocol(
+        input_feature_bundle_ref=current_bundle.resolved_feature_bundle_id,
+        resolved_input_features=REGIME_INPUT_FEATURES,
+    )
+    assert current_protocol.payload.missingness_policy == "median_impute_fold_empty_neutral_v2"
+    assert current_protocol.resolved_regime_protocol_id != GOLDEN_CANDIDATE_PROTOCOL_ID
+    assert feature_block_registry_hash() != GOLDEN_FEATURE_BLOCK_REGISTRY_HASH

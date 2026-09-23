@@ -71,6 +71,10 @@ class BundleFeatureViewPayload(FrozenContract):
     #: regime-bearing bundle view joined (None otherwise). Pre-acceptance
     #: identity evolution — every bundle_feature_view_id moves (recorded).
     regime_fold_feature_artifact_id: str | None = Field(default=None, pattern=SHA256_PATTERN)
+    #: Omit absent new binding from legacy identities (historical IDs stay valid).
+    geometry_feature_artifact_id: str | None = Field(
+        default=None, pattern=SHA256_PATTERN, exclude_if=lambda value: value is None,
+    )
 
 
 class BundleFeatureViewEnvelope(EnvelopeBase):
@@ -98,6 +102,8 @@ def build_bundle_feature_view(
     *,
     mbp1_features: pd.DataFrame | None = None,
     mbp1_feature_artifact=None,
+    geometry_features: pd.DataFrame | None = None,
+    geometry_feature_artifact=None,
 ) -> tuple[BundleFeatureViewEnvelope, pd.DataFrame]:
     """Scope the candidate view's frame to the bundle's resolved features.
 
@@ -116,6 +122,36 @@ def build_bundle_feature_view(
     names = tuple(bundle_envelope.payload.resolved_feature_names)
     assert_no_deep_book_identifiers(names)
     frame_source = view.frame
+    from .geometry_core_atr14 import GEOMETRY_FEATURES as CORE_GEOMETRY_FEATURES  # noqa: PLC0415
+    from .geometry_features import (  # noqa: PLC0415
+        GEOMETRY_FEATURES,
+        verify_geometry_feature_frame,
+    )
+
+    geometry_needed = set(names) & {*GEOMETRY_FEATURES, *CORE_GEOMETRY_FEATURES}
+    geometry_artifact_id = None
+    if geometry_needed:
+        if geometry_features is None or geometry_feature_artifact is None:
+            raise ValueError("geometry bundle requires its exact feature artifact and frame")
+        verify_geometry_feature_frame(geometry_feature_artifact, geometry_features)
+        actual_names = geometry_feature_artifact.payload.feature_names
+        if geometry_needed != set(actual_names):
+            raise ValueError("the geometry bundle requires its three frozen protocol additions")
+        if geometry_feature_artifact.payload.view_id != view.view_id:
+            raise ValueError("geometry artifact belongs to another candidate view")
+        if set(geometry_features.candidate_id.astype(str)) != set(
+            view.frame.candidate_id.astype(str)
+        ):
+            raise ValueError("geometry artifact candidate population does not exactly match view")
+        if geometry_needed & set(frame_source):
+            raise ValueError("geometry columns cannot shadow immutable candidate-view columns")
+        frame_source = frame_source.merge(
+            geometry_features[["candidate_id", *actual_names]], on="candidate_id",
+            how="left", validate="one_to_one", sort=False,
+        )
+        geometry_artifact_id = geometry_feature_artifact.geometry_feature_artifact_id
+    elif geometry_feature_artifact is not None or geometry_features is not None:
+        raise ValueError("geometry evidence was supplied to a bundle without geometry additions")
     missing = sorted(set(names) - set(frame_source.columns))
     mbp1_needed = tuple(name for name in missing if name in set(mbp1_feature_names()))
     truly_missing = sorted(set(missing) - set(mbp1_needed))
@@ -166,6 +202,7 @@ def build_bundle_feature_view(
         candidate_count=int(len(frame)),
         resolved_feature_names=names,
         mbp1_feature_artifact_id=mbp1_artifact_id,
+        geometry_feature_artifact_id=geometry_artifact_id,
     )
     return BundleFeatureViewEnvelope.from_payload(payload), frame
 
@@ -177,6 +214,8 @@ def resolve_available_bundle_view(
     allow_experimental: bool = False,
     mbp1_features: pd.DataFrame | None = None,
     mbp1_feature_artifact=None,
+    geometry_features: pd.DataFrame | None = None,
+    geometry_feature_artifact=None,
 ) -> tuple[BundleFeatureViewEnvelope, pd.DataFrame]:
     """Resolve-then-scope in one step; planned blocks refuse before any frame."""
 
@@ -188,6 +227,8 @@ def resolve_available_bundle_view(
         bundle_envelope,
         mbp1_features=mbp1_features,
         mbp1_feature_artifact=mbp1_feature_artifact,
+        geometry_features=geometry_features,
+        geometry_feature_artifact=geometry_feature_artifact,
     )
 
 

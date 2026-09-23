@@ -438,6 +438,142 @@ def test_each_guided_flow_renders_its_applicable_steps(monkeypatch, roots, card_
         assert "namespace" not in _visible_text(at).lower()
 
 
+def _guided_wizard_app():
+    import ifvg_research_wizard
+    import ifvg_workspace
+    import streamlit as st
+
+    ifvg_research_wizard.render_new_study(st, roots=ifvg_workspace._TEST_ROOTS)
+
+
+def _configure_search_app(monkeypatch, roots, *, selections=None, baseline_overrides=None):
+    import ifvg_research_wizard as wizard
+    import ifvg_study_wizard as existing
+    import ifvg_workspace
+    from ifvg_study_tab import TASK_CARDS, start_draft_from_card
+    from strategy_core.strategies.ifvg_smc.section import ifvg_profile_hash
+    from streamlit.testing.v1 import AppTest
+
+    monkeypatch.setattr(ifvg_workspace, "_TEST_ROOTS", roots, raising=False)
+    monkeypatch.setattr(existing, "_spawn_search_job", lambda *_: pytest.fail("Unexpected launch"))
+    draft = start_draft_from_card(
+        next(card for card in TASK_CARDS if card.card_id == "fsm_search"), roots
+    )
+    draft.display_name = "Configure timeout comparisons"
+    profile = "ifvg_v2_doc_default_fresh_static_1r"
+    section = existing.canonicalize_section(
+        existing.resolve_profile_config({"profile_name": profile}).section
+    )
+    draft.steps["baseline"] = {
+        "baseline_profile_name": profile,
+        "baseline_section_config_hash": ifvg_profile_hash(section),
+        "baseline_blocked_reason": None,
+        **(baseline_overrides or {}),
+    }
+    draft.steps["search_space"] = {
+        "mode_id": draft.mode_id,
+        "axis_selections": selections or {},
+        "interpretation": existing.INTERPRETATIONS[2],
+    }
+    draft.current_step_key = "search_space"
+    save_draft(roots["draft_root"], draft)
+    at = AppTest.from_function(_guided_wizard_app, default_timeout=60)
+    at.session_state[wizard._DRAFT] = draft.draft_id
+    at.run()
+    assert not at.exception
+    assert at.header[0].value == "Configure study"
+    return at, draft
+
+
+def test_configure_study_shows_timeout_choices_and_explicit_empty_values(monkeypatch, roots):
+    from alpha_lab.agents.data_infra.ifvg.search.axis_registry import SEARCH_AXIS_REGISTRY_V1
+
+    at, _draft = _configure_search_app(monkeypatch, roots)
+    captions = "\n".join(item.value for item in at.caption)
+    expected = {
+        "parent_retest_timeout_1m_bars": (
+            "No timeout (unbounded)",
+            ("60 1m bars", "90 1m bars", "120 1m bars", "240 1m bars"),
+        ),
+        "opposing_timeout_1m_bars": (
+            "No timeout (unbounded)",
+            ("60 1m bars", "90 1m bars", "120 1m bars"),
+        ),
+        "htf_registry_max_age_days": ("15 days", ("1 day", "2 days", "3 days", "4 days", "5 days")),
+        "max_executed_trades_per_day": (
+            "No trade cap",
+            ("1 trade per trading day", "2 trades per trading day", "3 trades per trading day"),
+        ),
+    }
+    for axis, (inherited, alternatives) in expected.items():
+        widget = at.multiselect(key=f"ifvg_research_wizard_search_space_{axis}")
+        name = SEARCH_AXIS_REGISTRY_V1[axis].human_label
+        assert f"{name} — {inherited} (default)" in widget.options
+        assert all(f"{name} — {value}" in widget.options for value in alternatives)
+        assert f"If left empty: **{inherited}** (from the selected baseline)." in captions
+        assert widget.value == []
+        assert widget.proto.placeholder == "Leave empty to keep the baseline value"
+        assert "empty menu keeps" in widget.proto.help
+    assert all(
+        "accepted doc-default baseline" not in option
+        for widget in at.multiselect
+        for option in widget.options
+    )
+
+
+def test_configure_study_preserves_saved_default_ids_and_other_empty_menus(monkeypatch, roots):
+    from alpha_lab.agents.data_infra.ifvg.search.axis_registry import SEARCH_AXIS_REGISTRY_V1
+    from alpha_lab.agents.data_infra.ifvg.study_drafts import load_draft
+
+    axis = "htf_registry_max_age_days"
+    selected = SEARCH_AXIS_REGISTRY_V1[axis].baseline_value_id
+    selections = {
+        axis: [selected],
+        "opposing_timeout_1m_bars": ["opposing_timeout_1m_bars.60"],
+    }
+    at, draft = _configure_search_app(monkeypatch, roots, selections=selections)
+    assert at.multiselect(key=f"ifvg_research_wizard_search_space_{axis}").value == [selected]
+    assert at.multiselect(
+        key="ifvg_research_wizard_search_space_parent_retest_timeout_1m_bars"
+    ).value == []
+    next(button for button in at.button if button.label == "Save draft").click().run()
+    assert not at.exception
+    saved = load_draft(roots["draft_root"], draft.draft_id)
+    assert saved.steps["search_space"]["axis_selections"] == selections
+
+
+def test_configure_study_renders_payload_when_registry_label_is_legacy(monkeypatch, roots):
+    from alpha_lab.agents.data_infra.ifvg.search import axis_registry
+
+    axis = "htf_registry_max_age_days"
+    value_id = axis_registry.SEARCH_AXIS_REGISTRY_V1[axis].baseline_value_id
+    values = dict(axis_registry.AXIS_VALUE_REGISTRY_V1)
+    values[value_id] = values[value_id].model_copy(
+        update={"human_label": "HTF registry max age — accepted doc-default baseline"}
+    )
+    monkeypatch.setattr(axis_registry, "AXIS_VALUE_REGISTRY_V1", values)
+    at, _draft = _configure_search_app(monkeypatch, roots, selections={axis: [value_id]})
+    widget = at.multiselect(key=f"ifvg_research_wizard_search_space_{axis}")
+    assert "HTF registry max age (days) — 15 days (default)" in widget.options
+    assert all("accepted doc-default baseline" not in option for option in widget.options)
+    assert widget.value == [value_id]
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"baseline_profile_name": None},
+        {"baseline_section_config_hash": "0" * 64},
+    ],
+)
+def test_configure_study_does_not_assume_unverified_empty_values(monkeypatch, roots, overrides):
+    at, _draft = _configure_search_app(monkeypatch, roots, baseline_overrides=overrides)
+    captions = "\n".join(item.value for item in at.caption)
+    assert "If left empty: **Unavailable" in captions
+    assert "If left empty: **15 days**" not in captions
+    assert any("Baseline values unavailable" in item.value for item in at.warning)
+
+
 def test_model_workflow_inconclusive_metrics_remain_unavailable():
     from streamlit.testing.v1 import AppTest
 

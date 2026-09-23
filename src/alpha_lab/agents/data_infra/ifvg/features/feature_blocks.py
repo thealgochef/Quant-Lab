@@ -37,6 +37,8 @@ from typing import ClassVar, Literal
 
 from pydantic import Field
 
+from ..audit_contracts import audit_contract_fingerprint
+from ..b0_projection import B0_PROJECTION_VERSION
 from ..context_experiment_contracts import ContextFeatureTier
 from ..context_feature_view import (
     M0_FEATURES,
@@ -225,7 +227,7 @@ def _definition(
 ) -> FeatureBlockDefinition:
     return FeatureBlockDefinition(
         feature_block_key=key,
-        block_version=1,
+        block_version=2 if key == "IFVG_CORE_BASELINE_V1" else 1,
         human_name=human_name,
         status=status,
         status_reason=reason,
@@ -271,12 +273,17 @@ def _resolution(
     categorical = categorical_features_for(names)
     payload = FeatureBlockResolutionPayload(
         feature_block_key=key,
-        block_version=1,
+        block_version=2 if key == "IFVG_CORE_BASELINE_V1" else 1,
         formula_version=formula_version,
         source_artifact_refs=(),
-        source_schema_hash=_source_schema_hash(source_kind_descriptor),
+        source_schema_hash=(canonical_contract_sha256({
+            "v2": _source_schema_hash(source_kind_descriptor),
+            "selected_stage_audit": audit_contract_fingerprint(),
+            "projection_version": B0_PROJECTION_VERSION,
+        }) if key == "IFVG_CORE_BASELINE_V1" else _source_schema_hash(source_kind_descriptor)),
         feature_schema_hash=canonical_contract_sha256({"features": list(names)}),
-        materializer_version="build_candidate_feature_view_v1",
+        materializer_version=(B0_PROJECTION_VERSION if key == "IFVG_CORE_BASELINE_V1"
+                              else "build_candidate_feature_view_v1"),
         feature_names=names,
         numeric_features=tuple(
             name for name in names if name not in categorical
@@ -398,7 +405,7 @@ _RESOLUTIONS: dict[str, FeatureBlockResolutionEnvelope] = {
     "IFVG_CORE_BASELINE_V1": _resolution(
         "IFVG_CORE_BASELINE_V1",
         CORE_BASELINE_FEATURES,
-        formula_version="ifvg_v2_capture_row_v1",
+        formula_version=B0_PROJECTION_VERSION,
         source_kind_descriptor="v2_candidate",
         join_policy="one_to_one_required",
     ),
@@ -836,11 +843,97 @@ _R61_DEFINITIONS, _R61_RESOLUTIONS, CONTEXT_BAR_PANEL_REGISTRATION_ENVELOPE = (
     )
 )
 
+def geometry_resolution_payload() -> FeatureBlockResolutionPayload:
+    """Three offline candidate geometry ratios; B0 is preserved verbatim."""
+    from .geometry_features import (  # noqa: PLC0415
+        GEOMETRY_BLOCK_KEY,
+        GEOMETRY_FEATURES,
+        GEOMETRY_FORMULA_VERSION,
+        GEOMETRY_FORMULAS,
+    )
+
+    return FeatureBlockResolutionPayload(
+        feature_block_key=GEOMETRY_BLOCK_KEY, block_version=1,
+        formula_version=GEOMETRY_FORMULA_VERSION, source_artifact_refs=(),
+        source_schema_hash=canonical_contract_sha256({
+            "b0_projection": B0_PROJECTION_VERSION,
+            "source": "verified_research_context_forward_bars_60s",
+            "formulas": GEOMETRY_FORMULAS,
+        }),
+        feature_schema_hash=canonical_contract_sha256({"features": GEOMETRY_FEATURES}),
+        materializer_version=GEOMETRY_FORMULA_VERSION, feature_names=GEOMETRY_FEATURES,
+        numeric_features=GEOMETRY_FEATURES, categorical_features=(), validity_fields=(),
+        missing_reason_fields=("atr_missing_reason", "parent_size_missing_reason"),
+        source_timeframes=(60,), source_interval_policy="observed_complete_60s_bars_only",
+        as_of_policy="exact_entry_decision_bar_availability_v1", join_keys=("candidate_id",),
+        join_policy="one_to_one_required", direction_normalization="inversion_thesis_direction",
+        session_normalization="trading_day_18et_reset_named_session_carry",
+        warmup_requirement="first_19_completed_same_day_bars_typed_null",
+        coverage_requirements={},
+    )
+
+
+_GEOMETRY_DEFINITIONS, _GEOMETRY_RESOLUTIONS, GEOMETRY_REGISTRATION_ENVELOPE = (
+    with_registered_block(
+        definition=_definition(
+            "IFVG_GEOMETRY_ATR20_V1", "Selected geometry / decision ATR20 (offline)",
+            FeatureBlockStatus.AVAILABLE, family="lifecycle_geometry_normalized",
+            source_kind="bars_1m", flags=("research_only_offline",),
+            computation_path="offline_geometry_materialization_v1",
+        ),
+        resolution_payload=geometry_resolution_payload(),
+        definitions=_R61_DEFINITIONS, resolutions=_R61_RESOLUTIONS,
+    )
+)
+
+
+def core_geometry_resolution_payload() -> FeatureBlockResolutionPayload:
+    from .geometry_core_atr14 import (  # noqa: PLC0415
+        GEOMETRY_BLOCK_KEY,
+        GEOMETRY_FEATURES,
+        GEOMETRY_FORMULA_VERSION,
+        GEOMETRY_FORMULAS,
+    )
+
+    return FeatureBlockResolutionPayload(
+        feature_block_key=GEOMETRY_BLOCK_KEY, block_version=1,
+        formula_version=GEOMETRY_FORMULA_VERSION, source_artifact_refs=(),
+        source_schema_hash=canonical_contract_sha256({
+            "b0_projection": B0_PROJECTION_VERSION,
+            "source": "verified_research_context_complete_time_60s_bars",
+            "formulas": GEOMETRY_FORMULAS,
+        }),
+        feature_schema_hash=canonical_contract_sha256({"features": GEOMETRY_FEATURES}),
+        materializer_version=GEOMETRY_FORMULA_VERSION, feature_names=GEOMETRY_FEATURES,
+        numeric_features=GEOMETRY_FEATURES, categorical_features=(), validity_fields=(),
+        missing_reason_fields=("atr_missing_reason", "parent_size_missing_reason"),
+        source_timeframes=(60,), source_interval_policy="core_complete_time_60s_source_chain",
+        as_of_policy="exact_entry_decision_bar_availability_v1", join_keys=("candidate_id",),
+        join_policy="one_to_one_required", direction_normalization="inversion_thesis_direction",
+        session_normalization="core_observer_source_chain_carry_across_days_and_sessions",
+        warmup_requirement="first_13_completed_source_chain_bars_typed_null",
+        coverage_requirements={},
+    )
+
+
+_CORE_GEOMETRY_DEFINITIONS, _CORE_GEOMETRY_RESOLUTIONS, CORE_GEOMETRY_REGISTRATION_ENVELOPE = (
+    with_registered_block(
+        definition=_definition(
+            "IFVG_GEOMETRY_CORE_ATR14_V1", "Selected geometry / Core ATR14 (offline)",
+            FeatureBlockStatus.AVAILABLE, family="lifecycle_geometry_normalized",
+            source_kind="bars_1m", flags=("research_only_offline",),
+            computation_path="offline_geometry_materialization_v1",
+        ),
+        resolution_payload=core_geometry_resolution_payload(),
+        definitions=_GEOMETRY_DEFINITIONS, resolutions=_GEOMETRY_RESOLUTIONS,
+    )
+)
+
 FEATURE_BLOCK_REGISTRY: MappingProxyType[str, FeatureBlockDefinition] = MappingProxyType(
-    dict(_R61_DEFINITIONS)
+    dict(_CORE_GEOMETRY_DEFINITIONS)
 )
 FEATURE_BLOCK_RESOLUTION_REGISTRY: MappingProxyType[str, FeatureBlockResolutionEnvelope] = (
-    MappingProxyType(dict(_R61_RESOLUTIONS))
+    MappingProxyType(dict(_CORE_GEOMETRY_RESOLUTIONS))
 )
 
 

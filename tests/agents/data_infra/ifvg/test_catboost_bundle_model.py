@@ -77,7 +77,9 @@ _CHALLENGER_VIEW_ID = "c" * 64
 _CHALLENGER_BUNDLE_REF = "d" * 64
 
 #: Golden constants of the FROZEN M0–M3 CatBoost lane (never modified in V1).
-_CONTEXT_MODEL_SOURCE_SHA256 = "3385af2b5354ec9838f6f650e8c086c766a86d806a32b9d71fd9e465f4b6f455"
+# The committed frozen lane already includes durable prediction-input capture;
+# pin that source without changing its numerical model or protocol.
+_CONTEXT_MODEL_SOURCE_SHA256 = "e9cd1be94514fe5564cf060a80329967f561af814d6fbf68a8459057adb41bd1"
 _M0_GOLDEN_RESOLVED_HASH = "b967af5e93eecb5be596005c4b41980bb3c5172d0f92c35c51cdcb43d605539e"
 _GOLDEN_ENVIRONMENT = {
     "catboost": "1.2.10",
@@ -564,6 +566,7 @@ def test_no_selection_surface_exists():
         "label_artifact_id",
         "manual_feature_overrides",
         "fitted_fold_sink",
+        "prediction_input_sink",
     }
     text = Path(bundle_module.__file__).read_text(encoding="utf-8")
     # no search / selection machinery and no promotion or store import

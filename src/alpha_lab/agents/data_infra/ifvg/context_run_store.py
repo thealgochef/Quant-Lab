@@ -119,6 +119,9 @@ def save_candidate_feature_view(
                 for tier, features in view.tier_features.items()
             },
         }
+        projection = view.b0_projection_evidence
+        if projection and "projection_evidence_hash" in projection:
+            manifest_core["b0_projection_evidence"] = projection
         _write_json(
             temporary / "manifest.json",
             {
@@ -200,14 +203,20 @@ def load_candidate_feature_view_frame(
         "context_capture_ids_sha256"
     ]:
         raise ImmutableContextStoreError("candidate feature links were modified")
-    computed_view_id = canonical_sha256(
-        {
+    view_payload = {
             "artifact_pair_hash": manifest["artifact_pair_hash"],
             "feature_registry_hash": manifest["feature_registry_hash"],
             "candidate_ids": frame["candidate_id"].astype(str).tolist(),
             "candidate_link_ids": frame["context_capture_id"].astype(str).tolist(),
         }
-    )
+    projection = manifest.get("b0_projection_evidence")
+    if projection:
+        projection_hash = projection["projection_evidence_hash"]
+        if canonical_sha256({key: value for key, value in projection.items()
+                             if key != "projection_evidence_hash"}) != projection_hash:
+            raise ImmutableContextStoreError("candidate B0 projection evidence was modified")
+        view_payload["b0_projection_evidence_hash"] = projection_hash
+    computed_view_id = canonical_sha256(view_payload)
     if computed_view_id != view_id:
         raise ImmutableContextStoreError("candidate feature view content ID mismatch")
     return frame, manifest

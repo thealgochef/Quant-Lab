@@ -240,6 +240,7 @@ def save_v2_dataset_immutable(
     count_reconciliation_report: dict | None = None,
     data_access_audit: dict,
     label_source_bars: pd.DataFrame | None = None,
+    entry_activity_report: dict | None = None,
 ) -> Path:
     """Write one content-derived dataset exactly once, then atomically publish."""
     if invariant_audit.get("passed") is not True:
@@ -287,6 +288,11 @@ def save_v2_dataset_immutable(
         ):
             path = exploration / filename
             _json_write(path, payload)
+            artifacts.append(_artifact_entry(path, temporary))
+
+        if entry_activity_report is not None:
+            path = exploration / "entry_activity_report.json"
+            _json_write(path, entry_activity_report)
             artifacts.append(_artifact_entry(path, temporary))
 
         for table in RecordTable:

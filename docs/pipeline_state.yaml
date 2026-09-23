@@ -1,8 +1,30 @@
 current_phase: "STRATEGY_CORE_V3_DASHBOARD_UTILITY"
-last_updated: "2026-09-08"
+last_updated: "2026-09-22"
 repo_role: "ml_training_workbench_with_strategy_core_v3_dashboard_utility_path"
 
+
+report_output_policy:
+  versioned: false
+  deliverables: "reports: light findings, settings, trade/equity/activity tables, comparisons, charts only"
+  working_root: "../Claude-Quant-Lab-Research-Artifacts"
+  historical_archive_root: "../Claude-Quant-Lab-Research-Artifacts/archived-reports"
+  historical_relocations: "Original report paths in old records remain provenance, not clean-checkout dependencies."
+  prohibited_report_contents: "scripts, runtime repositories, raw traces, working stores, caches, test fixtures, staging and duplicate extractions"
+
 application_workspaces:
+  ifsm_replication:
+    launcher: "python scripts/run_ifsm_research_ui.py"
+    url: "http://localhost:8502"
+    source: "process-local verified research Core 38825ed86f3e3940515cdc28d9df567ddccc0b70; current Quant-Lab; installed package unchanged"
+    source_preflight: "exact Core scoped hash and all 13 recorded effective configurations"
+    output_root: "data/ifsm_ui_replication"
+    ui_entry: "My studies / New study / Evaluate / Configuration"
+    home_screen_additions: false
+    configuration_mode: "Evaluate One; exactly one registered value per fixed setting; no implicit grid"
+    original_scope: "107 evaluation dates and 10 excluded warmup dates; final evaluation date 2026-06-10"
+    selectable_values: "parent/opposing distance 160; parent reaction 20; existing retest60/240 and opposing90; lifetime180/240 and parent policies only when imported Core supports them"
+    approval: "new exact-request strategy approval required; catalog and prior cache metadata grant no launch authority"
+    completed_ui_checks_are_studies: false
   router: "streamlit.st.navigation / st.Page; selected page only"
   default: "IFVG Lab"
   pages: ["IFVG Lab", "ML Training", "Dashboard Compatibility", "Strategy Analysis"]
@@ -33,12 +55,26 @@ application_workspaces:
     browser_report: "reports/ifvg_browser_acceptance/20260907/DESKTOP_FLOW_REPORT.md"
     browser_followup_checks: "97 focused + 55 chart/provider tests passed; CI Ruff passed"
     live_execution_limits: "research approval is study-specific; verified prop contracts and model labels remain required for their paths"
+    entry_session_policy:
+      entry: "Study Configuration / Session Policy / Enabled entry sessions"
+      choices: ["Registered default sessions", "Asia only", "London only", "New York only", "NY from 7am to 10:30am (Eastern Time)"]
+      custom_value_id: "enabled_entry_sessions.ny_0700_1030"
+      custom_enabled_entry_sessions: ["ny_0700_1030"]
+      custom_doc_sessions: {ny_0700_1030: ["07:00", "10:30"]}
+      custom_window: "America/New_York; DST-aware; 07:00 inclusive to 10:30 exclusive; continuous across standard session gaps"
+      enforcement: "existing Strategy-Core entry-confirmation gate; open positions retain configured exit rules"
+      scope: "selected child effective strategy only; Core defaults, market-data session_scheme and day artifacts unchanged"
+      search_selection: "each choice is a separate configuration; registered baseline automatically included; existing exact-plan approval required"
     feature_model_research:
       entry: "New study / More study types / Feature and model study"
       api: "search.research_runs"
       worker: "scripts/ifvg_research_job.py"
       runner: "pipeline_real_research_v1"
       source_identity: "exact saved core replay, v2 dataset and effective configuration section hashes"
+      core_compatibility: "immutable proof of saved clean package, equal committed runtime tree, current checkout/package/environment; explicit historical environment limitations; exact table neutrality required"
+      context_companion_schema: "v2 binds compatibility proof; v1 and original replay/subject identities unchanged"
+      regime_missing_columns: "median_impute_fold_empty_neutral_v2; train-empty features remain unavailable for whole fold; schema/decisions persisted; v1 identities preserved"
+      labeled_fold_readiness: "search.research_readiness; actual exclusions, purge, embargo and class counts before fitting; no floor relaxation"
       profile_names: "display only; generated configurations load from verified saved sections"
       subjects: "separate pipeline context per selected child; target R and cost inherited per child"
       evaluation: "explicit logical calendar within common saved evaluation dates"
@@ -50,8 +86,16 @@ application_workspaces:
       stage_indices: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 14, 15]
       grants_live_or_prop_scope: false
       r5_bases: ["B0_CORE", "B1_CORE_STRUCTURE", "B4_CORE_STRUCTURE_LIQUIDITY"]
+      geometry_comparison: "B0_CORE -> B0_GEOMETRY_CORE_ATR14_V1; fixed three-ratio bundle; no MBP or regime inputs"
+      geometry_volatility: "Existing Core ATR14: trailing arithmetic mean14 TR on completed TIME1m bars, cross-day/session carry; ticks; missing/zero denominator typed null"
+      geometry_prefit_supersession: "ATR20 fallback superseded before any fitting when final inventory found existing Core ATR14; historical prefit artifacts preserved; no length search"
+      geometry_artifacts: "geometry_feature_artifacts; exact source context/B0/decision bar bound; immutable B0 preserved"
+      geometry_models: "paired prevalence/logistic/CatBoost bundle ladders; same labels/costs/folds/seeds; per-arm durable checkpoint and verified reload"
+      geometry_batch_evidence: "reports/ifvg_geometry_batch/20260909; exploratory overlapping children, no activation or independent-confirmation claim"
       mbp_comparisons: ["B0_CORE -> B2_CORE_ORDER_FLOW", "B1_CORE_STRUCTURE -> B3_CORE_STRUCTURE_ORDER_FLOW"]
       mbp_coverage: "unknown when source completeness is not evidenced"
+      mbp_vendor_conditions: "manifest-verified archived metadata reaches coverage; negative conditions cannot be silently cleared by positive local receipts"
+      mbp_one_day_audit: "2026-02-23 logical day, 2026-02-22/23 physical files: 14,775,059 rows and 20 columns equivalent in retained order; completeness and general snapshot recovery unknown; no date generalization"
       mbp_receipt_import: "explicit reviewed JSON receipt; subject/window/physical hash validated; preview saves nothing"
       default_regimes: "completed numeric 5m bars; KMeans K3; 50 requested bootstrap refits; descriptive"
       candidate_regimes: "entry-decision grain; numeric selected-bundle features; registered 150 training observations per fold"
@@ -61,6 +105,12 @@ application_workspaces:
       fit_scope: "fold-local; paired comparison arms share candidate, label and fold evidence"
       inputs_persist_before_fit: true
       model_reload: "verify manifests, file membership and predictions without fitting"
+      b0_projection: "ifvg_b0_selected_stage_projection_v2; exact selected-stage audit/geometry/ordinal/parent-clock parity at decision; unmapped fields fail closed, retest entry-FVG structural nulls preserved"
+      b0_projection_evidence: "S06 b0_projection_evidence.json; version/source/projection hash bound to new candidate view"
+      supervised_model_schema: "supervised_model_feature_schema_v1 feature_schema.json per fitted fold; raw/transformed names and dimensions; logistic portable v2 with v1 reader; numerical protocols unchanged"
+      b0_repair_comparison: "one authorized B0-only exploratory comparison on inspected 2026-02-23 through 2026-06-10; same folds/labels/costs/settings/seeds; original acceptance immutable"
+      b0_repair_report: "reports/b0_projection_repair/20260909/REPORT.md"
+      b0_repair_result: "completed; 10 repaired fields at143/143, 25 full+3 structural-partial fields; same37 OOS; Brier prevalence0.241401/logistic0.375901/CatBoost0.521333, both fitted rungs worse than partial baseline and prevalence; no tuning"
       regime_reload: "research_regime_executions; completed S09a only; incomplete attempts recompute"
       mbp_memory: "one day retained at a time; physical source hashes verified on each reload"
       fold_purge_boundary: "first logical test day at preceding civil day 18ET, including empty first test day"
@@ -73,7 +123,9 @@ application_workspaces:
       chart_catalog: "selected search store/research_replay_chart_catalog.json"
       stores: ["research_subjects", "research_groups", "research_approvals", "research_context_companions", "research_cohorts", "research_labels", "research_model_inputs", "research_model_runs", "research_regime_executions", "research_replay_charts"]
       historical_artifacts_mutated: false
-      real_run_acceptance: "not established by implementation tests or these documentation updates"
+      real_run_acceptance: "bounded parent-240 B0 ladder and 5m KMeans completed; 4 predictive folds/37 OOS candidates, 7 panel folds; saved models/assignments reload; Streamlit component render checked, not a browser launch"
+      real_run_report: "reports/r5_r6_acceptance/20260908/ACCEPTANCE_REPORT.md"
+      real_run_limitations: "10/28 declared B0 fields unmapped; no predictive improvement; candidate R6 below 150-row floor; five regime-covered trades below reporting floor; R5B completeness/conversion unresolved; B0->B7 and S11 not run"
     strategy_search_approval:
       scope: "exact resolved strategy-only charter, namespace and current authority chain"
       runner: "search_strategy_development_v1"
@@ -83,6 +135,13 @@ application_workspaces:
       verification_acceptance: "not inferred from owner approval or data readiness"
       verification_report: "reports/ifvg_browser_acceptance/STRATEGY_APPROVAL_REPORT.md"
       documentation: "docs/IFVG_STRATEGY_SEARCH_APPROVAL.md"
+    strategy_search_pause_recovery:
+      runtime_policy: "bounded_saved_result_resume_v1"
+      completion_boundary: "verified replay plus durable costed metrics before releasing full tables"
+      pause_boundaries: "between input-verification configurations, completed children, and finalization stages"
+      resume: "manual only; original identity required; saved execution-only loader recovers missing metrics"
+      progress: "separate completed/reused/failed/running/queued/stopped counts, input verification, current-attempt timestamps"
+      documentation: "docs/IFVG_STUDY_PAUSE_RECOVERY.md"
     report: "QL-FSM-PROP-SEARCH-DASHBOARD/implementation-progress/UI-UX-REDESIGN-PLAN/FOCUSED_WORKSPACE/COMPLETION_REPORT.md"
 
 training_modes:
@@ -324,3 +383,25 @@ ifvg_prop_robust_config_search_v1:
     immutable_root: "data/ifvg_datasets/search/v1/"
     verification_namespace: "data/ifvg_datasets/search_test/v1/"
     mutable_catalog: "lock-guarded append-only catalog_events.jsonl + rebuildable index (display annotations only)"
+
+# 2026-09-12: HTF cap 1/2 fixed-profile research support; schema-3 active-HTF
+# repair is isolated, live pins unchanged. Exact approval and full chronology required.
+
+# IFVG no-entry research (2026-09-14)
+# Isolated Core schema4 pending delivery; exact B0/D0/B1/D1 direction-selection
+# research. Manifest-bound entry_activity_report separates actual-entry chronology
+# from stored-resolution-day gates. No live pin, holdout, fitting or new-data scope.
+
+# IFSM gap invalidation choice — September 18, 2026
+# Process-local study Core: ../Strategy-Core-gap-invalidation; installed/live pin unchanged.
+# Original default: execution_wick_full_fill_v1; optional own_timeframe_close_v1.
+# Policy-specific state/identities and gap_validity_events.parquet; see IFVG_GAP_INVALIDATION_CHOICE.md.
+
+# IFSM daily close and Chicago schedules — September 18, 2026
+# Research Core: ../Strategy-Core-daily-close; installed/live pins unchanged.
+# scheduled_daily_close_v1: proposed 3:55 PM Chicago buffer, earlier scheduled
+# close minus five minutes, legal-reopen lock; schema6/reducer4 persisted state.
+# Corrected morning_chicago_0700_1030_v1 excludes immutable legacy NY morning.
+# core_executed_trade_priced_exit_v2 preserves actual partial-R scheduled_close.
+# Independent full position-interval/price/order/calendar evidence required.
+# Exactly32 approved profiles,107evaluation+10warmup; no fitting/newdates/live.

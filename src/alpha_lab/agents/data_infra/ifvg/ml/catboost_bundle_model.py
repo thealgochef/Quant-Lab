@@ -55,6 +55,7 @@ from .comparison_rows import (
     join_fold_local_features,
     label_artifact_content_id,
 )
+from .model_feature_schema import fitted_feature_schema, training_missingness
 from .model_protocols import CATBOOST_BUNDLE_PROTOCOL_ID
 
 __all__ = [
@@ -365,6 +366,8 @@ def run_catboost_bundle_fold_models(
         test_y = pd.to_numeric(test["binary_target"], errors="raise").astype(int).to_numpy()
         model = CatBoostClassifier(**protocol.parameters)
         model.fit(train_x, train_y, cat_features=list(categorical))
+        report["training_missingness"] = training_missingness(train_x, categorical)
+        report["feature_schema"] = fitted_feature_schema(model, protocol)
         fitted_categorical_indices[fold.fold_index] = tuple(
             int(index) for index in model.get_cat_feature_indices()
         )

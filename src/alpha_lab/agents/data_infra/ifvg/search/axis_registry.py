@@ -17,6 +17,7 @@ from typing import Any, Literal
 from pydantic import field_validator, model_validator
 from strategy_core.strategies.ifvg_smc.section import default_ifvg_smc_section
 
+from ..presentation.axis_values import format_axis_value
 from .identities import (
     FrozenContract,
     canonical_contract_sha256,
@@ -197,7 +198,7 @@ def _register_axis(
     baseline_ratification: str = "not_required",
     baseline_reason: str | None = None,
     baseline_token: str | None = None,
-    extra_values: tuple[RegisteredAxisValue, ...] = (),
+    extra_values: tuple[RegisteredAxisValue | CompositeAxisValue, ...] = (),
 ) -> None:
     if baseline_payload == "__from_section__":
         baseline_payload = _B[key]
@@ -216,7 +217,7 @@ def _register_axis(
         value_id=baseline_id,
         axis_technical_key=key,
         payload=baseline_payload,
-        human_label=f"{label} — accepted doc-default baseline",
+        human_label=f"{label} — default: {format_axis_value(key, baseline_payload)}",
         capability_status=baseline_capability,  # type: ignore[arg-type]
         owner_ratification_status=baseline_ratification,  # type: ignore[arg-type]
         ratification_evidence_ref=baseline_reason,
@@ -281,14 +282,18 @@ def _blocked(key: str, label: str, capability: str, why: str, spec: DimensionVal
 
 
 def _search_values(
-    key: str, payloads: tuple[Any, ...], *, effect: str, evidence: str | None = None
+    key: str, payloads: tuple[Any, ...], *, effect: str, evidence: str | None = None,
+    readable_labels: bool = False,
 ) -> tuple[RegisteredAxisValue, ...]:
     return tuple(
         RegisteredAxisValue(
             value_id=_vid(key, _token(payload)),
             axis_technical_key=key,
             payload=payload,
-            human_label=f"{key} = {_token(payload)}",
+            human_label=(
+                format_axis_value(key, payload)
+                if readable_labels else f"{key} = {_token(payload)}"
+            ),
             capability_status="available",
             owner_ratification_status="pending",
             ratification_evidence_ref=evidence,
@@ -310,25 +315,68 @@ _locked("anchor_policy", "HTF anchor policy", "trading_day_18et_elapsed_v1 is th
 
 # ── thesis-defining, locked in v1 ────────────────────────────────────────────
 _thesis("session_scheme", "Session scheme", "thesis-locked in v1 (stamp + gating clock)")
-_thesis("doc_sessions", "Doc session windows", "thesis-locked in v1")
+_register_axis(
+    "doc_sessions",
+    label="Doc session windows",
+    description=(
+        "Entry-window definitions supplied by the selected session preset; "
+        "only registered Enabled entry sessions presets may replace them."
+    ),
+    classification=AxisClassification.MEASUREMENT_ONLY,
+    value_spec=_RECORD,
+    replay=True,
+    baseline_token="baseline",
+    dependencies=("enabled_entry_sessions",),
+)
 _thesis("entry_families", "Declared entry families", "thesis-locked in v1")
 _thesis("entry_family", "Entry family", "fresh_fvg_continuation is the executable thesis")
 _thesis("label_family", "Label family", "candidate label semantics are thesis-locked")
 _thesis("enable_longs", "Long side enabled", "long-only thesis in v1")
 
 # ── searchable clocks ────────────────────────────────────────────────────────
+# These optional fields exist in the isolated repaired IFSM runtime. The normal
+# installed Core may predate them: never advertise a setting it cannot execute.
+if "setup_timeout_1m_bars" in _B:
+    _register_axis(
+        "setup_timeout_1m_bars",
+        label="Whole-setup lifetime (1m bars)",
+        description=(
+            "Maximum processed one-minute bars from the original HTF activation "
+            "while waiting for entry, across S1–S4. Parent replacement does not "
+            "restart this clock. Expiry occurs on the first bar beyond the limit; "
+            "an open position keeps its existing exit rules. None = no lifetime limit."
+        ),
+        classification=AxisClassification.APPROVED_SEARCH_AXIS,
+        value_spec=_NULLABLE_POS_INT,
+        replay=True,
+        extra_values=_search_values(
+            "setup_timeout_1m_bars", (180, 240),
+            effect="bounds pre-entry occupation from activation without changing open trades",
+            evidence=(
+                "Completed IFSM frequency studies, 2026-09-09; exploratory evidence "
+                "does not promote a configuration or authorize another study."
+            ),
+            readable_labels=True,
+        ),
+    )
+
 _register_axis(
     "parent_retest_timeout_1m_bars",
     label="Parent retest staleness timeout (1m bars)",
     description=(
-        "How long a tapped setup may wait in S1 for parent selection/retest "
-        "before going stale. None = unbounded (the accepted doc-default)."
+        "How many 1m bars S1 may wait for a retest after selecting the current "
+        "parent. Replacing the parent restarts the clock. "
+        "None = no timeout for this wait."
     ),
     classification=AxisClassification.APPROVED_SEARCH_AXIS,
     value_spec=_NULLABLE_POS_INT,
     replay=True,
     baseline_ratification="pending",
     extra_values=_search_values(
+        "parent_retest_timeout_1m_bars",
+        (60, 90, 120),
+        effect="stale setups release the single FSM slot earlier",
+    ) + _search_values(
         "parent_retest_timeout_1m_bars",
         (240, 360, 480),
         effect="stale setups release the single FSM slot earlier",
@@ -341,10 +389,18 @@ _register_axis(
 _register_axis(
     "opposing_timeout_1m_bars",
     label="Opposing-FVG timeout (1m bars)",
-    description="S2→S3 wait bound; None = unbounded doc-default.",
+    description=(
+        "Maximum one-minute bars to wait for an opposing FVG after the parent "
+        "retest locks the setup (S2). None = no timeout for this wait."
+    ),
     classification=AxisClassification.APPROVED_SEARCH_AXIS,
     value_spec=_NULLABLE_POS_INT,
     replay=True,
+    extra_values=_search_values(
+        "opposing_timeout_1m_bars",
+        (60, 90, 120),
+        effect="setups waiting too long for an opposing FVG expire and release the FSM slot",
+    ),
 )
 _register_axis(
     "inversion_timeout_1m_bars",
@@ -369,7 +425,62 @@ _register_axis(
     classification=AxisClassification.APPROVED_SEARCH_AXIS,
     value_spec=_POS_INT,
     replay=True,
+    extra_values=_search_values(
+        "parent_reaction_window_parent_bars", (20,),
+        effect="shortens admission of newly formed parents on each parent timeframe clock",
+        evidence="Completed ParentReaction20 study, 2026-09-09; exploratory, not approval.",
+        readable_labels=True,
+    ),
 )
+
+if "parent_replacement_policy" in _B:
+    _register_axis(
+        "parent_replacement_policy",
+        label="Provisional parent replacement",
+        description=(
+            "Before lock, rank new eligible parents by timeframe, confirmation time "
+            "and FVG ID. The preservation alternative keeps an eligible selected "
+            "parent and its retest clock; it creates no fallback list. Physical or "
+            "structural clearing still permits only eligible new arrivals."
+        ),
+        classification=AxisClassification.APPROVED_SEARCH_AXIS,
+        value_spec=_STR,
+        replay=True,
+        extra_values=_search_values(
+            "parent_replacement_policy", ("preserve_selected",),
+            effect="keeps the provisional incumbent instead of taking higher-ranked arrivals",
+            evidence=(
+                "Completed PreserveSelected study, 2026-09-09; exploratory and "
+                "not an approved configuration."
+            ),
+            readable_labels=True,
+        ),
+    )
+
+if "parent_retest_depth_policy" in _B:
+    _register_axis(
+        "parent_retest_depth_policy",
+        label="First parent retest depth admission",
+        description=(
+            "After physical invalidation and expiry checks, the strict alternative "
+            "rejects and clears a provisional parent when its first later touch "
+            "reaches half its width (CE): 2 × penetration >= width. A shallower "
+            "touch locks immediately. The activation clocks continue; rejected "
+            "parents are never reused and eligible new arrivals may still be selected."
+        ),
+        classification=AxisClassification.APPROVED_SEARCH_AXIS,
+        value_spec=_STR,
+        replay=True,
+        extra_values=_search_values(
+            "parent_retest_depth_policy", ("strictly_before_ce",),
+            effect="admits only a first live retouch strictly before the existing CE midpoint",
+            evidence=(
+                "Completed ShallowFirstRetest study, 2026-09-09; exploratory and "
+                "not an approved configuration."
+            ),
+            readable_labels=True,
+        ),
+    )
 
 # ── searchable distances ─────────────────────────────────────────────────────
 _register_axis(
@@ -379,6 +490,12 @@ _register_axis(
     classification=AxisClassification.APPROVED_SEARCH_AXIS,
     value_spec=_NONNEG_INT,
     replay=True,
+    extra_values=_search_values(
+        "parent_htf_distance_ticks_max", (160,),
+        effect="admits parent intervals up to 160 ticks from the selected HTF interval",
+        evidence="Completed ParentDistance160 study, 2026-09-09; exploratory, not approval.",
+        readable_labels=True,
+    ),
 )
 _register_axis(
     "opposing_parent_distance_ticks_max",
@@ -387,6 +504,12 @@ _register_axis(
     classification=AxisClassification.APPROVED_SEARCH_AXIS,
     value_spec=_NONNEG_INT,
     replay=True,
+    extra_values=_search_values(
+        "opposing_parent_distance_ticks_max", (160,),
+        effect="admits opposing intervals up to 160 ticks from the locked parent interval",
+        evidence="Completed OpposingDistance160 study, 2026-09-09; exploratory, not approval.",
+        readable_labels=True,
+    ),
 )
 _register_axis(
     "entry_parent_distance_ticks_max",
@@ -432,10 +555,19 @@ _AXIS_SPECS["entry_near_parent"] = _AXIS_SPECS["entry_near_parent"].model_copy(
 _register_axis(
     "htf_registry_max_age_days",
     label="HTF registry max age (days)",
-    description="Retention bound for HTF zones.",
+    description=(
+        "Maximum HTF-zone age, measured as the calendar-day difference between "
+        "trading-day dates, including weekends. Zones at the limit remain; "
+        "older zones are removed."
+    ),
     classification=AxisClassification.APPROVED_SEARCH_AXIS,
     value_spec=_NULLABLE_POS_INT,
     replay=True,
+    extra_values=_search_values(
+        "htf_registry_max_age_days",
+        (1, 2, 3, 4, 5),
+        effect="older HTF zones leave the registry earlier, changing available setups",
+    ),
 )
 _register_axis(
     "ltf_registry_max_live",
@@ -448,11 +580,65 @@ _register_axis(
 _register_axis(
     "htf_selection_max_per_timeframe",
     label="HTF selection cap per timeframe",
-    description="Selection bound for HTF zones per timeframe.",
+    description=(
+        "Newest live HTF zones admitted per timeframe before tap filtering, across "
+        "both directions. Conflict and direction rules follow admission. One active "
+        "setup and one active position remain the execution limits."
+    ),
     classification=AxisClassification.APPROVED_SEARCH_AXIS,
     value_spec=_POS_INT,
     replay=True,
+    extra_values=_search_values(
+        "htf_selection_max_per_timeframe",
+        (2,),
+        effect="admits the second ranked live HTF zone per timeframe before tap filtering",
+    ),
 )
+if "htf_direction_selection_policy" in _B:
+    _register_axis(
+        "htf_direction_selection_policy",
+        label="HTF direction selection order",
+        description=(
+            "Mixed-direction ranking preserves the baseline. The research alternative "
+            "filters disabled directions before per-timeframe admission and ranking; "
+            "all physical zones remain tracked. Requires exact strategy-search approval."
+        ),
+        classification=AxisClassification.APPROVED_SEARCH_AXIS,
+        value_spec=_STR,
+        replay=True,
+        extra_values=_search_values(
+            "htf_direction_selection_policy", ("enabled_before_rank_v1",),
+            effect=("enabled-direction zones enter ranking before the selection cap "
+                    "and conflict checks"),
+        ),
+    )
+if "htf_gap_invalidation_policy" in _B:
+    _register_axis(
+        "htf_gap_invalidation_policy",
+        label="One-hour / four-hour gap invalidation",
+        description=(
+            "A one-hour gap waits for a completed one-hour candle. A four-hour gap "
+            "waits for a completed four-hour candle. Wicks and smaller-chart closes "
+            "do not invalidate these gaps. Smaller-pattern rules and protective stops "
+            "are unchanged. Other setup cancellation and eligibility rules still apply."
+        ),
+        classification=AxisClassification.APPROVED_SEARCH_AXIS,
+        value_spec=_STR,
+        replay=True,
+        artifact_effect=(
+            "policy-specific eligibility, replay identity and day seeds; "
+            "full chronological replay required"
+        ),
+        extra_values=_search_values(
+            "htf_gap_invalidation_policy", ("own_timeframe_close_v1",),
+            effect=(
+                "one-hour and four-hour starting gaps remain price-valid through wick "
+                "traversals until a later finalized candle on their own timeframe "
+                "closes strictly beyond the far boundary"
+            ),
+            readable_labels=True,
+        ),
+    )
 _register_axis(
     "min_gap_ticks_capture",
     label="Minimum FVG gap (ticks)",
@@ -461,6 +647,25 @@ _register_axis(
     value_spec=_POS_INT,
     replay=True,
 )
+if "opposing_min_gap_ticks" in _B:
+    _register_axis(
+        "opposing_min_gap_ticks",
+        label="One-minute opposing-pattern minimum gap",
+        description=(
+            "Retain the separately configured minimum for one-minute opposing patterns. "
+            "This inherited sequence-supply setting does not change starting-gap validity."
+        ),
+        classification=AxisClassification.APPROVED_SEARCH_AXIS,
+        value_spec=_NULLABLE_POS_INT,
+        replay=True,
+        artifacts=True,
+        artifact_effect="one-minute capture threshold and source artifact identity",
+        extra_values=_search_values(
+            "opposing_min_gap_ticks", (1, 4),
+            effect="changes only the opposing-pattern minimum; other gap roles retain their floor",
+            readable_labels=True,
+        ),
+    )
 _register_axis(
     "swing_strength_bars",
     label="Swing strength (bars)",
@@ -495,13 +700,139 @@ _register_axis(
 )
 
 # ── searchable session policy / caps / sides ─────────────────────────────────
+_entry_schedule_presets = ()
+if "entry_schedule_policy" in _B:
+    for _field, _label in (
+        ("entry_schedule_policy", "Entry schedule policy"),
+        ("entry_schedule_timezone", "Entry schedule timezone"),
+        ("entry_schedule_windows", "Entry schedule windows"),
+    ):
+        _register_axis(
+            _field, label=_label,
+            description="Resolved atomically by the selected entry-session preset.",
+            classification=AxisClassification.MEASUREMENT_ONLY,
+            value_spec=_RECORD if _field == "entry_schedule_windows" else _STR,
+            replay=True, baseline_token="baseline", dependencies=("enabled_entry_sessions",),
+        )
+    _entry_schedule_presets = tuple(
+        CompositeAxisValue(
+            value_id=f"enabled_entry_sessions.{token}",
+            human_label=label,
+            member_values={
+                "enabled_entry_sessions": tuple(_B["enabled_entry_sessions"]),
+                "entry_schedule_policy": policy,
+                "entry_schedule_timezone": "America/Chicago",
+                "entry_schedule_windows": windows,
+            },
+            capability_status="available", owner_ratification_status="pending",
+            ratification_evidence_ref=None,
+            dependencies=("enabled_entry_sessions", "entry_schedule_policy",
+                          "entry_schedule_timezone", "entry_schedule_windows"),
+            expected_replay_effect=(
+                "Restricts actual new entries using a separate Chicago clock; structural "
+                "sessions, market context and position management remain unchanged."
+            ),
+        )
+        for token, label, policy, windows in (
+            ("all_open_market_v1", "All open-market hours - Chicago time",
+             "all_open_market_v1", ()),
+            ("daytime_chicago_0700_1555_v1", "Daytime - 7:00 AM to 3:55 PM Chicago time",
+             "explicit_windows_v1", (("07:00", "15:55"),)),
+            ("morning_chicago_0700_1030_v1", "Morning - 7:00 AM to 10:30 AM Chicago time",
+             "explicit_windows_v1", (("07:00", "10:30"),)),
+        )
+    )
+if "holding_policy" in _B:
+    for _field, _label in (
+        ("daily_close_timezone", "Daily-close timezone"),
+        ("daily_close_time", "Daily-close clock"),
+        ("daily_close_buffer_minutes", "Scheduled-closure lead in minutes"),
+    ):
+        _register_axis(
+            _field, label=_label,
+            description="Frozen by the mandatory daily-close holding preset.",
+            classification=AxisClassification.MEASUREMENT_ONLY,
+            value_spec=_NONNEG_INT if _field == "daily_close_buffer_minutes" else _STR,
+            replay=True, baseline_token="baseline", dependencies=("holding_policy",),
+        )
+    _register_axis(
+        "holding_policy", label="Position holding rule",
+        description=(
+            "The research deadline is 3:55 PM Chicago time: a five-minute buffer before "
+            "the owner's 4:00 PM boundary. Scheduled shortened days close earlier with "
+            "the same lead. Entries stay locked until the actual market reopening. "
+            "The historical holding behavior remains available for reproduction."
+        ),
+        classification=AxisClassification.APPROVED_SEARCH_AXIS,
+        value_spec=_COMPOSITE, replay=True,
+        extra_values=(CompositeAxisValue(
+            value_id="holding_policy.scheduled_daily_close_v1",
+            human_label="Mandatory daily close - 3:55 PM Chicago time (five-minute buffer)",
+            member_values={
+                "holding_policy": "scheduled_daily_close_v1",
+                "daily_close_timezone": "America/Chicago",
+                "daily_close_time": "15:55",
+                "daily_close_buffer_minutes": 5,
+            },
+            capability_status="available", owner_ratification_status="pending",
+            ratification_evidence_ref=None,
+            dependencies=("holding_policy", "daily_close_timezone", "daily_close_time",
+                          "daily_close_buffer_minutes"),
+            expected_replay_effect=(
+                "Actually closes positions before prohibited closures, records priced time "
+                "exits, and blocks entries until scheduled reopening; full replay required."
+            ),
+        ),),
+    )
 _register_axis(
     "enabled_entry_sessions",
     label="Enabled entry sessions",
-    description="Which doc sessions may trigger entries.",
+    description=(
+        "Choose when new entries may execute. Starts are included and ends excluded. "
+        "The corrected morning is 7:00 AM to 10:30 AM Chicago time. Entry windows "
+        "do not liquidate positions; the separate holding rule governs their exit."
+    ),
     classification=AxisClassification.APPROVED_SEARCH_AXIS,
-    value_spec=_STR_TUPLE,
+    value_spec=_COMPOSITE,
     replay=True,
+    extra_values=(
+        *(
+            RegisteredAxisValue(
+                value_id=f"enabled_entry_sessions.{name}",
+                axis_technical_key="enabled_entry_sessions",
+                payload=(name,),
+                human_label=f"{label} only ({chicago} Chicago time)",
+                capability_status="available",
+                owner_ratification_status="pending",
+                ratification_evidence_ref=None,
+                expected_replay_effect=f"new entries are restricted to the {label} doc session",
+            )
+            for name, label, chicago in (
+                ("asia", "Asia", "3:00 PM–12:45 AM"),
+                ("london", "London", "1:00 AM–6:00 AM"),
+                ("ny", "New York", "7:00 AM–1:00 PM"),
+            )
+        ),
+        CompositeAxisValue(
+            value_id="enabled_entry_sessions.ny_0700_1030",
+            human_label="Legacy morning - 6:00 AM to 9:30 AM Chicago time (historical)",
+            member_values={
+                "enabled_entry_sessions": ("ny_0700_1030",),
+                # A single window prevents the overlapping standard London/NY
+                # stamps from shadowing this preset during replay.
+                "doc_sessions": {"ny_0700_1030": ("07:00", "10:30")},
+            },
+            capability_status="available",
+            owner_ratification_status="pending",
+            ratification_evidence_ref=None,
+            dependencies=("enabled_entry_sessions", "doc_sessions"),
+            expected_replay_effect=(
+                "new entries only at confirmation closes in [07:00, 10:30) "
+                "America/New_York; market session clocks and open-trade exits unchanged"
+            ),
+        ),
+        *_entry_schedule_presets,
+    ),
 )
 _register_axis(
     "outside_session_policy",
@@ -514,10 +845,18 @@ _register_axis(
 _register_axis(
     "max_executed_trades_per_day",
     label="Max executed trades per day",
-    description="Reducer-level execution cap (None = uncapped doc-default).",
+    description=(
+        "Maximum trades opened per trading day across all sessions; resets at "
+        "18:00 ET. Counts executions, not candidates. None = no daily trade cap."
+    ),
     classification=AxisClassification.APPROVED_SEARCH_AXIS,
     value_spec=_NULLABLE_POS_INT,
     replay=True,
+    extra_values=_search_values(
+        "max_executed_trades_per_day",
+        (1, 2, 3),
+        effect="additional trade entries are suppressed after reaching the daily execution cap",
+    ),
 )
 _register_axis(
     "enable_shorts",
@@ -560,6 +899,12 @@ _register_axis(
     replay=True,
     artifacts=True,
     artifact_effect="new artifacts_tag — full sequential day-artifact rebuild",
+    extra_values=_search_values(
+        "parent_timeframes", (("1m", "3m", "5m", "10m", "15m", "30m"),),
+        effect=("adds fresh one-minute supporting parents while retaining all "
+                "original parent charts"),
+        readable_labels=True,
+    ),
 )
 
 # ── blocked axes (fail closed before enumeration) ────────────────────────────
@@ -734,7 +1079,13 @@ def resolve_axis_overrides(
                     f"composite value {value_id!r} does not belong to axis {axis_key!r}"
                 )
             for field, payload in value.member_values:
-                _assign(field, _thaw(payload))
+                # This field is a sequence of clock pairs, not a frozen mapping.
+                # Preserve its declared shape instead of treating start clocks as keys.
+                restored = (
+                    [list(window) for window in payload]
+                    if field == "entry_schedule_windows" else _thaw(payload)
+                )
+                _assign(field, restored)
         else:
             if value.axis_technical_key != axis_key:
                 raise AxisAuthorizationError(

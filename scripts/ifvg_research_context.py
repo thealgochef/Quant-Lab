@@ -28,7 +28,11 @@ def render_context_study(st, *, run_id=None):
     if selected is None:
         return
     pair, entry = selected
-    view = lab.build_candidate_feature_view(pair)
+    try:
+        view = lab.build_candidate_feature_view(pair)
+    except Exception as error:
+        st.error(lab.context_study_input_error(error))
+        return
     from alpha_lab.agents.data_infra.ifvg.presentation.labels import FEATURE_TIER_LABELS
 
     tier = st.selectbox(

@@ -280,10 +280,7 @@ def list_research_subjects(store_root: Path) -> tuple[ResearchSubject, ...]:
 
 def preflight_research_subject(subject: ResearchSubject, store_root: Path, repo_root: Path) -> dict:
     """Verify saved binding and source bytes without decoding or replaying bars."""
-    from .identities import (  # noqa: PLC0415
-        CoreStrategyReplayIdentity,
-        strategy_core_source_identity,
-    )
+    from .research_compatibility import verify_research_core_compatibility  # noqa: PLC0415
     from .research_data import (  # noqa: PLC0415
         CONTEXT_STORE,
         ResearchContextEnvelope,
@@ -299,15 +296,7 @@ def preflight_research_subject(subject: ResearchSubject, store_root: Path, repo_
     )
     if rebound != subject:
         raise ValueError("saved research subject changed after binding")
-    core = CoreStrategyReplayIdentity.model_validate_json(subject.core_envelope_json)
-    current_commit, current_source = strategy_core_source_identity(
-        repository_root=Path(repo_root).parent / "Strategy-Core"
-    )
-    if (current_commit, current_source) != (
-        core.payload.strategy_core_commit,
-        core.payload.strategy_core_source_identity,
-    ):
-        raise ValueError("current Strategy-Core differs from the saved child source")
+    compatibility = verify_research_core_compatibility(subject, repo_root)
     loaded_source_hash = verify_loaded_core_source(repo_root)
     evidence = load_search_review_evidence(store_root, subject.core_replay_id)
     cfg = IfvgCaptureConfig(
@@ -315,7 +304,9 @@ def preflight_research_subject(subject: ResearchSubject, store_root: Path, repo_
         data_dir=Path(repo_root) / "data/databento",
     )
     input_refs = verify_research_input_hashes(subject, evidence, cfg)
-    expected_context, _cfg = expected_research_context(subject, repo_root)
+    expected_context, _cfg = expected_research_context(
+        subject, repo_root, core_compatibility_proof=compatibility
+    )
     companion_id = expected_context.research_context_companion_id
     context_reusable = has_envelope(store_root, CONTEXT_STORE, companion_id)
     if context_reusable:
@@ -353,6 +344,8 @@ def preflight_research_subject(subject: ResearchSubject, store_root: Path, repo_
         "passed": True,
         "subject_id": subject.subject_id,
         "strategy_core_loaded_source_sha256": loaded_source_hash,
+        "core_compatibility_proof_id": compatibility.proof_id,
+        "core_compatibility_proof": compatibility.model_dump(mode="json"),
         **counts,
         "input_partition_refs": input_refs,
         "context_companion_id": companion_id,

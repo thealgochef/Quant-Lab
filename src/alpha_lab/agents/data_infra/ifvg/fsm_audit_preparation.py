@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -342,6 +342,8 @@ class ChildFsmAuditBuild:
     reconciliation_report: dict
     coverage_report: dict
     chain_dates: tuple[str, ...]
+    supplemental_tables: dict = field(default_factory=dict)
+    supplemental_validation: dict = field(default_factory=dict)
 
 
 class ChildFsmAuditEnvelope(EnvelopeBase):
@@ -457,6 +459,19 @@ def build_child_fsm_audit(
         audit_contract_fingerprint=canonical_sha256(audit_contract_fingerprint()),
         neutrality_mechanism_id=neutrality.mechanism,
     )
+    from .selection_audit import build_selection_evidence  # noqa: PLC0415
+
+    supplemental, supplemental_validation = build_selection_evidence(audit_capture)
+    from .gap_validity_evidence import build_gap_validity_evidence  # noqa: PLC0415
+
+    validity_tables, validity_validation = build_gap_validity_evidence(audit_capture)
+    supplemental.update(validity_tables)
+    supplemental_validation["gap_validity"] = validity_validation
+    from .daily_close_evidence import build_forced_exit_evidence  # noqa: PLC0415
+
+    exit_tables, exit_validation = build_forced_exit_evidence(audit_capture)
+    supplemental.update(exit_tables)
+    supplemental_validation["daily_close"] = exit_validation
     return ChildFsmAuditBuild(
         core_replay_id=core_replay_id,
         identity=identity,
@@ -464,6 +479,8 @@ def build_child_fsm_audit(
         reconciliation_report=reconciliation,
         coverage_report=coverage,
         chain_dates=ordered_days,
+        supplemental_tables=supplemental,
+        supplemental_validation=supplemental_validation,
     )
 
 
@@ -488,6 +505,14 @@ def publish_child_fsm_audit(store_root, build: ChildFsmAuditBuild):
 
     envelope = ChildFsmAuditEnvelope.from_payload(build.identity)
     sidecars: dict[str, bytes] = {}
+    for name, frame in sorted(build.supplemental_tables.items()):
+        buffer = io.BytesIO()
+        frame.to_parquet(buffer, index=False, compression="zstd")
+        sidecars[f"{name}.parquet"] = buffer.getvalue()
+    if build.supplemental_tables:
+        sidecars["selection_evidence_validation.json"] = (
+            json.dumps(build.supplemental_validation, sort_keys=True) + "\n"
+        ).encode("utf-8")
     for table, frame in sorted(build.audit_tables.items(), key=lambda kv: kv[0].value):
         buffer = io.BytesIO()
         frame.to_parquet(buffer, index=False)

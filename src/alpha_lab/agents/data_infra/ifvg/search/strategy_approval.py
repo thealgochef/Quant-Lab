@@ -81,8 +81,16 @@ class StrategySearchApprovalPayload(FrozenContract):
             raise ValueError("approval content must exclude its own authorization")
         if charter_intent_hash(content) != self.charter_intent_sha256:
             raise ValueError("approved charter content does not match its hash")
-        if content.get("search_mode") != "fsm_config_search" or not content.get("axes"):
+        if content.get("search_mode") not in {
+            "fsm_config_search",
+            "single_configuration",
+        } or not content.get("axes"):
             raise ValueError("this approval supports strategy configuration searches only")
+        count = 1
+        for values in dict(content["axes"]).values():
+            count *= len(values)
+        if content["search_mode"] == "single_configuration" and count != 1:
+            raise ValueError("single-configuration approval requires exactly one configuration")
         for key in (
             "authorized_firm_contract_ids",
             "authorized_risk_policy_ids",

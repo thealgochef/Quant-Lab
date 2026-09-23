@@ -164,6 +164,10 @@ def checkpoint_research_model_input(context, request_id):
 
 
 def run_durable_supervised_stage(context):
+    if "B0_GEOMETRY_CORE_ATR14_V1" in context.semantic.payload.feature_bundle_ids:
+        from .research_geometry import run_durable_geometry_stage  # noqa: PLC0415
+
+        return run_durable_geometry_stage(context)
     from ..context_model import categorical_features_for  # noqa: PLC0415
     from ..features.feature_bundles import resolve_bundle  # noqa: PLC0415
     from ..ml.controlled_feature_study import (  # noqa: PLC0415
@@ -372,7 +376,31 @@ def research_reload_failures(context):
 
         def verify_view(view_id=view_id):
             loaded = load_bundle_feature_view(root, view_id)
-            load_bundle_feature_view_frame(root, loaded)
+            frame = load_bundle_feature_view_frame(root, loaded)
+            geometry_id = loaded.payload.geometry_feature_artifact_id
+            if geometry_id is not None:
+                from ..features.geometry_core_atr14 import (  # noqa: PLC0415
+                    load_geometry_features,
+                )
+
+                geometry, measurements = load_geometry_features(root, geometry_id)
+                if geometry.payload.view_id != loaded.payload.view_id:
+                    raise ValueError("geometry source view differs from the saved model bundle")
+                columns = [
+                    "candidate_id",
+                    *(name for name in loaded.payload.resolved_feature_names
+                      if name.startswith("geo_")),
+                ]
+                try:
+                    pd.testing.assert_frame_equal(
+                        frame[columns].sort_values("candidate_id").reset_index(drop=True),
+                        measurements[columns].sort_values("candidate_id").reset_index(drop=True),
+                        check_dtype=False, check_exact=True,
+                    )
+                except AssertionError as error:
+                    raise ValueError(
+                        "geometry bundle differs from its saved measurements"
+                    ) from error
 
         checks[f"bundle_feature_views/{view_id}"] = verify_view
     for request_id in context.research_model_run_ids:

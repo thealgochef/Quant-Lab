@@ -525,8 +525,8 @@ def test_blocked_generated_child_never_reaches_the_runner(tmp_path) -> None:
 
     def _force_block(**kwargs):
         capability = original(**kwargs)
-        if kwargs["axis_value_ids"].get("parent_retest_timeout_1m_bars", "").endswith(
-            ".240"
+        if kwargs["axis_value_ids"].get("parent_retest_timeout_1m_bars", "") == (
+            _axis_values()["parent_retest_timeout_1m_bars"][1]
         ):
             return capability.model_copy(
                 update={
@@ -550,7 +550,7 @@ def test_blocked_generated_child_never_reaches_the_runner(tmp_path) -> None:
 
     blocked = [c for c in result.children if c.state == "blocked"]
     ran = [c for c in result.children if c.replay_invocations]
-    assert len(blocked) == 2  # the two .240 children
+    assert len(blocked) == 2  # both combinations using the second registered value
     assert all(c.failure_reason is FailureReason.BLOCKED_AXIS for c in blocked)
     assert all("blocked before replay" in c.explanation for c in blocked)
     blocked_ids = {c.core_replay_id for c in blocked}

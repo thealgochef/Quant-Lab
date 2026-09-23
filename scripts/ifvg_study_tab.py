@@ -237,8 +237,9 @@ TASK_CARDS: tuple[TaskCard, ...] = (
         "find_robust_fsm",
         "strategy_quality_only",
         StudyWorkspaceRoute.NEW_STUDY,
-        "≥ 1 registered axis, ≥ 2 profiles (recommended preset: parent-retest "
-        "timeout unbounded / 240 / 360 / 480), one sequential replay per profile",
+        "≥ 1 registered axis, ≥ 2 profiles (parent-retest timeout choices: "
+        "unbounded / 60 / 90 / 120 / 240 / 360 / 480 one-minute bars), "
+        "one sequential replay per profile",
         "owner decisions 1 / 2 / 7 / R-2 (axes, values, thresholds, workflow)",
         "selectable",
         "implemented; freezing waits for a ready owner authorization",

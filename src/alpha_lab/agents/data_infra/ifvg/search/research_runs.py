@@ -73,6 +73,8 @@ class ResearchRequest(FrozenContract):
         "B0_CORE"
     )
     mbp1_comparison: bool = False
+    # Omitted for historical requests so their serialized identities stay exact.
+    geometry_comparison: bool = Field(default=False, exclude_if=lambda value: not value)
     model_protocol_id: Literal["ifvg_context_logistic_l2_v1", "ifvg_context_catboost_bundle_v1"] = (
         "ifvg_context_catboost_bundle_v1"
     )
@@ -90,6 +92,12 @@ class ResearchRequest(FrozenContract):
             raise ValueError("research end precedes its start")
         if self.mbp1_comparison and self.base_bundle_key not in MBP_CHALLENGERS:
             raise ValueError("MBP comparisons support only B0→B2 and B1→B3")
+        if self.geometry_comparison and (
+            self.base_bundle_key != "B0_CORE"
+            or self.mbp1_comparison
+            or self.regime_study is not None
+        ):
+            raise ValueError("geometry comparison is the fixed non-MBP B0→B0+geometry study")
         request = self.regime_study
         if request is not None:
             if set(request.comparison_classes_requested) - {
@@ -112,6 +120,8 @@ class ResearchRequest(FrozenContract):
 
     @property
     def feature_bundle_ids(self) -> tuple[str, ...]:
+        if self.geometry_comparison:
+            return ("B0_GEOMETRY_CORE_ATR14_V1", "B0_CORE")
         primary = (
             MBP_CHALLENGERS[self.base_bundle_key] if self.mbp1_comparison else self.base_bundle_key
         )
@@ -316,6 +326,11 @@ def build_research_preflight(
         "schema_version": 1,
         "request": request.model_dump(mode="json"),
         "subjects": subjects,
+        "core_compatibility_proofs": {
+            row["subject_id"]: row["preflight"]["core_compatibility_proof"]
+            for row in rows
+            if row["preflight"].get("core_compatibility_proof") is not None
+        },
         "software_commits": software,
         "store_namespace_id": namespace.store_namespace_id,
         "supersession_head_witness": chain.witness.model_dump(mode="json"),
@@ -352,6 +367,8 @@ def build_research_preflight(
         except (ValueError, PermissionError, OSError, TypeError) as error:
             blockers.append(str(error))
     lane = "R5 + R5B" if request.mbp1_comparison else "R5"
+    if request.geometry_comparison:
+        lane = "R5 B0 + fixed geometry comparison"
     if request.regime_study is not None:
         lane += (
             " + R6 prediction" if request.regime_study.requires_supervision else " + R6 descriptive"
@@ -444,6 +461,15 @@ def freeze_research_group(
         if subject_envelope.research_subject_id != subject.subject_id:
             raise ValueError("research subject serialization changed its identity")
         save_or_reuse_envelope(root, "research_subjects", subject_envelope)
+        from .research_compatibility import (  # noqa: PLC0415
+            COMPATIBILITY_STORE,
+            ResearchCoreCompatibilityProof,
+        )
+
+        proof = ResearchCoreCompatibilityProof.model_validate(
+            plan["core_compatibility_proofs"][subject.subject_id]
+        )
+        save_or_reuse_envelope(root, COMPATIBILITY_STORE, proof)
         original = load_verified_envelope(
             root, "charters", subject.original_search_id, SearchCharterEnvelope
         )

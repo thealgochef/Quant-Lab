@@ -289,12 +289,27 @@ def render_empty_state(
                     "The worker has not saved a startup status. The study is not confirmed "
                     "as running; refresh progress before trying again."
                 ),
+                "insufficient_regime_partition": (
+                    "Some market regime groups have too few trade observations for their "
+                    "results to be reported."
+                ),
             }.get(
                 state_id,
                 "Required evidence is unavailable. Restore the missing evidence and refresh "
                 "to continue.",
             )
         )
+        if state_id == "insufficient_regime_partition" and detail:
+            explanation = sanitize_error(detail).replace(
+                "pooled_regime_covered", "All trades with regime assignments"
+            )
+            explanation = re.sub(r"\bregime:(\d+)\b", r"Regime \1", explanation)
+            explanation = explanation.replace("stamped minimum", "study minimum")
+            explanation = explanation.replace("regime stratum", "regime group")
+            explanation = explanation.replace(
+                "proposed_protocol_default", "proposed study threshold"
+            )
+            st_module.caption(explanation)
         return
     presentation = EMPTY_STATE_PRESENTATIONS[state_id]
     st_module.subheader(presentation.heading)

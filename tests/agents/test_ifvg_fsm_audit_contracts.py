@@ -29,6 +29,30 @@ from alpha_lab.agents.data_infra.ifvg.capture_driver import (
 )
 from alpha_lab.agents.data_infra.ifvg.dataset import assemble_fsm_audit_tables
 
+
+def test_depth_rejection_counter_requires_parent_window_evidence():
+    tables = {
+        AuditTable.PARENT_WINDOW: pd.DataFrame([
+            {"event_kind": "parent_retest_depth_rejected", "prior_parent_fvg_id": None},
+            {"event_kind": "parent_cleared", "prior_parent_fvg_id": "discarded-parent"},
+        ])
+    }
+    assert reconcile_funnel_to_audit(
+        {"2026-01-05": {"parent_retest_depth_rejected": 1}}, tables
+    )["passed"]
+    with pytest.raises(ValueError, match="parent_retest_depth_rejected"):
+        reconcile_funnel_to_audit({}, tables)
+
+
+def test_lifetime_expiry_counter_requires_matching_terminal_evidence():
+    tables = {AuditTable.SLOT_DEATH: pd.DataFrame([{"death_reason": "expired_setup_lifetime"}])}
+    assert reconcile_funnel_to_audit(
+        {"2026-01-05": {"expired_setup_lifetime": 1}}, tables
+    )["passed"]
+    with pytest.raises(ValueError, match="expired_setup_lifetime"):
+        reconcile_funnel_to_audit({}, tables)
+
+
 _DAY0 = date(2026, 1, 5)
 _DAY_START = datetime(2026, 1, 4, 23, 0, tzinfo=UTC)
 _BARS_PER_DAY = 240

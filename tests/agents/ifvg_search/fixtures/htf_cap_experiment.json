@@ -1,0 +1,383 @@
+{
+  "control": {
+    "evaluator": {
+      "bootstrap_samples": 10000,
+      "confidence_level": 0.95,
+      "max_candidates_per_day": null
+    },
+    "section": {
+      "anchor_policy": "trading_day_18et_elapsed_v1",
+      "break_even_enabled": false,
+      "causality_entry": "confirmed_after",
+      "causality_opposing": "confirmed_after",
+      "causality_parent": "confirmed_after",
+      "doc_sessions": {
+        "asia": [
+          "16:00",
+          "01:45"
+        ],
+        "london": [
+          "02:00",
+          "07:00"
+        ],
+        "ny": [
+          "08:00",
+          "14:00"
+        ]
+      },
+      "enable_longs": true,
+      "enable_shorts": false,
+      "enabled_entry_sessions": [
+        "asia",
+        "london",
+        "ny"
+      ],
+      "entry_families": [
+        "fresh_fvg_continuation",
+        "ifvg_retest"
+      ],
+      "entry_family": "fresh_fvg_continuation",
+      "entry_near_parent": false,
+      "entry_parent_distance_ticks_max": null,
+      "execution_enabled": true,
+      "htf_registry_max_age_days": 15,
+      "htf_selection_max_per_timeframe": 1,
+      "htf_timeframes": [
+        "1H",
+        "4H"
+      ],
+      "inversion_timeout_1m_bars": null,
+      "label_family": "candidate_static_r_long_form_v2",
+      "legacy_candidate_row_limit": null,
+      "ltf_registry_max_live": 512,
+      "max_executed_trades_per_day": null,
+      "min_gap_ticks_capture": 4,
+      "non_runnable_reason": null,
+      "opposing_parent_distance_ticks_max": 80,
+      "opposing_timeout_1m_bars": 90,
+      "outside_session_policy": "keep_waiting",
+      "parent_full_fill_invalidation": true,
+      "parent_htf_distance_ticks_max": 160,
+      "parent_reaction_window_1m_bars_max": null,
+      "parent_reaction_window_parent_bars": 40,
+      "parent_retest_timeout_1m_bars": 240,
+      "parent_structural_invalidation": true,
+      "parent_timeframes": [
+        "3m",
+        "5m",
+        "10m",
+        "15m",
+        "30m"
+      ],
+      "post_inversion_expiry_1m_bars_max": 80,
+      "profile_name": "ifvg_search_profile_3e674604cff51269",
+      "qualification_mode": "custom_profile",
+      "resolver_policy": "next_1m_bar_stop_first_v1",
+      "retest_trigger": "first_touch",
+      "runnable": true,
+      "session_scheme": {
+        "closed_window": {
+          "crosses_midnight": false,
+          "end": "18:00",
+          "start": "17:00"
+        },
+        "sessions": {
+          "asia": {
+            "crosses_midnight": true,
+            "end": "01:45",
+            "start": "16:00"
+          },
+          "london": {
+            "crosses_midnight": false,
+            "end": "07:00",
+            "start": "02:00"
+          },
+          "ny": {
+            "crosses_midnight": false,
+            "end": "14:00",
+            "start": "08:00"
+          }
+        },
+        "timezone": "America/New_York",
+        "trading_day_boundary": "18:00"
+      },
+      "sl_buffer_ticks": 1,
+      "swing_pool_max": 64,
+      "swing_strength_bars": 3,
+      "tp_r_multiple": 1.0
+    },
+    "source_access_policy": "development_explicit_dates_before_path_v2"
+  },
+  "charter": {
+    "contract_name": "ifvg_prop_robust_config_search_v1",
+    "schema_version": 1,
+    "search_mode": "fsm_config_search",
+    "baseline_profile_name": "ifvg_v2_doc_default_fresh_static_1r",
+    "baseline_section_config_hash": "f3bce50c078a45235c7c77207e259ed98f2c13bb49a453a2f03e55fae3f0f685",
+    "axes": [
+      [
+        "enabled_entry_sessions",
+        [
+          "enabled_entry_sessions.asia-london-ny",
+          "enabled_entry_sessions.ny_0700_1030"
+        ]
+      ],
+      [
+        "entry_near_parent",
+        [
+          "entry_near_parent.false",
+          "entry_near_parent.within_40"
+        ]
+      ],
+      [
+        "opposing_parent_distance_ticks_max",
+        [
+          "opposing_parent_distance_ticks_max.80",
+          "opposing_parent_distance_ticks_max.160"
+        ]
+      ],
+      [
+        "opposing_timeout_1m_bars",
+        [
+          "opposing_timeout_1m_bars.none",
+          "opposing_timeout_1m_bars.90"
+        ]
+      ],
+      [
+        "parent_htf_distance_ticks_max",
+        [
+          "parent_htf_distance_ticks_max.80",
+          "parent_htf_distance_ticks_max.160"
+        ]
+      ],
+      [
+        "parent_reaction_window_parent_bars",
+        [
+          "parent_reaction_window_parent_bars.40",
+          "parent_reaction_window_parent_bars.20"
+        ]
+      ],
+      [
+        "parent_retest_timeout_1m_bars",
+        [
+          "parent_retest_timeout_1m_bars.none",
+          "parent_retest_timeout_1m_bars.90"
+        ]
+      ]
+    ],
+    "locked_invariants_registry_sha256": "df31011fc130d6c1ba3c6de9dda85a829ddfae5eb8498ed5c424a62248b17636",
+    "measured_only_fields": [
+      "doc_sessions",
+      "entry_parent_distance_ticks_max"
+    ],
+    "blocked_capabilities": [
+      "break_even_enabled",
+      "legacy_candidate_row_limit",
+      "parent_reaction_window_1m_bars_max",
+      "retest_trigger",
+      "resolver_policy",
+      "parent_full_fill_invalidation",
+      "parent_structural_invalidation"
+    ],
+    "authorized_firm_contract_ids": [],
+    "authorized_risk_policy_ids": [],
+    "authorized_withdrawal_policy_ids": [],
+    "objective_policy": {
+      "feasibility_gates": {
+        "min_executed_trades": 60,
+        "min_independent_days": 50,
+        "min_net_expectancy_r": 0.0,
+        "min_profit_factor": 1.1,
+        "max_drawdown_r": 15.0,
+        "max_time_under_water_days": 3,
+        "min_session_stability_score": 0.5,
+        "min_time_block_sign_consistency": 0.6,
+        "max_top_day_pnl_share": 0.4,
+        "max_top_setup_pnl_share": 0.25,
+        "require_bootstrap_ci_excludes_zero": false
+      },
+      "prop_feasibility_gates": {
+        "minimum_first_payout_probability_60d": 0.5,
+        "maximum_breach_probability_90d": 0.35,
+        "minimum_expected_net_payout_90d": null,
+        "minimum_p10_net_payout_90d": null,
+        "maximum_p90_payout_drought_days": null,
+        "minimum_three_payout_probability": null
+      },
+      "robustness_gates": {
+        "maximum_neighbor_expectancy_degradation_r": null,
+        "minimum_plateau_width": null,
+        "maximum_worst_firm_breach_probability_90d": null,
+        "minimum_time_block_sign_consistency": null,
+        "minimum_outer_fold_recurrence": null
+      },
+      "pareto_objectives": [
+        "net_expectancy_r"
+      ],
+      "lexicographic_tie_breaks": [
+        "profit_factor",
+        "max_drawdown_r",
+        "core_replay_id"
+      ]
+    },
+    "date_policy": {
+      "replay_dates": [
+        "2026-01-01",
+        "2026-01-02",
+        "2026-01-04",
+        "2026-01-05",
+        "2026-01-06",
+        "2026-01-07",
+        "2026-01-08",
+        "2026-01-09",
+        "2026-01-11",
+        "2026-01-12",
+        "2026-01-13",
+        "2026-01-14",
+        "2026-01-15",
+        "2026-01-16",
+        "2026-01-19",
+        "2026-01-20",
+        "2026-01-21",
+        "2026-01-22",
+        "2026-01-23",
+        "2026-01-26",
+        "2026-01-27",
+        "2026-01-28",
+        "2026-01-29",
+        "2026-01-30",
+        "2026-02-02",
+        "2026-02-03",
+        "2026-02-04",
+        "2026-02-05",
+        "2026-02-06",
+        "2026-02-09",
+        "2026-02-10",
+        "2026-02-11",
+        "2026-02-12",
+        "2026-02-13",
+        "2026-02-16",
+        "2026-02-17",
+        "2026-02-18",
+        "2026-02-19",
+        "2026-02-20",
+        "2026-02-23",
+        "2026-02-24",
+        "2026-02-25",
+        "2026-02-26",
+        "2026-02-27",
+        "2026-03-02",
+        "2026-03-03",
+        "2026-03-04",
+        "2026-03-05",
+        "2026-03-06",
+        "2026-03-09",
+        "2026-03-10",
+        "2026-03-11",
+        "2026-03-12",
+        "2026-03-13",
+        "2026-03-16",
+        "2026-03-17",
+        "2026-03-18",
+        "2026-03-19",
+        "2026-03-20",
+        "2026-03-23",
+        "2026-03-24",
+        "2026-03-25",
+        "2026-03-26",
+        "2026-03-27",
+        "2026-03-30",
+        "2026-03-31",
+        "2026-04-01",
+        "2026-04-02",
+        "2026-04-03",
+        "2026-04-06",
+        "2026-04-07",
+        "2026-04-08",
+        "2026-04-09",
+        "2026-04-10",
+        "2026-04-13",
+        "2026-04-14",
+        "2026-04-15",
+        "2026-04-16",
+        "2026-04-17",
+        "2026-04-20",
+        "2026-04-21",
+        "2026-04-22",
+        "2026-04-23",
+        "2026-04-24",
+        "2026-04-27",
+        "2026-04-28",
+        "2026-04-29",
+        "2026-04-30",
+        "2026-05-01",
+        "2026-05-04",
+        "2026-05-05",
+        "2026-05-06",
+        "2026-05-07",
+        "2026-05-08",
+        "2026-05-11",
+        "2026-05-12",
+        "2026-05-13",
+        "2026-05-14",
+        "2026-05-15",
+        "2026-05-18",
+        "2026-05-19",
+        "2026-05-20",
+        "2026-05-21",
+        "2026-05-22",
+        "2026-05-25",
+        "2026-05-26",
+        "2026-05-27",
+        "2026-05-28",
+        "2026-05-29",
+        "2026-06-01",
+        "2026-06-02",
+        "2026-06-03",
+        "2026-06-04",
+        "2026-06-05",
+        "2026-06-08",
+        "2026-06-09",
+        "2026-06-10"
+      ],
+      "warmup_dates": [
+        "2026-01-01",
+        "2026-01-02",
+        "2026-01-04",
+        "2026-01-05",
+        "2026-01-06",
+        "2026-01-07",
+        "2026-01-08",
+        "2026-01-09",
+        "2026-01-11",
+        "2026-01-12"
+      ],
+      "development_cutoff_utc": "2026-06-10T21:00:00Z",
+      "access_policy_id": "development_explicit_dates_before_path_v2"
+    },
+    "simulation_protocol": {
+      "modes": [
+        "historical_closed_trade"
+      ],
+      "bootstrap_n_paths": 10000,
+      "bootstrap_seed": 42,
+      "block_policy": "single_day",
+      "stress_scenario_ids": [],
+      "trade_path_capability_policy_id": "path_capability_policy_v1",
+      "clock_policy_id": "historical_calendar_clock_v1",
+      "event_detail_persistence_policy_id": "none_v0"
+    },
+    "max_child_count": 128,
+    "search_algorithm": "deterministic_exhaustive_v1",
+    "declared_contrast_ids": [],
+    "seed": 7,
+    "cost_policy": {
+      "cost_points_round_turn": 0.514,
+      "dollars_per_point": 20.0,
+      "tick_size": 0.25
+    },
+    "strategy_core_commit": "6f63a4c7be191c6ecb9162440b407cee66cb6276",
+    "quant_lab_commit": "c2a8af4aa64fa940175066a7f2e9fa8847ecacdf",
+    "source_artifact_ids": []
+  }
+}

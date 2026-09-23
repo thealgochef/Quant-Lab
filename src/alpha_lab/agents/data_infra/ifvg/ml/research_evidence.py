@@ -29,6 +29,11 @@ import pandas as pd
 from ..context_experiment_contracts import canonical_contract_sha256
 from .comparison_rows import label_artifact_content_id
 from .fold_set_artifact import fold_set_id
+from .model_feature_schema import (
+    FEATURE_SCHEMA_VERSION,
+    assert_prediction_columns,
+    fitted_feature_schema,
+)
 
 INPUT_STORE = "research_model_inputs"
 RUN_STORE = "research_model_runs"
@@ -339,9 +344,15 @@ def _pack_ladder(directory: Path, run) -> dict:
         for fold_index, model in sorted(rung.fitted_models.items()):
             if fold_index not in rung.prediction_inputs:
                 raise ValueError("durable model lacks exact prediction inputs")
+            assert_prediction_columns(rung.prediction_inputs[fold_index], protocol.ordered_features)
+            feature_schema = fitted_feature_schema(model, protocol)
+            report = next(r for r in rung.fold_reports if int(r["fold_index"]) == fold_index)
+            if report.get("feature_schema", feature_schema) != feature_schema:
+                raise ValueError("fold report disagrees with fitted feature schema")
             fold_dir = rung_dir / f"fold_{fold_index}"
             fold_dir.mkdir()
             rung.prediction_inputs[fold_index].to_parquet(fold_dir / "prediction_inputs.parquet")
+            _write_json(fold_dir / "feature_schema.json", feature_schema)
             if rung.protocol_id == LOGISTIC_PROTOCOL_ID:
                 persist_logistic_fit(
                     fold_dir, pipeline=model, protocol=protocol, fold_index=fold_index
@@ -350,7 +361,11 @@ def _pack_ladder(directory: Path, run) -> dict:
             else:
                 model.save_model(str(fold_dir / "model.cbm"))
                 kind = "catboost"
-            item["models"].append({"fold_index": fold_index, "kind": kind})
+            item["models"].append({
+                "fold_index": fold_index,
+                "kind": kind,
+                "feature_schema_version": FEATURE_SCHEMA_VERSION,
+            })
         metadata["rungs"].append(item)
     return metadata
 
@@ -406,13 +421,32 @@ def _unpack_ladder(directory, metadata):
             fold_index = int(model_ref["fold_index"])
             fold_dir = rung_dir / f"fold_{fold_index}"
             if model_ref["kind"] == "logistic":
-                model, _manifest_payload = reload_logistic_fit(fold_dir)
+                model, manifest_payload = reload_logistic_fit(fold_dir)
+                if (
+                    manifest_payload["protocol_id"] != item["protocol_id"]
+                    or manifest_payload["protocol_resolved_hash"] != protocol.resolved_hash
+                    or int(manifest_payload["fold_index"]) != fold_index
+                ):
+                    raise ValueError("stored logistic manifest disagrees with model protocol/fold")
             elif model_ref["kind"] == "catboost":
                 model = CatBoostClassifier()
                 model.load_model(str(fold_dir / "model.cbm"))
             else:
                 raise ValueError("unsupported stored research model kind")
             test_x = pd.read_parquet(fold_dir / "prediction_inputs.parquet")
+            assert_prediction_columns(test_x, protocol.ordered_features)
+            feature_schema = fitted_feature_schema(model, protocol)
+            report = next(r for r in item["fold_reports"] if int(r["fold_index"]) == fold_index)
+            if report.get("feature_schema", feature_schema) != feature_schema:
+                raise ValueError("stored fold report disagrees with fitted feature schema")
+            # Legacy completed runs remain readable without synthesizing proof
+            # sidecars. Newly saved models must carry this explicit version.
+            if model_ref.get("feature_schema_version") is not None:
+                if model_ref["feature_schema_version"] != FEATURE_SCHEMA_VERSION:
+                    raise ValueError("unsupported stored model feature schema version")
+                saved_schema = json.loads((fold_dir / "feature_schema.json").read_text())
+                if saved_schema != feature_schema:
+                    raise ValueError("stored model disagrees with persisted feature schema")
             expected = predictions.loc[predictions["fold_index"].eq(fold_index)]
             if list(test_x.index.astype(str)) != list(expected["candidate_id"].astype(str)):
                 raise ValueError("stored prediction inputs disagree with OOS candidate identity")

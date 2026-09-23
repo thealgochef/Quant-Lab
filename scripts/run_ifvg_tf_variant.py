@@ -43,17 +43,27 @@ from alpha_lab.agents.data_infra.ifvg.experiment import (  # noqa: E402
 )
 from alpha_lab.agents.data_infra.ifvg.preparation import _discover_sources  # noqa: E402
 from alpha_lab.agents.data_infra.ifvg.profiles import resolve_profile_config  # noqa: E402
+from alpha_lab.agents.data_infra.ifvg.working_artifacts import (  # noqa: E402
+    external_working_output,
+    research_working_directory,
+)
 
 VARIANT_NAME = "tf_variant_htf1h_parent5m15m"
 SECTION_OVERRIDES = {
     "htf_timeframes": ["1H"],
     "parent_timeframes": ["5m", "15m"],
 }
-REPORT_DIR = ROOT / "reports" / "ifvg_tf_variants" / VARIANT_NAME
+REPORT_DIR = research_working_directory(ROOT, "ifvg_tf_variants") / VARIANT_NAME
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=REPORT_DIR,
+        help="Working report directory (defaults outside the repository).",
+    )
     parser.add_argument(
         "--probe",
         type=int,
@@ -61,6 +71,7 @@ def main() -> int:
         help="Replay only the first N chain days and report per-day timing.",
     )
     args = parser.parse_args()
+    args.output_dir = external_working_output(ROOT, args.output_dir)
 
     resolved = resolve_profile_config(
         {
@@ -167,7 +178,7 @@ def main() -> int:
     for counters in capture.day_funnels.values():
         for key, value in counters.items():
             funnel_totals[key] = funnel_totals.get(key, 0) + int(value)
-    REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    args.output_dir.mkdir(parents=True, exist_ok=True)
     payload = {
         "variant": VARIANT_NAME,
         "status": "provisional config measurement — NOT a strategy verdict",
@@ -183,7 +194,7 @@ def main() -> int:
         "invariant_audit_passed": reports["invariant_audit"]["passed"],
         "protected_counters": audit_dict.get("protected_counters"),
     }
-    out = REPORT_DIR / "IFVG_TF_VARIANT_REPORT.json"
+    out = args.output_dir / "IFVG_TF_VARIANT_REPORT.json"
     out.write_text(
         json.dumps(json_safe(payload), indent=2, sort_keys=True, default=str) + "\n",
         encoding="utf-8",

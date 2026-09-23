@@ -185,7 +185,9 @@ class RegimeProtocolPayload(FrozenContract):
     panel_source_artifact_id: str | None
     panel_as_of_policy_id: str | None
     observation_stage: AvailabilityStage
-    missingness_policy: Literal["median_impute_with_indicator_v1"]
+    missingness_policy: Literal[
+        "median_impute_with_indicator_v1", "median_impute_fold_empty_neutral_v2"
+    ]
     winsorization_policy: Literal["none", "clip_p01_p99_train_fitted_v1"]
     scaler_policy: Literal["standard_scaler_v1"]
     dimensionality_reduction_policy: Literal["none", "pca_fixed_components_v1"]

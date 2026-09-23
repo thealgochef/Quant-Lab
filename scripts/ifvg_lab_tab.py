@@ -126,6 +126,18 @@ def _sanitize_error(error: BaseException) -> str:
     return _SECRET.sub(r"\1=[redacted]", value)[:800]
 
 
+def context_study_input_error(error: BaseException) -> str:
+    """Keep fresh legacy forms fail-closed while explaining the supported route."""
+    if isinstance(error, ArtifactVerificationError) and "B0" in str(error):
+        return (
+            "This new context study lacks verified B0 source evidence: selected Core "
+            "stage records and decision bars for the exact saved child. Open New study "
+            "→ More study types → Feature and model study to prepare those sources "
+            "and review the study plan. Existing saved context studies remain readable."
+        )
+    return f"Experiment inputs are unavailable: {_sanitize_error(error)}"
+
+
 def _read_json(path: Path) -> dict[str, Any]:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -1024,7 +1036,7 @@ def render_ifvg_experiments_tab(st_module=st) -> None:
         try:
             view = build_candidate_feature_view(pair)
         except Exception as error:
-            st_module.error(f"Experiment inputs are unavailable: {_sanitize_error(error)}")
+            st_module.error(context_study_input_error(error))
         else:
             st_module.success(
                 f"{entry['preparation_status']} · formula "

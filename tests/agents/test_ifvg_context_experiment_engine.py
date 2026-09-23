@@ -112,7 +112,8 @@ def test_capability_and_tier_contracts_fail_closed() -> None:
 
 
 def test_exact_candidate_view_and_primary_240m_exclusion() -> None:
-    view = build_candidate_feature_view(_pair())
+    # Historical context-only fixture has no selected-stage audit source.
+    view = build_candidate_feature_view(_pair(), allow_legacy_partial_projection=True)
     assert view.frame["candidate_id"].is_unique
     assert view.frame["entry_ts_utc"].notna().all()
     assert (
@@ -355,7 +356,7 @@ def test_run_store_is_full_id_immutable_and_verified(tmp_path: Path) -> None:
 
 
 def test_candidate_view_store_recomputes_full_content_id(tmp_path: Path) -> None:
-    view = build_candidate_feature_view(_pair())
+    view = build_candidate_feature_view(_pair(), allow_legacy_partial_projection=True)
     save_candidate_feature_view(view, base_dir=tmp_path)
     loaded, manifest = load_candidate_feature_view_frame(view.view_id, base_dir=tmp_path)
     assert loaded["candidate_id"].tolist() == view.frame["candidate_id"].tolist()
@@ -401,7 +402,7 @@ def _stub_context_execution(monkeypatch):
     from alpha_lab.agents.data_infra.ifvg import context_experiment_service as service
 
     pair = _pair()
-    view = build_candidate_feature_view(pair)
+    view = build_candidate_feature_view(pair, allow_legacy_partial_projection=True)
     config = IfvgContextExperimentConfig(
         dataset=IfvgContextExperimentDatasetConfig(artifact_pair=_references()),
         feature_tier=ContextFeatureTier.M0,

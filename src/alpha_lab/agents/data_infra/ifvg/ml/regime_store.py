@@ -66,7 +66,11 @@ from .regime_contracts import (
     fit_assignment_table_bytes,
     validate_assignment_rows,
 )
-from .regime_preprocessing import keyed_observations
+from .regime_preprocessing import (
+    REGIME_MISSINGNESS_POLICY_V2,
+    keyed_observations,
+    regime_input_matrix,
+)
 
 __all__ = [
     "REGIME_PROTOCOL_STORE",
@@ -127,8 +131,10 @@ def _assignments_from_bytes(data: bytes) -> pd.DataFrame:
 
 
 def _transform_with_bundle(bundle: dict, frame: pd.DataFrame) -> np.ndarray:
-    features = list(bundle["features"])
-    matrix = frame.loc[:, features].to_numpy(dtype=float)
+    features = tuple(bundle["features"])
+    matrix = regime_input_matrix(
+        frame, features, tuple(bundle.get("training_all_missing_features", ()))
+    )
     imputed = bundle["imputer"].transform(matrix)
     lower = bundle["clip_lower"]
     upper = bundle["clip_upper"]
@@ -205,6 +211,42 @@ class VerifiedFitAssignments:
         )
 
 
+def _verify_preprocessing_schema(
+    bundle: dict, parameters: dict, artifact: RegimeFitArtifact
+) -> None:
+    """Verify V2's saved unavailable-column decision; historical bundles are unchanged."""
+
+    if parameters.get("missingness_policy") != REGIME_MISSINGNESS_POLICY_V2:
+        return
+    features = list(bundle["features"])
+    empty = parameters.get("training_all_missing_features")
+    if (
+        not isinstance(empty, list)
+        or bundle.get("training_all_missing_features") != empty
+        or empty != [feature for feature in features if feature in set(empty)]
+        or parameters.get("features") != features
+        or parameters.get("numeric_output_features") != features
+        or not bundle["imputer"].keep_empty_features
+    ):
+        raise ValueError("regime preprocessing training-empty schema is inconsistent")
+    indicators = [
+        f"missing_indicator__{features[index]}"
+        for index in bundle["imputer"].indicator_.features_
+    ]
+    names = [*features, *indicators]
+    if (
+        parameters.get("missing_indicator_features") != indicators
+        or parameters.get("output_feature_names") != names
+        or bundle["scaler"].n_features_in_ != len(names)
+        or bundle["estimator"].cluster_centers_.shape[1] != len(names)
+        or any(
+            [name for name, _value in descriptors] != names
+            for descriptors in artifact.centroid_or_component_descriptors.values()
+        )
+    ):
+        raise ValueError("regime preprocessing output schema differs from its fitted coordinates")
+
+
 def _verify_bundle(
     bundle: dict,
     parameters: dict,
@@ -215,6 +257,7 @@ def _verify_bundle(
 ) -> None:
     if canonical_contract_sha256(parameters) != artifact.fitted_parameter_payload_hash:
         raise ValueError("parameter payload does not hash to fitted_parameter_payload_hash")
+    _verify_preprocessing_schema(bundle, parameters, artifact)
     actual = _transform_with_bundle(bundle, rows)
     if not np.allclose(actual, expected_transform, equal_nan=True):
         raise ValueError(
@@ -282,6 +325,10 @@ def persist_regime_fit(
         "features": list(preprocessing.features),
         "estimator": fold_fit.estimator,
     }
+    if "training_all_missing_features" in preprocessing.parameter_payload:
+        bundle["training_all_missing_features"] = list(
+            preprocessing.parameter_payload["training_all_missing_features"]
+        )
     pipeline_blob = io.BytesIO()
     joblib.dump(bundle, pipeline_blob)
     pipeline_bytes = pipeline_blob.getvalue()
@@ -468,6 +515,7 @@ def load_regime_fit(root: Path, regime_fit_id: str) -> ReloadedRegimeFit:
             )
         )
     )
+    _verify_preprocessing_schema(bundle, parameters, artifact)
     assignments = _assignments_from_bytes(
         load_sidecar_bytes(
             Path(root), REGIME_FIT_STORE, regime_fit_id, ASSIGNMENTS_SIDECAR

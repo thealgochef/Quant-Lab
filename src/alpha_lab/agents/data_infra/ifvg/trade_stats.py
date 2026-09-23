@@ -87,11 +87,14 @@ def _sided(ordered: pd.DataFrame, fn) -> dict:
 
 
 def _counts(sub: pd.DataFrame) -> dict:
-    return {
+    counts = {
         "trades": int(len(sub)),
         "winners": int((sub["_label"] == "win").sum()),
         "losers": int((sub["_label"] == "loss").sum()),
     }
+    if (sub["_label"] == "flat").any():
+        counts["gross_flat_exits"] = int((sub["_label"] == "flat").sum())
+    return counts
 
 
 def _win_rate(sub: pd.DataFrame) -> dict:
@@ -215,6 +218,7 @@ def _streaks(labels: pd.Series) -> dict:
     current_label, run = None, 0
     for label in labels:
         if label not in ("win", "loss"):
+            current_label, run = None, 0
             continue
         run = run + 1 if label == current_label else 1
         current_label = label
@@ -330,8 +334,10 @@ def _validate_and_normalize_executed_trades(
         raise ValueError(
             "only resolved executed_trade rows may enter performance statistics"
         )
-    if not work["resolution"].isin(("target", "stop")).all():
-        raise ValueError("resolved executed_trade resolution must be target or stop")
+    if not work["resolution"].isin(("target", "stop", "scheduled_close")).all():
+        raise ValueError(
+            "resolved executed_trade resolution must be target, stop or scheduled_close"
+        )
 
     normalized = work.copy()
     normalized["direction"] = normalized["direction"].astype(str).str.upper()
@@ -375,8 +381,58 @@ def _validate_and_normalize_executed_trades(
         ),
         index=normalized.index,
     )
+    scheduled = normalized["resolution"].eq("scheduled_close")
+    if scheduled.any():
+        fields = {"exit_ticks", "scheduled_exit_deadline_ts_utc", "scheduled_exit_schedule_id"}
+        if missing := fields - set(normalized):
+            raise ValueError(
+                f"scheduled_close requires priced deadline evidence: {sorted(missing)}"
+            )
+        exits = pd.to_numeric(normalized.loc[scheduled, "exit_ticks"], errors="raise")
+        if not np.isfinite(exits).all() or not (exits == np.floor(exits)).all():
+            raise ValueError("scheduled_close exit_ticks must be finite recorded grid prices")
+        # The completed minute is checked stop-first before its closing-price
+        # liquidation. A surviving scheduled exit therefore lies inside both
+        # protective barriers; it is neither a fabricated target nor a stop.
+        lower = pd.concat([stop_ticks, target_ticks], axis=1).min(axis=1)
+        upper = pd.concat([stop_ticks, target_ticks], axis=1).max(axis=1)
+        if not ((exits > lower[scheduled]) & (exits < upper[scheduled])).all():
+            raise ValueError("scheduled_close price must remain inside protective barriers")
+        expected_realized.loc[scheduled] = (
+            (exits - entry_ticks[scheduled]) * np.where(is_long[scheduled], 1, -1)
+        )
+        scheduled_realized = expected_realized[scheduled]
+        normalized.loc[scheduled, "_label"] = np.where(
+            scheduled_realized > 0, "win", np.where(scheduled_realized < 0, "loss", "flat")
+        )
+        if normalized.loc[scheduled, "scheduled_exit_schedule_id"].isna().any() or (
+            normalized.loc[scheduled, "scheduled_exit_schedule_id"].astype(str).str.len() == 0
+        ).any():
+            raise ValueError("scheduled_close requires a frozen schedule identity")
+        deadlines = normalized.loc[scheduled, "scheduled_exit_deadline_ts_utc"].map(pd.Timestamp)
+        if deadlines.isna().any() or any(value.tzinfo is None for value in deadlines):
+            raise ValueError("scheduled_close deadline must be timezone-aware")
+        deadlines = pd.to_datetime(deadlines, utc=True)
+        exits_at = pd.to_datetime(normalized.loc[scheduled, "resolution_ts_utc"], utc=True)
+        if not (deadlines == exits_at).all():
+            raise ValueError(
+                "scheduled_close actual exit must equal its causal execution deadline"
+            )
+    # New captures expose actual prices for barrier exits too. Historical
+    # tables omit this additive evidence and retain their old exact assertions.
+    if "exit_ticks" in normalized:
+        priced_barriers = ~scheduled & normalized["exit_ticks"].notna()
+        actual = pd.to_numeric(normalized.loc[priced_barriers, "exit_ticks"], errors="raise")
+        expected = pd.Series(
+            np.where(normalized["resolution"].eq("stop"), stop_ticks, target_ticks),
+            index=normalized.index,
+        )
+        if not (actual == expected[priced_barriers]).all():
+            raise ValueError("executed_trade exit_ticks disagrees with its protective barrier")
     if not (realized_ticks == expected_realized).all():
-        raise ValueError("executed_trade realized_ticks disagrees with its barrier")
+        raise ValueError(
+            "executed_trade realized_ticks disagrees with its barrier or scheduled exit"
+        )
     normalized["_realized_pts"] = realized_ticks * tick_size
     normalized["_gross_r"] = normalized["_realized_pts"] / normalized["_risk_points"]
     normalized["_mfe_r"] = (

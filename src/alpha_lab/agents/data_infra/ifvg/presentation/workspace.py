@@ -79,6 +79,7 @@ def profile_name(value: str) -> str:
 
 def axis_value_name(value_id: str) -> str:
     from ..search.axis_registry import AXIS_VALUE_REGISTRY_V1, SEARCH_AXIS_REGISTRY_V1
+    from .axis_values import format_axis_value
 
     value = AXIS_VALUE_REGISTRY_V1.get(value_id)
     if value is None:
@@ -87,7 +88,11 @@ def axis_value_name(value_id: str) -> str:
     spec = SEARCH_AXIS_REGISTRY_V1.get(axis_key)
     label = value.human_label
     if spec:
-        label = label.replace(axis_key, spec.human_label)
+        # Derive display text from the typed payload, including registries loaded
+        # before clearer human labels were added. Saved drafts keep value IDs.
+        label = f"{spec.human_label} — {format_axis_value(axis_key, value.payload)}"
+        if value_id == spec.baseline_value_id:
+            label += " (default)"
     return label.replace("_", " ")
 
 
@@ -151,6 +156,66 @@ def pipeline_status(state: Mapping[str, Any] | None) -> str:
     )
 
 
+@dataclass(frozen=True)
+class SearchProgress:
+    """Exclusive saved child states; failures never count as queued work."""
+
+    total: int
+    completed: int = 0
+    reused: int = 0
+    failed: int = 0
+    running: int = 0
+    queued: int = 0
+    stopped: int = 0
+    blocked: int = 0
+    unresolved: int = 0
+
+    @property
+    def attempted(self) -> int:
+        return self.completed + self.reused + self.failed + self.running
+
+
+def search_progress(state: Mapping[str, Any]) -> SearchProgress:
+    rows = list(state.get("children") or ())
+    counts = {
+        key: sum(isinstance(row, Mapping) and row.get("state") == key for row in rows)
+        for key in (
+            "completed", "reused", "failed", "running", "queued",
+            "cancelled_at_safe_boundary", "blocked",
+        )
+    }
+    return SearchProgress(
+        total=len(rows),
+        completed=counts["completed"],
+        reused=counts["reused"],
+        failed=counts["failed"],
+        running=counts["running"],
+        queued=counts["queued"],
+        stopped=counts["cancelled_at_safe_boundary"],
+        blocked=counts["blocked"],
+        unresolved=len(rows) - sum(counts.values()),
+    )
+
+
+def search_activity(state: Mapping[str, Any]) -> str:
+    phase = state.get("phase")
+    if phase == "replays":
+        progress = search_progress(state)
+        if progress.total and not (progress.queued or progress.running or progress.unresolved):
+            return "Finalizing configuration results"
+        return "Evaluating configurations"
+    return {
+        "charter_frozen": "Verifying study inputs",
+        "children_enumerated": "Preparing input artifacts",
+        "artifacts_prewarmed": "Preparing configuration replays",
+        "underlying_edge_passed": "Preparing account simulations",
+        "prop_simulations": "Evaluating account simulations",
+        "prop_feasible": "Checking robustness",
+        "robustness_passed": "Comparing qualifying configurations",
+        "frontier_complete": "Saving study results",
+    }.get(phase, "Working on the study")
+
+
 def elapsed(state: Mapping[str, Any]) -> str:
     try:
         attempts = state.get("attempts") or ()
@@ -158,13 +223,24 @@ def elapsed(state: Mapping[str, Any]) -> str:
         start = datetime.fromisoformat(
             str(
                 attempt.get("started_at")
+                or state.get("attempt_started_at_utc")
                 or state.get("started_at_utc")
                 or state.get("created_at_utc")
             )
         )
         end_raw = (
-            attempt.get("ended_at") or state.get("finished_at_utc") or state.get("updated_at_utc")
+            attempt.get("ended_at")
+            or state.get("attempt_finished_at_utc")
+            or state.get("finished_at_utc")
         )
+        if "phase" in state:
+            if search_status(state) != "Running":
+                end_raw = end_raw or state.get("paused_at_utc") or state.get("updated_at_utc")
+                if not end_raw:
+                    return "Not recorded"
+        else:
+            # Preserve the existing pipeline attempt timing contract.
+            end_raw = end_raw or state.get("updated_at_utc")
         end = datetime.fromisoformat(str(end_raw)) if end_raw else datetime.now(start.tzinfo)
         minutes = max(0, int((end - start).total_seconds() // 60))
         return f"{minutes // 60}h {minutes % 60}m" if minutes >= 60 else f"{minutes}m"

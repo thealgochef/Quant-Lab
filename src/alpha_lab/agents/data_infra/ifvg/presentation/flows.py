@@ -270,8 +270,8 @@ def flow_for_goal(
             "baseline": ("Baseline", "the exact baseline profile every axis starts from"),
             "search_space": (
                 "Search axes",
-                "≥ 1 registered axis with a challenger value (≥ 2 profiles); recommended "
-                "preset: parent-retest timeout unbounded / 240 / 360 / 480",
+                "≥ 1 registered axis with a challenger value (≥ 2 profiles); parent-retest "
+                "timeout choices: unbounded / 60 / 90 / 120 / 240 / 360 / 480 one-minute bars",
             ),
             "benchmarks": ("Strategy gates", "the strategy and robustness gates, for display"),
             "validation": validation,

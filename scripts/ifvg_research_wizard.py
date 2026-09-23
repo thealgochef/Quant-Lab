@@ -192,6 +192,8 @@ def render_new_study(st, *, roots):
     errors = w._STEP_VALIDATORS_BY_KEY[step.key](fields)
     # Validation remains single-sourced; only human field labels are displayed.
     for field, message in errors.items():
+        if fields.get("approval_panel_shown") and field == "freeze_readiness":
+            continue  # the approval panel already explains the exact blocker and next action
         st.error(_validation_message(step.key, field, message))
     changed = (
         not w._fields_equal(draft.steps.get(step.key), fields)
@@ -341,6 +343,7 @@ def render_step(st, draft, step, resolution):
             "question_id": question,
             "template_id": template_id,
             "custom_objectives": custom,
+            "custom_tie_breaks": tuple(payload.get("custom_tie_breaks") or ("core_replay_id",)),
         }
     if step == "baseline":
         names = list(w.PROFILE_CAPABILITY_REGISTRY)
@@ -374,12 +377,27 @@ def render_step(st, draft, step, resolution):
         except Exception:
             blocked = "The selected configuration could not be verified."
             st.error(blocked)
+        fixed = {}
+        if (
+            draft.mode_id == "single_configuration"
+            and draft.step_payload("objective").get("question_id") == "evaluate_one_configuration"
+            and (draft.purpose_annotation or {}).get("purpose") != "implementation_verification"
+        ):
+            from ifsm_replication_controls import render_fixed_settings
+
+            fixed = render_fixed_settings(
+                st, payload, selected, key_prefix=f"{_PREFIX}fixed_{draft.draft_id}_"
+            )
         return {
             "baseline_profile_name": selected,
             "baseline_section_config_hash": section_hash,
             "baseline_blocked_reason": blocked,
+            "fixed_axis_value_ids": fixed,
+            "replication_recipe_id": payload.get("replication_recipe_id"),
+            "historical_search_id": payload.get("historical_search_id"),
         }
     if step == "search_space":
+        baseline_section = w._search_space_baseline(st, draft)
         selections = {}
         grouped = w.grouped_axis_keys()
         for group in w.AXIS_GROUP_ORDER:
@@ -408,7 +426,22 @@ def render_step(st, draft, step, resolution):
                         ],
                         format_func=axis_value_name,
                         key=key + axis,
+                        placeholder="Leave empty to keep the baseline value",
+                        help=(
+                            "An empty menu keeps the baseline value shown below. "
+                            "Selecting alternatives adds comparisons with the default."
+                        ),
                     )
+                    inherited_label = (
+                        w.format_axis_value(axis, baseline_section[axis])
+                        if baseline_section is not None and axis in baseline_section
+                        else "Unavailable — return to Baseline to select a valid profile"
+                    )
+                    st.caption(
+                        f"If left empty: **{inherited_label}** (from the selected baseline). "
+                        "This setting is not varied."
+                    )
+                    st.caption(spec.description)
                     if values:
                         selections[axis] = tuple(values)
         interpretation = payload.get("interpretation") or w.INTERPRETATIONS[2]
@@ -663,15 +696,21 @@ def _risk(st, draft, key):
 
 
 def _review(st, draft, resolution, key):
+    from ifvg_strategy_approval import render_strategy_approval
+
     resolved = resolution.resolved
     report = w._satisfiability_for_draft(draft, resolved, resolution.flow)
     validation = draft.step_payload("validation")
     st.write(profile_name(draft.step_payload("baseline").get("baseline_profile_name", "")))
     st.write(date_scope(validation.get("real_dates")))
-    st.write(report.configuration_sentence)
+    st.write(
+        "One configuration with the fixed settings shown below."
+        if w.fixed_axis_values(draft) else report.configuration_sentence
+    )
     for rule in report.failures:
         st.warning(_validation_message("review", rule.rule_id, rule.detail))
-    if not resolved.freeze_allowed:
+    approval_handled, approval_block = render_strategy_approval(st, draft, resolution)
+    if not resolved.freeze_allowed and not approval_handled:
         st.warning(
             "Running is unavailable until the required authorization and evidence "
             "are ready. Your settings can still be saved."
@@ -694,5 +733,6 @@ def _review(st, draft, resolution, key):
         "requires_acknowledgement": acknowledged,
         "n_children": w.enumerate_child_count(w._challenger_selections(draft, resolution.flow)),
         "satisfiable": report.passed,
-        "freeze_block_reason": resolved.freeze_block_reason,
+        "freeze_block_reason": approval_block or resolved.freeze_block_reason,
+        "approval_panel_shown": approval_handled,
     }

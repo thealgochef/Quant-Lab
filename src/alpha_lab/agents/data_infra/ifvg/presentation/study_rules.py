@@ -143,6 +143,8 @@ def _describe_configurations(base, configurations, *, metadata=None) -> RuleDesc
 
 
 def _draft_rules(study: StudySummary) -> RuleDescription:
+    from ..ifsm_replication import fixed_axis_values
+
     draft = study.draft
     name = draft.step_payload("baseline").get("baseline_profile_name") if draft else None
     if not name:
@@ -154,6 +156,11 @@ def _draft_rules(study: StudySummary) -> RuleDescription:
             is_preview=True,
         )
     base = resolve_profile_config({"profile_name": name}).effective_config
+    fixed = fixed_axis_values(draft)
+    if fixed:
+        # Evaluate One explains the exact selected section, with no implicit
+        # baseline alternative. Other goals and verification ignore stale values.
+        return replace(describe_strategy(_configuration(base, fixed)), is_preview=True)
     description = describe_strategy(base)
     try:
         combinations = _combinations(_draft_axes(draft))

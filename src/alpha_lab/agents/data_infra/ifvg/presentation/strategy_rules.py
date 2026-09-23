@@ -9,7 +9,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
+from datetime import datetime
 from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 from strategy_core.strategies.ifvg_smc.section import IfvgSmcSection
@@ -39,6 +41,7 @@ _RULE_FIELDS = {
     "post_inversion_expiry_1m_bars_max", "parent_htf_distance_ticks_max",
     "opposing_parent_distance_ticks_max", "entry_near_parent",
     "entry_parent_distance_ticks_max", "htf_selection_max_per_timeframe",
+    "htf_direction_selection_policy",
     "sl_buffer_ticks", "tp_r_multiple", "causality_parent", "causality_opposing",
     "causality_entry", "enabled_entry_sessions", "outside_session_policy",
     "parent_full_fill_invalidation", "parent_structural_invalidation",
@@ -54,8 +57,24 @@ _MEASUREMENT_FIELDS = {
     "label_family", "swing_strength_bars", "swing_pool_max",
 }
 _INERT_FIELDS = {"break_even_enabled", "legacy_candidate_row_limit"}
+_LEGACY_OPTIONAL_DEFAULTS = {
+    "holding_policy": "legacy_unrestricted_v1",
+    "daily_close_timezone": "America/Chicago",
+    "daily_close_time": "15:55",
+    "daily_close_buffer_minutes": 5,
+    "entry_schedule_policy": "legacy_doc_sessions_v1",
+    "entry_schedule_timezone": "America/Chicago",
+    "entry_schedule_windows": [],
+    "opposing_min_gap_ticks": None,
+    "htf_gap_invalidation_policy": "execution_wick_full_fill_v1",
+    "htf_direction_selection_policy": "mixed_direction_rank_v1",
+    "setup_timeout_1m_bars": None,
+    "parent_replacement_policy": "highest_tf_newest",
+    "parent_retest_depth_policy": "any_live_touch",
+}
 _CLASSIFIED_FIELDS = (
     _RULE_FIELDS | _CAPABILITY_FIELDS | _MEASUREMENT_FIELDS | _INERT_FIELDS
+    | (_LEGACY_OPTIONAL_DEFAULTS.keys() & IfvgSmcSection.model_fields.keys())
 )
 
 
@@ -69,10 +88,17 @@ def _load(section: SectionInput) -> tuple[IfvgSmcSection | None, tuple[str, ...]
         if isinstance(section, IfvgSmcSection)
         else dict(section)
     )
-    required = _RULE_FIELDS | (_CAPABILITY_FIELDS - {"non_runnable_reason"})
+    required = (_RULE_FIELDS - _LEGACY_OPTIONAL_DEFAULTS.keys()) | (
+        _CAPABILITY_FIELDS - {"non_runnable_reason"}
+    )
     if required - raw.keys():
         return None, ("The saved strategy settings are incomplete; its rules cannot be verified.",)
-    unknown = raw.keys() - _CLASSIFIED_FIELDS
+    for field, default in _LEGACY_OPTIONAL_DEFAULTS.items():
+        if field in raw and field not in IfvgSmcSection.model_fields and raw[field] != default:
+            return None, (
+                "The saved lifecycle settings require the isolated research implementation.",
+            )
+    unknown = raw.keys() - _CLASSIFIED_FIELDS - _LEGACY_OPTIONAL_DEFAULTS.keys()
     issues = (
         ("Some saved settings are not yet covered by this description.",)
         if unknown else ()
@@ -115,10 +141,23 @@ def _retest_rule(section: IfvgSmcSection) -> str:
         f"If more than {limit} one-minute candles pass after selecting the main zone "
         "without a retest, abandon the setup"
     )
+    reaction = "If a later candle touches the main zone, continue. "
+    if getattr(section, "parent_retest_depth_policy", "any_live_touch") == "strictly_before_ce":
+        reaction = (
+            "At the first later overlap with the main zone, continue only when wick penetration "
+            "from its near edge is strictly less than half its width. A live touch at the "
+            "midpoint or deeper clears this main zone; consider only newly confirmed eligible "
+            "gaps, including new arrivals on that candle. Full-fill and structural invalidation "
+            "take precedence. "
+        )
+    replacement = (
+        "Keeping the selected main zone retains its original selection clock. "
+        if getattr(section, "parent_replacement_policy", "highest_tf_newest") == "preserve_selected"
+        else "A replacement main zone restarts this wait. "
+    )
     return (
-        "If a later candle touches the main zone, continue. "
-        f"{wait}; other invalidation rules still apply. "
-        "A replacement main zone restarts this wait. Count recorded candles, not clock time."
+        f"{reaction}{wait}; other invalidation rules still apply. "
+        f"{replacement}Count recorded candles, not clock time."
     )
 
 
@@ -131,17 +170,51 @@ def _wait(limit: int | None, start: str) -> str:
     )
 
 
+def _chicago_session_clock(value: str, source_timezone: str) -> str:
+    """Recurring 2026 research-session clocks, displayed with both DST seasons.
+
+    Eastern and Chicago clocks stay one hour apart in both seasons. A source
+    with a different DST calendar gets explicit winter/summer alternatives.
+    Persisted engine windows and timestamped source records are never rewritten.
+    """
+    hour, minute = (int(part) for part in value[:5].split(":"))
+    clocks = []
+    for month in (1, 7):
+        instant = datetime(2026, month, 15, hour, minute, tzinfo=ZoneInfo(source_timezone))
+        clocks.append(
+            instant.astimezone(ZoneInfo("America/Chicago")).strftime("%I:%M %p").lstrip("0")
+        )
+    return clocks[0] if clocks[0] == clocks[1] else (
+        f"{clocks[0]} in winter / {clocks[1]} in summer"
+    )
+
+
 def _sessions(section: IfvgSmcSection) -> str:
-    names = {"asia": "Asia", "london": "London", "ny": "New York"}
+    names = {
+        "asia": "Asia", "london": "London", "ny": "New York",
+        "ny_0700_1030": "Legacy morning (historical)",
+    }
     windows = []
-    for name in section.enabled_entry_sessions:
+    source_timezone = section.session_scheme.timezone
+    schedule = getattr(section, "entry_schedule_policy", "legacy_doc_sessions_v1")
+    for name in section.enabled_entry_sessions if schedule == "legacy_doc_sessions_v1" else ():
         if name in section.doc_sessions:
             start, end = section.doc_sessions[name]
             overnight = " the next day" if start > end else ""
-            windows.append(f"{names.get(name, name)} {start}–{end}{overnight}")
-    zone = section.session_scheme.timezone
-    zone = "Eastern time" if zone == "America/New_York" else zone
-    allowed = _join(windows) or "no entry windows"
+            shown_start = _chicago_session_clock(start, source_timezone)
+            shown_end = _chicago_session_clock(end, source_timezone)
+            windows.append(f"{names.get(name, name)} {shown_start}–{shown_end}{overnight}")
+    zone = "America/Chicago"
+    if schedule == "explicit_windows_v1":
+        for start, end in section.entry_schedule_windows:
+            shown_start = _chicago_session_clock(start, section.entry_schedule_timezone)
+            shown_end = _chicago_session_clock(end, section.entry_schedule_timezone)
+            overnight = " the next day" if start > end else ""
+            windows.append(f"{shown_start}–{shown_end}{overnight}")
+    allowed = (
+        "all open-market hours, including overnight"
+        if schedule == "all_open_market_v1" else _join(windows) or "no entry windows"
+    )
     outside = (
         "If an entry signal appears outside these windows, abandon that setup."
         if section.outside_session_policy == "reset_setup_as_missed" else
@@ -154,10 +227,16 @@ def _sessions(section: IfvgSmcSection) -> str:
         f"After {cap} executed trade{'s' if cap != 1 else ''} in a trading day, "
         "skip further entries until the next trading day."
     )
+    lock = (
+        " The mandatory daily and weekend entry locks also apply until actual reopening."
+        if getattr(section, "holding_policy", "legacy_unrestricted_v1")
+        == "scheduled_daily_close_v1" else ""
+    )
     return (
         f"Enter during {allowed} ({zone}; end times excluded). "
-        f"{outside} {capped} Each trading day starts at "
-        f"{section.session_scheme.trading_day_boundary[:5]} {zone}."
+        f"{outside}{lock} {capped} Each trading day starts at "
+        f"{_chicago_session_clock(section.session_scheme.trading_day_boundary, source_timezone)} "
+        f"{zone}."
     )
 
 
@@ -196,16 +275,39 @@ def _rules(section: IfvgSmcSection) -> dict[str, str]:
     legacy = section.parent_reaction_window_1m_bars_max
     if legacy is not None:
         parent_window += f" and within {legacy} recorded one-minute candles of the initial touch"
+    replacement = (
+        "Until its first retest, prefer replacements on larger timeframes, "
+        "then newer gaps on the same timeframe."
+    )
+    if getattr(section, "parent_replacement_policy", "highest_tf_newest") == "preserve_selected":
+        replacement = (
+            "When several new gaps qualify, prefer larger timeframes, then newer gaps. "
+            "Keep the selected main zone until its first retest or invalidation; "
+            "new alternatives do not replace it or restart its wait. After clearing it, "
+            "consider newly confirmed eligible gaps only."
+        )
     rules["parent"] = (
         f"If a new {matching_gap} on the {_timeframes(section.parent_timeframes, 'or')} charts "
         f"{_after(section.causality_parent, 'that touch')}, {parent_window}, and lies within "
         f"{section.parent_htf_distance_ticks_max} ticks of the touched zone, use it as the "
-        "main zone. Until its first retest, prefer replacements on larger timeframes, "
-        "then newer gaps on the same timeframe."
+        "main zone. " + replacement
+    )
+    lifetime = getattr(section, "setup_timeout_1m_bars", None)
+    rules["lifetime"] = (
+        "There is no whole-setup lifetime limit."
+        if lifetime is None else
+        f"Before entry, abandon the setup once more than {lifetime} recorded one-minute "
+        "candles pass from the original higher-timeframe touch. Parent selection, "
+        "replacement and retest do not restart this clock. This limit does not close an open trade."
     )
     rules["retest"] = _retest_rule(section)
+    opposing_minimum = getattr(section, "opposing_min_gap_ticks", None)
+    opposing_width = (
+        f" at least {opposing_minimum} tick{'s' if opposing_minimum != 1 else ''} wide"
+        if opposing_minimum is not None else ""
+    )
     rules["inversion"] = (
-        f"After the retest, wait for a {opposing_gap} that "
+        f"After the retest, wait for a {opposing_gap}{opposing_width} that "
         f"{_after(section.causality_opposing, 'the retest')} and lies within "
         f"{section.opposing_parent_distance_ticks_max} ticks of the main zone. "
         f"{_wait(section.opposing_timeout_1m_bars, 'the retest')} "
@@ -240,11 +342,26 @@ def _rules(section: IfvgSmcSection) -> dict[str, str]:
         f"Set a fixed profit target {section.tp_r_multiple:g} times "
         "the initial distance to the stop. "
     )
+    holding = (
+        f"Close any remaining position by "
+        f"{_chicago_session_clock(section.daily_close_time, section.daily_close_timezone)} "
+        "Chicago time, or earlier on scheduled shortened days, using the "
+        f"{section.daily_close_buffer_minutes}-minute lead before market closure. "
+        "This research buffer implements the owner's before-4:00 PM requirement. "
+        "Record the actual priced time exit, which may be a partial gain or loss, "
+        "then lock entries until the scheduled market reopening. "
+        "Holding across midnight is allowed within an open session; holding across "
+        "daily or weekend market closures is prohibited. The end of a morning entry "
+        "window does not close an existing position."
+        if getattr(section, "holding_policy", "legacy_unrestricted_v1")
+        == "scheduled_daily_close_v1" else
+        "Historical holding behavior. Session or trading-day changes do not close the trade."
+    )
     rules["exit"] = (
         f"Place the stop {buffer} tick{'s' if buffer != 1 else ''} {anchor}, "
         f"including the entry candle. {target}"
         "Check exits from the next one-minute candle; if both prices are touched, count the "
-        "stop first. The stop stays fixed. Session or trading-day changes do not close the trade."
+        f"stop first. The stop stays fixed. {holding}"
     )
     causes = []
     if section.parent_full_fill_invalidation:
@@ -257,14 +374,35 @@ def _rules(section: IfvgSmcSection) -> dict[str, str]:
         if causes else
         "A main-zone fill or a close through its far edge does not cancel the setup."
     )
+    own_close = (
+        getattr(section, "htf_gap_invalidation_policy", "execution_wick_full_fill_v1")
+        == "own_timeframe_close_v1"
+    )
+    larger_gap_rule = (
+        "A one-hour gap waits for a later completed one-hour candle; a four-hour gap "
+        "waits for a later completed four-hour candle. An upward gap becomes invalid "
+        "only when that candle closes strictly below its bottom edge; a downward gap "
+        "only when it closes strictly above its top edge. A close exactly on the edge, "
+        "a wick, or a smaller-chart close does not invalidate it. Before entry, abandon "
+        "a setup when its starting gap becomes invalid. Smaller-pattern rules and "
+        "protective stops are unchanged."
+        if own_close else
+        "Before entry, if a one-minute wick completely fills the starting one-hour "
+        "or four-hour gap, abandon the setup (original rule)."
+    )
     rules["cancellation"] = (
-        "Before entry, if price completely fills the original higher-timeframe gap, "
-        f"abandon the setup. {invalidation} Work on one setup or open trade at a time."
+        f"{larger_gap_rule} {invalidation} Work on one setup or open trade at a time."
     )
     selection = section.htf_selection_max_per_timeframe
+    selection_scope = (
+        " in enabled trade directions"
+        if getattr(section, "htf_direction_selection_policy", "mixed_direction_rank_v1")
+        == "enabled_before_rank_v1" else " across both directions"
+    )
     rules["selection"] = (
         f"Consider only the {selection} most recent active higher-timeframe "
-        f"gap{'s' if selection != 1 else ''} per timeframe. For simultaneous touches, "
+        f"gap{'s' if selection != 1 else ''}{selection_scope} per timeframe. "
+        "For simultaneous touches, "
         "prefer larger timeframes, then newer gaps; skip opposing directions tied on "
         "the highest eligible timeframe."
     )
@@ -278,7 +416,13 @@ def _rules(section: IfvgSmcSection) -> dict[str, str]:
         f"Keep at most {live} active gaps per lower timeframe, dropping the oldest first."
         if live is not None else "There is no count limit for active lower-timeframe gaps."
     )
-    rules["retention"] = f"{retention} {lower} Fully filled gaps leave the active list."
+    validity = (
+        "A wick-traversed one-hour or four-hour starting gap remains available until "
+        "its own completed candle invalidates it; normal selection and age limits "
+        "still apply. Smaller fully filled gaps leave their active lists."
+        if own_close else "Fully filled gaps leave the active list."
+    )
+    rules["retention"] = f"{retention} {lower} {validity}"
     return rules
 
 
@@ -303,13 +447,24 @@ def _visible_rules(
         visible.append(text)
     # Reviewed document-profile values are only brevity choices here, never
     # missing configuration defaults. Exact non-default profiles expose them.
-    if section.htf_selection_max_per_timeframe != 1 and "selection" not in (omit or set()):
+    if (
+        section.htf_selection_max_per_timeframe != 1
+        or getattr(section, "htf_direction_selection_policy", "mixed_direction_rank_v1")
+        != "mixed_direction_rank_v1"
+    ) and "selection" not in (omit or set()):
         visible.append(rules["selection"])
     if (
-        (section.htf_registry_max_age_days, section.ltf_registry_max_live) != (15, 512)
+        ((section.htf_registry_max_age_days, section.ltf_registry_max_live) != (15, 512)
+         or getattr(section, "htf_gap_invalidation_policy", "execution_wick_full_fill_v1")
+         == "own_timeframe_close_v1")
         and "retention" not in (omit or set())
     ):
         visible.append(rules["retention"])
+    if (
+        getattr(section, "setup_timeout_1m_bars", None) is not None
+        and "lifetime" not in (omit or set())
+    ):
+        visible.append(rules["lifetime"])
     return tuple(visible)
 
 
@@ -341,7 +496,9 @@ def describe_strategy(
         return _unavailable("The saved exit rules are not supported by this description.")
     if parsed.anchor_policy != "trading_day_18et_elapsed_v1":
         issues += ("The configured chart timing policy is not covered by this description.",)
-    if set(parsed.enabled_entry_sessions) - parsed.doc_sessions.keys():
+    if (getattr(parsed, "entry_schedule_policy", "legacy_doc_sessions_v1")
+            == "legacy_doc_sessions_v1"
+            and set(parsed.enabled_entry_sessions) - parsed.doc_sessions.keys()):
         issues += ("Some enabled entry sessions have no saved time window.",)
     if parsed.break_even_enabled:
         issues += (

@@ -384,6 +384,7 @@ def execute_context_experiment(
         frame=cohort,
         tier_features=view.tier_features,
         m3_status=m3_cohort_status(cohort),
+        b0_projection_evidence=view.b0_projection_evidence,
     )
     model_run = None
     status = folds.status

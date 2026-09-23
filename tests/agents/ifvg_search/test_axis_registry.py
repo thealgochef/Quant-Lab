@@ -127,19 +127,71 @@ def test_composite_group_resolves_atomically() -> None:
     assert overrides == {"entry_near_parent": True, "entry_parent_distance_ticks_max": 40}
 
 
-def test_resolved_overrides_validate_into_a_section() -> None:
+@pytest.mark.parametrize("name", ("asia", "london", "ny", "ny_0700_1030"))
+def test_session_presets_resolve_without_changing_market_session_clocks(name: str) -> None:
+    from alpha_lab.agents.data_infra.ifvg.config import IfvgCaptureConfig
     from alpha_lab.agents.data_infra.ifvg.profiles import resolve_profile_config
 
-    overrides = resolve_axis_overrides(
-        {"parent_retest_timeout_1m_bars": "parent_retest_timeout_1m_bars.480"}
+    baseline = resolve_profile_config()
+    ids = {"enabled_entry_sessions": f"enabled_entry_sessions.{name}"}
+    assert_axes_authorized(ids, require_ratified=False)
+    overrides = resolve_axis_overrides(ids)
+    resolved = resolve_profile_config({"section_overrides": overrides})
+    assert resolved.section.enabled_entry_sessions == (name,)
+    assert resolved.section.session_scheme == baseline.section.session_scheme
+    assert resolved.section_config_hash != baseline.section_config_hash
+    assert (
+        IfvgCaptureConfig(section=resolved.section).artifacts_tag()
+        == IfvgCaptureConfig(section=baseline.section).artifacts_tag()
     )
+    if name == "ny_0700_1030":
+        assert resolved.section.doc_sessions == {name: ("07:00", "10:30")}
+        value = AXIS_VALUE_REGISTRY_V1[ids["enabled_entry_sessions"]]
+        assert isinstance(value, CompositeAxisValue)
+        assert resolve_axis_overrides(
+            ids, {value.value_id: CompositeAxisValue.model_validate(value.model_dump(mode="json"))}
+        ) == overrides
+    else:
+        assert resolved.section.doc_sessions == baseline.section.doc_sessions
+    with pytest.raises(AxisAuthorizationError, match="ratification"):
+        assert_axes_authorized(ids, require_ratified=True)
+
+
+def test_doc_windows_are_only_changed_through_registered_session_presets() -> None:
+    spec = SEARCH_AXIS_REGISTRY_V1["doc_sessions"]
+    assert spec.dependencies == ("enabled_entry_sessions",)
+    with pytest.raises(AxisAuthorizationError, match="not searchable"):
+        assert_axes_authorized({"doc_sessions": spec.baseline_value_id}, require_ratified=False)
+
+
+@pytest.mark.parametrize(
+    ("axis_key", "value"),
+    [
+        (axis, value)
+        for axis, values in (
+            ("parent_retest_timeout_1m_bars", (60, 90, 120, 240, 360, 480)),
+            ("opposing_timeout_1m_bars", (60, 90, 120)),
+            ("htf_registry_max_age_days", (1, 2, 3, 4, 5)),
+            ("max_executed_trades_per_day", (1, 2, 3)),
+        )
+        for value in values
+    ],
+)
+def test_resolved_overrides_validate_into_a_section(axis_key: str, value: int) -> None:
+    from alpha_lab.agents.data_infra.ifvg.profiles import resolve_profile_config
+
+    ids = {axis_key: f"{axis_key}.{value}"}
+    assert_axes_authorized(ids, require_ratified=False)
+    with pytest.raises(AxisAuthorizationError, match="ratification"):
+        assert_axes_authorized(ids, require_ratified=True)
+    overrides = resolve_axis_overrides(ids)
     resolved = resolve_profile_config(
         {
             "profile_name": "ifvg_v2_doc_default_fresh_static_1r",
             "section_overrides": overrides,
         }
     )
-    assert resolved.section.parent_retest_timeout_1m_bars == 480
+    assert getattr(resolved.section, axis_key) == value
     assert resolved.section.qualification_mode.value == "custom_profile"
 
 

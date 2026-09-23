@@ -8,8 +8,9 @@ cancelled_at_safe_boundary/blocked``.
 
 Mechanics cloned from the verified repo patterns: an ``O_EXCL`` lock per
 search, atomic JSON checkpoints after every child transition, a
-``cancel.requested`` sentinel honored at safe boundaries only (child
-boundaries — completed children stay immutable and reusable), idempotent
+``cancel.requested`` sentinel honored at safe work boundaries only (input
+verification, completed children and finalization stages — completed children
+stay immutable and reusable), idempotent
 resume via store-identity reuse, and enumeration deduped on the resolved
 replay identity within AND across studies. Generated-profile capability is
 enforced BEFORE any replay (P0-D): an unratified/blocked child never reaches
@@ -24,7 +25,9 @@ import os
 from collections.abc import Callable, Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from itertools import product
+from math import prod
 from pathlib import Path
 from typing import Any, ClassVar, Literal
 
@@ -78,6 +81,7 @@ __all__ = [
     "enumerate_children",
     "run_search",
     "request_safe_cancel",
+    "cancellation_requested",
     "read_search_state",
     "SearchLockError",
 ]
@@ -569,6 +573,11 @@ def request_safe_cancel(state_root: Path, search_id: str) -> Path:
     return sentinel
 
 
+def cancellation_requested(state_root: Path, search_id: str) -> bool:
+    """Whether the current attempt has a pending safe-boundary stop request."""
+    return (_state_dir(state_root, search_id) / _CANCEL_SENTINEL).exists()
+
+
 def _checkpoint(
     state_root: Path,
     search_id: str,
@@ -577,16 +586,29 @@ def _checkpoint(
     *,
     heartbeat: Path | None = None,
     phase_notes: Mapping[str, str] | None = None,
+    new_attempt: bool = False,
 ) -> Path:
     if heartbeat is not None:
         with suppress(OSError):  # pragma: no cover - lock broken externally
             os.utime(heartbeat)  # live-run heartbeat: the lock never goes stale
     directory = _state_dir(state_root, search_id)
+    previous = read_search_state(state_root, search_id) or {}
+    saved_children = {
+        child["core_replay_id"]: child for child in previous.get("children", [])
+    }
+    now = datetime.now(UTC).isoformat()
+    attempt_start = now if new_attempt else previous.get("attempt_started_at_utc", now)
     payload = {
         "schema_version": 1,
         "search_id": search_id,
         "phase": phase,
         "phase_notes": dict(phase_notes or {}),
+        "started_at_utc": previous.get("started_at_utc") or now,
+        "updated_at_utc": now,
+        "attempt_started_at_utc": attempt_start,
+        "attempt_finished_at_utc": (
+            now if phase in ("failed", "cancelled", "search_complete") else None
+        ),
         "children": [
             {
                 "ordinal": outcome.spec.ordinal,
@@ -599,10 +621,27 @@ def _checkpoint(
                 ),
                 "explanation": outcome.explanation,
                 "replay_invocations": outcome.replay_invocations,
+                "metrics_available": outcome.metrics is not None,
+                "gates_evaluated": outcome.gate_report is not None,
             }
             for outcome in outcomes
         ],
     }
+    # Revalidating inputs does not erase already saved progress on a resume.
+    # These are operational facts; immutable artifacts are still verified below.
+    if not outcomes and phase in ("charter_frozen", "failed", "cancelled"):
+        payload["children"] = previous.get("children", [])
+    else:
+        for child in payload["children"]:
+            saved = saved_children.get(child["core_replay_id"], {})
+            if (
+                child["state"] in ("completed", "reused")
+                and saved.get("state") in ("completed", "reused")
+            ):
+                # Preserve prior published facts during resumed preparation.
+                # These flags never substitute for verified metric loading.
+                for flag in ("metrics_available", "gates_evaluated"):
+                    child[flag] = child[flag] or saved.get(flag, False)
     path = directory / _STATE_FILENAME
     _write_json_atomic(path, payload)
     return path
@@ -620,6 +659,7 @@ def run_search(
     progress_fn: Callable[[int, int, str], None] | None = None,
     stale_lock_seconds: float = 86_400.0,
     prop_simulator: Callable[..., Any] | None = None,
+    result_loader: Callable[..., Any] | None = None,
 ) -> SearchRunResult:
     """Run (or resume) one frozen search charter, sequentially and safely.
 
@@ -631,8 +671,17 @@ def run_search(
     ``ChildAuditNeutralityReport``, exposes it as ``neutrality`` - a FAILED
     report (or a raised :class:`ChildNeutralityError`, which the real
     ``run_child_replay`` raises itself) blocks the child's publication
-    (CS 3.3). Cancellation is honored at child boundaries only; completed
-    children remain immutable and reusable on resume.
+    (CS 3.3). Metrics and gates publish before a completed child checkpoint;
+    full replay tables are released before the next child. An explicit
+    ``result_loader(spec=..., core_replay_id=...)`` may load verified persisted
+    tables to recover an interrupted legacy evaluation, or for the prop seam.
+    It must never replay the child. Missing recovery evidence fails closed.
+    With a loader, prop simulations load one child's inputs at a time in the
+    prop stage. Without one, the legacy simulator consumes the fresh result
+    immediately after strategy gates and only its vectors are retained; reused
+    children still pass ``None`` under that legacy contract.
+    Cancellation is honored between preparation units, completed children and
+    finalization stages, including after the final replay.
     """
 
     payload = charter.payload
@@ -640,30 +689,80 @@ def run_search(
     store_root = Path(store_root)
     state_root = Path(state_root)
     cost = payload.cost_policy.cost_points_round_turn if cost_points is None else cost_points
+    thresholds: ResolvedStrategyGateThresholds = payload.objective_policy.feasibility_gates
+    sentinel = _state_dir(state_root, search_id) / _CANCEL_SENTINEL
+    resolved_identities: dict[str, tuple[str, object | None]] = {}
+    planned_configurations = prod(len(values) for values in payload.axes.values())
+
+    class _PreparationCancelledError(Exception):
+        pass
 
     def _resolve_identity(spec: ChildSpec) -> tuple[str, object | None]:
+        key = spec.resolved_section_config_hash
+        if key in resolved_identities:
+            return resolved_identities[key]
+        if sentinel.exists():
+            raise _PreparationCancelledError
         resolved = identity_resolver(spec)
         if isinstance(resolved, str):
-            return resolved, None
-        return resolved.core_replay_id, resolved
+            identity = resolved, None
+        else:
+            identity = resolved.core_replay_id, resolved
+        resolved_identities[key] = identity
+        _checkpoint(
+            state_root, search_id, "charter_frozen", [], heartbeat=lock_path,
+            phase_notes={
+                "preparation_completed_configurations": str(len(resolved_identities)),
+                "preparation_planned_configurations": str(planned_configurations),
+            },
+        )
+        return identity
 
     with _search_lock(
         state_root, search_id, stale_lock_seconds=stale_lock_seconds
     ) as lock_path:
-        # a leftover sentinel from an earlier (already-cancelled) run applies
-        # to THAT run only; a fresh run starts unpoisoned and can be
-        # re-cancelled at any child boundary.
-        with suppress(OSError):
-            os.unlink(_state_dir(state_root, search_id) / _CANCEL_SENTINEL)
+        # An acknowledged stop is consumed by _cancel_at_boundary. A sentinel
+        # present at startup may be a NEW request after Resume was clicked;
+        # the previous phase cannot distinguish it and must not erase it.
+        prior_children = {
+            child["core_replay_id"]: child
+            for child in (read_search_state(state_root, search_id) or {}).get("children", [])
+        }
+        outcomes: list[ChildOutcome] = []
+
+        def _cancel_at_boundary() -> SearchRunResult | None:
+            if not sentinel.exists():
+                return None
+            with suppress(OSError):
+                os.unlink(sentinel)
+            for outcome in outcomes:
+                if outcome.state == "queued":
+                    outcome.state = "cancelled_at_safe_boundary"
+                    outcome.failure_reason = FailureReason.CANCELLED
+                    outcome.explanation = "safe cancel honored at the work boundary"
+            path = _checkpoint(
+                state_root, search_id, "cancelled", outcomes, heartbeat=lock_path,
+                phase_notes=(read_search_state(state_root, search_id) or {}).get("phase_notes"),
+            )
+            return SearchRunResult(
+                search_id=search_id, phase="cancelled", children=outcomes, state_path=path
+            )
+
         phase = "charter_frozen"
         # Real input verification can outlast the UI's startup wait. Persist
         # startup before resolving inputs so a live worker never looks absent.
-        _checkpoint(state_root, search_id, phase, [], heartbeat=lock_path)
+        _checkpoint(state_root, search_id, phase, [], heartbeat=lock_path, new_attempt=True)
+        if cancelled := _cancel_at_boundary():
+            return cancelled
         try:
             specs = enumerate_children(
                 charter, identity_resolver=lambda spec: _resolve_identity(spec)[0],
                 store_root=store_root,
             )
+        except _PreparationCancelledError:
+            cancelled = _cancel_at_boundary()
+            assert cancelled is not None
+            return cancelled
         except Exception as error:
             _checkpoint(
                 state_root, search_id, "failed", [], heartbeat=lock_path,
@@ -672,41 +771,92 @@ def run_search(
             raise
         if len(specs) > payload.max_child_count:
             raise ValueError("enumerated children exceed the charter ceiling")
+        if cancelled := _cancel_at_boundary():
+            return cancelled
         outcomes = [
             ChildOutcome(spec=spec, core_replay_id=_resolve_identity(spec)[0])
             for spec in specs
         ]
+        for outcome in outcomes:
+            saved = prior_children.get(outcome.core_replay_id, {})
+            if saved.get("state") in ("completed", "reused"):
+                # Restored state is historical progress, not recovery evidence.
+                # The replay/evaluation stores are still verified per child.
+                outcome.state = saved["state"]
+                outcome.explanation = "saved completed replay awaiting reuse verification"
         phase = "children_enumerated"
         _checkpoint(state_root, search_id, phase, outcomes, heartbeat=lock_path)
 
+        if cancelled := _cancel_at_boundary():
+            return cancelled
         if prewarm is not None:
             prewarm(specs)
         phase = "artifacts_prewarmed"
         _checkpoint(state_root, search_id, phase, outcomes, heartbeat=lock_path)
 
-        sentinel = _state_dir(state_root, search_id) / _CANCEL_SENTINEL
         phase = "replays"
         _checkpoint(state_root, search_id, phase, outcomes, heartbeat=lock_path)
-        tables_by_child: dict[str, Any] = {}
-        for index, outcome in enumerate(outcomes):
-            if sentinel.exists():
-                with suppress(OSError):  # honored exactly once, then consumed
-                    os.unlink(sentinel)
-                outcome.state = "cancelled_at_safe_boundary"
-                outcome.failure_reason = FailureReason.CANCELLED
-                outcome.explanation = "safe cancel honored at the child boundary"
-                for later in outcomes[index + 1 :]:
-                    later.state = "cancelled_at_safe_boundary"
-                    later.failure_reason = FailureReason.CANCELLED
-                    later.explanation = "safe cancel honored at the child boundary"
-                phase = "cancelled"
-                _checkpoint(state_root, search_id, phase, outcomes, heartbeat=lock_path)
-                return SearchRunResult(
-                    search_id=search_id,
-                    phase=phase,
-                    children=outcomes,
-                    state_path=_state_dir(state_root, search_id) / _STATE_FILENAME,
+        # Legacy prop callables without a loader consume each fresh result
+        # while it is available. Only their small metric vectors survive to
+        # the parent prop phase, never the full replay tables.
+        prop_vectors_by_child: dict[str, tuple[Mapping[str, Any] | None, str | None]] = {}
+
+        def _evaluate_child(outcome: ChildOutcome, result: Any) -> None:
+            evaluation = _child_evaluation_envelope(
+                outcome.core_replay_id, payload.cost_policy
+            )
+            metrics = (
+                _load_child_evaluation(store_root, evaluation.costed_evaluation_id)
+                if result is None else None
+            )
+            if metrics is None:
+                if result is None:
+                    if result_loader is None:
+                        raise ChildNeutralityError(
+                            "reused replay has no published costed evaluation; "
+                            "a verified result loader is required for recovery"
+                        )
+                    result = result_loader(
+                        spec=outcome.spec, core_replay_id=outcome.core_replay_id
+                    )
+                neutrality = getattr(result, "neutrality", None)
+                if neutrality is not None and not neutrality.passed:
+                    raise ChildNeutralityError("recovered replay failed audit neutrality")
+                metrics = compute_strategy_metrics(
+                    result.tables,
+                    cost_points=cost,
+                    evaluation_config_hash=canonical_contract_sha256(
+                        {
+                            "core_replay_id": outcome.core_replay_id,
+                            "cost_policy": payload.cost_policy.model_dump(mode="json"),
+                        }
+                    ),
                 )
+                _publish_child_evaluation(store_root, evaluation, metrics)
+            outcome.metrics = metrics
+            outcome.gate_report = evaluate_strategy_gates(metrics, thresholds)
+            if not outcome.gate_report.passed:
+                outcome.failure_reason = outcome.gate_report.failure_reason
+                outcome.explanation = outcome.gate_report.human_explanation
+            elif prop_simulator is not None and result_loader is None and not sentinel.exists():
+                # Preserve the legacy fresh-result seam without retaining a
+                # child-sized graph until every other replay has finished.
+                missing = any(
+                    hasattr(metrics, objective) and getattr(metrics, objective) is None
+                    for objective in payload.objective_policy.pareto_objectives
+                )
+                if not missing:
+                    try:
+                        vectors = prop_simulator(outcome=outcome, result=result)
+                        prop_vectors_by_child[outcome.core_replay_id] = (vectors, None)
+                    except Exception as error:  # noqa: BLE001 — per-child containment
+                        prop_vectors_by_child[outcome.core_replay_id] = (
+                            None, sanitize_failure_message(str(error))
+                        )
+
+        for index, outcome in enumerate(outcomes):
+            if cancelled := _cancel_at_boundary():
+                return cancelled
             spec = outcome.spec
             # P0-D: blocked/unratified generated children never reach a replay
             if spec.capability is not None and spec.capability.status != "generated_runnable":
@@ -718,20 +868,27 @@ def run_search(
                 )
                 _checkpoint(state_root, search_id, phase, outcomes, heartbeat=lock_path)
                 continue
-            if has_envelope(store_root, "core_replays", outcome.core_replay_id):
-                outcome.state = "reused"
-                outcome.explanation = (
-                    "verified reuse: an immutable replay with this exact identity "
-                    "already exists (zero replay invocations)"
-                )
-            else:
-                outcome.state = "running"
-                _checkpoint(state_root, search_id, phase, outcomes, heartbeat=lock_path)
-                try:
+            result = None
+            neutrality = None
+            replay_persisted = False
+            outcome.failure_reason = None
+            outcome.explanation = ""
+            outcome.replay_invocations = 0
+            try:
+                if has_envelope(store_root, "core_replays", outcome.core_replay_id):
+                    replay_persisted = True
+                    outcome.state = "reused"
+                    outcome.explanation = (
+                        "verified reuse: an immutable replay with this exact identity "
+                        "already exists (zero replay invocations)"
+                    )
+                else:
+                    outcome.state = "running"
+                    _checkpoint(state_root, search_id, phase, outcomes, heartbeat=lock_path)
+                    outcome.replay_invocations = 1
                     result = child_runner(
                         spec=spec, core_replay_id=outcome.core_replay_id
                     )
-                    outcome.replay_invocations = 1
                     # §3.3: a FAILED neutrality report blocks CHILD
                     # PUBLICATION - nothing below this line runs for it.
                     neutrality = getattr(result, "neutrality", None)
@@ -741,23 +898,31 @@ def run_search(
                             "publish (core tables differ with the audit channel "
                             "enabled, or audit stamps broke referential integrity)"
                         )
-                    tables_by_child[outcome.core_replay_id] = result
                     _, envelope = _resolve_identity(spec)
                     if envelope is not None:
                         save_or_reuse_envelope(store_root, "core_replays", envelope)
+                    replay_persisted = True
                     outcome.state = "completed"
-                except ChildNeutralityError as error:
-                    outcome.state = "failed"
-                    outcome.failure_reason = FailureReason.INVARIANT
-                    outcome.explanation = sanitize_failure_message(str(error))
-                    _checkpoint(state_root, search_id, phase, outcomes, heartbeat=lock_path)
-                    continue
-                except Exception as error:
-                    outcome.state = "failed"
-                    outcome.failure_reason = FailureReason.REPLAY
-                    outcome.explanation = sanitize_failure_message(str(error))
-                    _checkpoint(state_root, search_id, phase, outcomes, heartbeat=lock_path)
-                    continue
+                _evaluate_child(outcome, result)
+            except ChildNeutralityError as error:
+                outcome.state = "failed"
+                outcome.failure_reason = FailureReason.INVARIANT
+                outcome.explanation = sanitize_failure_message(str(error))
+                _checkpoint(state_root, search_id, phase, outcomes, heartbeat=lock_path)
+                continue
+            except Exception as error:
+                outcome.state = "failed"
+                outcome.failure_reason = (
+                    FailureReason.INVARIANT if replay_persisted else FailureReason.REPLAY
+                )
+                outcome.explanation = sanitize_failure_message(str(error))
+                _checkpoint(state_root, search_id, phase, outcomes, heartbeat=lock_path)
+                continue
+            finally:
+                # Do not leave even the most recent replay alive while the
+                # next runner builds its tables (or while paused/finalizing).
+                result = None
+                neutrality = None
             membership = SearchChildMembership(
                 parent_search_id=search_id,
                 child_ordinal=spec.ordinal,
@@ -774,48 +939,19 @@ def run_search(
             if progress_fn is not None:
                 progress_fn(index + 1, len(outcomes), outcome.core_replay_id[:12])
 
-        # Strategy gates over every completed OR reused child. Completed
-        # children publish their study-independent costed evaluation (metrics
-        # keyed on core_replay_id x cost policy); reused children RELOAD the
-        # published evaluation, so a fully-reused resume or cross-study run
-        # produces the identical gates and frontier. Gate reports are
-        # charter-scoped and always re-evaluated from the metrics.
-        thresholds: ResolvedStrategyGateThresholds = payload.objective_policy.feasibility_gates
+        if cancelled := _cancel_at_boundary():
+            return cancelled
+        # Every completed/reused child already has durable metrics and fresh
+        # charter-scoped gates. Aggregate only these small values.
         feasible_metrics: dict[str, dict[str, float]] = {}
         for outcome in outcomes:
+            if cancelled := _cancel_at_boundary():
+                return cancelled
             if outcome.state not in ("completed", "reused"):
                 continue
-            evaluation = _child_evaluation_envelope(
-                outcome.core_replay_id, payload.cost_policy
-            )
-            result = tables_by_child.get(outcome.core_replay_id)
-            if result is not None:
-                metrics = compute_strategy_metrics(
-                    result.tables,
-                    cost_points=cost,
-                    evaluation_config_hash=canonical_contract_sha256(
-                        {
-                            "core_replay_id": outcome.core_replay_id,
-                            "cost_policy": payload.cost_policy.model_dump(
-                                mode="json"
-                            ),
-                        }
-                    ),
-                )
-                _publish_child_evaluation(store_root, evaluation, metrics)
-            else:
-                metrics = _load_child_evaluation(
-                    store_root, evaluation.costed_evaluation_id
-                )
-                if metrics is None:
-                    outcome.explanation = (
-                        "reused replay has no published costed evaluation for "
-                        "this cost policy; gates were not evaluated this run"
-                    )
-                    continue
-            outcome.metrics = metrics
-            report = evaluate_strategy_gates(metrics, thresholds)
-            outcome.gate_report = report
+            metrics = outcome.metrics
+            report = outcome.gate_report
+            assert metrics is not None and report is not None
             if report.passed:
                 objective_values: dict[str, float] = {}
                 missing_objectives: list[str] = []
@@ -852,6 +988,8 @@ def run_search(
                 outcome.explanation = report.human_explanation
         phase = "underlying_edge_passed"
         _checkpoint(state_root, search_id, phase, outcomes, heartbeat=lock_path)
+        if cancelled := _cancel_at_boundary():
+            return cancelled
 
         # Prop phases (R3 seam): ``prop_simulator(outcome=..., result=...)``
         # returns {label -> PayoutReliabilityVector} per gates-passing child.
@@ -880,18 +1018,33 @@ def run_search(
                 ),
             }
             prop_thresholds = payload.objective_policy.prop_feasibility_gates
+            phase = "prop_simulations"
+            _checkpoint(
+                state_root, search_id, phase, outcomes,
+                heartbeat=lock_path, phase_notes=skip_notes,
+            )
             for outcome in outcomes:
+                if cancelled := _cancel_at_boundary():
+                    return cancelled
                 if (
                     outcome.gate_report is None
                     or not outcome.gate_report.passed
                     or outcome.core_replay_id not in feasible_metrics
                 ):
                     continue
-                # ``result`` is None for REUSED children (their tables were
-                # not rebuilt this run) — a simulator must handle both shapes.
-                result = tables_by_child.get(outcome.core_replay_id)
+                result = None
                 try:
-                    vectors = prop_simulator(outcome=outcome, result=result)
+                    if result_loader is not None:
+                        result = result_loader(
+                            spec=outcome.spec, core_replay_id=outcome.core_replay_id
+                        )
+                        vectors = prop_simulator(outcome=outcome, result=result)
+                    else:
+                        vectors, simulation_error = prop_vectors_by_child.pop(
+                            outcome.core_replay_id, (None, "prop inputs are unavailable")
+                        )
+                        if simulation_error is not None:
+                            raise ValueError(simulation_error)
                 except Exception as error:  # noqa: BLE001 — per-child containment
                     outcome.failure_reason = FailureReason.REPLAY
                     outcome.explanation = (
@@ -900,6 +1053,8 @@ def run_search(
                     )
                     feasible_metrics.pop(outcome.core_replay_id, None)
                     continue
+                finally:
+                    result = None
                 merge = merge_prop_vectors(
                     vectors,
                     prop_thresholds=prop_thresholds,
@@ -915,21 +1070,33 @@ def run_search(
                 feasible_metrics[outcome.core_replay_id] = dict(
                     merge.merged_objectives or {}
                 )
+                _checkpoint(
+                    state_root, search_id, phase, outcomes,
+                    heartbeat=lock_path, phase_notes=skip_notes,
+                )
+        if cancelled := _cancel_at_boundary():
+            return cancelled
         phase = "prop_simulations"
         _checkpoint(
             state_root, search_id, phase, outcomes,
             heartbeat=lock_path, phase_notes=skip_notes,
         )
+        if cancelled := _cancel_at_boundary():
+            return cancelled
         phase = "prop_feasible"
         _checkpoint(
             state_root, search_id, phase, outcomes,
             heartbeat=lock_path, phase_notes=skip_notes,
         )
+        if cancelled := _cancel_at_boundary():
+            return cancelled
         phase = "robustness_passed"
         _checkpoint(
             state_root, search_id, phase, outcomes,
             heartbeat=lock_path, phase_notes=skip_notes,
         )
+        if cancelled := _cancel_at_boundary():
+            return cancelled
 
         frontier = None
         if feasible_metrics:
@@ -961,6 +1128,8 @@ def run_search(
             state_root, search_id, phase, outcomes,
             heartbeat=lock_path, phase_notes=skip_notes,
         )
+        if cancelled := _cancel_at_boundary():
+            return cancelled
         phase = "search_complete"
         state_path = _checkpoint(
             state_root, search_id, phase, outcomes,

@@ -305,7 +305,9 @@ def test_coverage_v2_reresolution_is_a_second_versioned_event() -> None:
     assert {k: v.model_dump(mode="json") for k, v in resolutions.items()} == {
         k: v.model_dump(mode="json") for k, v in PRE_R6_1_RESOLUTION_REGISTRY.items()
     }
-    assert set(FEATURE_BLOCK_REGISTRY) == set(definitions) | {"IFVG_CONTEXT_BAR_PANEL_V1"}
+    assert set(FEATURE_BLOCK_REGISTRY) == set(definitions) | {
+        "IFVG_CONTEXT_BAR_PANEL_V1", "IFVG_GEOMETRY_ATR20_V1", "IFVG_GEOMETRY_CORE_ATR14_V1",
+    }
     assert definitions["IFVG_ORDER_FLOW_MBP1_V1"].block_version == 3
     assert envelope.payload.block_version == 3
     assert envelope.payload.formula_version == "ifvg_order_flow_mbp1_formula_v2"
@@ -406,9 +408,13 @@ def test_context_bar_panel_registration_is_a_versioned_event() -> None:
     assert envelope.resolved_feature_block_id == (
         CONTEXT_BAR_PANEL_REGISTRATION_ENVELOPE.resolved_feature_block_id
     )
-    assert dict(definitions) == dict(FEATURE_BLOCK_REGISTRY)
+    assert dict(definitions) == {
+        key: value for key, value in FEATURE_BLOCK_REGISTRY.items()
+        if key not in {"IFVG_GEOMETRY_ATR20_V1", "IFVG_GEOMETRY_CORE_ATR14_V1"}
+    }
     assert {k: v.model_dump(mode="json") for k, v in resolutions.items()} == {
         k: v.model_dump(mode="json") for k, v in FEATURE_BLOCK_RESOLUTION_REGISTRY.items()
+        if k not in {"IFVG_GEOMETRY_ATR20_V1", "IFVG_GEOMETRY_CORE_ATR14_V1"}
     }
     assert feature_block_registry_hash() != feature_block_registry_hash(
         PRE_R6_1_FEATURE_BLOCK_REGISTRY, PRE_R6_1_RESOLUTION_REGISTRY

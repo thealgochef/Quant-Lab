@@ -99,6 +99,18 @@ FEATURE_BUNDLE_REGISTRY: MappingProxyType[str, FeatureBundleDefinition] = Mappin
                 blocks=("IFVG_CORE_BASELINE_V1", "IFVG_SESSION_CONTEXT_V1"),
             ),
             _bundle(
+                "B0_GEOMETRY_ATR20_V1",
+                "Repaired B0 + selected geometry / decision ATR20",
+                base="B0_CORE",
+                blocks=("IFVG_GEOMETRY_ATR20_V1",),
+            ),
+            _bundle(
+                "B0_GEOMETRY_CORE_ATR14_V1",
+                "Repaired B0 + selected geometry / existing Core ATR14",
+                base="B0_CORE",
+                blocks=("IFVG_GEOMETRY_CORE_ATR14_V1",),
+            ),
+            _bundle(
                 "B1_CORE_STRUCTURE",
                 "Core + structure",
                 base="B0_CORE",

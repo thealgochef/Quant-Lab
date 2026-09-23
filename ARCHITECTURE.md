@@ -1,6 +1,18 @@
 # Architecture — Quant-Lab
 
-Updated: 2026-09-08.
+Updated: 2026-09-22.
+
+The offline IFVG geometry extension (`B0_GEOMETRY_CORE_ATR14_V1`) composes repaired
+B0 with three fixed, source-verified geometry ratios. It does not change
+Strategy-Core or runtime strategy semantics. Its denominator reuses Core's ATR14
+convention: the trailing arithmetic mean of 14 true ranges on completed TIME
+one-minute bars, tick prices, with source history carried across days and sessions.
+`features/geometry_core_atr14.py` uses the exact Core scale and persists immutable
+`geometry_feature_artifacts`; `search/research_geometry.py` runs paired B0 and
+geometry ladders through the registered research worker, preserving the same
+candidate labels, fold assignments, costs, model parameters and seeds. Each arm
+persists inputs before fitting and verifies model schemas and predictions after
+reload. See `docs/IFVG_GEOMETRY_CORE_ATR14_RESEARCH.md` for definitions and limits.
 
 Quant-Lab is the research/training workbench for NQ/ES futures ML models. Its current production-aligned path is the **dashboard-utility** workflow, which is now single-sourced to **Strategy-Core v3** for the decision semantics that must match runtime execution.
 
@@ -26,6 +38,20 @@ Older historical reports and scaffold prompt documents were pruned from the work
 
 ### Application workspaces and IFVG research presentation
 
+The optional IFSM replication UI (`scripts/run_ifsm_research_ui.py`, port 8502)
+uses current Quant-Lab presentation and a process-local, source-verified preserved
+research Core; it does not replace the installed engine. Its studies, drafts,
+jobs and context listings use `data/ifsm_ui_replication/`. Registered fixed values
+are editable within the existing Evaluate One Configuration step. The thirteen
+verified September 9 configurations remain a documentation/evidence catalog;
+there is no home-screen replication card or preset picker.
+Search grids retain their existing enumeration;
+fixed configurations enumerate one child. Approval and execution resolve Core
+provenance from the actual imported checkout, with source parity required for an
+installed-package/sibling fallback. Separate cache-preparation evidence supplies
+only creation metadata, never new read or replay authority. See
+`docs/IFSM_UI_REPLICATION.md`.
+
 `scripts/dashboard.py` uses Streamlit `st.navigation` / `st.Page` for **IFVG Lab**
 (default), **ML Training**, **Dashboard Compatibility**, and **Strategy Analysis**.
 Only the selected page executes. Strategy Analysis owns the former shared pipeline
@@ -40,6 +66,20 @@ existing exact identities. Names are display annotations; they never replace an
 identity in a scientific join. Corrupt progress stays unavailable and cannot hide
 other saved studies. Verification scope derives from the frozen charter; ambiguous
 legacy records remain explicitly unresolved.
+
+IFVG **Study Configuration → Session Policy → Enabled entry sessions** offers
+the registered default sessions, each standard session individually, and
+**NY from 7am to 10:30am (Eastern Time)**. The custom registered value
+`enabled_entry_sessions.ny_0700_1030` composes
+`enabled_entry_sessions=["ny_0700_1030"]` with
+`doc_sessions={"ny_0700_1030": ["07:00", "10:30"]}` in that child's effective
+strategy configuration. Strategy-Core's existing entry-confirmation gate accepts
+07:00 inclusive through 10:30 exclusive in DST-aware `America/New_York`, including
+the gap between the standard London and New York sessions. Open positions retain
+their configured exit rules. Market-data `session_scheme`, day artifacts and
+Core defaults are unchanged. Search selections remain separate configurations
+with the registered baseline included automatically; their exact saved plans
+still require the existing approval before execution.
 
 `QUANT_LAB_DEVELOPER_MODE=1` must be set before startup to register the **Developer**
 page. The flag is captured once by `presentation/workspace_mode.py`; there is no
@@ -119,6 +159,51 @@ Real research purging starts at the first logical test day's boundary (18:00 ET
 on the preceding civil day), including an empty first test day. Source preflight
 also verifies the loaded Strategy-Core package against the intended checkout.
 
+Saved replay reuse now carries a `research_core_compatibility` proof. It reconstructs
+the recorded clean package identity at the pinned revision, compares committed
+runtime files (including build/dependency configuration), verifies the current
+checkout and loaded package, and binds the current interpreter/dependency inventory.
+Only explicitly classified documentation/ignore changes may differ. The historical
+environment and dirty files outside the recorded package scope were not recorded;
+the proof does not claim to reconstruct them. New schema-2 context companions bind
+the proof and must reproduce every accepted Core table exactly. Original replay,
+subject and schema-1 companion identities remain unchanged.
+
+New KMeans protocols use `median_impute_fold_empty_neutral_v2`. A feature entirely
+missing in training is unavailable for that whole fold, even if evaluation later
+contains values. Its numeric coordinate and missing indicator remain neutral after
+scaling. Saved preprocessing records the input/output schema, empty-column list,
+imputation and scaling decisions. Existing v1 protocols retain their historical
+semantics and identities; the new default receives a distinct protocol/fit identity.
+An entirely empty training feature matrix cannot be fitted.
+
+B0 projection version `ifvg_b0_selected_stage_projection_v2` joins verified FSM
+audit emissions for the exact selected parent, lock, opposing gap and inversion.
+It checks Core geometry formulas, original emission order, completed-bar ordinals,
+parent-window clocks and decision-time availability. New construction refuses
+unmapped advertised fields. Entry-FVG values remain structurally null for retests.
+The projection evidence and source hashes enter new view identities; S06 saves
+`b0_projection_evidence.json` and checks the scoped bundle against that evidence.
+The field contract is in [IFVG_B0_PROJECTION_REPAIR.md](docs/IFVG_B0_PROJECTION_REPAIR.md).
+
+Each new fitted supervised research fold saves `feature_schema.json`
+(`supervised_model_feature_schema_v1`), with the ordered raw and transformed names,
+types and dimensions. Fold reports distinguish training-empty inputs from source
+mapping status. Logistic portable manifests are schema 2; schema-1 artifacts stay
+readable. The frozen logistic imputer and CatBoost native-NaN numerical protocols
+are unchanged. Save/reload rejects schema drift and reproduces saved probabilities.
+Historical partial-B0 acceptance remains immutable. The authorized comparison is
+exploratory evidence on the same already-inspected period, with unchanged floors.
+It completed on the same 37 OOS candidates: prevalence Brier 0.241401, logistic
+0.375901, CatBoost 0.521333. Both fitted rungs worsened from the original partial
+projection; the repair establishes source/schema correctness, not positive lift.
+
+`search/research_readiness.py` derives actual eligibility from real labels and the
+existing fold engine before fitting: unavailable outcomes, setup-boundary removals,
+purging, embargo and final class counts reconcile per partition. The logical
+calendar does not depend on which dates emit candidates. Panel adequacy is assessed
+separately; additional market bars do not add labeled candidate outcomes.
+
 Research chart artifacts and their discovery catalog live under the selected
 search store at `research_replay_charts/` and `research_replay_chart_catalog.json`.
 They bind both v2/v3 identities and manifest hashes, the verified forward source,
@@ -133,7 +218,13 @@ candidate/label/fold evidence. `research_mbp1.py` supplies the local source comp
 and evidence adapter. Coverage remains unknown where source completeness is not
 evidenced; the feature lane remains offline research. The real MBP reader holds
 one day at a time and verifies its physical hashes on every reload, rather than
-retaining all study-day event frames. The default regime request
+retaining all study-day event frames. Archived vendor condition documents now
+reach coverage as checksum-bound negative evidence; a positive local receipt
+cannot silently clear a degraded/pending/missing vendor condition. The bounded
+[one-day conversion audit](docs/MBP_ONE_DAY_CONVERSION_AUDIT.md) proves exact
+DBN/parquet scalar and retained-order equivalence for February 23's associated
+physical files only. Source completeness and general snapshot recovery remain
+unknown; no completeness receipt was created. The default regime request
 uses completed numeric 5-minute bars, KMeans K=3 and descriptive reporting, fitted
 within each training fold. Candidate entry-decision observations are also
 available, using numeric members of the selected bundle and the unchanged
@@ -490,11 +581,16 @@ R2 additions (multi-child search, lineage, deltas, verifier integration):
   identity (within and across studies), `GeneratedProfileCapability` enforced
   BEFORE any replay, O_EXCL per-search lock with checkpoint heartbeats +
   stale-orphan break (resume-after-kill), atomic `search_state.json`
-  checkpoints per child transition, `cancel.requested` honored at child
-  boundaries only, store-identity verified reuse. Launch shim:
-  `scripts/ifvg_search_job.py` (start/status/cancel; worker refuses execution
-  without an explicit runner entry — real executors land with the R5
-  pipeline).
+  checkpoints per child transition, `cancel.requested` honored between
+  input-verification configurations, completed children and finalization stages,
+  with store-identity verified reuse. Metrics publish before the completed
+  checkpoint, and full replay tables are released before the next child.
+  `search/saved_strategy_result.py` recovers missing legacy metrics from one
+  verified execution table at a time; unavailable evidence fails closed.
+  Launch shim `scripts/ifvg_search_job.py` preserves existing replay identities
+  on resume and records the separate orchestration runtime source manifest via
+  `search/job_runtime.py`. Historical strategy replay identities are not rewritten
+  for control-flow-only repairs. See `docs/IFVG_STUDY_PAUSE_RECOVERY.md`.
 - **Profile-independent lineage** (`search/lineage.py`): setup → candidate →
   decision → trade lineage payloads derived from source-stable evidence
   (deterministic SC fvg ids + cursors); native→lineage one-to-one enforced
@@ -1574,3 +1670,90 @@ acceptance still transitively blocked by R1):
   navigation exemption; the source scan (`tests/agents/test_ifvg_help_scans.py`) enforces it.
 - **Unchanged**: Strategy-Core, the fixed M0–M3 lane, every immutable artifact identity, the
   exact-ID loading rule, S11, MBP-1's `research_only_offline` boundary, the backend contracts.
+
+
+### HTF selection-cap experiment support (2026-09-12)
+
+The registry now offers cap 2 as a pending value requiring exact strategy-search
+approval; cap 1 stays the default. Evaluate One fixed settings expose this cap.
+`search/htf_cap_experiment.py` creates the four fixed-profile drafts for the
+240/90-wait comparison, preventing automatic default expansion. Per-timeframe
+selection ranks both directions before taps and conflict/direction handling.
+The new `selection_audit.py` companion preserves complete per-bar inventory
+observations, pre-cap universes and HTF creations when the imported research
+Core supports them, with strict coverage and tap reconciliation. These source
+files enter replay identity; old artifacts and canonical tables stay immutable.
+
+The task-local Core branch ports only active-selected-HTF physical tracking
+after registry eviction, including schema-3 day seeds, and adds audit-only
+selection observations. The installed/live Core pin is unchanged. Required
+full replay uses the original 117-date bundle, four separately approved fixed
+profiles and source-comparable controls; no other research policies apply.
+
+
+### IFVG no-entry research (2026-09-14)
+
+See `docs/IFVG_NO_ENTRY_DROUGHT.md` and the frozen task artifacts under
+`../Claude-Quant-Lab-Research-Artifacts/archived-reports/ifvg_no_entry_drought_20260914/`. The isolated Core schema-4 day seed
+preserves pending logical-close bars and the last minute decision. This repairs
+seven partial-day deliveries without making bars available early, retains the
+active-selected-HTF repair, and changes source/seed identities. Historical studies
+and installed/live Core pins remain unchanged.
+
+The separately approved research policy `htf_direction_selection_policy` retains
+`mixed_direction_rank_v1` as default and adds `enabled_before_rank_v1`. The latter
+filters disabled directions before HTF admission/ranking, while preserving physical
+tracking, one setup/position and every unrelated setting. Its exact finite matrix
+is B0/D0/B1/D1; there is no second mechanism or combined policy. The root registry
+only exposes this field with a supporting research Core. Saved fixed drafts and
+headless worker enumeration are the supported workflow.
+
+New strategy-search v2 datasets optionally include manifest-bound
+`entry_activity_report.json`: explicit evaluation calendar, actual-entry-day counts,
+all consecutive zero-entry intervals/ties/censoring and adjacent elapsed/flat
+intervals. Stored resolution-day economics and all original charter gates remain
+separate; no activity statistic forces entries or supplies an acceptance threshold.
+Historical datasets remain readable. This is same-sample research, with no fitting,
+new data, June 11/holdout access or live promotion.
+
+## One-hour / four-hour gap choice (September 18, 2026)
+
+The IFSM study launcher uses a process-local verified development Core with a selectable starting one-hour/four-hour gap policy. Missing htf_gap_invalidation_policy retains execution_wick_full_fill_v1; own_timeframe_close_v1 separates physical traversal from policy validity. Policy-bearing seeds reject incompatible resumes. Immutable audit companions add source-bound gap_validity_events.parquet. See docs/IFVG_GAP_INVALIDATION_CHOICE.md.
+
+### IFSM mandatory daily close and Chicago entry windows (2026-09-18)
+
+The process-local IFSM research Core now supports `scheduled_daily_close_v1`,
+timezone-aware entry schedules and schema-6 daily-close state. Historical holding
+and preset identities remain unchanged. New mandatory-close tables use
+`core_executed_trade_priced_exit_v2`, with actual exit price and planned schedule
+identity; partial-R time exits enter the original costs and equity exactly once.
+Supplemental `forced_exit_events` and independent position-interval audits verify
+every planned closure, including weekends. The structural calendar is preserved;
+a separately frozen holding calendar governs deadline/reopening decisions. See
+`docs/IFVG_DAILY_CLOSE_SESSIONS.md` for causal execution, calendar provenance,
+legacy compatibility, the exact 32-profile scope and broker-validation limits.
+
+### Report delivery and working storage (2026-09-22)
+
+`reports/` contains only local, light peer-review deliverables: conclusions,
+effective settings, trade/equity/activity tables, comparisons and relevant charts.
+No report directory is versioned. Reusable exporters belong in source code;
+tests import them there and keep small fixtures under `tests/`.
+
+New ad hoc replay stores, raw traces, preparation diagnostics, test output, source checkouts
+and package staging belong outside this repository, by default under the sibling
+`Claude-Quant-Lab-Research-Artifacts/`. Working-output helpers reject report
+directories. Synthetic tests may use pytest's managed OS temporary directory,
+which preserves the test-only namespace safeguards. The September 22 cleanup preserves unique historical evidence under
+that sibling's `archived-reports/` directory, with original names and immutable
+payloads. Historical report paths in old records describe their original location;
+they do not imply files available in a clean checkout. Verified duplicate
+extractions and disposable work files can be removed without altering study results.
+
+`generate_costed_exports` in `search/costed_exports.py` defaults to seven compact
+audit files, retaining scheduled-exit prices, deadlines, costs and partial R.
+Full JSON/Parquet evidence requires `include_raw_evidence=True` and an output
+outside the checkout. Existing output folders must be empty. The FSM audit and
+timeframe-variant CLIs also reject checkout paths and every directory named
+`reports` for diagnostic output, including symlink aliases; their ordinary
+saved-study readers and caches keep existing paths.

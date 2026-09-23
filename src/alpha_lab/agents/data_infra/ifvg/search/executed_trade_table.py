@@ -73,6 +73,7 @@ __all__ = [
 EXECUTED_TRADE_TABLE_STORE = "executed_trade_tables"
 EXECUTED_TRADE_TABLE_SIDECAR = "executed_trade.arrow"
 EXECUTED_TRADE_TABLE_PROJECTION_ID = "core_executed_trade_exact_v1"
+SCHEDULED_EXIT_PROJECTION_ID = "core_executed_trade_priced_exit_v2"
 
 _STRING = pa.large_string()
 _TS = pa.timestamp("ns", "UTC")
@@ -125,6 +126,17 @@ EXECUTED_TRADE_TABLE_SCHEMA_V1: pa.Schema = pa.schema(
     ]
 )
 EXECUTED_TRADE_TABLE_SCHEMA_HASH = arrow_schema_hash(EXECUTED_TRADE_TABLE_SCHEMA_V1)
+EXECUTED_TRADE_TABLE_SCHEMA_V2 = pa.schema([
+    *EXECUTED_TRADE_TABLE_SCHEMA_V1,
+    pa.field("exit_ticks", pa.float64()),
+    pa.field("scheduled_exit_deadline_ts_utc", _TS),
+    pa.field("scheduled_exit_schedule_id", _STRING),
+])
+_PROJECTION_SCHEMAS = {
+    EXECUTED_TRADE_TABLE_PROJECTION_ID: EXECUTED_TRADE_TABLE_SCHEMA_V1,
+    SCHEDULED_EXIT_PROJECTION_ID: EXECUTED_TRADE_TABLE_SCHEMA_V2,
+    "research_scoped_executed_trade_v2": EXECUTED_TRADE_TABLE_SCHEMA_V1,
+}
 
 _INT_COLUMNS = (
     "record_schema_version",
@@ -148,9 +160,9 @@ _TS_COLUMNS = ("entry_ts_utc", "resolution_ts_utc")
 class ExecutedTradeTablePayload(FrozenContract):
     core_replay_id: str = Field(pattern=SHA256_PATTERN)
     source_record_schema_version: int = Field(ge=1)
-    table_projection_id: Literal["core_executed_trade_exact_v1"] = (
-        EXECUTED_TRADE_TABLE_PROJECTION_ID
-    )
+    table_projection_id: Literal[
+        "core_executed_trade_exact_v1", "core_executed_trade_priced_exit_v2"
+    ] = EXECUTED_TRADE_TABLE_PROJECTION_ID
     executed_trade_arrow_schema_hash: str = Field(pattern=SHA256_PATTERN)
     source_table_name: Literal["executed_trade"] = "executed_trade"
 
@@ -197,12 +209,23 @@ class VerifiedExecutedTradeTable:
         return self.envelope.executed_trade_table_id
 
 
-def project_executed_trades(frame: pd.DataFrame) -> pd.DataFrame:
+def project_executed_trades(
+    frame: pd.DataFrame, *, projection_id: str = EXECUTED_TRADE_TABLE_PROJECTION_ID,
+) -> pd.DataFrame:
     """The exact projection of a (raw or already projected) executed-trade
     frame: the 42 declared columns, deterministically typed, rows sorted by
     ``trade_id``. A missing column refuses; no column is inferred or filled."""
 
-    names = list(EXECUTED_TRADE_TABLE_SCHEMA_V1.names)
+    names = list(_PROJECTION_SCHEMAS[projection_id].names)
+    if frame.empty and projection_id == SCHEDULED_EXIT_PROJECTION_ID:
+        frame = frame.copy()
+        for name in ("exit_ticks", "scheduled_exit_deadline_ts_utc", "scheduled_exit_schedule_id"):
+            if name not in frame:
+                frame[name] = pd.Series(dtype="object")
+    if projection_id == EXECUTED_TRADE_TABLE_PROJECTION_ID and (
+        "resolution" in frame and frame.resolution.eq("scheduled_close").any()
+    ):
+        raise ValueError("scheduled_close requires the explicit priced-exit v2 projection")
     missing = sorted(set(names) - set(frame.columns))
     if missing:
         raise ValueError(f"executed-trade frame lacks projection columns: {missing}")
@@ -210,9 +233,9 @@ def project_executed_trades(frame: pd.DataFrame) -> pd.DataFrame:
     for column in names:
         if column in _INT_COLUMNS:
             out[column] = pd.to_numeric(out[column], errors="raise").astype("int64")
-        elif column in _FLOAT_COLUMNS:
+        elif column in _FLOAT_COLUMNS or column == "exit_ticks":
             out[column] = pd.to_numeric(out[column], errors="raise").astype("float64")
-        elif column in _TS_COLUMNS:
+        elif column in _TS_COLUMNS or column == "scheduled_exit_deadline_ts_utc":
             out[column] = pd.to_datetime(out[column], utc=True, errors="raise")
         elif column == "trading_day":
             out[column] = pd.to_datetime(out[column], errors="raise").dt.date
@@ -225,18 +248,24 @@ def project_executed_trades(frame: pd.DataFrame) -> pd.DataFrame:
     return out.sort_values("trade_id", kind="mergesort").reset_index(drop=True)
 
 
-def executed_trade_table_bytes(projected: pd.DataFrame) -> bytes:
-    return frame_to_arrow_bytes(projected, EXECUTED_TRADE_TABLE_SCHEMA_V1)
+def executed_trade_table_bytes(
+    projected: pd.DataFrame, *, projection_id: str = EXECUTED_TRADE_TABLE_PROJECTION_ID,
+) -> bytes:
+    return frame_to_arrow_bytes(projected, _PROJECTION_SCHEMAS[projection_id])
 
 
-def executed_trade_table_id_for(core_replay_id: str, *, record_schema_version: int) -> str:
+def executed_trade_table_id_for(
+    core_replay_id: str, *, record_schema_version: int,
+    projection_id: str = EXECUTED_TRADE_TABLE_PROJECTION_ID,
+) -> str:
     """The table's identity DERIVED from the core replay — no listing needed."""
 
     return canonical_contract_sha256(
         ExecutedTradeTablePayload(
             core_replay_id=str(core_replay_id),
             source_record_schema_version=int(record_schema_version),
-            executed_trade_arrow_schema_hash=EXECUTED_TRADE_TABLE_SCHEMA_HASH,
+            table_projection_id=projection_id,
+            executed_trade_arrow_schema_hash=arrow_schema_hash(_PROJECTION_SCHEMAS[projection_id]),
         )
     )
 
@@ -246,22 +275,24 @@ def build_executed_trade_table(
     trades: pd.DataFrame,
     *,
     record_schema_version: int,
+    projection_id: str = EXECUTED_TRADE_TABLE_PROJECTION_ID,
 ) -> tuple[ExecutedTradeTableEnvelope, bytes]:
     """Project the child's executed-trade table and mint the envelope; the
     table's own ``record_schema_version`` must equal the declared one."""
 
-    projected = project_executed_trades(trades)
+    projected = project_executed_trades(trades, projection_id=projection_id)
     versions = set(int(v) for v in projected["record_schema_version"].unique())
     if versions and versions != {int(record_schema_version)}:
         raise ValueError(
             f"executed-trade table carries record_schema_version {sorted(versions)}, not the "
             f"declared {record_schema_version}"
         )
-    table_bytes = executed_trade_table_bytes(projected)
+    table_bytes = executed_trade_table_bytes(projected, projection_id=projection_id)
     payload = ExecutedTradeTablePayload(
         core_replay_id=str(core_replay_id),
         source_record_schema_version=int(record_schema_version),
-        executed_trade_arrow_schema_hash=EXECUTED_TRADE_TABLE_SCHEMA_HASH,
+        table_projection_id=projection_id,
+        executed_trade_arrow_schema_hash=arrow_schema_hash(_PROJECTION_SCHEMAS[projection_id]),
     )
     envelope = ExecutedTradeTableEnvelope.from_payload(
         payload,
@@ -341,7 +372,8 @@ def _assert_bound(envelope: ExecutedTradeTableEnvelope, table_bytes: bytes) -> N
         raise ValueError("executed-trade table bytes do not hash to the envelope")
     if len(table_bytes) != int(envelope.byte_size):
         raise ValueError("executed-trade table byte size disagrees with the envelope")
-    if envelope.payload.executed_trade_arrow_schema_hash != EXECUTED_TRADE_TABLE_SCHEMA_HASH:
+    expected_schema = _PROJECTION_SCHEMAS[envelope.payload.table_projection_id]
+    if envelope.payload.executed_trade_arrow_schema_hash != arrow_schema_hash(expected_schema):
         raise ValueError("executed-trade table envelope names another projection schema")
 
 
@@ -405,7 +437,8 @@ def load_executed_trade_table(
 
     with pyarrow.ipc.open_file(pa.BufferReader(table_bytes)) as reader:
         schema = reader.schema
-    if arrow_schema_hash(schema) != EXECUTED_TRADE_TABLE_SCHEMA_HASH:
+    expected_schema = _PROJECTION_SCHEMAS[envelope.payload.table_projection_id]
+    if arrow_schema_hash(schema) != arrow_schema_hash(expected_schema):
         raise ValueError(
             "stored executed-trade table does not carry the declared projection schema"
         )

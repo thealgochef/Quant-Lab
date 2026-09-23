@@ -127,9 +127,11 @@ SEARCH_STORE_NAMES: tuple[str, ...] = (
     "research_groups",
     "research_approvals",
     "research_context_companions",
+    "research_core_compatibility",
     "research_cohorts",
     "research_labels",
     "research_regime_executions",
+    "geometry_feature_artifacts",
 )
 
 _ENVELOPE_FILE = "envelope.json"

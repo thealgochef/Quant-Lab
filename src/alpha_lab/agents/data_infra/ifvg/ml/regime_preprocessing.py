@@ -14,6 +14,11 @@ Rows whose regime inputs are ALL missing never enter a fit: they are typed
 fit identity (``training_row_ids_hash`` + ``training_feature_matrix_hash``)
 and the typed-null coverage report agree exactly (review F10).
 
+V2 retains every declared numeric coordinate. A column absent from the
+entire training fold is unavailable for that whole fold, including when
+test values exist: its retained zero and missingness indicator standardize
+to neutral zero. The training-only decision is persisted with the schema.
+
 The fitted pipeline persists dual-format (canonical JSON parameter payload
 whose hash is ``fitted_parameter_payload_hash``, plus a joblib binary for
 reuse); persistence and reload verification live in ``regime_store``.
@@ -32,6 +37,8 @@ from ..context_folds import IfvgContextFoldDefinition
 from ..search.identities import canonical_contract_sha256
 
 __all__ = [
+    "REGIME_MISSINGNESS_POLICY_V1",
+    "REGIME_MISSINGNESS_POLICY_V2",
     "WINSORIZATION_POLICIES",
     "OBSERVATION_KEY_COLUMNS",
     "OBSERVATION_TS_COLUMNS",
@@ -39,11 +46,14 @@ __all__ = [
     "observation_ts_column",
     "keyed_observations",
     "training_feature_matrix_hash",
+    "regime_input_matrix",
     "FittedRegimePreprocessing",
     "fit_regime_preprocessing",
 ]
 
 WINSORIZATION_POLICIES: tuple[str, ...] = ("none", "clip_p01_p99_train_fitted_v1")
+REGIME_MISSINGNESS_POLICY_V1 = "median_impute_with_indicator_v1"
+REGIME_MISSINGNESS_POLICY_V2 = "median_impute_fold_empty_neutral_v2"
 
 #: The observation key column (candidate views key by ``candidate_id``; a
 #: completed-bar panel keys by ``row_id``) — first present wins.
@@ -111,6 +121,22 @@ def training_feature_matrix_hash(
     return canonical_contract_sha256({"features": list(features), "rows": rows})
 
 
+def regime_input_matrix(
+    frame: pd.DataFrame,
+    features: tuple[str, ...],
+    training_all_missing_features: tuple[str, ...] = (),
+) -> np.ndarray:
+    """Apply the saved training-only unavailable-column decision before imputation."""
+
+    matrix = frame.loc[:, list(features)].to_numpy(dtype=float, copy=True)
+    empty = set(training_all_missing_features)
+    if not empty.issubset(features):
+        raise ValueError("training-empty columns are outside the declared input schema")
+    if empty:
+        matrix[:, [index for index, feature in enumerate(features) if feature in empty]] = np.nan
+    return matrix
+
+
 @dataclass(frozen=True, slots=True)
 class FittedRegimePreprocessing:
     """One fold's fitted pipeline + its canonical parameter payload."""
@@ -132,7 +158,11 @@ class FittedRegimePreprocessing:
     def transform(self, frame: pd.DataFrame) -> np.ndarray:
         """Deterministic transform of any rows carrying the feature columns."""
 
-        matrix = frame.loc[:, list(self.features)].to_numpy(dtype=float)
+        matrix = regime_input_matrix(
+            frame,
+            self.features,
+            tuple(self.parameter_payload.get("training_all_missing_features", ())),
+        )
         imputed = self.imputer.transform(matrix)
         n = len(self.features)
         if self.clip_lower is not None and self.clip_upper is not None:
@@ -146,6 +176,7 @@ def fit_regime_preprocessing(
     fold: IfvgContextFoldDefinition,
     *,
     winsorization_policy: str = "none",
+    missingness_policy: str = REGIME_MISSINGNESS_POLICY_V2,
 ) -> FittedRegimePreprocessing:
     """Fit the fixed pipeline on the fold's TRAINING rows only.
 
@@ -155,6 +186,8 @@ def fit_regime_preprocessing(
     excluded (typed ``source_feature_missing`` downstream).
     """
 
+    if missingness_policy not in (REGIME_MISSINGNESS_POLICY_V1, REGIME_MISSINGNESS_POLICY_V2):
+        raise ValueError(f"unknown regime missingness policy {missingness_policy!r}")
     if winsorization_policy not in WINSORIZATION_POLICIES:
         raise ValueError(
             f"unknown winsorization policy {winsorization_policy!r}; "
@@ -191,7 +224,14 @@ def fit_regime_preprocessing(
         )
     train = raw[present_mask]
 
-    imputer = SimpleImputer(strategy="median", add_indicator=True)
+    keep_empty = missingness_policy == REGIME_MISSINGNESS_POLICY_V2
+    empty_features = tuple(
+        feature for feature, empty in zip(features, np.isnan(train).all(axis=0), strict=True)
+        if empty
+    )
+    imputer = SimpleImputer(
+        strategy="median", add_indicator=True, keep_empty_features=keep_empty
+    )
     imputed = imputer.fit_transform(train)
     n = len(features)
     clip_lower = clip_upper = None
@@ -212,7 +252,10 @@ def fit_regime_preprocessing(
     )
     output_names = (*features, *indicator_names)
     parameter_payload = {
-        "pipeline": "median_impute_indicator__winsorize__standard_scale_v1",
+        "pipeline": (
+            "median_impute_fold_empty_neutral__winsorize__standard_scale_v2"
+            if keep_empty else "median_impute_indicator__winsorize__standard_scale_v1"
+        ),
         "features": list(features),
         "winsorization_policy": winsorization_policy,
         "imputer_medians": _jsonable_array(imputer.statistics_),
@@ -222,6 +265,14 @@ def fit_regime_preprocessing(
         "scaler_scale": _jsonable_array(scaler.scale_),
         "output_feature_names": list(output_names),
     }
+    if keep_empty:
+        parameter_payload.update(
+            missingness_policy=missingness_policy,
+            training_all_missing_features=list(empty_features),
+            empty_feature_policy="unavailable_for_entire_fold_neutral_scaled_coordinates_v1",
+            numeric_output_features=list(features),
+            missing_indicator_features=list(indicator_names),
+        )
     return FittedRegimePreprocessing(
         fold_index=fold.fold_index,
         features=tuple(features),

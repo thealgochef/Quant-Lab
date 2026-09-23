@@ -9,6 +9,12 @@ from typing import Any
 import pandas as pd
 
 from .artifact_io import ArtifactVerificationError, VerifiedIfvgPair
+from .b0_projection import (
+    B0_PROJECTION_VERSION,
+    LEGACY_B0_PROJECTION_VERSION,
+    B0ProjectionSource,
+    project_b0_candidates,
+)
 from .context_contracts import ContextRecordTable
 from .context_experiment_contracts import (
     CandidateStageContextLink,
@@ -226,6 +232,7 @@ class CandidateFeatureView:
     frame: pd.DataFrame
     tier_features: dict[ContextFeatureTier, tuple[str, ...]]
     m3_status: str
+    b0_projection_evidence: dict[str, Any] | None = None
 
     def frame_for_tier(self, tier: ContextFeatureTier) -> pd.DataFrame:
         columns = [*_IDENTITY_COLUMNS, *self.tier_features[tier]]
@@ -394,10 +401,32 @@ def _m3_values(
     return result
 
 
-def build_candidate_feature_view(pair: VerifiedIfvgPair) -> CandidateFeatureView:
+def build_candidate_feature_view(
+    pair: VerifiedIfvgPair,
+    *,
+    b0_source: B0ProjectionSource | None = None,
+    decision_bars: pd.DataFrame | None = None,
+    allow_legacy_partial_projection: bool = False,
+) -> CandidateFeatureView:
     core = pair.v2.tables
     context = pair.v3.tables
     candidates = _one(core[RecordTable.ENTRY_CANDIDATE], "candidate_id", "v2 candidates")
+    b0_evidence = None
+    if b0_source is not None and decision_bars is not None:
+        if (
+            b0_source.reference.get("v2_dataset_id") != pair.v2.reference.artifact_id
+            or b0_source.reference.get("v2_manifest_payload_sha256")
+            != pair.v2.reference.manifest_payload_sha256
+        ):
+            raise ArtifactVerificationError("B0 source is not bound to the accepted v2 artifact")
+        candidates, b0_evidence = project_b0_candidates(
+            candidates, b0_source, decision_bars=decision_bars, advertised_features=M0_FEATURES,
+        )
+    elif not allow_legacy_partial_projection:
+        raise ArtifactVerificationError(
+            "unmapped advertised B0 features: exact selected Core stage audit source "
+            "and verified decision bars are required (including five elapsed-bar clocks)"
+        )
     links = _one(
         context[ContextRecordTable.CANDIDATE_CONTEXT_LINK],
         "candidate_id",
@@ -485,15 +514,25 @@ def build_candidate_feature_view(pair: VerifiedIfvgPair) -> CandidateFeatureView
         raise ArtifactVerificationError("candidate view contains duplicate candidates")
     m3_status = m3_cohort_status(frame)
     artifact_pair_hash = canonical_contract_sha256(pair.reference)
-    feature_registry_hash = canonical_contract_sha256(
-        {tier.value: list(features) for tier, features in TIER_FEATURE_REGISTRY.items()}
-    )
+    registry_payload = {
+        tier.value: list(features) for tier, features in TIER_FEATURE_REGISTRY.items()
+    }
+    if b0_evidence is not None:
+        registry_payload["b0_projection_version"] = B0_PROJECTION_VERSION
+    feature_registry_hash = canonical_contract_sha256(registry_payload)
     view_payload = {
         "artifact_pair_hash": artifact_pair_hash,
         "feature_registry_hash": feature_registry_hash,
         "candidate_ids": frame["candidate_id"].tolist(),
         "candidate_link_ids": frame["context_capture_id"].tolist(),
     }
+    if b0_evidence is not None:
+        view_payload["b0_projection_evidence_hash"] = b0_evidence["projection_evidence_hash"]
+    else:
+        b0_evidence = {
+            "projection_version": LEGACY_B0_PROJECTION_VERSION,
+            "mapping_status": "legacy_partial_unverified",
+        }
     return CandidateFeatureView(
         view_id=canonical_contract_sha256(view_payload),
         artifact_pair_hash=artifact_pair_hash,
@@ -501,6 +540,7 @@ def build_candidate_feature_view(pair: VerifiedIfvgPair) -> CandidateFeatureView
         frame=frame,
         tier_features=dict(TIER_FEATURE_REGISTRY),
         m3_status=m3_status,
+        b0_projection_evidence=b0_evidence,
     )
 
 

@@ -683,8 +683,17 @@ QL_REPLAY_SOURCE_SCOPE: tuple[str, ...] = (
     "src/alpha_lab/agents/data_infra/ifvg/development_access.py",
     "src/alpha_lab/agents/data_infra/ifvg/entry_dataset.py",
     "src/alpha_lab/agents/data_infra/ifvg/profiles.py",
+    "src/alpha_lab/agents/data_infra/ifvg/fsm_audit_preparation.py",
+    "src/alpha_lab/agents/data_infra/ifvg/selection_audit.py",
+    "src/alpha_lab/agents/data_infra/ifvg/gap_validity_evidence.py",
+    "src/alpha_lab/agents/data_infra/ifvg/trade_stats.py",
+    "src/alpha_lab/agents/data_infra/ifvg/daily_close_evidence.py",
+    "src/alpha_lab/agents/data_infra/ifvg/search/executed_trade_table.py",
     "src/alpha_lab/agents/data_infra/ifvg/search/child_replay.py",
+    "src/alpha_lab/agents/data_infra/ifvg/search/entry_activity.py",
+    "src/alpha_lab/agents/data_infra/ifvg/manifest.py",
     "src/alpha_lab/agents/data_infra/ifvg/search/identities.py",
+    "src/alpha_lab/agents/data_infra/ifvg/search/runtime_source.py",
     "src/alpha_lab/agents/data_infra/ifvg/search/strategy_executor.py",
 )
 

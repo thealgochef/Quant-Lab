@@ -987,6 +987,7 @@ def build_child_companions(
     repository_states: tuple | None = None,
     authoritative_source_blob: str | None = None,
     cost_points: float | None = None,
+    activity_cutoff_utc: str | None = None,
 ) -> dict:
     """Publish the existing child evidence for explicit dates and warmup.
 
@@ -1032,6 +1033,8 @@ def build_child_companions(
             "slice v2 dataset identity (bind them via functools.partial); "
             "repository evidence is never fabricated"
         )
+
+    from .entry_activity import entry_activity_payload
 
     tables = result.capture.tables
     resolved = result.resolved_profile
@@ -1117,6 +1120,15 @@ def build_child_companions(
                 ),
                 evaluation_config_hash=evaluation_config_hash,
                 tick_size=CostPolicy().tick_size,
+            ),
+            entry_activity_report=(
+                entry_activity_payload(
+                    tables.get(RecordTable.EXECUTED_TRADE, pd.DataFrame()),
+                    list(replay_dates[warmup_days:]),
+                    cutoff_utc=activity_cutoff_utc,
+                    timezone=resolved.section.session_scheme.timezone,
+                    boundary=resolved.section.session_scheme.trading_day_boundary,
+                ) if activity_cutoff_utc is not None else None
             ),
             invariant_audit=invariant,
             data_access_audit=result.capture.access_policy.audit_dict(),

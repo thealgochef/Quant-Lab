@@ -49,18 +49,14 @@ data/processed/
 /data/ifvg_preparation_jobs/
 /data/ifvg_search_jobs/
 /data/ifvg_study_drafts/
+/data/ifsm_ui_replication/
 /data/ifvg_visual_review/
 /data/ifvg_profiles.json
 /ifvg_search_runs/
-
-# Generated reports and acceptance-test workspaces (including nested stores).
-# Historical studies/audits are retained locally; curated docs remain trackable.
-/reports/ifvg_browser_acceptance/
-/reports/ifvg_final_review/
-/reports/ifvg_fsm_audit/
-/reports/ifvg_tf_variants/
-/reports/parent_staleness_audit/
-/reports/IFVG_WORK_COMPLETION_SUMMARY.docx
+# Peer-review deliveries are local outputs at every nesting level, never source.
+[Rr][Ee][Pp][Oo][Rr][Tt][Ss]/
+# Immutable local research event records; narrative contracts remain versioned.
+/ledger/
 /IFVG_FUNNEL.md
 /IFVG_LABELS.md
 
@@ -97,3 +93,6 @@ Thumbs.db
 /.w3_new_bundle_name
 *.code-workspace
 /.pytest_tmp/
+
+# Captured pipeline job state stays local.
+/data/ifvg_pipeline_jobs/

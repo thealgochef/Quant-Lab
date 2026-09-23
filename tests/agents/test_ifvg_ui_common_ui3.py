@@ -116,3 +116,52 @@ def test_paginate_controls_carry_help() -> None:
     size = next(s for s in at.selectbox if s.key == "ifvg_study_v1_ui3_pages_page_size")
     page = next(n for n in at.number_input if n.key == "ifvg_study_v1_ui3_pages_page")
     assert size.help and page.help
+
+
+def test_regime_sample_warning_explains_threshold_without_claiming_missing_files(monkeypatch):
+    monkeypatch.setattr(common, "technical_details_enabled", lambda: False)
+
+    def _samples():
+        import ifvg_ui_common as common
+        import streamlit as st
+
+        common.render_empty_state(
+            st,
+            "insufficient_regime_partition",
+            detail=(
+                "pooled_regime_covered, regime:0, regime:1 — below the stamped minimum of "
+                "20 trades per regime stratum (proposed_protocol_default)"
+            ),
+        )
+
+    app = apptest.AppTest.from_function(_samples, default_timeout=60).run()
+    assert not app.exception
+    warning = "\n".join(item.value for item in app.warning)
+    assert "too few trade observations" in warning
+    assert "restore" not in warning.lower() and "unavailable" not in warning.lower()
+    detail = "\n".join(item.value for item in app.caption)
+    assert "All trades with regime assignments, Regime 0, Regime 1" in detail
+    assert "20 trades per regime group" in detail
+    assert "proposed study threshold" in detail
+    assert "pooled_regime_covered" not in detail and "proposed_protocol_default" not in detail
+
+
+def test_regime_sample_detail_keeps_existing_sanitization(monkeypatch):
+    monkeypatch.setattr(common, "technical_details_enabled", lambda: False)
+
+    def _samples():
+        import ifvg_ui_common as common
+        import streamlit as st
+
+        common.render_empty_state(
+            st,
+            "insufficient_regime_partition",
+            detail="regime:0 below 20 trades; secret=fixture_value /private/fixture.csv",
+        )
+
+    app = apptest.AppTest.from_function(_samples, default_timeout=60).run()
+    assert not app.exception
+    detail = "\n".join(item.value for item in app.caption)
+    assert "Regime 0 below 20 trades" in detail
+    assert "fixture_value" not in detail and "/private/fixture.csv" not in detail
+    assert "<redacted>" in detail and "<path>" in detail

@@ -25,7 +25,10 @@ from alpha_lab.agents.data_infra.ifvg.search.store import (
 )
 from alpha_lab.agents.data_infra.ifvg.search.store_namespace import initialize_store_namespace
 from tests.agents.ifvg_search.test_orchestrator import _charter
-from tests.agents.ifvg_search.test_research_subject_data import subject_fixture
+from tests.agents.ifvg_search.test_research_subject_data import (
+    compatibility_fixture,
+    subject_fixture,
+)
 
 
 @pytest.fixture
@@ -68,9 +71,14 @@ def sources(tmp_path, monkeypatch):
         )
 
     monkeypatch.setattr(research_subject, "bind_research_subject", bind)
-    monkeypatch.setattr(research_subject, "preflight_research_subject", lambda *a: {"passed": True})
+    def checked(subject, *_args):
+        proof = compatibility_fixture(subject)
+        return {"passed": True, "core_compatibility_proof_id": proof.proof_id,
+                "core_compatibility_proof": proof.model_dump(mode="json")}
+
+    monkeypatch.setattr(research_subject, "preflight_research_subject", checked)
     monkeypatch.setattr(
-        research_executor, "preflight_research_subject", lambda *a: {"passed": True}
+        research_executor, "preflight_research_subject", checked
     )
     software = {
         "quant_lab": "a" * 40,

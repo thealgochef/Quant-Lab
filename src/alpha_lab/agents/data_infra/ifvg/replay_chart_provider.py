@@ -22,7 +22,9 @@ by timestamp — and a pure timestamp TIE is indeterminate, never ordered.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import time
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
@@ -935,8 +937,15 @@ def _model_evidence(ctx: ReplayContext, candidate_id: str) -> dict[str, dict[str
     return payload
 
 
-def session_scheme_windows() -> dict[str, dict[str, Any]]:
-    """Session window geometry from the exact strategy_core schemes."""
+def session_scheme_windows(
+    section: Mapping[str, Any] | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Default geometry, or the exact saved child's document-session windows.
+
+    A supplied section is read as saved; missing session fields never inherit
+    today's defaults. Market-session geometry remains independent of entry
+    windows, so a custom entry preset does not change the engine bands.
+    """
     from strategy_core.constants import IFVG_DOC_SESSION_SCHEME, RESEARCH_SESSION_SCHEME
 
     result: dict[str, dict[str, Any]] = {}
@@ -953,7 +962,44 @@ def session_scheme_windows() -> dict[str, dict[str, Any]]:
                 for session, window in sorted(scheme.sessions.items())
             },
         }
+    if section is not None:
+        try:
+            clock = section["session_scheme"]
+            timezone = clock["timezone"]
+            if not isinstance(timezone, str) or not timezone:
+                raise ValueError("missing session timezone")
+            windows = section["doc_sessions"]
+            parsed = {
+                name: (time.fromisoformat(start), time.fromisoformat(end))
+                for name, (start, end) in sorted(windows.items())
+            }
+            result["doc"] = {
+                "timezone": timezone,
+                "trading_day_boundary": time.fromisoformat(
+                    clock["trading_day_boundary"]
+                ).isoformat(),
+                "sessions": {
+                    name: {
+                        "start": start.isoformat(),
+                        "end": end.isoformat(),
+                        "crosses_midnight": start > end,
+                    }
+                    for name, (start, end) in parsed.items()
+                },
+            }
+        except (AttributeError, KeyError, TypeError, ValueError) as error:
+            raise MissingEvidenceError(
+                "session_scheme", "saved entry-session windows are incomplete or invalid"
+            ) from error
     return result
+
+
+def _saved_session_scheme_windows(ctx: ReplayContext) -> dict[str, dict[str, Any]]:
+    effective = ctx.pair.v2.reports.get("effective_config.json")
+    section = effective.get("section") if isinstance(effective, Mapping) else None
+    if not isinstance(section, Mapping):
+        raise MissingEvidenceError("session_scheme", "saved effective section is missing")
+    return session_scheme_windows(section)
 
 
 def candidate_evidence(
@@ -1449,7 +1495,7 @@ def candidate_evidence(
             if pd.notna(candidate.get("in_doc_session"))
             else None
         ),
-        "schemes": session_scheme_windows(),
+        "schemes": _saved_session_scheme_windows(ctx),
     }
 
     return CandidateEvidence(

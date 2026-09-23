@@ -126,13 +126,32 @@ def _worker(args) -> int:
     # DEV-R5-10 closure (safety F4): the worker's --store-root is passed to
     # the factory explicitly, matching the pipeline shim's contract — the
     # real search entry no longer defaults to the canonical namespace.
-    wiring = _resolve_runner_entry(entry)(charter, store_root=store_root)
+    wiring = dict(_resolve_runner_entry(entry)(charter, store_root=store_root))
+    from alpha_lab.agents.data_infra.ifvg.search.job_runtime import (  # noqa: PLC0415
+        guard_resume_identities,
+        record_job_runtime,
+    )
+    from alpha_lab.agents.data_infra.ifvg.search.runner_registry import (  # noqa: PLC0415
+        REGISTERED_RUNNER_ENTRIES,
+    )
+
+    if entry == REGISTERED_RUNNER_ENTRIES["search_strategy_development_v1"]:
+        from alpha_lab.agents.data_infra.ifvg.search.saved_strategy_result import (  # noqa: PLC0415
+            make_saved_strategy_result_loader,
+        )
+
+        wiring["result_loader"] = make_saved_strategy_result_loader(store_root)
+    record_job_runtime(ROOT, state_root, args.search_id)
+    resolver = guard_resume_identities(
+        wiring["identity_resolver"], _state_payload(state_root, args.search_id)
+    )
     result = run_search(
         charter,
         store_root=store_root,
         state_root=state_root,
-        identity_resolver=wiring["identity_resolver"],
+        identity_resolver=resolver,
         child_runner=wiring["child_runner"],
+        result_loader=wiring.get("result_loader"),
         cost_points=wiring.get("cost_points"),
         prewarm=wiring.get("prewarm"),
     )

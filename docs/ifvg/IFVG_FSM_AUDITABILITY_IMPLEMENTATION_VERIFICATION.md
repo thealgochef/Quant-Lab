@@ -1,6 +1,13 @@
 # IFVG FSM Auditability Repair — Implementation Verification
 
-Status: implementation complete; publication fields in §7 are recorded at the
+Historical record (August 2026). Generated reports are no longer versioned.
+The eight formerly tracked files are recoverable from commit
+`c2a8af4` using `git show c2a8af4:reports/ifvg_fsm_audit/<filename>`;
+the September 22 cleanup also preserved their exact bytes outside the repository
+under `../Claude-Quant-Lab-Research-Artifacts/archived-reports/ifvg_fsm_audit/`.
+Paths below describe the original publication, not files shipped in a clean clone.
+
+Status at publication: implementation complete; publication fields in §7 are recorded at the
 Phase 6.5 gate. Behavior-neutral by construction and by measurement: NO
 strategy rule/profile/label change, NO training, NO ablation, existing
 artifacts immutable, sealed/June-11 untouched, Trade-Lab unmodified.
@@ -9,8 +16,8 @@ artifacts immutable, sealed/June-11 untouched, Trade-Lab unmodified.
 
 Quant-Lab HEAD `bd6825924d02f76c108e81ef1d4edb27b032d55a` on `platform-refactor`.
 The full `git status --porcelain` inventory (93 entries of pre-existing dirt
-from the prior IFVG windows — none of it belongs to this task) is preserved
-verbatim at `reports/ifvg_fsm_audit/QL_DIRTY_STATE_BEFORE_EDITS.txt`.
+from the prior IFVG windows — none of it belonged to that task) was captured
+verbatim as `QL_DIRTY_STATE_BEFORE_EDITS.txt` (retrieval described above).
 Strategy-Core was clean at `f16d27d07f68820b3a5958eafd66cce68f6a7f3c`.
 
 ## 2. Strategy-Core changes (committed + pushed BEFORE the QL pin edit)
@@ -72,7 +79,7 @@ Key measured facts: 251 slot deaths = 215 terminal + 36 provisional;
 htf-fill terminal deaths; 83 parent-fill terminal deaths; 13 S4 + 15 S3
 deaths (the review-queue strata).
 
-## 5. Reports
+## 5. Reports at the original publication
 
 `reports/ifvg_fsm_audit/`: `IFVG_FSM_AUDITABILITY_PARITY_REPORT.json`,
 `IFVG_FSM_FUNNEL_REPORT.{md,json}` (the three previously-unknown quantities —

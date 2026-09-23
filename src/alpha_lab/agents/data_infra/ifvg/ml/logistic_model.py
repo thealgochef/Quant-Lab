@@ -56,6 +56,7 @@ from .comparison_rows import (
     join_fold_local_features,
     label_artifact_content_id,
 )
+from .model_feature_schema import fitted_feature_schema, training_missingness
 from .model_protocols import LOGISTIC_PROTOCOL_ID
 
 __all__ = [
@@ -147,6 +148,8 @@ def resolve_logistic_protocol(
     }
     if forbidden:
         raise ValueError(f"manual override cannot alter locked protocol: {sorted(forbidden)}")
+    if not ordered_features or len(set(ordered_features)) != len(ordered_features):
+        raise ValueError("ordered features must be nonempty and unique")
     outside = sorted(set(extra_categorical_features) - set(ordered_features))
     if outside:
         raise ValueError(f"categorical features outside the ordered features: {outside}")
@@ -372,6 +375,14 @@ def run_logistic_fold_models(
         test_y = pd.to_numeric(test["binary_target"], errors="raise").astype(int).to_numpy()
         pipeline = _build_pipeline(protocol)
         pipeline.fit(train_x, train_y)
+        report["training_missingness"] = training_missingness(
+            train_x, protocol.categorical_features
+        )
+        report["feature_schema"] = fitted_feature_schema(pipeline, protocol)
+        if report["training_missingness"]["numeric_training_empty_features"] != (
+            report["feature_schema"]["numeric_training_empty_features"]
+        ):
+            raise ValueError("logistic imputer empty columns disagree with training rows")
         if fitted_fold_sink is not None:
             fitted_fold_sink[fold.fold_index] = pipeline
         if prediction_input_sink is not None:
@@ -446,7 +457,7 @@ def run_logistic_fold_models(
 LOGISTIC_FIT_MANIFEST = "manifest.json"
 LOGISTIC_FIT_PARAMETERS = "fitted_parameters.json"
 LOGISTIC_FIT_PIPELINE = "pipeline.joblib"
-_ARTIFACT_SCHEMA_VERSION = 1
+_ARTIFACT_SCHEMA_VERSION = 2
 
 
 def _fitted_parameter_payload(pipeline: Pipeline) -> dict[str, Any]:
@@ -508,6 +519,7 @@ def persist_logistic_fit(
     """
 
     directory = Path(directory)
+    feature_schema = fitted_feature_schema(pipeline, protocol)
     directory.mkdir(parents=True, exist_ok=True)
     fitted_payload = _fitted_parameter_payload(pipeline)
     fitted_hash = canonical_contract_sha256(fitted_payload)
@@ -525,6 +537,7 @@ def persist_logistic_fit(
         "fold_index": fold_index,
         "fitted_parameter_payload_hash": fitted_hash,
         "software_versions": dict(protocol.package_versions),
+        "feature_schema": feature_schema,
         "references": {
             LOGISTIC_FIT_PARAMETERS: {
                 "file_sha256": _file_sha256(parameters_path),
@@ -551,6 +564,8 @@ def reload_logistic_fit(directory: Path) -> tuple[Pipeline, dict[str, Any]]:
 
     directory = Path(directory)
     manifest = json.loads((directory / LOGISTIC_FIT_MANIFEST).read_text(encoding="utf-8"))
+    if manifest.get("artifact_schema_version") not in {1, _ARTIFACT_SCHEMA_VERSION}:
+        raise ValueError("unsupported portable logistic artifact schema version")
     for name, reference in manifest["references"].items():
         target = directory / name
         if not target.exists():
@@ -566,4 +581,18 @@ def reload_logistic_fit(directory: Path) -> tuple[Pipeline, dict[str, Any]]:
     if canonical_contract_sha256(fitted_payload) != manifest["fitted_parameter_payload_hash"]:
         raise ValueError("fitted parameter payload does not hash to the manifest value")
     pipeline = joblib.load(directory / LOGISTIC_FIT_PIPELINE)
+    if canonical_contract_sha256(_fitted_parameter_payload(pipeline)) != (
+        manifest["fitted_parameter_payload_hash"]
+    ):
+        raise ValueError("loaded logistic model disagrees with persisted fitted parameters")
+    if manifest["artifact_schema_version"] == _ARTIFACT_SCHEMA_VERSION:
+        from types import SimpleNamespace  # noqa: PLC0415
+
+        schema = manifest["feature_schema"]
+        protocol_schema = SimpleNamespace(
+            ordered_features=tuple(schema["raw_ordered_features"]),
+            categorical_features=tuple(schema["categorical_features"]),
+        )
+        if fitted_feature_schema(pipeline, protocol_schema) != schema:
+            raise ValueError("loaded logistic model disagrees with persisted feature schema")
     return pipeline, manifest

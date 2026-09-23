@@ -99,7 +99,15 @@ def pipeline_real_research_entry(charter, semantic, *, store_root):
             or bundle.supersession_head_witness != approval.payload.supersession_head_witness
         ):
             raise PermissionError("research charter authority differs from the approved plan")
-        preflight_research_subject(subject, root, REPO_ROOT)
+        facts = preflight_research_subject(subject, root, REPO_ROOT)
+        frozen_proof = plan.get("core_compatibility_proofs", {}).get(subject.subject_id)
+        if frozen_proof is None or facts.get("core_compatibility_proof") != frozen_proof:
+            raise PermissionError("Core compatibility evidence differs from the reviewed plan")
+        from .research_compatibility import load_research_core_compatibility  # noqa: PLC0415
+
+        saved_proof = load_research_core_compatibility(root, frozen_proof["proof_id"])
+        if saved_proof.model_dump(mode="json") != frozen_proof:
+            raise PermissionError("stored Core compatibility evidence differs from approval")
         if request.mbp1_comparison:
             from .research_mbp1 import preflight_research_mbp1  # noqa: PLC0415
 
@@ -115,6 +123,7 @@ def pipeline_real_research_entry(charter, semantic, *, store_root):
         REPO_ROOT,
         cost_points=float(charter.payload.cost_policy.cost_points_round_turn),
         mbp1_preflight=plan.get("mbp1_preflights", {}).get(subject.subject_id),
+        core_compatibility_proof=plan["core_compatibility_proofs"][subject.subject_id],
     )
     child = ChildSpec(**subject.child_spec)
     core = CoreStrategyReplayIdentity.model_validate_json(subject.core_envelope_json)

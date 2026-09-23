@@ -1,0 +1,533 @@
+{
+  "schema_version": 1,
+  "repository_url": "https://github.com/thealgochef/Strategy-Core.git",
+  "base_commit": "a4e3303179ac6a1088aecaaa3482934cf1aec4d7",
+  "target_commit": "38825ed86f3e3940515cdc28d9df567ddccc0b70",
+  "target_ref": "refs/heads/codex/daily-close-sessions",
+  "source_identity": "9db57357b1702b7022592980644eb20f320d19fcf0e309a4431836717d6a1eb1",
+  "bundle_file": "ifsm-daily-close.bundle",
+  "bundle_sha256": "0cc662e382807716370734808b2c99dd0ec62bde05569caa5a38c1cb793ed9f2",
+  "bundle_bytes": 70936,
+  "commits": [
+    "3bebfef67f5a620ede8aab4e4a6ca65015a8f6b3",
+    "6f63a4c7be191c6ecb9162440b407cee66cb6276",
+    "b0d116b94a6fdb62c21e24a5835f243dd8f47c0d",
+    "8c12648131da0362f65a4a9dd0d9bd3edc832018",
+    "541c004a17103195d55c132a85a1223d63fd028a",
+    "38825ed86f3e3940515cdc28d9df567ddccc0b70"
+  ],
+  "source_files": [
+    {
+      "path": "src/strategy_core/__init__.py",
+      "sha256": "204040477a1b507f79dd48bb7320bf3e20e611da5a21749f09b25927df3f0608",
+      "bytes": 8008,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/candles/__init__.py",
+      "sha256": "a4dea81629f49494ac7a785697bb3c37e5b98a046d840d497e3c2593f4aee4d2",
+      "bytes": 402,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/candles/_buckets.py",
+      "sha256": "d3c626411cbd9245139602036612a7f394ca323a34cca57110367a4441a12d1f",
+      "bytes": 8647,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/candles/_ids.py",
+      "sha256": "88b742c927c9eb6d5ae6abb9bd21989049ba507aeae879f10ea381faeb89109e",
+      "bytes": 1637,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/candles/batch.py",
+      "sha256": "c80c77b8cd630feb64af9d2d4b59537d3e6ccb31a244d2467171664b75b06b5c",
+      "bytes": 9062,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/candles/exchange_calendar.py",
+      "sha256": "6c4f3bed351370419934a10cf96c75f2cfbf2b8ce98844c91a0b31562c872123",
+      "bytes": 22152,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/candles/streaming.py",
+      "sha256": "80b4d03610a175706a318f1e0dda010c6f556519e002aa6812dda82fd0b9ceee",
+      "bytes": 9770,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/candles/time_batch.py",
+      "sha256": "55eab08a1ce324215175e01a439709c4248907a941843803c4fb9c15d534f414",
+      "bytes": 13795,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/candles/time_streaming.py",
+      "sha256": "08353917c9ee9f36e81d3134934fa53dd007982e940445509779cad1ef437c54",
+      "bytes": 16742,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/constants.py",
+      "sha256": "f78ebde42e95d99d52a2eaa0aec716f1040743fe62ff0daef0bcd60687ae2bb4",
+      "bytes": 23011,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/contract/__init__.py",
+      "sha256": "fad81cd36353eebee6aa9377867b5883e290da942000e956dfdfe73e5a779741",
+      "bytes": 255,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/contract/loader.py",
+      "sha256": "bb488995de5a835fd49fafe2ba25ca291af141629715f050f3fdcfdd0a5f01fe",
+      "bytes": 5318,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/contract/schema.py",
+      "sha256": "e3fd5a0c5181c0ce38fde4afbf820d1f76e803c92ada2bc2e12eb89c30d58009",
+      "bytes": 14347,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/data/__init__.py",
+      "sha256": "16a659f5765ab860206b8ffe6187de3831620332b23b69fe6be7421b9360252d",
+      "bytes": 426,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/data/databento_live.py",
+      "sha256": "4d7b5bdab4d60b8ec8c08fb336e8d0fddc58d9b6677134afe8d287dfb74eaef4",
+      "bytes": 7766,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/data/databento_parquet.py",
+      "sha256": "5a8d9814c592921960b8109e12f45507465501a09e2eef7dce9099a01ff668d7",
+      "bytes": 52946,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/data/events.py",
+      "sha256": "a78862132f3ab3fa9802c6316d21c03a2b73fd8da41bbb731955cda3c37b23a6",
+      "bytes": 4216,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/data/ordering.py",
+      "sha256": "435858ab10d42b86bbe9c500223fb7be30679abb990292049b751b580fd4d4c7",
+      "bytes": 1895,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/data/prior_day.py",
+      "sha256": "292d1f987ed0621dcd7f001dfd19501fffa1c5937e0222e2d4665910303b8037",
+      "bytes": 8106,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/decisions/__init__.py",
+      "sha256": "c59c5068996ef632a9574d51046c55d1da4d7bc2dba083fa68f347f01c3bbb6b",
+      "bytes": 777,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/decisions/dedup.py",
+      "sha256": "575bd282dd81f1a11a647f7bc79b54e1806b0a5dbb7df3d90a1ef39c4bb8ba9f",
+      "bytes": 1299,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/decisions/features.py",
+      "sha256": "d4b0154909a8f1c43ff36da87531b8e0ecfa0ef7d64c51611037a58ecd2655f6",
+      "bytes": 9027,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/decisions/honest_entry.py",
+      "sha256": "d9acd2f0d6e51160cb94aa45bef4389b2ae73fa7d9df7a9bbac1acdf9b512a16",
+      "bytes": 8854,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/decisions/outcomes.py",
+      "sha256": "ab7fc229b81c9e2f2dbf0a8c90a77ab20b1fa43b036e857a2a1f4ecbd8305f13",
+      "bytes": 9096,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/decisions/sessions.py",
+      "sha256": "743ca9e5aa31f2cd94b276308a4eaf50f64009b6861eb5cd31a6a3fdd7e3c0ea",
+      "bytes": 6427,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/decisions/streaming.py",
+      "sha256": "3ce8dd59cbf74abacf36e0ce583c579614c90a4c0d84f5bd72a247e8fff9a896",
+      "bytes": 18289,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/decisions/touch.py",
+      "sha256": "5b5d9364fb0a1cb25eb38587d478541b4188627bc204581c5f6eeb9658ccc470",
+      "bytes": 5461,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/decisions/zones.py",
+      "sha256": "de987bf41e5a77347294103bccb036a4b119bea2d15e5f4b9a292294453998ad",
+      "bytes": 5000,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/py.typed",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/runtime/__init__.py",
+      "sha256": "104e6b3cbc03a51a93bbf53db838c9fc1d8722c302d6d71c4a7a67e7ea624e67",
+      "bytes": 569,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/runtime/context.py",
+      "sha256": "5c8dbee03e7dcf7ddd9d42e4c7d6a4e109ee021d3e814bb3446cc34ef1f5933c",
+      "bytes": 5160,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/runtime/levels.py",
+      "sha256": "b7347d5cb02da776118741c4b6cee6c3d4c9fc00d80a461c9d057a9368e0e762",
+      "bytes": 9430,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/runtime/live.py",
+      "sha256": "6a745d8a4f14030084e94c67e37d65872ddbcbd73ab05813d3c45394d0807eb4",
+      "bytes": 6921,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/runtime/replay.py",
+      "sha256": "0d90a43f67951558a1203a1cbc71f3f3318e98f788927bcec5a750a720b9d84f",
+      "bytes": 10207,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/runtime/state.py",
+      "sha256": "44701c4ac86ebcfca57afc7f3265462240e1cca7990d817babeb81d80ca1a385",
+      "bytes": 21534,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/runtime/wiring.py",
+      "sha256": "0eaaca314c5cbc0a59859c045d54479864f1fd07c84625a76109db0f474dba13",
+      "bytes": 1668,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/strategies/__init__.py",
+      "sha256": "69f66d320888c5ed4149de26add89ef7d264bd55d3f4dc364d6f68c5810bc014",
+      "bytes": 1250,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/strategies/ifvg_smc/__init__.py",
+      "sha256": "79b03de2e01035ea31ba3441b7de3c56fef87d81343984edc627fec6e305b0c2",
+      "bytes": 604,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/strategies/ifvg_smc/context_config.py",
+      "sha256": "52739a97de154d18dc5b013609847806a88983b1665e3e5db5b2eba87e003615",
+      "bytes": 19848,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/strategies/ifvg_smc/context_features.py",
+      "sha256": "4093fcdc7bebd5ea82f9af40bced0e6f98892ef44a0d68a07bce630e2843ee63",
+      "bytes": 41272,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/strategies/ifvg_smc/context_records.py",
+      "sha256": "2b052c3500462ec486e39a561a13e62dfa18c6b86e706c20926f00a0cf4efea1",
+      "bytes": 11132,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/strategies/ifvg_smc/daily_close.py",
+      "sha256": "7b48d8380ae057f1a6b8d9d3d1e60aca302ecdb88f1317a69c85c94fb5684cb0",
+      "bytes": 14947,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/strategies/ifvg_smc/gap_validity.py",
+      "sha256": "191e0f81380171b226885dbf9954bf5784c419226ced39febb66b8f936b0faca",
+      "bytes": 10850,
+      "line_endings": "git"
+    },
+    {
+      "path": "src/strategy_core/strategies/ifvg_smc/labels.py",
+      "sha256": "530356e13604c68f61f83e8b83e6b28f602cce0368d90405086a178da2b7cedb",
+      "bytes": 4086,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/strategies/ifvg_smc/plugin.py",
+      "sha256": "8ce1ff6d8e65ccb28e5c5b27e49faf482d01b798145140179315298dab612e5c",
+      "bytes": 13626,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/strategies/ifvg_smc/records.py",
+      "sha256": "e90b525b660e0528bcd007243619b496bc8ad36797a4e0aee1d08860372118d4",
+      "bytes": 19318,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/strategies/ifvg_smc/reducer.py",
+      "sha256": "1f42548dba6726d1636abf32dc4963f8c8eb0dd5e7d840e528abb43cc6ae01b9",
+      "bytes": 122285,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/strategies/ifvg_smc/replay.py",
+      "sha256": "b36ecbc3162a72d36936c2e55caae51229ab4f47067c63d1966c20969ff3da87",
+      "bytes": 44090,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/strategies/ifvg_smc/section.py",
+      "sha256": "fdcfa890867519cc3ae0c8673e4b4e5e2efb3b9bcd005e7459348872af1d6d19",
+      "bytes": 17147,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/strategies/ifvg_smc/selection_audit.py",
+      "sha256": "256670e300c5b97ca601dddba490a89c6e0cfe6461fd8e24521d0488c92b348e",
+      "bytes": 5601,
+      "line_endings": "mixed",
+      "crlf_lines": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        61,
+        62,
+        63,
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71,
+        72,
+        73,
+        74,
+        75,
+        76,
+        77,
+        78,
+        81,
+        82,
+        83,
+        84,
+        85,
+        86,
+        87,
+        93,
+        94,
+        95,
+        96,
+        97,
+        98,
+        99,
+        100,
+        101,
+        102,
+        103,
+        104,
+        105,
+        106,
+        107,
+        108,
+        109,
+        110,
+        111,
+        113,
+        114,
+        115,
+        116,
+        117,
+        118,
+        119,
+        120,
+        123,
+        124,
+        125,
+        126,
+        127,
+        128,
+        129,
+        130,
+        131,
+        132,
+        133,
+        134,
+        135
+      ]
+    },
+    {
+      "path": "src/strategy_core/strategies/ifvg_smc/state.py",
+      "sha256": "316f0ca9b30b21f6221372e220f97ee517665171ec77fcef2dda1c9a4fc0724b",
+      "bytes": 3859,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/strategies/protocols.py",
+      "sha256": "0250c48f4904e64c1f83e9ff449d844be56c526e641c9e717f6c8aa15c2cb084",
+      "bytes": 14839,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/strategies/registry.py",
+      "sha256": "827b6e2e948a7ecda7967ec25f1da433a0bfbf6020893e60bc4b1fa869737dca",
+      "bytes": 4961,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/strategies/touch_reversal/__init__.py",
+      "sha256": "6037e5e8a53d84eb974e359444dce7c66985fc6f421d9e8e03be0efb33554dbd",
+      "bytes": 856,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/strategies/touch_reversal/plugin.py",
+      "sha256": "216caa619aee7b66537b7b6c0dd6380750f6ed9c61e4f2739079071805bfde89",
+      "bytes": 18371,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/strategies/touch_reversal/section.py",
+      "sha256": "0d3637f21e56d209f8e359a4a94733c1dd44865d5df4af91698b0d5759a6549a",
+      "bytes": 9357,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/structures/__init__.py",
+      "sha256": "b3f963e8e8c350f75fec4ccdffed1cc0bd1f08d6b5eb996595d8ad0b20c17124",
+      "bytes": 571,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/structures/context.py",
+      "sha256": "9ed4f2978989021147a6bdba8ee5bf5a4e6cbaa0873238abc28e0d1f18712042",
+      "bytes": 5534,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/structures/displacement.py",
+      "sha256": "ff19956d73a01c2ed069f8aeb4bf05017727c70bfe5a0c17590b5246744dad4e",
+      "bytes": 41201,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/structures/equal_levels.py",
+      "sha256": "7ea1dec75d504330df021075a30444a255d9dc78fa618cbaf4fcb99812eae573",
+      "bytes": 47919,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/structures/fvg.py",
+      "sha256": "0932fe9fe05d2932d9e83fc90cb94ede2f5d1f9f736afcbef1a441706d86c8d1",
+      "bytes": 23885,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/structures/market_structure.py",
+      "sha256": "2927be854d83e9cd9f452384c576b93f43eada1cfc00023e9bd3de8b0d06a40c",
+      "bytes": 33297,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/structures/sweeps.py",
+      "sha256": "560c09c73839c00ab2543e2e53b141566ca0e7fd011871009dbc3017d908dbca",
+      "bytes": 7480,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/structures/swings.py",
+      "sha256": "580441fd8b0e140a5689befd191111c9056638827ee21131715b914d7b03963c",
+      "bytes": 5315,
+      "line_endings": "crlf"
+    },
+    {
+      "path": "src/strategy_core/types.py",
+      "sha256": "1419b033e616ed6d8dab58ef39054c3315aeb1b450c6ba36430e2bb1c591a170",
+      "bytes": 8958,
+      "line_endings": "crlf"
+    }
+  ]
+}

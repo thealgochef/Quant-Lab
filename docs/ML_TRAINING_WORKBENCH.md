@@ -1,12 +1,47 @@
 # Streamlit ML Training Workbench
 
-Updated: 2026-09-08.
+Updated: 2026-09-22.
+
+The research API also supports `geometry_comparison=True` with `B0_CORE`,
+`mbp1_comparison=False` and no regime request. This freezes the comparison
+`B0_CORE` versus `B0_GEOMETRY_CORE_ATR14_V1`; each arm runs the registered training
+prevalence, logistic and bundle-aware CatBoost protocols. Prepare and verify each
+saved child's own context once, inspect actual purged/embargoed fold populations,
+validate the fixed additions, then freeze the exact request before starting
+`scripts/ifvg_research_job.py`. Separate one-child groups allow the bounded batch
+to continue after a child failure. Completed arms are verified and reused on
+resume. The existing UI presets and production activation scope are unchanged.
+Geometry labels distinguish the actual Core ATR14 bundle from historical ATR20
+preparation, which was superseded before fitting; both retain their technical keys.
+See `IFVG_GEOMETRY_CORE_ATR14_RESEARCH.md`. The historical batch delivery location
+was `reports/ifvg_geometry_batch/20260909/`; those local outputs are not part of a
+clean checkout. Use an available preserved study delivery for its evidence.
 
 The ML Training Workbench is the primary Quant-Lab UI for building local ML datasets, running walk-forward CatBoost evaluation, and saving runtime model bundles. It is mounted by `scripts/dashboard.py` and implemented in `scripts/ml_training_tab.py`.
 
 The workbench is local-data only: it discovers and reads Databento-derived Parquet files from disk through `TickStore`. It does not call the Databento API.
 
 ## Opening a workspace
+
+Open **My studies → New study → Evaluate → Configuration** to modify a single
+strategy configuration. The existing Configuration step selects one registered
+value per setting; it does not add default comparisons or a Cartesian search.
+There is no home-screen replication card or preset picker. Dates, warmup, seed
+and gates remain in their existing study steps.
+Parent/opposing distance **160 ticks** and reaction window **20 parent bars** are
+now selectable alongside the existing timeout choices. Whole-setup lifetime
+**180/240 processed 1m bars** and the two parent policies appear only when the
+loaded Core actually implements them. `None` means unbounded and remains distinct
+from “Keep baseline.”
+
+For exact IFSM replication, run `python scripts/run_ifsm_research_ui.py` and open
+`http://localhost:8502`. This separate process loads the preserved, hash-verified
+research Core with the active-selected-HTF repair, uses current Quant-Lab UI code,
+and writes only to `data/ifsm_ui_replication/`. It neither installs a package nor
+repoints the normal dashboard or running geometry work. Each new study retains
+its actual source identity and requires its own exact approval; selecting values
+never starts a replay or inherits earlier approvals. See
+[IFSM UI replication](IFSM_UI_REPLICATION.md) for every tested change and result.
 
 Completed IFVG searches evaluate post-warmup trades only. The parent-staleness
 audit on 2026-09-08 corrected warmup leakage and the initial drawdown peak. Its
@@ -71,17 +106,110 @@ saves it; subsequent changes to a saved form autosave. Duplicate questions and
 configurations receive an advisory. Names must be descriptive rather than paths
 or technical identifiers.
 
+Under **Study Configuration → Session Policy → Enabled entry sessions**, choose
+**Asia only**, **London only**, **New York only**, or
+**NY from 7am to 10:30am (Eastern Time)** alongside the existing default option.
+The custom NY window allows new entry confirmations from **7:00am inclusive to
+10:30am exclusive, New York time**, with daylight saving time handled automatically.
+It is continuous through those hours, including time outside the standard doc-session
+windows. Positions opened within the window continue under their configured exit
+rules after 10:30am; other entry conditions still apply. Replay-chart document-session
+bands follow that configuration's saved windows. The default sessions and
+market-data session labels keep their existing definitions.
+
+In a search, each selected entry-session option is a separate configuration;
+selecting several compares those policies and automatically includes the registered
+baseline. It does not combine their trading hours into one configuration. Inspect
+the exact combinations in Review before approving and running the study.
+
+For a parent-retest timeout backtest, choose **Search**, then under **Search axes
+→ Staleness** select **Parent retest staleness timeout (1m bars)**. Available
+values are **None (unbounded), 60, 90, 120, 240, 360, and 480**. Selecting
+60/90/120/240 evaluates four challengers plus the unbounded baseline, with other
+axes held at baseline. Each configuration requires a full sequential replay.
+The clock counts processed one-minute bars in S1 after the current parent is
+selected; a replacement parent restarts it. A retest at the configured limit
+is still eligible, and expiry occurs on the following bar if still waiting.
+
+Additional search choices are available under **Staleness** and **Risk
+Admissibility**:
+
+| Setting | Additional choices | Value used when empty with the standard baseline |
+| --- | --- | --- |
+| Opposing-FVG timeout | 60, 90, 120 one-minute bars | No timeout (unbounded) |
+| HTF registry max age | 1, 2, 3, 4, 5 days | 15 days |
+| Max executed trades per day | 1, 2, 3 | No daily trade cap |
+
+The opposing-FVG timeout starts when the parent retest locks the setup and
+expires on the first bar beyond the selected limit. HTF age counts calendar-day
+differences between trading-day dates, including weekends; a zone at the age
+limit remains, and older zones are removed. The execution cap counts trades
+opened across all sessions of the trading day, resetting at 18:00 ET; it does
+not count candidates or close an existing trade.
+
+Every default option now displays its actual value and units instead of
+"accepted doc-default baseline". **If left empty** beneath each menu shows the
+value inherited from the selected baseline profile in both the normal
+**Configure study** form and the Developer wizard. Empty means keep that
+setting unchanged; it does not disable it or authorize a run. Other strategy
+rules still apply when a particular timeout or cap is unbounded. An unavailable
+baseline is labeled rather than replaced by an assumed default.
+
+Selecting alternatives adds comparisons with the registered default, which is
+included automatically. Selecting several settings tests all combinations:
+the three opposing timeouts, five HTF ages and three daily caps together produce
+96 configurations once their defaults are included (4 × 6 × 4). Settings left
+empty keep their baseline values, except dependent fields explicitly controlled
+by a composite option such as **Entry-near-parent gate**. Selection and saving
+alone do not start a backtest.
+
+Adding registered choices changes the registry hash included in exact strategy
+approval. Previously approved plans need matching approval against the current
+registry before launching again; saved results and approval records remain
+immutable.
+
 Continue a draft, explicitly run a ready study, or inspect a running study's saved
 progress. Draft cards also offer **Details and actions** for rename, clone and
 archive. A selected running detail view refreshes every five seconds. **Stop after
-current work** requests safe cancellation. Failed/interrupted studies retain
-supported resume actions; backend readiness and authorization checks still govern
-execution. A full progress bar alone does not establish completion. If a workflow
+current work** requests a pause at the next work boundary: after the current
+configuration and its saved metrics, between input-verification configurations,
+or between finalization stages. A pending request stays visible until honored.
+The screen reports completed, reused, failed, running, queued and stopped work
+separately; attempted includes failed configurations. It labels input verification
+separately from replay, and records timing for new attempts. Legacy missing times
+remain explicitly unavailable.
+
+An interrupted study stays paused until **Resume study** is clicked. Refreshing
+or opening it does not launch work. Resume verifies the original identities,
+reuses completed replay artifacts and saved metrics, and retries unfinished or
+failed configurations. Missing legacy metrics can be recovered from verified
+saved executions without replay. Changed source/data identities fail closed;
+they require the original runtime or a separate study. Backend readiness and
+authorization checks still govern execution. See
+[study pause and recovery](IFVG_STUDY_PAUSE_RECOVERY.md). A full progress bar alone
+does not establish completion. If a workflow
 never saved its progress, restore that evidence or clone its saved settings.
+
+Study preparation validates a shared day-artifact/seed chain once per worker,
+instead of reconstructing the same bars and levels for every configuration.
+Every new configuration still authorizes the exact paths and hashes both input
+files for every approved date; changed bytes refuse reuse. Different artifact
+settings or locations require a separate validation. Only verified input
+references are retained, not decoded bars or strategy state. A resumed worker
+starts with fresh validation. Both chronological replay drives and the final
+input-integrity checks remain unchanged. This implementation carries a new
+replay-source identity; historical source identities are never rewritten.
 
 An explicitly approved strategy search can be saved with **Run study** enabled
 without starting it. Approval follows the exact saved configurations, dates,
 thresholds, costs and seed; changing those settings requires matching approval.
+On **Configure study → Review**, the **Study approval** panel shows the exact
+configuration combinations, date scope, costs and thresholds, plus the local
+data metadata check. Resolve any listed evidence blockers, enter your reviewer
+name, check **I approve this exact strategy study**, and select **Save study
+approval**. This is one approval for the displayed strategy search; saving it
+does not launch work. A settings change resets the confirmation. The panel
+then confirms that the exact study is approved and **Run study** is available.
 Only clicking Run freezes and launches the study. See
 [saved strategy-search approval](IFVG_STRATEGY_SEARCH_APPROVAL.md) for the operator
 record and execution contract.
@@ -90,6 +218,69 @@ record and execution contract.
 
 Under **New study → More study types**, choose **Feature and model study**.
 This opens the source-based research form rather than a new strategy charter.
+
+The older **Context feature study** and **IFVG Lab — Experiments** forms stop
+before fitting when the selected pair lacks exact B0 stage/decision-bar sources.
+Their message directs new work to **Feature and model study**. Saved context
+studies remain readable. Explicit legacy partial-view reconstruction is limited
+to tests and historical analysis; it is not a default or a source-validation
+bypass for new studies.
+
+Saved studies retain their original identities. Documentation-only Core updates
+can be reused only with an immutable compatibility proof covering the pinned
+source, current checkout/package and runtime environment, followed by exact Core
+table reconciliation for a new context capture. Behavior-changing revisions remain
+blocked. Historical dependency versions outside the saved evidence are unknown;
+the new proof records that limitation rather than silently replacing the old pin.
+
+Before treating a bounded acceptance as evaluable, inspect actual labeled fold
+counts after scope, availability, setup grouping, purge and embargo. Candidate R6
+still requires 150 training observations per fold; five-minute panel R6 requires
+300 usable training bars and has separate stability/occupancy gates. Panel regimes
+describe market conditions and map the latest completed bar to each candidate at
+decision time. They do not provide more labeled trades. New fold preprocessing
+keeps training-empty features unavailable throughout evaluation and persists that
+decision for consistent saving/reloading.
+
+When a regime group has fewer trades than its reporting floor, the UI states that
+there are too few observations and shows the affected groups/threshold. This is
+different from a missing or corrupt artifact. Passing the panel clustering gates
+does not establish sufficient trade-by-regime samples or predictive feature lift.
+
+The [bounded acceptance report](../reports/r5_r6_acceptance/20260908/ACCEPTANCE_REPORT.md)
+records an actual parent-240 B0 ladder and five-minute KMeans run for February
+23–June 10, 2026. Four supervised folds contain 37 held-out candidates; all seven
+panel folds pass their descriptive gates. Reload reproduces saved predictions and
+regime distances. Both fitted models score worse than training prevalence here.
+Ten of 28 declared B0 fields are wholly empty because its historical feature view
+read fields from the wrong record shape. This run therefore verifies the workflow
+on the materialized inputs, not the complete intended B0 feature set. Candidate
+R6, trade-by-regime reporting and MBP comparisons retain their sample/evidence
+blockers. B0→B7 and S11 were not run; the report states the remaining requirements.
+
+New B0 views use `ifvg_b0_selected_stage_projection_v2`: exact selected Core stage
+records, verified geometry/event/ordinal/parent-clock parity and availability at
+the candidate decision. Missing mapping evidence blocks a new study. Structural
+entry-FVG nulls on retests remain valid and are reported separately from features
+empty within a training fold. S06 persists the source and candidate-level repair
+evidence. Fitted folds persist ordered raw/transformed feature schemas and verify
+them with model reload. See [the field contract](IFVG_B0_PROJECTION_REPAIR.md) and
+the local [controlled comparison report](../reports/b0_projection_repair/20260909/REPORT.md).
+That comparison uses the same dates, folds, outcomes, costs, model settings and
+seeds, and is exploratory evidence on an already-inspected period.
+
+The controlled run completed with the same 37 OOS rows: Brier was 0.241401 for
+prevalence, 0.375901 for logistic and 0.521333 for CatBoost. Both fitted models
+worsened relative to their original partial-B0 scores (0.331452 and 0.458105).
+All ten repaired fields are 143/143 populated and all eight predictive models
+reload; neither software completion nor the repaired mapping establishes
+sufficient evidence or predictive improvement. No tuning followed these results.
+
+The independent [one-day MBP audit](MBP_ONE_DAY_CONVERSION_AUDIT.md) covers logical
+February 23 and its February 22/23 physical files only. Conversion scalar/order
+equivalence passes; completeness remains unknown and snapshot event redundancy is
+unproved. Archived degradation warnings now reach coverage even alongside positive
+local receipts. Other dates are not certified, and R5B remains blocked.
 
 1. Select one or more **Saved strategy configurations**. The form displays each
    exact child's target in R, round-trip cost, evaluation dates and warmup count.
@@ -483,3 +674,83 @@ That file is not automatically a Strategy-Core v3 bundle. The deferred bundle ta
 - RFECV must run once before walk-forward, not per fold.
 - Label purging remains required for walk-forward leakage control.
 - No model profitability, robustness, or live readiness claim is valid without a current v3 backtest/paper-trading evidence chain.
+
+
+### HTF selection-cap experiment support (2026-09-12)
+
+The registry now offers cap 2 as a pending value requiring exact strategy-search
+approval; cap 1 stays the default. Evaluate One fixed settings expose this cap.
+`search/htf_cap_experiment.py` creates the four fixed-profile drafts for the
+240/90-wait comparison, preventing automatic default expansion. Per-timeframe
+selection ranks both directions before taps and conflict/direction handling.
+The new `selection_audit.py` companion preserves complete per-bar inventory
+observations, pre-cap universes and HTF creations when the imported research
+Core supports them, with strict coverage and tap reconciliation. These source
+files enter replay identity; old artifacts and canonical tables stay immutable.
+
+The task-local Core branch ports only active-selected-HTF physical tracking
+after registry eviction, including schema-3 day seeds, and adds audit-only
+selection observations. The installed/live Core pin is unchanged. Required
+full replay uses the original 117-date bundle, four separately approved fixed
+profiles and source-comparable controls; no other research policies apply.
+
+
+### IFVG no-entry research (2026-09-14)
+
+See `docs/IFVG_NO_ENTRY_DROUGHT.md` and the frozen task artifacts under
+`../Claude-Quant-Lab-Research-Artifacts/archived-reports/ifvg_no_entry_drought_20260914/`. The isolated Core schema-4 day seed
+preserves pending logical-close bars and the last minute decision. This repairs
+seven partial-day deliveries without making bars available early, retains the
+active-selected-HTF repair, and changes source/seed identities. Historical studies
+and installed/live Core pins remain unchanged.
+
+The separately approved research policy `htf_direction_selection_policy` retains
+`mixed_direction_rank_v1` as default and adds `enabled_before_rank_v1`. The latter
+filters disabled directions before HTF admission/ranking, while preserving physical
+tracking, one setup/position and every unrelated setting. Its exact finite matrix
+is B0/D0/B1/D1; there is no second mechanism or combined policy. The root registry
+only exposes this field with a supporting research Core. Saved fixed drafts and
+headless worker enumeration are the supported workflow.
+
+New strategy-search v2 datasets optionally include manifest-bound
+`entry_activity_report.json`: explicit evaluation calendar, actual-entry-day counts,
+all consecutive zero-entry intervals/ties/censoring and adjacent elapsed/flat
+intervals. Stored resolution-day economics and all original charter gates remain
+separate; no activity statistic forces entries or supplies an acceptance threshold.
+Historical datasets remain readable. This is same-sample research, with no fitting,
+new data, June 11/holdout access or live promotion.
+
+## One-hour / four-hour gap choice (September 18, 2026)
+
+The IFSM research screen (python scripts/run_ifsm_research_ui.py) now exposes One-hour / four-hour gap invalidation in the existing Configuration step. Save a fixed policy for one configuration, or explicitly choose both for comparison. Old missing fields use the original wick rule. Worker environment and source verification use the same study engine. See IFVG_GAP_INVALIDATION_CHOICE.md for timing, save/reload, and restart behavior.
+
+### IFSM research: daily close and corrected morning (September 18, 2026)
+
+Use `python scripts/run_ifsm_research_ui.py` for the process-local research engine.
+The study controls expose historical holding or the mandatory daily-close policy,
+with a visible proposed 3:55 PM Chicago five-minute research buffer before the
+owner's before-4:00-PM rule. Earlier scheduled market closes take priority.
+The corrected **Morning - 7:00 AM to 10:30 AM Chicago time** preset changes actual
+entry eligibility and worker settings. The old preset is visibly **Legacy morning
+- 6:00 AM to 9:30 AM Chicago time (historical)**; use its explicit corrected-copy
+action to create a new draft. Opening an old draft never migrates its meaning.
+All-open-market and 7:00 AM–3:55 PM Chicago daytime presets are also selectable.
+Closing a morning window does not close an existing position. Continuous market
+context and protection remain active; daily/weekend entry locks apply separately.
+The frozen 32-profile experiment, priced time-exit accounting, source-bound audit,
+and operational limits are documented in `IFVG_DAILY_CLOSE_SESSIONS.md`.
+
+### Local peer-review reports
+
+Open `reports/IFVG_Daily_Close_Audit_Light/START_HERE.md` for the latest daily-close
+study. Reports are local outputs, never committed. Keep only the findings,
+settings, useful trade/equity/activity tables and charts needed for peer review.
+Scripts, raw traces, runtime copies, working stores and duplicate ZIP extractions
+do not belong in reports. Diagnostic CLIs use the sibling
+`Claude-Quant-Lab-Research-Artifacts/` working directory by default.
+
+The September 22 cleanup moved unique legacy study material and full audit
+archives to `../Claude-Quant-Lab-Research-Artifacts/archived-reports/`, retaining
+their original names. Use those preserved archives for detailed reconstruction;
+the light folders contain the performance review. This is a storage change,
+not a new replay, refit or revision to historical results.

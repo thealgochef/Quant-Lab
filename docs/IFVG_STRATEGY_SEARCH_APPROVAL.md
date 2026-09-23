@@ -7,6 +7,30 @@ research store must first have an explicitly initialized research namespace.
 The initialization instance is recorded before initialization so an interrupted
 setup can retry the identical request.
 
+In **Configure study → Review**, the **Study approval** panel displays every
+configuration (including automatic baseline combinations), research dates,
+warmup, costs, target, seed, and thresholds. It checks local bars/levels metadata,
+cache provenance and warmup continuity without replaying or fitting. Missing or
+inconsistent evidence is shown as a specific blocker. Full input verification
+still occurs in the runner.
+
+Review those terms, enter **Reviewer name**, check **I approve this exact
+strategy study**, and click **Save study approval**. This saves the existing
+exact-request approval and registers it for readiness lookup; it starts no work.
+Then click **Run study** when ready. The confirmation is tied to the request's
+identity, so changing settings clears the confirmation and requires a matching
+approval. Recording rechecks the request and metadata before saving.
+
+This panel supports strategy configuration searches and exact
+`single_configuration` studies with one registered value per selected setting
+and exactly one child. Evaluate One's fixed settings do not add a baseline or
+Cartesian comparisons; ordinary searches keep their existing comparison rules.
+One approval covers the
+axes, their values, strategy thresholds and the strategy-search workflow; it
+does not add model, regime or prop-firm authority. Existing approvals and
+completed results are preserved. A cloned or edited study with a changed
+request cannot reuse an earlier approval merely because its name is similar.
+
 `search/strategy_approval.py` persists a `StrategySearchApprovalEnvelope` in
 `strategy_search_approvals`. It records the owner's statement and reviewed
 references, effective time, namespace, requirement set, full resolved charter
@@ -36,6 +60,13 @@ provenance adapter checks the caches against their creation allowlist while its
 inner policy confines actual reads to the selected dates. It does not rebuild
 caches or widen source authorization. Missing or untrusted cache evidence refuses
 execution.
+
+The isolated IFSM UI uses the preserved research Core in its own process and
+separate store. Approval and replay identify the actual imported Core checkout;
+an installed package may use the sibling checkout only after source parity is
+verified. Its fixed historical preparation reference is a verified metadata-only
+source for the original cache creation allowlist. It never transfers the prior
+study's approval, output namespace or input-reading authority.
 
 The worker saves its startup checkpoint before resolving the input identities,
 so a long cache check is visible in progress. An input-verification exception

@@ -233,6 +233,18 @@ def test_registered_worker_wiring_completes_and_reuses_four_fixture_children(app
 
     root, payload, _, _ = approved
     calls = []
+    imported_root = root / "isolated_core"
+    identity_roots = []
+    evidence_roots = []
+
+    def source_identity(*, repository_root):
+        identity_roots.append(repository_root)
+        return "a" * 40, "a" * 64
+
+    def repository_state(name, repository_root, **kwargs):
+        if name == "strategy-core":
+            evidence_roots.append(repository_root)
+        return None
 
     def artifacts(day, cfg, *, expected_seeds, access_policy):
         access_policy.authorize_date(day)
@@ -266,16 +278,17 @@ def test_registered_worker_wiring_completes_and_reuses_four_fixture_children(app
     monkeypatch.setattr(executor, "file_sha256", lambda path: "d" * 64)
     monkeypatch.setattr(executor, "run_child_replay", replay)
     monkeypatch.setattr(executor, "build_child_companions", publish)
-    monkeypatch.setattr(executor, "read_repository_state", lambda *a, **kw: None)
-    monkeypatch.setattr(
-        executor, "strategy_core_source_identity", lambda **kw: ("a" * 40, "a" * 64)
-    )
+    monkeypatch.setattr(executor, "strategy_core_repository_root", lambda _repo: imported_root)
+    monkeypatch.setattr(executor, "read_repository_state", repository_state)
+    monkeypatch.setattr(executor, "strategy_core_source_identity", source_identity)
     monkeypatch.setattr(executor, "quant_lab_replay_source_identity", lambda **kw: "b" * 64)
     charter = SearchCharterEnvelope.from_payload(payload)
     wiring = search_strategy_development_entry(charter, store_root=root)
     first = run_search(charter, store_root=root, state_root=root / "state", **wiring)
     assert first.phase == "search_complete"
     assert len(calls) == 4 and all(child.state == "completed" for child in first.children)
+    assert identity_roots == [imported_root] * 4
+    assert evidence_roots == [imported_root] * 4
     assert {call["cfg"].section.parent_retest_timeout_1m_bars for call in calls} == {
         None,
         240,

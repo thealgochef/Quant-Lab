@@ -26,6 +26,7 @@ from strategy_core.strategies.ifvg_smc.section import IfvgSmcSection
 from strategy_core.types import Bar, BarKind, CloseReason, Direction
 
 from ..artifact_io import VerifiedIfvgArtifact, VerifiedIfvgPair, validate_exact_context_links
+from ..b0_projection import load_b0_projection_source
 from ..config import IfvgCaptureConfig, IfvgV3CaptureConfig
 from ..context_contracts import (
     ContextRecordTable,
@@ -48,6 +49,11 @@ from .identities import (
     EnvelopeBase,
     FrozenContract,
     canonical_contract_sha256,
+)
+from .research_compatibility import (
+    COMPATIBILITY_STORE,
+    ResearchCoreCompatibilityProof,
+    load_research_core_compatibility,
 )
 from .research_subject import (
     ResearchSubject,
@@ -73,10 +79,17 @@ class ResearchContextPayload(FrozenContract):
     )
 
 
+class ResearchContextCompatiblePayload(ResearchContextPayload):
+    """New captures bind an audited execution environment without changing v1 IDs."""
+
+    schema_version: Literal[2] = 2
+    core_compatibility_proof_id: str = Field(pattern=SHA256_PATTERN)
+
+
 class ResearchContextEnvelope(EnvelopeBase):
     _ID_FIELD: ClassVar[str] = "research_context_companion_id"
     research_context_companion_id: str = Field(pattern=SHA256_PATTERN)
-    payload: ResearchContextPayload
+    payload: ResearchContextCompatiblePayload | ResearchContextPayload
 
 
 @dataclass(frozen=True)
@@ -89,7 +102,9 @@ class LoadedResearchContext:
     forward_bars_sha256: str
 
 
-def expected_research_context(subject: ResearchSubject, repo_root: Path):
+def expected_research_context(
+    subject: ResearchSubject, repo_root: Path, *, core_compatibility_proof=None
+):
     """Pure configuration/source identity; never decode bars or run a replay."""
     cfg = IfvgV3CaptureConfig(
         core=IfvgCaptureConfig(
@@ -105,18 +120,32 @@ def expected_research_context(subject: ResearchSubject, repo_root: Path):
         (
             "src/alpha_lab/agents/data_infra/ifvg/search/research_data.py",
             "src/alpha_lab/agents/data_infra/ifvg/search/research_subject.py",
+            "src/alpha_lab/agents/data_infra/ifvg/search/research_compatibility.py",
             "src/alpha_lab/agents/data_infra/ifvg/capture_driver.py",
             "src/alpha_lab/agents/data_infra/ifvg/dataset.py",
             "src/alpha_lab/agents/data_infra/ifvg/context_feature_view.py",
+            "src/alpha_lab/agents/data_infra/ifvg/b0_projection.py",
         ),
     )
+    payload_type = ResearchContextPayload
+    compatibility_fields = {}
+    if core_compatibility_proof is not None:
+        proof = ResearchCoreCompatibilityProof.model_validate(core_compatibility_proof)
+        if (
+            proof.payload.subject_id != subject.subject_id
+            or proof.payload.core_replay_id != subject.core_replay_id
+        ):
+            raise ValueError("Core compatibility proof belongs to another subject")
+        payload_type = ResearchContextCompatiblePayload
+        compatibility_fields["core_compatibility_proof_id"] = proof.proof_id
     return ResearchContextEnvelope.from_payload(
-        ResearchContextPayload(
+        payload_type(
             subject=subject,
             producer_source_hash=producer,
             feature_schema_hash=cfg.feature_schema_hash,
             context_config_hash=cfg.context_config_hash,
             context_config_json=json.dumps(asdict(cfg.context), sort_keys=True),
+            **compatibility_fields,
         )
     ), cfg
 
@@ -202,6 +231,20 @@ def _validate_forward_bars(frame: pd.DataFrame, subject: ResearchSubject) -> Non
 def load_research_context_companion(store_root: Path, companion_id: str) -> LoadedResearchContext:
     root = Path(store_root)
     envelope = load_verified_envelope(root, CONTEXT_STORE, companion_id, ResearchContextEnvelope)
+    if isinstance(envelope.payload, ResearchContextCompatiblePayload):
+        proof = load_research_core_compatibility(
+            root, envelope.payload.core_compatibility_proof_id
+        )
+        if (
+            proof.payload.subject_id != envelope.payload.subject.subject_id
+            or proof.payload.core_replay_id != envelope.payload.subject.core_replay_id
+        ):
+            raise ValueError("context compatibility proof differs from its exact source subject")
+        recorded = ResearchCoreCompatibilityProof.model_validate_json(
+            load_sidecar_bytes(root, CONTEXT_STORE, companion_id, "core_compatibility.json")
+        )
+        if recorded != proof:
+            raise ValueError("context compatibility evidence differs from the verified proof")
     tables = {}
     for table in ContextRecordTable:
         data = load_sidecar_bytes(root, CONTEXT_STORE, companion_id, f"{table.value}.parquet")
@@ -414,6 +457,7 @@ class ResearchPreparation:
         mbp1_coverage_evidence=None,
         mbp1_preflight=None,
         progress_callback=None,
+        core_compatibility_proof=None,
     ):
         self.subject = subject
         self.store_root = Path(store_root)
@@ -427,6 +471,7 @@ class ResearchPreparation:
         self.mbp1_coverage_evidence = mbp1_coverage_evidence
         self.mbp1_preflight = mbp1_preflight
         self.progress_callback = progress_callback
+        self.core_compatibility_proof = core_compatibility_proof
         self.replay_invocations = 0
         self.context_reused = False
 
@@ -436,9 +481,20 @@ class ResearchPreparation:
     def prepare(self):
         if self._candidate_view is not None:
             return self
-        preflight_research_subject(self.subject, self.store_root, self.repo_root)
+        facts = preflight_research_subject(self.subject, self.store_root, self.repo_root)
+        current_proof = facts.get("core_compatibility_proof")
+        if self.core_compatibility_proof is not None and (
+            current_proof != self.core_compatibility_proof
+        ):
+            raise PermissionError("Core compatibility evidence changed before preparation")
+        if current_proof is None:
+            raise PermissionError("real context preparation requires verified Core compatibility")
+        proof = ResearchCoreCompatibilityProof.model_validate(current_proof)
+        save_or_reuse_envelope(self.output_root, COMPATIBILITY_STORE, proof)
         evidence = load_search_review_evidence(self.store_root, self.subject.core_replay_id)
-        envelope, v3_cfg = expected_research_context(self.subject, self.repo_root)
+        envelope, v3_cfg = expected_research_context(
+            self.subject, self.repo_root, core_compatibility_proof=proof
+        )
         cfg, context = v3_cfg.core, v3_cfg.context
         section = cfg.section
         companion_id = envelope.research_context_companion_id
@@ -475,7 +531,17 @@ class ResearchPreparation:
                 progress_fn=self.progress_callback,
             )
             self._input_hashes(evidence, cfg)
+            after = preflight_research_subject(self.subject, self.store_root, self.repo_root)
+            if after.get("core_compatibility_proof") != proof.model_dump(mode="json"):
+                raise PermissionError("Core compatibility evidence changed during context capture")
+            expected_after, _ = expected_research_context(
+                self.subject, self.repo_root, core_compatibility_proof=proof
+            )
+            if expected_after != envelope:
+                raise PermissionError("research context producer changed during capture")
             sidecars = {}
+            if proof is not None:
+                sidecars["core_compatibility.json"] = proof.model_dump_json(indent=2).encode()
             for table, frame in capture.context_tables.items():
                 stream = BytesIO()
                 pq.write_table(context_table_from_frame(table, frame), stream)
@@ -515,7 +581,10 @@ class ResearchPreparation:
             context_artifact,
         )
         validate_exact_context_links(self.context_tables, core_tables=self.v2_tables)
-        full = build_candidate_feature_view(self.pair)
+        b0_source = load_b0_projection_source(self.store_root, self.subject.core_replay_id)
+        full = build_candidate_feature_view(
+            self.pair, b0_source=b0_source, decision_bars=self._loaded.bars_1m,
+        )
         self._candidate_view = scope_research_candidate_view(
             full,
             self.v2_tables[RecordTable.ENTRY_CANDIDATE],

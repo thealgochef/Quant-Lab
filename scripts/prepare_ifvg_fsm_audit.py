@@ -3,7 +3,8 @@
 Runs the audit-enabled replay over the fixed permitted development chain
 (cached day artifacts only, by default), gates on EXACT v2 parity against the
 accepted final-review dataset, and publishes atomically. Writes the deep
-parity report to ``reports/ifvg_fsm_audit/IFVG_FSM_AUDITABILITY_PARITY_REPORT.json``.
+parity report under the sibling ``Claude-Quant-Lab-Research-Artifacts/ifvg_fsm_audit``
+working directory unless an explicit output path is supplied.
 """
 
 from __future__ import annotations
@@ -22,6 +23,10 @@ from alpha_lab.agents.data_infra.ifvg.fsm_audit_preparation import (  # noqa: E4
     prepare_ifvg_fsm_audit_persisted,
     summarize_result,
 )
+from alpha_lab.agents.data_infra.ifvg.working_artifacts import (  # noqa: E402
+    external_working_output,
+    research_working_directory,
+)
 
 
 def main() -> int:
@@ -35,10 +40,12 @@ def main() -> int:
     parser.add_argument(
         "--parity-report",
         default=str(
-            ROOT / "reports" / "ifvg_fsm_audit" / "IFVG_FSM_AUDITABILITY_PARITY_REPORT.json"
+            research_working_directory(ROOT, "ifvg_fsm_audit")
+            / "IFVG_FSM_AUDITABILITY_PARITY_REPORT.json"
         ),
     )
     args = parser.parse_args()
+    parity_report = external_working_output(ROOT, Path(args.parity_report))
 
     def progress(completed: int, total: int, day: str) -> None:
         print(
@@ -50,7 +57,7 @@ def main() -> int:
         repo_root=ROOT,
         profile_name=args.profile,
         cached_artifacts_only=not args.allow_rebuild_day_artifacts,
-        parity_report_path=Path(args.parity_report),
+        parity_report_path=parity_report,
         progress_fn=progress,
     )
     print(summarize_result(result))

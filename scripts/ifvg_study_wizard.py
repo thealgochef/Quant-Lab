@@ -67,6 +67,8 @@ from alpha_lab.agents.data_infra.ifvg.context_experiment_contracts import (
     ProfileCapabilityStatus,
 )
 from alpha_lab.agents.data_infra.ifvg.development_access import FROZEN_WARMUP_DATES
+from alpha_lab.agents.data_infra.ifvg.ifsm_replication import fixed_axis_values
+from alpha_lab.agents.data_infra.ifvg.presentation.axis_values import format_axis_value
 from alpha_lab.agents.data_infra.ifvg.presentation.charter_satisfiability import (
     CharterSatisfiabilityReport,
     StudyGoal,
@@ -533,7 +535,8 @@ def _requirement_set_for_draft(draft: StudyDraft, run_scope: str, flow: StudyFlo
         _effective_payload(draft, flow, "prop_contracts").get("selected_contract_ids") or ()
     )
     selections = _effective_payload(draft, flow, "search_space").get("axis_selections") or {}
-    axes = sorted(str(axis) for axis in selections if tuple(selections[axis] or ()))
+    axes = sorted({str(axis) for axis in selections if tuple(selections[axis] or ())}
+                  | set(fixed_axis_values(draft)))
     search_mode = _search_mode_for(draft, bool(axes))
     path = ComputationPath(
         full_strategy_replay=any(
@@ -758,7 +761,9 @@ def _resolved_objectives(draft: StudyDraft) -> tuple[tuple[str, ...], tuple[str,
         OBJECTIVE_TEMPLATES[-1],
     )
     if template.template_id == "custom":
-        return tuple(objective_step.get("custom_objectives") or ()), ("core_replay_id",)
+        return tuple(objective_step.get("custom_objectives") or ()), tuple(
+            objective_step.get("custom_tie_breaks") or ("core_replay_id",)
+        )
     return tuple(template.primary_objective), (*template.tie_breaks, "core_replay_id")
 
 
@@ -897,6 +902,7 @@ def _step_objective(st_module, draft: StudyDraft) -> dict[str, Any]:
         "question_id": question_id,
         "template_id": template.template_id,
         "custom_objectives": custom_objectives,
+        "custom_tie_breaks": tuple(payload.get("custom_tie_breaks") or ("core_replay_id",)),
     }
 
 
@@ -952,7 +958,7 @@ def _step_baseline(st_module, draft: StudyDraft) -> dict[str, Any]:
                 "Target / label family": str(getattr(section, "label_family", "—")),
                 "FSM concurrency": "one active setup / one active trade",
                 "Development date range": (
-                    "through 2026-06-10 21:00Z (development cutoff)"
+                    "through June 10, 2026 at 4:00 PM Chicago time (development cutoff)"
                 ),
             }
         )
@@ -970,14 +976,38 @@ def _step_baseline(st_module, draft: StudyDraft) -> dict[str, Any]:
             "computed at freeze time and ride the replay identity. Seed and "
             "date-policy references are shown in the Validation step."
         )
-    return {
+    fixed = {}
+    if (
+        draft.mode_id == "single_configuration"
+        and draft.step_payload("objective").get("question_id") == "evaluate_one_configuration"
+        and (draft.purpose_annotation or {}).get("purpose") != "implementation_verification"
+    ):
+        from ifsm_replication_controls import render_fixed_settings  # noqa: PLC0415
+
+        fixed = render_fixed_settings(
+            st_module, payload, selected, key_prefix=f"{_W}fixed_{draft.draft_id}_"
+        )
+    result = {
         "baseline_profile_name": selected,
         "baseline_section_config_hash": section_hash,
         "baseline_blocked_reason": blocked_reason,
+        "fixed_axis_value_ids": fixed,
     }
+    # Opening a saved draft must not inject absent historical metadata and
+    # trigger autosave. Deliberate configuration edits still use the normal path.
+    for key in ("replication_recipe_id", "historical_search_id"):
+        if key in payload:
+            result[key] = payload[key]
+    return result
 
 
-def _axis_card(st_module, axis_key: str, payload: Mapping[str, Any]) -> tuple[str, ...]:
+def _axis_card(
+    st_module,
+    axis_key: str,
+    payload: Mapping[str, Any],
+    *,
+    baseline_section: Mapping[str, Any] | None,
+) -> tuple[str, ...]:
     spec = SEARCH_AXIS_REGISTRY_V1[axis_key]
     label = classification_label(spec.classification)
     chip = computation_path_chip(spec)
@@ -989,6 +1019,11 @@ def _axis_card(st_module, axis_key: str, payload: Mapping[str, Any]) -> tuple[st
     baseline_value = AXIS_VALUE_REGISTRY_V1.get(spec.baseline_value_id)
     baseline_label = (
         baseline_value.human_label if baseline_value is not None else spec.baseline_value_id
+    )
+    inherited_label = (
+        format_axis_value(axis_key, baseline_section[axis_key])
+        if baseline_section is not None and axis_key in baseline_section
+        else "Unavailable — return to Baseline to select a valid profile"
     )
     selected: tuple[str, ...] = ()
     if axis_renders_widget(spec):
@@ -1002,22 +1037,40 @@ def _axis_card(st_module, axis_key: str, payload: Mapping[str, Any]) -> tuple[st
             label for label, value_id in options.items() if value_id in stored
         ]
         chosen = st_module.multiselect(
-            f"Registered search values — baseline: {baseline_label}",
+            "Values to compare",
             list(options),
             default=default_labels,
             key=f"{_W}axis_{axis_key}",
+            placeholder="Leave empty to keep the baseline value",
             help=(
-                "Values come from the typed axis/value registry only; no "
-                "free-form overrides exist anywhere in this workspace."
+                "An empty menu keeps this setting from the selected baseline. "
+                "Choosing values adds comparisons with the registered default. "
+                "When several settings are varied, all combinations are tested."
             ),
         )
+        st_module.caption(
+            f"If left empty: **{inherited_label}** (from the selected baseline). "
+            "This setting is not varied."
+        )
         selected = tuple(options[label] for label in chosen)
+        if axis_key == "enabled_entry_sessions":
+            st_module.caption(
+                "Each selected preset is a separate configuration, with the registered "
+                "default retained for comparison. The NY morning configuration only "
+                "opens trades from 7:00am up to, but not including, 10:30am Eastern Time."
+            )
     else:
         st_module.caption(
-            f"Value: **{baseline_label}** — no input widget "
+            f"Baseline value: **{inherited_label}** — no input widget "
             f"({label.lower()}; visible for audit)"
         )
+        if spec.dependencies:
+            controls = ", ".join(
+                SEARCH_AXIS_REGISTRY_V1[key].human_label for key in spec.dependencies
+            )
+            st_module.caption(f"This value can also be set by: {controls}.")
     with st_module.expander("Evidence & authorization"):
+        st_module.write(f"Registered comparison default: {baseline_label}")
         st_module.write(f"Baseline value: `{spec.baseline_value_id}`")
         st_module.write(
             "Registered values: "
@@ -1051,8 +1104,38 @@ def _axis_card(st_module, axis_key: str, payload: Mapping[str, Any]) -> tuple[st
     return selected
 
 
+def _search_space_baseline(st_module, draft: StudyDraft) -> Mapping[str, Any] | None:
+    """Shared default explanation and verified baseline for both study forms."""
+    st_module.info(
+        "Leave a menu empty to keep the selected baseline's value, shown below "
+        "that menu. Choosing other values adds comparisons; the registered default "
+        "is included automatically. Multiple settings test all combinations. "
+        "Selecting or saving values does not start a backtest."
+    )
+    baseline_section = None
+    baseline = draft.step_payload("baseline")
+    try:
+        name = baseline.get("baseline_profile_name")
+        if not name:
+            raise ValueError("Select a baseline profile first.")
+        resolved = resolve_profile_config({"profile_name": name})
+        from strategy_core.strategies.ifvg_smc.section import ifvg_profile_hash  # noqa: PLC0415
+
+        expected_hash = baseline.get("baseline_section_config_hash")
+        if (
+            expected_hash
+            and ifvg_profile_hash(canonicalize_section(resolved.section)) != expected_hash
+        ):
+            raise ValueError("The saved baseline has changed; select it again.")
+        baseline_section = resolved.effective_config
+    except (ValueError, TypeError, KeyError) as error:
+        st_module.warning(f"Baseline values unavailable: {error}")
+    return baseline_section
+
+
 def _step_search_space(st_module, draft: StudyDraft) -> dict[str, Any]:
     payload = draft.step_payload("search_space")
+    baseline_section = _search_space_baseline(st_module, draft)
     stored_selections: dict[str, tuple[str, ...]] = {
         key: tuple(values)
         for key, values in (payload.get("axis_selections") or {}).items()
@@ -1067,7 +1150,9 @@ def _step_search_space(st_module, draft: StudyDraft) -> dict[str, Any]:
             group, expanded=group in ("Staleness", "Parent Handling")
         ):
             for axis_key in keys:
-                chosen = _axis_card(st_module, axis_key, stored_selections)
+                chosen = _axis_card(
+                    st_module, axis_key, stored_selections, baseline_section=baseline_section
+                )
                 if chosen:
                     selections[axis_key] = chosen
     session_changed = sorted(set(selections) & _SESSION_DIRECTION_AXES)
@@ -1838,6 +1923,15 @@ def _step_review(
             "execution": ["sequential_children_v1 · effective workers 1"],
         }
     )
+    fixed = fixed_axis_values(draft)
+    if fixed:
+        st_module.markdown("**Exact configuration settings (one replay)**")
+        st_module.dataframe(
+            [{"Setting": SEARCH_AXIS_REGISTRY_V1[axis].human_label,
+              "Value": format_axis_value(axis, AXIS_VALUE_REGISTRY_V1[value].payload)}
+             for axis, value in fixed.items()],
+            hide_index=True, width="stretch",
+        )
     identity_block(
         st_module,
         "Baseline resolved section hash",
@@ -1980,16 +2074,11 @@ def _strategy_core_root() -> Path:
     directory containing ``.git`` avoids hardcoding a sibling folder name.
     """
 
-    try:
-        import strategy_core  # noqa: PLC0415
+    from alpha_lab.agents.data_infra.ifvg.search.runtime_source import (  # noqa: PLC0415
+        strategy_core_repository_root,
+    )
 
-        candidate = Path(strategy_core.__file__).resolve()
-        for parent in candidate.parents:
-            if (parent / ".git").exists():
-                return parent
-    except Exception:  # noqa: BLE001 — fall through to the sibling guess
-        pass
-    return _REPO_ROOT.parent / "strategy-core"
+    return strategy_core_repository_root(_REPO_ROOT)
 
 
 def _charter_fields(
@@ -2028,6 +2117,11 @@ def _charter_fields(
             dict.fromkeys((spec.baseline_value_id, *values))
         )  # baseline first, deduped, order-stable
         axes[axis_key] = merged
+    fixed = fixed_axis_values(draft)
+    if fixed:
+        if axes:
+            raise CharterValidationError("A fixed configuration cannot also enumerate comparisons.")
+        axes = {axis: (value,) for axis, value in fixed.items()}
     pareto, tie_breaks = _resolved_objectives(draft)
     prop_selected = tuple(prop.get("selected_contract_ids") or ())
     strategy_gates = {

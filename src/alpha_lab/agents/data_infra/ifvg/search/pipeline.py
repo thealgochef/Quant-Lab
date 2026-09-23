@@ -49,6 +49,8 @@ from . import pipeline_regime as _regime
 from .authorization import SyntheticAuthorizationMarker
 from .charter import SearchCharterEnvelope, SimulationProtocol
 from .executed_trade_table import (
+    EXECUTED_TRADE_TABLE_PROJECTION_ID,
+    SCHEDULED_EXIT_PROJECTION_ID,
     build_executed_trade_table,
     executed_trade_table_id_for,
     load_executed_trade_table,
@@ -1202,13 +1204,27 @@ def _record_schema_version_for(core_replay_id: str, envelope) -> int:
     return int(envelope.payload.record_schema_version)
 
 
-def _executed_trade_evidence_for_result(core_replay_id: str, envelope, result):
+def _execution_projection_for(spec_child):
+    """Select the priced schema from the frozen profile, never observed outcomes."""
+    return (
+        SCHEDULED_EXIT_PROJECTION_ID
+        if spec_child.section_overrides.get("holding_policy") == "scheduled_daily_close_v1"
+        else EXECUTED_TRADE_TABLE_PROJECTION_ID
+    )
+
+
+def _executed_trade_evidence_for_result(
+    core_replay_id: str, envelope, result,
+    *, projection_id=EXECUTED_TRADE_TABLE_PROJECTION_ID,
+):
     """The child's executed-trade table artifact built from THIS run's raw
     tables (R6.1-FIX §3.7): ``(table_envelope, table_bytes)``."""
 
     trades = result.tables.get(RecordTable.EXECUTED_TRADE, pd.DataFrame())
     version = _record_schema_version_for(core_replay_id, envelope)
-    return build_executed_trade_table(core_replay_id, trades, record_schema_version=version)
+    return build_executed_trade_table(
+        core_replay_id, trades, record_schema_version=version, projection_id=projection_id,
+    )
 
 
 def _persist_and_load_executed_trade_table(context: _RunContext, table_envelope, table_bytes):
@@ -1309,7 +1325,7 @@ def _reuse_child_with_regime_tables(
     result = context.wiring.child_runner(spec=spec_child, core_replay_id=core_replay_id)
     row["replay_invocations"] = 1
     table_envelope, table_bytes = _executed_trade_evidence_for_result(
-        core_replay_id, envelope, result
+        core_replay_id, envelope, result, projection_id=_execution_projection_for(spec_child),
     )
     if table_state == "present":
         stored = load_executed_trade_table(context.store_root, table_id)
@@ -1417,7 +1433,10 @@ def _stage_s02_replays(context: _RunContext) -> tuple[tuple[str, ...], str]:
             # identity DERIVED from the core replay (no listing); corrupt is a
             # typed child failure, absent is a typed fact — never silence
             version = _record_schema_version_for(core_replay_id, envelope)
-            table_id = executed_trade_table_id_for(core_replay_id, record_schema_version=version)
+            table_id = executed_trade_table_id_for(
+                core_replay_id, record_schema_version=version,
+                projection_id=_execution_projection_for(spec_child),
+            )
             try:
                 table_state = probe_executed_trade_table(context.store_root, table_id)
             except SidecarLoadError as error:
@@ -1480,7 +1499,8 @@ def _stage_s02_replays(context: _RunContext) -> tuple[tuple[str, ...], str]:
                 # (identical bytes reuse; different bytes under one id refuse);
                 # a neutrality report's core-table hash must agree
                 table_envelope, table_bytes = _executed_trade_evidence_for_result(
-                    core_replay_id, envelope, result
+                    core_replay_id, envelope, result,
+                    projection_id=_execution_projection_for(spec_child),
                 )
                 if neutrality is not None:
                     hashes = neutrality.audit_disabled_core_table_hashes or {}
@@ -1780,7 +1800,31 @@ def _stage_s05_feature_views(context: _RunContext) -> tuple[tuple[str, ...], str
                 "owner decision R-6) and joined one-to-one with typed nulls"
             )
         else:
-            envelope, frame = resolve_available_bundle_view(context.view, bundle_key)
+            if bundle_key == "B0_GEOMETRY_CORE_ATR14_V1":
+                from ..features.geometry_core_atr14 import (  # noqa: PLC0415
+                    materialize_geometry_features,
+                    save_geometry_features,
+                )
+
+                preparation = context.wiring.research_preparation
+                if preparation is None or context.wiring.research_subject is None:
+                    raise PipelineWiringError("geometry requires exact research source context")
+                geometry, geometry_frame = materialize_geometry_features(
+                    context.view,
+                    preparation.bars_1m,
+                    source_reference=preparation.label_source_reference,
+                )
+                save_geometry_features(context.store_root, geometry, geometry_frame)
+                envelope, frame = resolve_available_bundle_view(
+                    context.view,
+                    bundle_key,
+                    geometry_features=geometry_frame,
+                    geometry_feature_artifact=geometry,
+                )
+                dumped["__geometry_evidence__"] = geometry.model_dump(mode="json")
+                outputs.append(geometry.geometry_feature_artifact_id)
+            else:
+                envelope, frame = resolve_available_bundle_view(context.view, bundle_key)
         if context.wiring.research_subject is not None:
             from ..features.bundle_feature_view import save_bundle_feature_view  # noqa: PLC0415
 
@@ -1808,7 +1852,67 @@ def _stage_s05_feature_views(context: _RunContext) -> tuple[tuple[str, ...], str
     )
 
 
+def _validated_research_b0_projection(context: _RunContext) -> dict[str, Any] | None:
+    """Refuse a fresh real study whose advertised B0 lacks exact source evidence."""
+    if context.wiring.research_subject is None or not context.bundle_views:
+        return None
+    from ..b0_projection import (  # noqa: PLC0415
+        B0_PROJECTION_VERSION,
+        STAGE_FEATURES,
+        validate_b0_feature_mapping,
+    )
+    from ..context_feature_view import M0_FEATURES  # noqa: PLC0415
+
+    evidence = getattr(context.view, "b0_projection_evidence", None)
+    if not evidence or evidence.get("projection_version") != B0_PROJECTION_VERSION:
+        raise ValueError(
+            "real research B0 advertised features require verified projection evidence"
+        )
+    payload = dict(evidence)
+    claimed = payload.pop("projection_evidence_hash", None)
+    if claimed != canonical_contract_sha256(payload):
+        raise ValueError("B0 projection evidence hash mismatch")
+    if evidence["source"]["core_replay_id"] != context.wiring.research_subject.core_replay_id:
+        raise ValueError("B0 projection source differs from the research subject")
+    records = evidence["candidate_evidence"]
+    by_id = {row["candidate_id"]: row for row in records}
+    if len(by_id) != len(records):
+        raise ValueError("B0 projection evidence repeats candidates")
+    frame = context.view.frame
+    repaired_names = {name for names in STAGE_FEATURES.values() for name in names}
+    for _, row in frame.iterrows():
+        proof = by_id.get(row["candidate_id"])
+        if proof is None or proof["all_formula_clock_ordinal_checks_passed"] is not True:
+            raise ValueError("B0 candidate lacks verified geometry/event/clock evidence")
+        if pd.Timestamp(proof["entry_ts_utc"]) != pd.Timestamp(row["entry_ts_utc"]):
+            raise ValueError("B0 projection decision timestamp differs from candidate")
+        if set(proof.get("projected_values", {})) != repaired_names:
+            raise ValueError("B0 projection evidence omits advertised source fields")
+        for name, value in proof["projected_values"].items():
+            if name not in row or pd.isna(row[name]) or row[name] != value:
+                raise ValueError(f"B0 projected feature differs from source evidence: {name}")
+    mapping = validate_b0_feature_mapping(frame, M0_FEATURES)
+    for key, bundle_frame in context.bundle_frames.items():
+        envelope = context.bundle_views[key]
+        if not set(M0_FEATURES) <= set(envelope.payload.resolved_feature_names):
+            raise ValueError("research bundle does not advertise the complete B0 schema")
+        missing = sorted(set(M0_FEATURES) - set(bundle_frame))
+        if missing:
+            raise ValueError(f"research bundle omits advertised B0 features: {missing}")
+        pd.testing.assert_frame_equal(
+            frame[["candidate_id", *M0_FEATURES]]
+            .sort_values("candidate_id").reset_index(drop=True),
+            bundle_frame[["candidate_id", *M0_FEATURES]]
+            .sort_values("candidate_id").reset_index(drop=True),
+            check_dtype=False, check_exact=True,
+            obj="B0 persisted bundle projection",
+        )
+    return {"evidence": evidence, "scoped_feature_mapping": mapping,
+            "scoped_candidate_count": len(frame)}
+
+
 def _stage_s06_coverage(context: _RunContext) -> tuple[tuple[str, ...], str]:
+    projection = _validated_research_b0_projection(context)
     report: dict[str, Any] = {}
     for bundle_key, envelope in context.bundle_views.items():
         frame = context.bundle_frames[bundle_key]
@@ -1822,6 +1926,18 @@ def _stage_s06_coverage(context: _RunContext) -> tuple[tuple[str, ...], str]:
             "minimum_feature_coverage": min(coverage.values()) if coverage else None,
             "per_feature_nonnull_fraction": coverage,
         }
+        if projection is not None:
+            report[bundle_key]["b0_projection_version"] = (
+                projection["evidence"]["projection_version"]
+            )
+            report[bundle_key]["b0_projection_evidence_hash"] = (
+                projection["evidence"]["projection_evidence_hash"]
+            )
+            report[bundle_key]["b0_feature_mapping"] = projection["scoped_feature_mapping"]
+    if projection is not None:
+        context.stage_sidecars["b0_projection_evidence.json"] = (
+            json.dumps(projection, sort_keys=True) + "\n"
+        ).encode("utf-8")
     context.stage_sidecars["feature_coverage.json"] = (
         json.dumps(report, sort_keys=True) + "\n"
     ).encode("utf-8")

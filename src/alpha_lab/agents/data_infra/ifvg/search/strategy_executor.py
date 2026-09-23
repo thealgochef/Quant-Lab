@@ -37,6 +37,7 @@ from .identities import (
     quant_lab_replay_source_identity,
     strategy_core_source_identity,
 )
+from .runtime_source import strategy_core_repository_root
 from .store import save_or_reuse_envelope
 from .strategy_approval import DECISION_ID, load_strategy_approval, ratified_registry_for_charter
 
@@ -54,7 +55,11 @@ def search_strategy_development_entry(charter_envelope, *, store_root) -> dict:
     dates = tuple(payload.date_policy.replay_dates)
     # This validates the ten-date warmup and the cutoff before any source path.
     DevelopmentReplayPolicy(dates)
+    core_root = strategy_core_repository_root(REPO_ROOT)
     contexts = {}
+    # Trust is reusable only inside this worker, for identical authorized files.
+    # Retain small immutable refs, never decoded bars, levels or reducer state.
+    verified_inputs = {}
 
     def artifact_policy():
         # Cache provenance can name a wider writing allowlist. All actual I/O
@@ -63,6 +68,31 @@ def search_strategy_development_entry(charter_envelope, *, store_root) -> dict:
             DevelopmentReplayPolicy(dates),
             artifact_provenance_dates=approval.payload.artifact_provenance_dates,
         )
+
+    def input_refs(cfg, policy):
+        paths = []
+        refs = []
+        for day in dates:
+            for kind, factory in (("bars", cfg.bars_path), ("levels", cfg.levels_path)):
+                path = policy.resolve_source_path(day, factory)
+                policy.record_file_open(day)
+                try:
+                    digest = file_sha256(path)
+                except FileNotFoundError as error:
+                    raise PermissionError(
+                        f"trusted day artifacts are unavailable for {day}"
+                    ) from error
+                paths.append(str(path.resolve()))
+                refs.append(
+                    ReplayDayArtifactRef(
+                        trading_day=day,
+                        artifact_kind=kind,
+                        artifact_id=path.name,
+                        manifest_payload_sha256=digest,
+                        content_sha256=digest,
+                    )
+                )
+        return (cfg.identity_lane, cfg.artifacts_tag(), tuple(paths)), tuple(refs)
 
     def identity_resolver(spec):
         key = spec.resolved_section_config_hash
@@ -85,26 +115,25 @@ def search_strategy_development_entry(charter_envelope, *, store_root) -> dict:
         if cfg.profile_hash != key:
             raise PermissionError("child profile differs from its enumerated identity")
         policy = artifact_policy()
-        previous = None
-        day_refs = []
-        for day in dates:
-            expected = _chained_seeds(previous) or DaySeeds(None, None, None, None)
-            previous = load_day_artifacts(day, cfg, expected_seeds=expected, access_policy=policy)
-            if previous is None:
-                raise PermissionError(f"trusted day artifacts are unavailable for {day}")
-            for kind, factory in (("bars", cfg.bars_path), ("levels", cfg.levels_path)):
-                path = policy.resolve_source_path(day, factory)
-                policy.record_file_open(day)
-                digest = file_sha256(path)
-                day_refs.append(
-                    ReplayDayArtifactRef(
-                        trading_day=day,
-                        artifact_kind=kind,
-                        artifact_id=path.name,
-                        manifest_payload_sha256=digest,
-                        content_sha256=digest,
-                    )
+        input_key, day_refs = input_refs(cfg, policy)
+        if input_key in verified_inputs:
+            if day_refs != verified_inputs[input_key]:
+                raise PermissionError("day artifact changed during study preparation")
+        else:
+            previous = None
+            for day in dates:
+                expected = _chained_seeds(previous) or DaySeeds(None, None, None, None)
+                previous = load_day_artifacts(
+                    day, cfg, expected_seeds=expected, access_policy=policy
                 )
+                if previous is None:
+                    raise PermissionError(f"trusted day artifacts are unavailable for {day}")
+            # A file replaced during the first trust/seed pass cannot establish
+            # reusable trust for bytes that were not the ones just validated.
+            if input_refs(cfg, policy) != (input_key, day_refs):
+                raise PermissionError("day artifact changed during study preparation")
+            policy.assert_zero_forbidden_access()
+            verified_inputs[input_key] = day_refs
         date_id = canonical_contract_sha256(dates)
         bundle = build_replay_input_bundle(
             authorized_date_set_id=date_id,
@@ -121,7 +150,7 @@ def search_strategy_development_entry(charter_envelope, *, store_root) -> dict:
             ),
         )
         sc_commit, sc_source = strategy_core_source_identity(
-            repository_root=REPO_ROOT.parent / "Strategy-Core"
+            repository_root=core_root
         )
         core = CoreStrategyReplayIdentity.from_payload(
             CoreStrategyReplayPayload(
@@ -187,12 +216,13 @@ def search_strategy_development_entry(charter_envelope, *, store_root) -> dict:
                 read_repository_state("quant-lab", REPO_ROOT, source_paths=QL_REPLAY_SOURCE_SCOPE),
                 read_repository_state(
                     "strategy-core",
-                    REPO_ROOT.parent / "Strategy-Core",
+                    core_root,
                     source_paths=("src/strategy_core",),
                 ),
             ),
             authoritative_source_blob="approved_strategy_search_cached_artifacts_v1",
             cost_points=payload.cost_policy.cost_points_round_turn,
+            activity_cutoff_utc=payload.date_policy.development_cutoff_utc,
         )
         if not report["invariants_passed"]:
             raise PermissionError("child evidence failed its invariant checks")

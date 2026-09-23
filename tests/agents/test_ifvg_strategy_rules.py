@@ -33,9 +33,9 @@ def test_baseline_has_concise_conditional_rules_with_real_session_times():
     assert len(result.preview_bullets) == 3
     assert 6 <= len(result.detail_bullets) <= 10
     assert len(_text(result).split()) <= 410
-    assert result.detail_bullets[0].startswith("Enter during Asia 16:00–01:45")
-    assert "New York 08:00–14:00" in _text(result)
-    assert "Eastern time" in _text(result)
+    assert result.detail_bullets[0].startswith("Enter during Asia 3:00 PM–12:45 AM")
+    assert "New York 7:00 AM–1:00 PM" in _text(result)
+    assert "America/Chicago" in _text(result)
     assert "end times excluded" in _text(result)
     assert "at least 4 ticks" in _text(result)
     assert "40 candles of its own timeframe" in _text(result)
@@ -133,7 +133,7 @@ def test_disabled_invalidation_policies_do_not_claim_to_cancel_setups():
     )))
 
     assert "A main-zone fill or a close through its far edge does not cancel the setup" in text
-    assert "completely fills the original higher-timeframe gap, abandon" in text
+    assert "one-minute wick completely fills the starting one-hour or four-hour gap" in text
 
 
 @pytest.mark.parametrize("section", [
@@ -262,7 +262,7 @@ def test_short_direction_target_and_entry_session_changes_are_all_explained():
     assert "close below its lower edge" in text
     assert "above the highest price since the main-zone retest" in text
     assert "2 times the initial distance to the stop" in text
-    assert "Enter during New York 08:00–14:00" in text
+    assert "Enter during New York 7:00 AM–1:00 PM" in text
     assert "After 2 executed trades" in text
     assert "outside these windows, abandon that setup" in text
 
@@ -278,4 +278,9 @@ def test_source_sections_are_unchanged_and_results_are_immutable():
 
 
 def test_every_current_engine_field_has_an_explicit_description_classification():
-    assert set(IfvgSmcSection.model_fields) == _CLASSIFIED_FIELDS
+    current_fields = set(IfvgSmcSection.model_fields)
+    # The description supports this explicitly named research-only field even
+    # when the installed stable Core predates it. Every actual runtime field
+    # must still be classified, and all other stale/unknown classifications fail.
+    unavailable_research_fields = {"htf_direction_selection_policy"} - current_fields
+    assert current_fields == _CLASSIFIED_FIELDS - unavailable_research_fields

@@ -62,6 +62,29 @@ def bar(bar_id, ts, high=102, low=99):
     )
 
 
+def compatibility_fixture(subject):
+    """Metadata fixture only; source-verification tests construct actual Git trees."""
+    from alpha_lab.agents.data_infra.ifvg.search.research_compatibility import (
+        ResearchCoreCompatibilityPayload,
+        ResearchCoreCompatibilityProof,
+    )
+
+    return ResearchCoreCompatibilityProof.from_payload(
+        ResearchCoreCompatibilityPayload(
+            subject_id=subject.subject_id, core_replay_id=subject.core_replay_id,
+            saved_commit="a" * 40, saved_source_identity="a" * 64,
+            saved_package_tree_sha256="a" * 64,
+            saved_checkout_representation="git_blob_bytes",
+            current_commit="b" * 40, current_git_tree="b" * 40,
+            current_checkout_tree_sha256="b" * 64,
+            current_source_identity="b" * 64, changed_documentation_paths=("README.md",),
+            runtime_files=(), runtime_tree_sha256="c" * 64,
+            loaded_package_files=(), loaded_package_sha256="d" * 64,
+            runtime_environment_json='{"fixture": true}',
+        )
+    )
+
+
 def candidate(**updates):
     return dict(
         candidate_id="candidate",
@@ -337,17 +360,62 @@ def test_prepare_publishes_companion_once_and_reuses_exact_saved_pair(tmp_path, 
     from pathlib import Path
 
     from alpha_lab.agents.data_infra.ifvg.artifact_io import VerifiedIfvgArtifact
+    from alpha_lab.agents.data_infra.ifvg.audit_contracts import (
+        TRACE_AUDIT_KIND_BY_TABLE,
+        AuditTable,
+    )
+    from alpha_lab.agents.data_infra.ifvg.b0_projection import B0ProjectionSource
+    from alpha_lab.agents.data_infra.ifvg.capture_driver import flatten_audit_emissions
     from alpha_lab.agents.data_infra.ifvg.context_experiment_contracts import ArtifactReference
     from alpha_lab.agents.data_infra.ifvg.contracts import RecordTable
     from alpha_lab.agents.data_infra.ifvg.dataset import reconcile_v3_core_to_accepted_v2
     from alpha_lab.agents.data_infra.ifvg.search import research_data
-    from tests.agents.ifvg_v3_fixtures import _bar, context_fixture
+    from tests.agents import ifvg_v3_fixtures
 
     subject = subject_fixture()
-    _day, tables, core, _emissions = context_fixture()
+    # Supply the newly required selected-stage evidence from the same real Core
+    # fixture drive. Keep projection/geometry/clock validation enabled; only the
+    # external immutable-store discovery is mocked in this preparation unit test.
+    decision_bars, audit_emissions = [], []
+    original_reducer = ifvg_v3_fixtures.IfvgReducer
+
+    class AuditedFixtureReducer(original_reducer):
+        def __init__(self, config):
+            super().__init__(config, audit_capture_mode="fsm_audit_v1")
+
+        def step(self, inp):
+            decision_bars.append(inp.bar_1m)
+            emitted = super().step(inp)
+            audit_emissions.extend(self.drain_audit())
+            return emitted
+
+    monkeypatch.setattr(ifvg_v3_fixtures, "IfvgReducer", AuditedFixtureReducer)
+    day_capture, tables, core, _emissions = ifvg_v3_fixtures.context_fixture()
+    trace = day_capture.core_rows.copy()
+    trace["trace_ordinal"] = range(len(trace))
     for table in (RecordTable.ENTRY_CANDIDATE, RecordTable.ELIGIBLE_DECISION):
+        core[table] = (
+            trace.loc[trace.kind.eq(table.value)].drop(columns="kind").reset_index(drop=True)
+        )
         core[table]["is_warmup"] = False
         core[table]["trading_day"] = core[table]["envelope_trading_day"]
+        core[table]["entry_session"] = core[table]["envelope_entry_session"]
+    audit_tables = {
+        table: trace.loc[trace.kind.eq(kind)].copy()
+        for table, kind in TRACE_AUDIT_KIND_BY_TABLE.items()
+    }
+    audit = flatten_audit_emissions(audit_emissions, entering_seed_hash=None)
+    windows = audit.loc[audit.kind.eq("parent_window_event")].copy()
+    windows["core_trace_ordinal_before_global"] = windows["stamp_core_trace_ordinal_before"]
+    audit_tables[AuditTable.PARENT_WINDOW] = windows
+    b0_source = B0ProjectionSource(
+        {
+            "core_replay_id": subject.core_replay_id,
+            "v2_dataset_id": subject.v2_dataset_id,
+            "v2_manifest_payload_sha256": subject.v2_manifest_hash,
+        },
+        audit_tables,
+    )
     reference = ArtifactReference(
         artifact_id=subject.v2_dataset_id,
         manifest_payload_sha256=subject.v2_manifest_hash,
@@ -363,8 +431,18 @@ def test_prepare_publishes_companion_once_and_reuses_exact_saved_pair(tmp_path, 
         {"effective_config.json": {"evaluator": {}}},
     )
     evidence = SimpleNamespace(dataset=artifact)
-    monkeypatch.setattr(research_data, "preflight_research_subject", lambda *a: None)
+    proof = compatibility_fixture(subject)
+    monkeypatch.setattr(research_data, "preflight_research_subject", lambda *a: {
+        "core_compatibility_proof": proof.model_dump(mode="json"),
+    })
     monkeypatch.setattr(research_data, "load_search_review_evidence", lambda *a: evidence)
+
+    def load_b0_source(store_root, core_replay_id):
+        assert store_root == tmp_path
+        assert core_replay_id == subject.core_replay_id
+        return b0_source
+
+    monkeypatch.setattr(research_data, "load_b0_projection_source", load_b0_source)
     monkeypatch.setattr(ResearchPreparation, "_input_hashes", lambda *a: [])
     calls = []
 
@@ -372,7 +450,7 @@ def test_prepare_publishes_companion_once_and_reuses_exact_saved_pair(tmp_path, 
         assert kwargs["accepted_v2_tables"] is core
         calls.append(days)
         bars = {day: () for day in days}
-        bars["2026-01-13"] = (_bar(5, 10015, 10018, 10010, 10016),)
+        bars["2026-01-13"] = tuple(decision_bars)
         return SimpleNamespace(
             context_tables=tables,
             bars_by_day=bars,
@@ -385,7 +463,13 @@ def test_prepare_publishes_companion_once_and_reuses_exact_saved_pair(tmp_path, 
     assert len(calls) == first.replay_invocations == 1
     assert first.pair.v2 is artifact
     assert len(first.candidate_view.frame) == len(core[RecordTable.ENTRY_CANDIDATE])
+    assert first.candidate_view.b0_projection_evidence["candidate_count"] == len(
+        core[RecordTable.ENTRY_CANDIDATE]
+    )
+    assert first.candidate_view.frame["parent_tf_seconds"].notna().all()
     assert first.label_source_reference["path"].endswith("forward_bars.parquet")
+    assert first._loaded.envelope.payload.schema_version == 2
+    assert first._loaded.envelope.payload.core_compatibility_proof_id == proof.proof_id
     second = ResearchPreparation(subject, tmp_path, repo).prepare()
     assert len(calls) == 1
     assert second.replay_invocations == 0

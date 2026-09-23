@@ -13,6 +13,8 @@ from alpha_lab.agents.data_infra.ifvg.presentation.workspace import (
     elapsed,
     human_name,
     load_studies,
+    search_activity,
+    search_progress,
 )
 from alpha_lab.agents.data_infra.ifvg.presentation.workspace_mode import technical_details_enabled
 
@@ -284,13 +286,29 @@ def _live_progress(st_module, study, roots):
 
 def _progress(st_module, study, roots):
     state = study.state or {}
+    stop_requested = False
+    if study.status == "Running" and study.kind != "pipeline":
+        from alpha_lab.agents.data_infra.ifvg.search.orchestrator import cancellation_requested
+
+        stop_requested = cancellation_requested(Path(roots["state_root"]), study.key)
     if study.status == "Running":
-        activity = "Evaluating configurations"
+        activity = search_activity(state)
         if study.kind == "pipeline":
             from ifvg_research_pipeline import activity_label
 
             activity = activity_label(state.get("current_stage"))
         st_module.subheader(activity)
+        if study.kind != "pipeline" and state.get("phase") == "charter_frozen":
+            notes = state.get("phase_notes") or {}
+            try:
+                checked = int(notes["preparation_completed_configurations"])
+                planned = int(notes["preparation_planned_configurations"])
+            except (KeyError, ValueError, TypeError):
+                checked, planned = -1, 0
+            if 0 <= checked <= planned and planned > 0:
+                st_module.caption(
+                    f"Input checks: {checked} of {planned} configuration input sets verified."
+                )
     elif study.status in ("Failed", "Interrupted", "Blocked"):
         st_module.warning(
             {
@@ -299,7 +317,8 @@ def _progress(st_module, study, roots):
                     "establish a completed outcome."
                 ),
                 "Interrupted": (
-                    "The study stopped at a safe boundary. Completed evidence has been retained."
+                    "The study is paused. Saved progress has been retained. "
+                    "Work continues only when you choose Resume study."
                 ),
                 "Blocked": (
                     "A required part of the study is unavailable. The study cannot yet "
@@ -316,23 +335,56 @@ def _progress(st_module, study, roots):
         completed = sum(row.get("status") in ("completed", "reused") for row in rows)
     else:
         rows = list(state.get("children") or ())
-        completed = sum(
-            row.get("state")
-            in (
-                "completed",
-                "reused",
-            )
-            for row in rows
-        )
+        counts = search_progress(state)
+        completed = counts.completed + counts.reused
     if rows:
-        st_module.progress(
-            completed / len(rows), text=f"{completed} of {len(rows)} work items complete"
+        progress_text = (
+            f"{completed} of {len(rows)} work items complete"
+            if study.kind == "pipeline"
+            else f"{counts.completed} completed · {counts.reused} reused "
+            f"· {counts.total} configurations total"
         )
-    st_module.caption(f"Elapsed time: {elapsed(state)}")
+        st_module.progress(completed / len(rows), text=progress_text)
+        if study.kind != "pipeline":
+            st_module.caption(
+                f"{counts.attempted} of {counts.total} configurations attempted "
+                "(including saved results and failures)."
+            )
+            st_module.caption(
+                f"Failed: {counts.failed} · Running: {counts.running} · Queued: {counts.queued} "
+                f"· Stopped: {counts.stopped} · Blocked: {counts.blocked}"
+                + (f" · Unresolved: {counts.unresolved}" if counts.unresolved else "")
+            )
+            if counts.failed:
+                st_module.warning(
+                    f"{counts.failed} configurations failed. These are not completed results."
+                )
+            if study.status == "Running" and not (counts.running or counts.queued):
+                st_module.caption(
+                    "No configurations are currently queued or marked running. "
+                    "The saved study phase is still in progress."
+                )
+    elif study.kind != "pipeline" and state.get("phase") == "charter_frozen":
+        st_module.caption(
+            "Configuration counts become available after input verification. "
+            "No replay completion has been recorded yet."
+        )
+    timer_label = "Current attempt elapsed time" if state.get("attempt_started_at_utc") else (
+        "Elapsed time"
+    )
+    st_module.caption(f"{timer_label}: {elapsed(state)}")
     if st_module.button("Refresh progress", key="ifvg_workspace_refresh"):
         st_module.rerun()
     if study.status == "Running":
-        if st_module.button("Stop after current work", key="ifvg_workspace_cancel"):
+        if stop_requested:
+            st_module.info(
+                "Stop requested. Current work will finish at a safe boundary. "
+                "Completed results will be kept."
+            )
+        if st_module.button(
+            "Stop after current work", key="ifvg_workspace_cancel", disabled=stop_requested,
+            help="Finish the current work at a safe boundary and save progress for a later resume.",
+        ):
             try:
                 if study.kind == "pipeline":
                     from alpha_lab.agents.data_infra.ifvg.search.pipeline import (
@@ -391,6 +443,12 @@ def _run_action(st_module, study, roots):
 
 
 def _manage_study(st_module, study, roots):
+    from alpha_lab.agents.data_infra.ifvg.ifsm_replication import (
+        CORRECTED_MORNING,
+        corrected_morning_copy,
+        uses_legacy_morning,
+    )
+    from alpha_lab.agents.data_infra.ifvg.search.axis_registry import AXIS_VALUE_REGISTRY_V1
     from alpha_lab.agents.data_infra.ifvg.search.catalog import append_catalog_event
     from alpha_lab.agents.data_infra.ifvg.study_drafts import (
         archive_draft,
@@ -402,6 +460,18 @@ def _manage_study(st_module, study, roots):
     if not study.draft and not study.store_root:
         return
     with st_module.expander("Study actions"):
+        if study.draft and uses_legacy_morning(study.draft):
+            st_module.caption(
+                "Legacy morning - 6:00 AM to 9:30 AM Chicago time (historical). "
+                "Create a separate corrected copy to use 7:00 AM to 10:30 AM Chicago time."
+            )
+            if st_module.button(
+                "Create corrected morning copy", key="ifvg_workspace_correct_morning",
+                disabled=CORRECTED_MORNING not in AXIS_VALUE_REGISTRY_V1,
+            ):
+                clone = corrected_morning_copy(study.draft)
+                save_draft(Path(roots["draft_root"]), clone)
+                _open_draft(st_module, clone)
         if study.draft and st_module.button("Clone study", key="ifvg_workspace_clone"):
             clone = clone_draft(study.draft)
             clone.display_name = f"{study.name} (copy)"

@@ -543,10 +543,12 @@ def validate_audit_links(tables: Mapping[AuditTable, pd.DataFrame]) -> None:
 #: :func:`reconcile_funnel_to_audit`; every listed counter must match exactly.
 _TERMINAL_REASONS = (
     "invalidated_htf_filled",
+    "invalidated_htf_own_timeframe_close",
     "invalidated_parent_filled",
     "invalidated_parent_structural",
     "expired_parent_retest",
     "expired_parent_search",
+    "expired_setup_lifetime",
     "expired_opposing_wait",
     "expired_inversion_wait",
     "expired_entry_wait",
@@ -618,6 +620,15 @@ def reconcile_funnel_to_audit(
             total.get("parents_locked", 0),
             _count(AuditTable.PARENT_LOCK),
         ),
+        "parent_retest_depth_rejected": (
+            total.get("parent_retest_depth_rejected", 0),
+            _count(
+                AuditTable.PARENT_WINDOW,
+                lambda f: f["event_kind"] == "parent_retest_depth_rejected",
+            )
+            if not window.empty
+            else 0,
+        ),
         "opposing_candidates": (
             total.get("opposing_candidates", 0),
             _count(AuditTable.OPPOSING),
@@ -653,7 +664,10 @@ def reconcile_funnel_to_audit(
             else 0
         )
         checks[reason] = (expected, observed)
-    resolved = total.get("resolved_target", 0) + total.get("resolved_stop", 0)
+    resolved = (
+        total.get("resolved_target", 0) + total.get("resolved_stop", 0)
+        + total.get("resolved_scheduled_close", 0)
+    )
     checks["resolved_slot_freed"] = (
         resolved,
         _count(AuditTable.SLOT_DEATH, lambda f: f["death_reason"] == "slot_freed")

@@ -97,7 +97,9 @@ _KMEANS_EXECUTABLE_POLICIES: dict[str, tuple[str, ...]] = {
     "dimensionality_reduction_policy": ("none",),
     "kernel_or_affinity_policy": ("none",),
     "out_of_sample_assignment_policy": ("centroid_predict_v1",),
-    "missingness_policy": ("median_impute_with_indicator_v1",),
+    "missingness_policy": (
+        "median_impute_with_indicator_v1", "median_impute_fold_empty_neutral_v2"
+    ),
     "winsorization_policy": ("none", "clip_p01_p99_train_fitted_v1"),
     "scaler_policy": ("standard_scaler_v1",),
     "cluster_label_alignment_policy": ("centroid_min_distance_hungarian_v1",),

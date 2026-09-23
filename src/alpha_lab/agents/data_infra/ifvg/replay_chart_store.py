@@ -963,6 +963,7 @@ _TERMINAL_END_SOURCE = {
     "dataset_exhaustion": "setup_end",
     "dataset_exhaustion_pre_entry": "setup_end",
     "invalidated_htf_filled": "setup_invalidation",
+    "invalidated_htf_own_timeframe_close": "setup_invalidation",
     "invalidated_parent_filled": "setup_invalidation",
     "invalidated_parent_structural": "setup_invalidation",
 }

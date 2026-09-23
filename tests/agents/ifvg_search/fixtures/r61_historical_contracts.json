@@ -1,0 +1,197 @@
+{
+  "provenance": {
+    "commit": "6c0b60a1dddee89a058bfe015c55be5fbe2ceced",
+    "source_path": "src/alpha_lab/agents/data_infra/ifvg/features/feature_blocks.py",
+    "source_sha256": "2ff8ea86bf8b929d83ad0ab5e00e0f886a0eae251fc6f20127eaa2c5eac30c14",
+    "scope": "Historical B0 contracts and original registry membership. Unchanged member contracts are read from the current registry and checked by the original complete registry hash; no historical fitting or current-registry replacement."
+  },
+  "definitions": {
+    "IFVG_CORE_BASELINE_V1": {
+      "feature_block_key": "IFVG_CORE_BASELINE_V1",
+      "block_version": 1,
+      "human_name": "IFVG lifecycle geometry core",
+      "status": "available",
+      "status_reason": null,
+      "feature_family": "lifecycle_geometry",
+      "source_kind": "v2_candidate",
+      "availability_stage": "entry_decision",
+      "dependencies": [],
+      "incompatible_blocks": [],
+      "experimental_flags": [],
+      "requires_strategy_replay": false,
+      "requires_feature_materialization": true,
+      "requires_model_retrain": true,
+      "can_affect_execution": false,
+      "expected_computation_path": "feature_materialization_plus_model_refit"
+    }
+  },
+  "resolutions": {
+    "IFVG_CORE_BASELINE_V1": {
+      "resolved_feature_block_id": "2dae045af3b459546494a8c585f0c092925b51b4da3140dd514f64ad2cc6ed25",
+      "payload": {
+        "feature_block_key": "IFVG_CORE_BASELINE_V1",
+        "block_version": 1,
+        "formula_version": "ifvg_v2_capture_row_v1",
+        "source_artifact_refs": [],
+        "source_schema_hash": "4ae0745c9cac94d99d6bf4b780b8aff30ae94c1dea0b263d0b78050d15001754",
+        "feature_schema_hash": "9eab3e157df812afc83a821663b071254c26242811a51b248f50bd8fb2b96e59",
+        "materializer_version": "build_candidate_feature_view_v1",
+        "feature_names": [
+          "direction",
+          "entry_family",
+          "parent_tf_seconds",
+          "distance_to_htf_ticks",
+          "elapsed_parent_bars_since_tap",
+          "elapsed_1m_bars_since_tap",
+          "elapsed_1m_bars_since_selection",
+          "distance_to_parent_ticks",
+          "elapsed_1m_bars_since_lock",
+          "close_through_margin_ticks",
+          "bars_armed_to_inversion",
+          "opposing_size_ticks",
+          "bars_since_inversion",
+          "entry_to_parent_ticks",
+          "entry_fvg_size_ticks",
+          "entry_fvg_gap_low_ticks",
+          "entry_fvg_gap_high_ticks",
+          "geometry_htf_size_ticks",
+          "geometry_parent_size_ticks",
+          "geometry_opposing_size_ticks",
+          "geometry_manipulation_swing_ticks",
+          "geometry_sl_buffer_ticks",
+          "geometry_entry_ticks",
+          "geometry_stop_ticks",
+          "risk_ticks"
+        ],
+        "numeric_features": [
+          "parent_tf_seconds",
+          "distance_to_htf_ticks",
+          "elapsed_parent_bars_since_tap",
+          "elapsed_1m_bars_since_tap",
+          "elapsed_1m_bars_since_selection",
+          "distance_to_parent_ticks",
+          "elapsed_1m_bars_since_lock",
+          "close_through_margin_ticks",
+          "bars_armed_to_inversion",
+          "opposing_size_ticks",
+          "bars_since_inversion",
+          "entry_to_parent_ticks",
+          "entry_fvg_size_ticks",
+          "entry_fvg_gap_low_ticks",
+          "entry_fvg_gap_high_ticks",
+          "geometry_htf_size_ticks",
+          "geometry_parent_size_ticks",
+          "geometry_opposing_size_ticks",
+          "geometry_manipulation_swing_ticks",
+          "geometry_sl_buffer_ticks",
+          "geometry_entry_ticks",
+          "geometry_stop_ticks",
+          "risk_ticks"
+        ],
+        "categorical_features": [
+          "direction",
+          "entry_family"
+        ],
+        "validity_fields": [],
+        "missing_reason_fields": [],
+        "source_timeframes": [],
+        "source_interval_policy": "event_driven_context_v2",
+        "as_of_policy": "candidate_stage_as_of_v1",
+        "join_keys": [
+          "candidate_id"
+        ],
+        "join_policy": "one_to_one_required",
+        "direction_normalization": "none",
+        "session_normalization": "none",
+        "warmup_requirement": "exclude_warmup_v1",
+        "coverage_requirements": [],
+        "mbp1_feature_windows": []
+      }
+    }
+  },
+  "definition_keys": [
+    "IFVG_CONTEXT_BAR_PANEL_V1",
+    "IFVG_CORE_BASELINE_V1",
+    "IFVG_DISPLACEMENT_CONTEXT_V2",
+    "IFVG_EXECUTION_LIQUIDITY_V1",
+    "IFVG_KEY_LEVEL_CONTEXT_V1",
+    "IFVG_LIQUIDITY_CONTEXT_V1",
+    "IFVG_ORDER_FLOW_MBP1_V1",
+    "IFVG_REGIME_CONTEXT_V1",
+    "IFVG_SESSION_CONTEXT_V1",
+    "IFVG_STRUCTURE_CONTEXT_240_V1",
+    "IFVG_STRUCTURE_CONTEXT_V1",
+    "IFVG_VOLATILITY_CONTEXT_V1"
+  ],
+  "resolution_keys": [
+    "IFVG_CONTEXT_BAR_PANEL_V1",
+    "IFVG_CORE_BASELINE_V1",
+    "IFVG_DISPLACEMENT_CONTEXT_V2",
+    "IFVG_LIQUIDITY_CONTEXT_V1",
+    "IFVG_ORDER_FLOW_MBP1_V1",
+    "IFVG_SESSION_CONTEXT_V1",
+    "IFVG_STRUCTURE_CONTEXT_240_V1",
+    "IFVG_STRUCTURE_CONTEXT_V1"
+  ],
+  "bundle_definition": {
+    "feature_bundle_key": "B0_CORE",
+    "bundle_version": 1,
+    "human_name": "Core + session",
+    "base_bundle_key": null,
+    "included_block_keys": [
+      "IFVG_CORE_BASELINE_V1",
+      "IFVG_SESSION_CONTEXT_V1"
+    ],
+    "excluded_feature_ids": [],
+    "manual_include_ids": [],
+    "manual_exclude_ids": [],
+    "manual_override_registration_id": null,
+    "required_profile_capabilities": [],
+    "required_coverage_gates": []
+  },
+  "protocol": {
+    "resolved_regime_protocol_id": "a9b7888ad1ff801ad343422248bdf5b1951ddff9121a972ff23ca3814598159b",
+    "payload": {
+      "algorithm_key": "kmeans_v1",
+      "algorithm_version": "1",
+      "pinned_parameters_hash": "3130dd35c2752f0652290ff8368d9dc610836738548b7b03dbc78496fb0d8fa8",
+      "input_feature_bundle_ref": "668f6fa60afe73f63d0036952874bfdd8319c328570041c25cbdcfdf7bc428cb",
+      "resolved_input_features": [
+        "distance_to_htf_ticks",
+        "opposing_size_ticks"
+      ],
+      "observation_granularity": "candidate_stage_row",
+      "panel_interval_seconds": null,
+      "panel_source_artifact_id": null,
+      "panel_as_of_policy_id": null,
+      "observation_stage": "entry_decision",
+      "missingness_policy": "median_impute_with_indicator_v1",
+      "winsorization_policy": "none",
+      "scaler_policy": "standard_scaler_v1",
+      "dimensionality_reduction_policy": "none",
+      "kernel_or_affinity_policy": null,
+      "cluster_count_policy": "fixed_k",
+      "resolved_cluster_count": 3,
+      "random_seed": 7,
+      "initialization_policy": "k-means++_n_init_10_v1",
+      "out_of_sample_assignment_policy": "centroid_predict_v1",
+      "cluster_label_alignment_policy": "centroid_min_distance_hungarian_v1",
+      "fit_scope": "per_training_fold",
+      "software_versions": [
+        [
+          "numpy",
+          "2.3.1"
+        ],
+        [
+          "pandas",
+          "2.3.1"
+        ],
+        [
+          "scikit-learn",
+          "1.7.0"
+        ]
+      ],
+      "formula_version": "regime_lane_v1"
+    }
+  }
+}

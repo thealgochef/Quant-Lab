@@ -1,6 +1,6 @@
 # Quant-Lab documentation index
 
-Updated: 2026-09-08.
+Updated: 2026-09-22.
 
 Use this index to avoid treating old reports as current architecture. The current production-aligned path is **dashboard-utility training through Strategy-Core v3**. Bundle presence/checksum verification is deferred until the local data/model zip is available.
 
@@ -12,10 +12,13 @@ Use this index to avoid treating old reports as current architecture. The curren
 | `ML_TRAINING_WORKBENCH.md` | **Current workflow guide** | Streamlit ML tab, dashboard-utility build/train/save, exact-source IFVG R5–R6 research and separate authorization. |
 | `pipeline_state.yaml` | **Current machine-readable summary** | Quick state for agents/scripts; v3 fields and known gaps. |
 | [Saved strategy-search approval](IFVG_STRATEGY_SEARCH_APPROVAL.md) | **Current approval and execution contract** | Enable Run for an exact approved strategy-only configuration without launching it. |
+| [IFSM UI replication](IFSM_UI_REPLICATION.md) | **Completed-run configuration guide** | Thirteen tested configurations and their editable values in the existing study Configuration screen. |
 | [Focused IFVG workspace report](../QL-FSM-PROP-SEARCH-DASHBOARD/implementation-progress/UI-UX-REDESIGN-PLAN/FOCUSED_WORKSPACE/COMPLETION_REPORT.md) | **Current presentation implementation** | Page routing, My studies, startup Developer boundary, Replay selection and test evidence. |
 | `reports/ifvg_browser_acceptance/20260907/DESKTOP_FLOW_REPORT.md` (local repository root) | **Saved local browser evidence** | Historical desktop acceptance report; generated reports are ignored and are not shipped with a clean clone. |
 | `DECISIONS.md` | **Decision log** | Architectural decisions and why they changed. |
 | `IFVG_CONTEXT_CAPTURE_V3.md` | **Current measurement contract** | Separate IFVG v3 context tables, fixed nonsealed access, immutable identity, and future M0-M3 inputs. |
+| [B0 projection repair](IFVG_B0_PROJECTION_REPAIR.md) | **Current B0 mapping contract** | Authoritative selected-stage sources, formulas, clocks, structural nulls and availability; new immutable projection evidence. |
+| [Bounded MBP conversion audit](MBP_ONE_DAY_CONVERSION_AUDIT.md) | **One-day evidence and adapter contract** | Exact DBN/parquet conversion and retained order for February 23's two physical files; snapshot and completeness limitations, propagated vendor warnings. |
 | `../../Strategy-Core/README.md` | **Shared engine guide** | Code pointers for Strategy-Core contracts, mechanics and tests. Verify the checkout used by the run. |
 | `../../Strategy-Core/V3_COMPATIBILITY_MATRIX.md` | **Historical compatibility matrix** | Recorded migration evidence; current compatibility requires code and bundle verification. |
 | `../../Strategy-Core/MIGRATION.md` | **Historical migration checklist** | Migration rationale and recorded checks; not current Trade-Lab certification. |
@@ -30,6 +33,7 @@ Use this index to avoid treating old reports as current architecture. The curren
 | `../src/alpha_lab/agents/data_infra/ifvg/search/research_regimes.py` | Read-only eligibility review and explicit evidence-bound owner decision for linked B0→B7 feature research. |
 | `../src/alpha_lab/agents/data_infra/ifvg/search/research_subject.py`, `research_data.py`, `research_mbp1.py` | Saved effective configuration binding, source/context preparation and neutrality, configured-R labels and MBP-1 source evidence. |
 | `../src/alpha_lab/agents/data_infra/ifvg/search/research_artifacts.py` and `../src/alpha_lab/agents/data_infra/ifvg/ml/research_evidence.py` | Scoped cohorts/labels and durable inputs, models, OOS predictions and verified reload without fitting. |
+| `../src/alpha_lab/agents/data_infra/ifvg/b0_projection.py` and `ml/model_feature_schema.py` | Exact Core B0 projection proof and per-fold raw/transformed schema checks. New fitted folds persist `feature_schema.json`; portable logistic schema 2 preserves schema-1 reading. |
 | `../src/alpha_lab/agents/data_infra/ifvg/ml/regime_execution_cache.py` | Opt-in completed real S09a KMeans/bootstrap/assignment reuse; incomplete attempts recompute. |
 | `../src/alpha_lab/agents/data_infra/ifvg/replay_chart_store.py` | Exact custom-store research charts/forward-source verification and scoped geometry; configured labels are separate annotations. |
 | `../src/alpha_lab/agents/data_infra/ifvg/presentation/workspace_mode.py` | Startup-only Developer flag and route-scoped technical presentation. |
@@ -45,9 +49,29 @@ Use this index to avoid treating old reports as current architecture. The curren
 
 ## Completed study audits
 
+Report directories are local, ignored deliverables and are never shipped in Git.
+Only light peer-review reports, settings, tables and charts belong there. The
+latest daily-close review starts at
+`reports/IFVG_Daily_Close_Audit_Light/START_HERE.md` (repository root).
+Since the owner-authorized September 22 cleanup, unique legacy working material
+and full audit archives are under
+`../Claude-Quant-Lab-Research-Artifacts/archived-reports/`, with their original
+names. Historical `reports/...` paths below and in archived records describe
+the original delivery location, not a clean-checkout dependency. Working
+generators now default to the external research-artifacts directory; source,
+test fixtures and dependencies never belong in a report delivery.
+
+The fixed non-MBP geometry bundle is documented in
+`IFVG_GEOMETRY_CORE_ATR14_RESEARCH.md`. Its registered materializer and research
+worker preserve repaired B0 and publish `geometry_feature_artifacts`, two
+source-bound bundle views and separately resumable paired model inputs/runs.
+Local batch evidence is under `reports/ifvg_geometry_batch/20260909/`;
+verified completion and findings come from its final report, not file presence.
+
 The exact-source R5–R6 workflow adds generated artifact families
 `research_subjects`, `research_groups`, `research_approvals`,
 `research_context_companions`, `research_cohorts`, `research_labels`,
+`research_core_compatibility` (new context captures bind source/environment proofs),
 `research_model_inputs`, `research_model_runs`, `research_regime_executions` and
 `research_replay_charts` under the selected search store. Research chart discovery
 uses that store's `research_replay_chart_catalog.json`.
@@ -139,3 +163,56 @@ obsolete `docs/ifvg/IFVG_LAB_UI_RESTORATION_MAP.md`. The current workbench repla
 the old three-tab UI map. Historical audit archives, governing contracts and
 owner-decision records remain intact. The local agent entry point `CLAUDE.md`
 now points to `AGENTS.md` rather than repeating stale engine/workflow claims.
+
+
+### HTF selection-cap experiment support (2026-09-12)
+
+The registry now offers cap 2 as a pending value requiring exact strategy-search
+approval; cap 1 stays the default. Evaluate One fixed settings expose this cap.
+`search/htf_cap_experiment.py` creates the four fixed-profile drafts for the
+240/90-wait comparison, preventing automatic default expansion. Per-timeframe
+selection ranks both directions before taps and conflict/direction handling.
+The new `selection_audit.py` companion preserves complete per-bar inventory
+observations, pre-cap universes and HTF creations when the imported research
+Core supports them, with strict coverage and tap reconciliation. These source
+files enter replay identity; old artifacts and canonical tables stay immutable.
+
+The task-local Core branch ports only active-selected-HTF physical tracking
+after registry eviction, including schema-3 day seeds, and adds audit-only
+selection observations. The installed/live Core pin is unchanged. Required
+full replay uses the original 117-date bundle, four separately approved fixed
+profiles and source-comparable controls; no other research policies apply.
+
+
+### IFVG no-entry research (2026-09-14)
+
+See `docs/IFVG_NO_ENTRY_DROUGHT.md` and the frozen task artifacts under
+`reports/ifvg_no_entry_drought_20260914/`. The isolated Core schema-4 day seed
+preserves pending logical-close bars and the last minute decision. This repairs
+seven partial-day deliveries without making bars available early, retains the
+active-selected-HTF repair, and changes source/seed identities. Historical studies
+and installed/live Core pins remain unchanged.
+
+The separately approved research policy `htf_direction_selection_policy` retains
+`mixed_direction_rank_v1` as default and adds `enabled_before_rank_v1`. The latter
+filters disabled directions before HTF admission/ranking, while preserving physical
+tracking, one setup/position and every unrelated setting. Its exact finite matrix
+is B0/D0/B1/D1; there is no second mechanism or combined policy. The root registry
+only exposes this field with a supporting research Core. Saved fixed drafts and
+headless worker enumeration are the supported workflow.
+
+New strategy-search v2 datasets optionally include manifest-bound
+`entry_activity_report.json`: explicit evaluation calendar, actual-entry-day counts,
+all consecutive zero-entry intervals/ties/censoring and adjacent elapsed/flat
+intervals. Stored resolution-day economics and all original charter gates remain
+separate; no activity statistic forces entries or supplies an acceptance threshold.
+Historical datasets remain readable. This is same-sample research, with no fitting,
+new data, June 11/holdout access or live promotion.
+
+## One-hour / four-hour gap choice (September 18, 2026)
+
+[One-hour / four-hour gap invalidation](IFVG_GAP_INVALIDATION_CHOICE.md) documents the study-screen choice, physical-versus-policy audit evidence, policy-specific seed compatibility and bounded D2 comparison.
+
+- **Current research contract:** `IFVG_DAILY_CLOSE_SESSIONS.md` — mandatory daily
+  and weekend flatness, the corrected Chicago morning preset, legacy identities,
+  priced execution projection and the bounded 32-profile review package.

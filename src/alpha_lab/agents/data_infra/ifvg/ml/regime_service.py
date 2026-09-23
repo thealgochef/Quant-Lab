@@ -60,6 +60,7 @@ from .regime_contracts import (
     sample_adequacy_minimum,
 )
 from .regime_preprocessing import (
+    REGIME_MISSINGNESS_POLICY_V2,
     FittedRegimePreprocessing,
     fit_regime_preprocessing,
     keyed_observations,
@@ -225,7 +226,7 @@ def resolve_kmeans_protocol(
         panel_source_artifact_id=panel_source_artifact_id,
         panel_as_of_policy_id=panel_as_of_policy_id,
         observation_stage=stage,
-        missingness_policy="median_impute_with_indicator_v1",
+        missingness_policy=REGIME_MISSINGNESS_POLICY_V2,
         winsorization_policy=winsorization_policy,
         scaler_policy="standard_scaler_v1",
         dimensionality_reduction_policy="none",
@@ -339,6 +340,7 @@ def _fit_one_fold(
         payload.resolved_input_features,
         fold,
         winsorization_policy=payload.winsorization_policy,
+        missingness_policy=payload.missingness_policy,
     )
     pinned = dict(entry.pinned_parameters)
     estimator = KMeans(n_clusters=payload.resolved_cluster_count, **pinned)

@@ -389,9 +389,163 @@ def test_search_space_selection_updates_child_count(monkeypatch, tmp_path) -> No
         if w.key == f"{wizard._W}axis_parent_retest_timeout_1m_bars"
     )
     assert target.value  # restored from the seeded draft
+    choices = [f"parent_retest_timeout_1m_bars = {value}" for value in (60, 90, 120, 240)]
+    assert set(choices).issubset(target.options)
+    target.set_value(choices).run()
+    assert not at.exception
+    assert "5 configurations: baseline + 4 challengers" in _caption_text(at)
+    assert not _button(at, "Next").disabled
     _button(at, "Save Draft").click().run()
     stored = load_draft(roots["drafts"], draft.draft_id)
-    assert stored.steps["search_space"]["axis_selections"]
+    assert stored.steps["search_space"]["axis_selections"] == {
+        "parent_retest_timeout_1m_bars": [
+            f"parent_retest_timeout_1m_bars.{value}" for value in (60, 90, 120, 240)
+        ]
+    }
+
+
+def test_new_axis_choices_persist_and_enumerate_with_explicit_defaults(monkeypatch, tmp_path):
+    from alpha_lab.agents.data_infra.ifvg.search.charter import (
+        SearchCharterEnvelope,
+        SearchCharterPayload,
+        validate_charter,
+    )
+    from alpha_lab.agents.data_infra.ifvg.search.orchestrator import enumerate_children
+
+    at, draft, roots = _run_at_step(monkeypatch, tmp_path, step=2)
+    captions = _caption_text(at)
+    for reading in ("No timeout (unbounded)", "15 days", "No trade cap"):
+        assert f"If left empty: **{reading}**" in captions
+    assert "Selecting or saving values does not start a backtest" in " ".join(
+        str(info.value) for info in at.info
+    )
+    for widget in at.multiselect:
+        assert not any("accepted doc-default baseline" in label for label in widget.options)
+
+    parent = next(
+        w for w in at.multiselect if w.key == f"{wizard._W}axis_parent_retest_timeout_1m_bars"
+    )
+    parent.set_value([]).run()
+    values_by_axis = {
+        "opposing_timeout_1m_bars": (60, 90, 120),
+        "htf_registry_max_age_days": (1, 2, 3, 4, 5),
+        "max_executed_trades_per_day": (1, 2, 3),
+    }
+    for axis, values in values_by_axis.items():
+        widget = next(w for w in at.multiselect if w.key == f"{wizard._W}axis_{axis}")
+        choices = [f"{axis} = {value}" for value in values]
+        assert set(choices).issubset(widget.options)
+        widget.set_value(choices).run()
+        assert not at.exception
+    assert "96 configurations: baseline + 95 challengers" in _caption_text(at)
+    assert not _button(at, "Next").disabled
+    _button(at, "Save Draft").click().run()
+    stored = load_draft(roots["drafts"], draft.draft_id)
+    assert stored.steps["search_space"]["axis_selections"] == {
+        axis: [f"{axis}.{value}" for value in values]
+        for axis, values in values_by_axis.items()
+    }
+    fields = wizard._charter_fields(stored, roots)
+    assert fields["axes"] == {
+        axis: (SEARCH_AXIS_REGISTRY_V1[axis].baseline_value_id, *(
+            f"{axis}.{value}" for value in values
+        ))
+        for axis, values in values_by_axis.items()
+    }
+    payload = SearchCharterPayload.model_validate({
+        **fields, "owner_authorization": wizard.SyntheticAuthorizationMarker(),
+    })
+    validate_charter(payload, as_of_utc="2026-09-08T00:00:00Z")
+    children = enumerate_children(
+        SearchCharterEnvelope.from_payload(payload),
+        identity_resolver=lambda spec: spec.resolved_section_config_hash,
+    )
+    assert len(children) == len({c.resolved_section_config_hash for c in children}) == 96
+    baseline = next(child for child in children if child.comparison_role == "baseline")
+    assert baseline.section_overrides == {
+        "opposing_timeout_1m_bars": None,
+        "htf_registry_max_age_days": 15,
+        "max_executed_trades_per_day": None,
+    }
+    # Blank parent timeout was omitted, so every child inherits it from the baseline.
+    assert all("parent_retest_timeout_1m_bars" not in c.section_overrides for c in children)
+
+
+def test_unresolved_baseline_does_not_display_assumed_empty_menu_values(monkeypatch, tmp_path):
+    roots = _patched_roots(monkeypatch, tmp_path)
+    draft = _seed_draft(roots["drafts"], step=2)
+    draft.steps["baseline"]["baseline_section_config_hash"] = "0" * 64
+    save_draft(roots["drafts"], draft)
+    at = apptest.AppTest.from_function(_app, default_timeout=120)
+    at.session_state[_DRAFT_KEY] = draft.draft_id
+    at.run()
+    assert not at.exception
+    assert "Baseline values unavailable" in " ".join(str(w.value) for w in at.warning)
+    assert "If left empty: **Unavailable" in _caption_text(at)
+    assert "If left empty: **15 days**" not in _caption_text(at)
+
+
+def test_ny_morning_preset_persists_and_enumerates_exact_window(monkeypatch, tmp_path):
+    from alpha_lab.agents.data_infra.ifvg.presentation.strategy_rules import describe_strategy
+    from alpha_lab.agents.data_infra.ifvg.search.charter import (
+        SearchCharterEnvelope,
+        SearchCharterPayload,
+        validate_charter,
+    )
+    from alpha_lab.agents.data_infra.ifvg.search.orchestrator import enumerate_children
+
+    at, draft, roots = _run_at_step(monkeypatch, tmp_path, step=2)
+    parent = next(
+        w for w in at.multiselect if w.key == f"{wizard._W}axis_parent_retest_timeout_1m_bars"
+    )
+    parent.set_value([]).run()
+    sessions = next(
+        w for w in at.multiselect if w.key == f"{wizard._W}axis_enabled_entry_sessions"
+    )
+    label = "Legacy morning - 6:00 AM to 9:30 AM Chicago time (historical)"
+    assert label in sessions.options
+    for name in ("Asia only", "London only", "New York only"):
+        assert any(option.startswith(name) for option in sessions.options)
+    sessions.set_value([label]).run()
+    assert not at.exception
+    assert "Each selected preset is a separate configuration" in _caption_text(at)
+    assert "2 configurations: baseline + 1 challenger" in _caption_text(at)
+    _button(at, "Save Draft").click().run()
+    stored = load_draft(roots["drafts"], draft.draft_id)
+    assert stored.steps["search_space"]["axis_selections"] == {
+        "enabled_entry_sessions": ["enabled_entry_sessions.ny_0700_1030"],
+    }
+    restored = apptest.AppTest.from_function(_app, default_timeout=120)
+    restored.session_state[_DRAFT_KEY] = draft.draft_id
+    restored.run()
+    assert not restored.exception
+    assert next(
+        w for w in restored.multiselect if w.key == f"{wizard._W}axis_enabled_entry_sessions"
+    ).value == [label]
+
+    fields = wizard._charter_fields(stored, roots)
+    payload = SearchCharterPayload.model_validate({
+        **fields, "owner_authorization": wizard.SyntheticAuthorizationMarker(),
+    })
+    validate_charter(payload, as_of_utc="2026-09-08T00:00:00Z")
+    children = enumerate_children(
+        SearchCharterEnvelope.from_payload(payload),
+        identity_resolver=lambda spec: spec.resolved_section_config_hash,
+    )
+    assert len(children) == 2
+    child = next(c for c in children if c.comparison_role == "challenger")
+    assert child.capability.status == "generated_runnable"
+    assert child.section_overrides == {
+        "enabled_entry_sessions": ["ny_0700_1030"],
+        "doc_sessions": {"ny_0700_1030": ["07:00", "10:30"]},
+    }
+    resolved = resolve_profile_config({"section_overrides": dict(child.section_overrides)})
+    description = describe_strategy(resolved.section)
+    assert description.status == "available"
+    assert "Legacy morning (historical) 6:00 AM–9:30 AM" in description.detail_bullets[0]
+    baseline = next(c for c in children if c.comparison_role == "baseline")
+    assert "doc_sessions" not in baseline.section_overrides
+    assert baseline.section_overrides["enabled_entry_sessions"] == ["asia", "london", "ny"]
 
 
 # ── prop contracts ──────────────────────────────────────────────────────────
@@ -461,6 +615,13 @@ def test_conditional_flow_skips_steps_with_visible_reasons(monkeypatch, tmp_path
         assert not at.exception
         assert "**Prop Contracts**" not in _caption_text(at)
         assert "**Strategy Search Space**" not in _caption_text(at)
+        # AppTest retains removed selectboxes when an immediate rerun replaces
+        # this longer configuration page with a shorter page. Reopen the saved
+        # current step before the next interaction; do not submit stale widgets.
+        at = apptest.AppTest.from_function(_app, default_timeout=120)
+        at.session_state[_DRAFT_KEY] = draft.draft_id
+        at.run()
+        assert not at.exception
 
 
 def test_prop_objective_blocks_instead_of_disappearing(monkeypatch, tmp_path) -> None:

@@ -33,7 +33,9 @@ from alpha_lab.agents.data_infra.ifvg.ml.regime_alignment import (
 )
 from alpha_lab.agents.data_infra.ifvg.ml.regime_contracts import (
     ObservationGranularity,
+    RegimeFitEnvelope,
     RegimeProtocolEnvelope,
+    RegimeProtocolPayload,
 )
 from alpha_lab.agents.data_infra.ifvg.ml.regime_preprocessing import (
     fit_regime_preprocessing,
@@ -207,7 +209,9 @@ def test_fit_api_cannot_receive_a_pooled_frame(cluster_run):
     import inspect
 
     parameters = inspect.signature(fit_regime_preprocessing).parameters
-    assert set(parameters) == {"frame", "features", "fold", "winsorization_policy"}
+    assert set(parameters) == {
+        "frame", "features", "fold", "winsorization_policy", "missingness_policy"
+    }
     fixture, folds, _protocol_, _run_ = cluster_run
     invalid = next((f for f in folds.folds if not f.valid), None)
     if invalid is not None:
@@ -798,14 +802,52 @@ def test_stability_report_carries_transitions_and_recurrence(cluster_run):
 #: with no winsorization (`../R6/browser-smoke/MANIFEST.json`
 #: `healthy.first_fit_id`). Fit identity ignores every stability semantic.
 R6_GOLDEN_FOLD0_FIT_ID = "1e183cd722612c28c210396e0350ddc50edf3576c16dddbbb005b2a39360f7d0"
+#: Recorded before the selected-stage B0 projection repair; see
+#: implementation-progress/R6.1-FIX/PRE_R6_1_FIX_BASELINE.md. These are historical
+#: envelope inputs, never overrides for a new fit using the current B0 registry.
+R6_GOLDEN_B0_ID = "668f6fa60afe73f63d0036952874bfdd8319c328570041c25cbdcfdf7bc428cb"
+R6_GOLDEN_PROTOCOL_ID = "a9b7888ad1ff801ad343422248bdf5b1951ddff9121a972ff23ca3814598159b"
 
 
 def test_fit_identity_is_the_r6_golden_constant_and_ignores_stability_semantics(cluster_run):
-    _fixture, _folds_, _protocol_, run = cluster_run
-    assert run.fold_fits[0].fit_envelope.regime_fit_id == R6_GOLDEN_FOLD0_FIT_ID
-    assert run.fold_fits[0].fit_envelope.payload.resolved_regime_protocol_id == (
+    fixture, folds, protocol, current_run = cluster_run
+    # Exercise the original numerical policy with today's truthful bundle and
+    # software identity. V1 and V2 fits must remain separately identified.
+    legacy = RegimeProtocolEnvelope.from_payload(
+        protocol.payload.model_copy(
+            update={"missingness_policy": "median_impute_with_indicator_v1"}
+        )
+    )
+    run = _run(fixture, folds, legacy)
+    current_fit = run.fold_fits[0].fit_envelope
+    assert legacy.payload.input_feature_bundle_ref == _B0 != R6_GOLDEN_B0_ID
+    assert current_fit.regime_fit_id != current_run.fold_fits[0].fit_envelope.regime_fit_id
+    assert current_fit.payload.resolved_regime_protocol_id == (
         run.protocol.resolved_regime_protocol_id
     )
+
+    # Restore the R6 envelope's recorded inputs for the historical identity
+    # check. Merely switching back to V1 cannot undo the later B0 repair.
+    # This does not fit with historical metadata or relabel a current result.
+    historical_payload = legacy.payload.model_dump(mode="json")
+    historical_payload.update(
+        input_feature_bundle_ref=R6_GOLDEN_B0_ID,
+        software_versions={"numpy": "2.3.1", "pandas": "2.3.1", "scikit-learn": "1.7.0"},
+    )
+    historical_protocol = RegimeProtocolEnvelope.from_payload(
+        RegimeProtocolPayload.model_validate(historical_payload)
+    )
+    assert historical_protocol.resolved_regime_protocol_id == R6_GOLDEN_PROTOCOL_ID
+    # Deriving every nonprotocol input from the actual V1 run proves that its
+    # source, training rows, training matrix and fold boundaries still match R6.
+    historical_fit = RegimeFitEnvelope.from_payload(
+        current_fit.payload.model_copy(update={
+            "resolved_regime_protocol_id": historical_protocol.resolved_regime_protocol_id,
+        })
+    )
+    restored = RegimeFitEnvelope.model_validate_json(historical_fit.model_dump_json())
+    assert restored.regime_fit_id == R6_GOLDEN_FOLD0_FIT_ID
+    assert current_fit.regime_fit_id != restored.regime_fit_id
 
 
 def test_bootstrap_runs_on_every_valid_fold_with_fold_seeds(cluster_run):

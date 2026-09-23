@@ -29,6 +29,7 @@ from ..features.mbp1_coverage_evidence import (
     MBP1_GAP_MANIFEST_STORE,
     Mbp1CompletenessCompilationReportEnvelope,
     Mbp1CompletenessCompilationReportPayload,
+    Mbp1DatasetConditionRecord,
     Mbp1DeclaredGapInterval,
     Mbp1EvidenceProvenance,
     Mbp1EvidenceScope,
@@ -50,6 +51,7 @@ from ..features.mbp1_source_contract import R5B_WINDOW_SPECS, Mbp1SourceContract
 from ..features.mbp1_stage_windows import stage_anchor_frame_from_candidates
 from ..manifest import file_sha256
 from .identities import canonical_contract_sha256
+from .mbp1_vendor_conditions import load_archived_dataset_conditions
 from .store import save_or_reuse_envelope
 
 ROLL_POLICY = "strategy_core_dominant_trade_count_authorized_partition_span_v1"
@@ -143,7 +145,7 @@ def _source_policy(subject):
     )
 
 
-def _discover_evidence(store_root, subject, partition_refs):
+def _discover_evidence(store_root, subject, partition_refs, dataset_conditions=None):
     by_date = {item["source_date"]: item for item in partition_refs if item.get("sha256")}
     found, warnings = {}, []
     for path in sorted((Path(store_root) / MBP1_GAP_MANIFEST_STORE).glob("*/envelope.json")):
@@ -151,6 +153,11 @@ def _discover_evidence(store_root, subject, partition_refs):
         scope = evidence.scope
         if scope.utc_date not in by_date or scope.schema_name != "mbp-1":
             continue
+        condition = (dataset_conditions or {}).get(scope.utc_date)
+        if condition is not None:
+            evidence = load_verified_partition_evidence(
+                store_root, manifest_id=path.parent.name, dataset_condition=condition
+            )
         if evidence.provenance is not Mbp1EvidenceProvenance.OWNER_REVIEWED:
             continue
         report = evidence.completeness_report
@@ -218,7 +225,13 @@ def preflight_research_mbp1(subject, store_root, repo_root) -> dict:
     if available == 0:
         blockers.append("No MBP-1 source partitions are available for the subject calendar")
     warnings.append("No completeness is inferred from file presence or sequence continuity")
-    evidence, evidence_warnings = _discover_evidence(store_root, subject, refs)
+    try:
+        conditions, condition_warnings = load_archived_dataset_conditions(repo_root, physical)
+    except (ValueError, OSError) as exc:
+        conditions, condition_warnings = {}, []
+        blockers.append(f"MBP-1 vendor condition evidence could not be verified: {exc}")
+    warnings.extend(condition_warnings)
+    evidence, evidence_warnings = _discover_evidence(store_root, subject, refs, conditions)
     warnings.extend(evidence_warnings)
     ids = sorted(
         {
@@ -256,6 +269,9 @@ def preflight_research_mbp1(subject, store_root, repo_root) -> dict:
         "available_partition_count": available,
         "physical_source_dates": list(physical),
         "input_partition_refs": refs,
+        "dataset_condition_records": {
+            day: record.model_dump(mode="json") for day, record in sorted(conditions.items())
+        },
         "coverage_evidence_ids": ids,
         "evidence_refs": ids,
         "evidenced_logical_day_count": sum(bool(items) for items in evidence.values()),
@@ -484,6 +500,7 @@ def build_research_mbp1_evidence(
         current[key] != frozen.get(key)
         for key in (
             "input_partition_refs",
+            "dataset_condition_records",
             "coverage_evidence_ids",
             "physical_source_dates",
             "mbp1_source_contract_id",
@@ -493,7 +510,13 @@ def build_research_mbp1_evidence(
     if canonical_contract_sha256(contract) != current["mbp1_source_contract_id"]:
         raise ValueError("MBP-1 source contract differs from the frozen canonical adapter")
     discovered, _warnings = _discover_evidence(
-        preparation.store_root, subject, current["input_partition_refs"]
+        preparation.store_root,
+        subject,
+        current["input_partition_refs"],
+        {
+            day: Mbp1DatasetConditionRecord.model_validate(record)
+            for day, record in current["dataset_condition_records"].items()
+        },
     )
     if coverage_evidence is not None and coverage_evidence != discovered:
         raise ValueError("explicit MBP-1 evidence differs from verified source discovery")

@@ -24,18 +24,27 @@ from alpha_lab.agents.data_infra.ifvg.audit_contracts import AuditTable  # noqa:
 from alpha_lab.agents.data_infra.ifvg.fsm_audit_io import (  # noqa: E402
     load_verified_fsm_audit_artifact,
 )
+from alpha_lab.agents.data_infra.ifvg.working_artifacts import (  # noqa: E402
+    external_working_output,
+    research_working_directory,
+)
 
-REPORT_DIR = ROOT / "reports" / "ifvg_fsm_audit"
-
-
-def _write(name: str, text: str) -> None:
-    REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    (REPORT_DIR / name).write_text(text, encoding="utf-8")
-    print("wrote", (REPORT_DIR / name).as_posix())
+REPORT_DIR = research_working_directory(ROOT, "ifvg_fsm_audit")
 
 
-def _write_json(name: str, payload) -> None:
-    _write(name, json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n")
+def _write(name: str, text: str, *, output_dir: Path = REPORT_DIR) -> None:
+    output_dir = external_working_output(ROOT, output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / name).write_text(text, encoding="utf-8")
+    print("wrote", (output_dir / name).as_posix())
+
+
+def _write_json(name: str, payload, *, output_dir: Path = REPORT_DIR) -> None:
+    _write(
+        name,
+        json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n",
+        output_dir=output_dir,
+    )
 
 
 def funnel_report(tables) -> dict:
@@ -249,7 +258,14 @@ def review_queue(tables) -> pd.DataFrame:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--audit-id", required=True)
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=REPORT_DIR,
+        help="Working evidence directory (defaults outside the repository).",
+    )
     args = parser.parse_args()
+    args.output_dir = external_working_output(ROOT, args.output_dir)
     artifact = load_verified_fsm_audit_artifact(
         ROOT / "data" / "ifvg_datasets" / "fsm_audit" / "v1", args.audit_id
     )
@@ -262,7 +278,7 @@ def main() -> int:
 
     funnel = funnel_report(artifact.tables)
     funnel["fsm_audit_artifact_id"] = artifact.artifact_id
-    _write_json("IFVG_FSM_FUNNEL_REPORT.json", funnel)
+    _write_json("IFVG_FSM_FUNNEL_REPORT.json", funnel, output_dir=args.output_dir)
     lines = ["# IFVG FSM Funnel Report", "", f"Artifact: `{artifact.artifact_id}`", ""]
     lines.append("## Funnel totals\n")
     for key, value in sorted(funnel["funnel_totals"].items()):
@@ -287,14 +303,16 @@ def main() -> int:
         )
     )
     lines.append("```")
-    _write("IFVG_FSM_FUNNEL_REPORT.md", "\n".join(lines) + "\n")
+    _write("IFVG_FSM_FUNNEL_REPORT.md", "\n".join(lines) + "\n", output_dir=args.output_dir)
 
     coverage_payload = {
         "fsm_audit_artifact_id": artifact.artifact_id,
         **coverage,
         "reconciliation_passed": reconciliation.get("passed"),
     }
-    _write_json("IFVG_FSM_EVIDENCE_COVERAGE_REPORT.json", coverage_payload)
+    _write_json(
+        "IFVG_FSM_EVIDENCE_COVERAGE_REPORT.json", coverage_payload, output_dir=args.output_dir
+    )
     md = ["# IFVG FSM Evidence Coverage", "", f"Artifact: `{artifact.artifact_id}`", ""]
     md.append("## Drop-reason coverage (every contract reason observed or provably zero)\n")
     for reason, count in sorted(coverage["drop_reason_counts"].items()):
@@ -307,12 +325,20 @@ def main() -> int:
         f"\nFunnel ⇔ events reconciliation: "
         f"{'EXACT' if reconciliation.get('passed') else 'FAILED'}\n"
     )
-    _write("IFVG_FSM_EVIDENCE_COVERAGE_REPORT.md", "\n".join(md) + "\n")
+    _write(
+        "IFVG_FSM_EVIDENCE_COVERAGE_REPORT.md", "\n".join(md) + "\n", output_dir=args.output_dir
+    )
 
-    _write("IFVG_FSM_RULE_CONFLICT_REPORT.md", rule_conflict_report(artifact.tables))
+    _write(
+        "IFVG_FSM_RULE_CONFLICT_REPORT.md",
+        rule_conflict_report(artifact.tables),
+        output_dir=args.output_dir,
+    )
 
     queue = review_queue(artifact.tables)
-    _write("IFVG_SETUP_VISUAL_REVIEW_SAMPLE.csv", queue.to_csv(index=False))
+    _write(
+        "IFVG_SETUP_VISUAL_REVIEW_SAMPLE.csv", queue.to_csv(index=False), output_dir=args.output_dir
+    )
     print(
         json.dumps(
             {

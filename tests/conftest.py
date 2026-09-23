@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime, timedelta
 
 import numpy as np
@@ -25,6 +26,21 @@ from alpha_lab.core.contracts import (
 )
 from alpha_lab.core.enums import AgentID, MessageType, Priority
 from alpha_lab.core.message import MessageBus, MessageEnvelope
+
+
+def pytest_configure(config):
+    """The research CI lane must never pass by skipping unsupported controls."""
+    if os.environ.get("IFSM_REQUIRE_RESEARCH_CORE") != "1":
+        return
+    from strategy_core.strategies.ifvg_smc.section import IfvgSmcSection
+
+    required = {"holding_policy", "entry_schedule_policy", "htf_gap_invalidation_policy"}
+    missing = sorted(required - IfvgSmcSection.model_fields.keys())
+    if missing:
+        raise pytest.UsageError(
+            "IFSM research tests require the prepared research Core; missing fields: "
+            + ", ".join(missing)
+        )
 
 
 @pytest.fixture
