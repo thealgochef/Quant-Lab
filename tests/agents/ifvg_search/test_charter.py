@@ -281,6 +281,15 @@ def test_real_charter_prop_objective_requires_a_firm_contract_and_is_never_rewri
                 warmup_dates=FROZEN_WARMUP_DATES,
                 access_policy_id="development_explicit_dates_before_path_v2",
             ),
+            # one evaluated date: keep the independent-day threshold reachable
+            # so the prop-objective rule under test is the one that refuses
+            "objective_policy": synthetic.objective_policy.model_copy(
+                update={
+                    "feasibility_gates": synthetic.objective_policy.feasibility_gates.model_copy(
+                        update={"min_independent_days": 1}
+                    )
+                }
+            ),
         }
     )
     with pytest.raises(CharterValidationError, match="never silently rewritten") as refused:

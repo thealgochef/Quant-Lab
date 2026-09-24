@@ -26,6 +26,7 @@ _UI_SCRIPTS = (
     "ifvg_mbp1_panels.py",  # R5B panel (coverage gap closed by R6 review S5)
     "ifvg_regime_panels.py",  # R6 Regime Lane panel
     "ifvg_verification_center.py",  # UI-2 Verification Center (no spawn seam)
+    "ifvg_research_dates.py",  # repair R8: start/end research dates
 )
 
 _SRC_MODULES = (
@@ -153,11 +154,13 @@ def test_no_raw_override_editor_exists() -> None:
         r'text_area\(\s*[\"\']([^\"\']+)', wizard
     )
     # UI-1: the frozen warmup prefix is read-only (derived from the backend
-    # contract), so the ONE remaining text area is the evidence-date list,
-    # validated field-by-field against the logical-day calendar
-    assert len(text_area_labels) == 1
-    assert all("dates" in label.lower() for label in text_area_labels)
-    assert "logical trading days" in text_area_labels[0]
+    # contract). Repair R8 replaced the one remaining text area (the evidence-
+    # date list) with start and end date pickers that resolve to logical
+    # trading days, so no text area remains; the date step is scanned too.
+    assert text_area_labels == []
+    dates = sources["ifvg_research_dates.py"]
+    assert "text_area" not in dates and "section_overrides" not in dates
+    assert '"Start date"' in dates and '"End date"' in dates
     for name, source in sources.items():
         assert "json.loads" not in source or name in (
             "study_drafts.py",
@@ -384,7 +387,7 @@ def test_timeline_builder_marker_shapes_and_display_timezone() -> None:
     # and phase transitions appear on the chart with their labels
     phases = next(t for t in figure.data if t.name == "phase transition")
     assert any("evaluation→funded" in t for t in phases.text)
-    assert "America/New_York" in figure.layout.xaxis.title.text
+    assert figure.layout.xaxis.title.text == "Chicago time (CST/CDT)"
 
 
 def test_sanitizer_redacts_unc_and_quoted_space_paths() -> None:

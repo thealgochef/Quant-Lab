@@ -88,12 +88,15 @@ def test_fixed_policy_saved_reloaded_worker_loaded_one_profile(monkeypatch, tmp_
     else:
         assert "original one-minute wick/full-fill rule" in _fixed_widget(app, FIELD).proto.help
     stored = _save(app, draft, roots)
-    assert fixed_axis_values(stored) == {FIELD: _vid(policy)}
+    # repair R7: choosing the rule already shown (the inherited original rule) is not an
+    # edit, so nothing is written; the missing field resolves to the original rule
+    expected = {FIELD: _vid(policy)} if policy == OWN_CLOSE else {}
+    assert fixed_axis_values(stored) == expected
     reopened = _open(stored, roots)
     assert _fixed_widget(reopened, FIELD).value == _vid(policy)
     fields, children = _worker_children(stored, roots)
     assert fields["max_child_count"] == 1
-    assert fields["axes"] == {FIELD: (_vid(policy),)}
+    assert fields["axes"] == {key: (value,) for key, value in expected.items()}
     assert len(children) == 1
     child = resolve_profile_config({
         "profile_name": BASELINE, "section_overrides": children[0].section_overrides,
@@ -140,7 +143,11 @@ def test_actual_ifsm_page_save_reopen_edit_and_import(monkeypatch, tmp_path):
     next(button for button in app.button if button.label == "Save draft").click().run()
     draft_id = app.session_state[f"{wizard.STATE_PREFIX}draft_id"]
     stored = load_draft(tmp_path / "drafts", draft_id)
-    assert fixed_axis_values(stored) == {FIELD: _vid(OWN_CLOSE)}
+    # repair R7: a new Evaluate study starts on S0_D80_W1_P1's saved settings
+    from tests.agents.test_ifsm_replication_ui import _named_start
+
+    start = _named_start()[0]
+    assert fixed_axis_values(stored) == {**start, FIELD: _vid(OWN_CLOSE)}
     exported = export_fixed_configuration(BASELINE, fixed_axis_values(stored))
 
     reopened = apptest.AppTest.from_file(
@@ -153,7 +160,8 @@ def test_actual_ifsm_page_save_reopen_edit_and_import(monkeypatch, tmp_path):
     assert _fixed_widget(reopened, FIELD).value == _vid(OWN_CLOSE)
     _fixed_widget(reopened, FIELD).set_value(_vid(ORIGINAL)).run()
     next(button for button in reopened.button if button.label == "Save draft").click().run()
-    assert fixed_axis_values(load_draft(tmp_path / "drafts", draft_id)) == {FIELD: _vid(ORIGINAL)}
+    assert fixed_axis_values(load_draft(tmp_path / "drafts", draft_id)) == {
+        **start, FIELD: _vid(ORIGINAL)}
     next(widget for widget in reopened.text_area
          if widget.label == "Paste exported configuration JSON").set_value(exported).run()
     next(button for button in reopened.button
@@ -161,8 +169,36 @@ def test_actual_ifsm_page_save_reopen_edit_and_import(monkeypatch, tmp_path):
     assert not reopened.exception
     assert _fixed_widget(reopened, FIELD).value == _vid(OWN_CLOSE)
     next(button for button in reopened.button if button.label == "Save draft").click().run()
-    assert fixed_axis_values(load_draft(tmp_path / "drafts", draft_id)) == {FIELD: _vid(OWN_CLOSE)}
+    assert fixed_axis_values(load_draft(tmp_path / "drafts", draft_id)) == {
+        **start, FIELD: _vid(OWN_CLOSE)}
     assert not (tmp_path / "search/v1").exists()
+
+
+def test_reopening_saved_settings_without_the_rule_never_adds_it(monkeypatch, tmp_path):
+    """Repair R7: a saved configuration like drafts f3099b0b… and 708c133a… (fixed
+    settings without the gap rule, saved before it existed) reopens byte-identical;
+    an owner edit still saves the configuration's rule explicitly."""
+
+    from tests.agents.test_ifsm_replication_ui import _wizard_app
+
+    roots = _roots(monkeypatch, tmp_path)
+    fixed = {"opposing_timeout_1m_bars": "opposing_timeout_1m_bars.90",
+             "parent_htf_distance_ticks_max": "parent_htf_distance_ticks_max.160",
+             "parent_retest_timeout_1m_bars": "parent_retest_timeout_1m_bars.240"}
+    draft = _draft(fixed=fixed)
+    path = save_draft(roots["drafts"], draft)
+    before = path.read_bytes()
+    app = apptest.AppTest.from_function(_wizard_app, default_timeout=120)
+    app.session_state[f"{wizard.STATE_PREFIX}draft_id"] = draft.draft_id
+    app.run()
+    assert not app.exception
+    assert _fixed_widget(app, FIELD).value == _vid(ORIGINAL)  # shown, not written
+    app.run()  # refresh
+    assert path.read_bytes() == before
+    axis = "htf_selection_max_per_timeframe"
+    _fixed_widget(app, axis).set_value(f"{axis}.2").run()
+    stored = _save(app, draft, roots)
+    assert fixed_axis_values(stored) == {**fixed, f"{axis}": f"{axis}.2", FIELD: _vid(ORIGINAL)}
 
 
 def test_legacy_missing_field_retains_original_without_rewriting_saved_draft(tmp_path):
@@ -252,6 +288,8 @@ def test_normal_approval_review_accepts_exact_policy_without_granting_authority(
 
     draft = _draft(fixed={FIELD: _vid(policy)})
     draft.steps["validation"]["warmup_dates"] = list(FROZEN_WARMUP_DATES)
+    # two evaluated dates: keep the independent-day threshold reachable (R5)
+    draft.steps["benchmarks"] = {"strategy_gates": {"min_independent_days": 2}}
     fields = wizard._charter_fields(draft, {"store_root": tmp_path / "store"})
     requirements = wizard._requirement_set_for_draft(draft, "full_authorized_development")
     intent = service._typed_intent(fields)

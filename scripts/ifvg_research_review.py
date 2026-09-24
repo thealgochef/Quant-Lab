@@ -89,6 +89,22 @@ def research_figure(figure, *, title):
     return result
 
 
+#: R4: UTC bar-time columns (named ``*_utc`` by contract) and their Chicago
+#: display names, in source-priority order.
+_CHICAGO_BAR_TIME = (
+    ("close_ts_utc", "Bar close (Chicago)"),
+    ("logical_close_ts_utc", "Bar close (Chicago)"),
+    ("ts_utc", "Time (Chicago)"),
+)
+
+
+def _chicago_times(values):
+    """Chicago display labels for a UTC-convention column (order kept)."""
+    from ifvg_verifier_charts import display_time
+
+    return [display_time(value, naive="utc") for value in values]
+
+
 def bar_table(st, bars_by_pane, *, key):
     with st.expander("Chart data table"):
         choices = [value for value, frame in bars_by_pane.items() if not frame.empty]
@@ -127,11 +143,21 @@ def bar_table(st, bars_by_pane, *, key):
             column in allowed for column in ("ts_utc", "ts_event", "timestamp", "logical_close_ts")
         ) and isinstance(frame.index, pd.DatetimeIndex):
             table.insert(0, "Time", frame.index)
+        # R4: the screen shows Chicago time in place of the UTC columns; the
+        # CSV keeps every original UTC column unchanged and appends the label.
+        source = next((pair for pair in _CHICAGO_BAR_TIME if pair[0] in frame), None)
+        shown_utc = source[0] if source is not None and source[0] in table else None
         table.columns = [words(column).capitalize() for column in table.columns]
-        st.dataframe(table, hide_index=True, width="stretch")
+        screen = table.drop(columns=[words(shown_utc).capitalize()] if shown_utc else [])
+        export = table.copy()
+        if source is not None:
+            labels = _chicago_times(frame[source[0]])
+            screen.insert(0, source[1], labels)
+            export[source[1]] = labels
+        st.dataframe(screen, hide_index=True, width="stretch")
         st.download_button(
             "Download chart data",
-            table.to_csv(index=False),
+            export.to_csv(index=False),
             file_name="trade-chart-data.csv",
             mime="text/csv",
             key=key + "_download",
@@ -168,10 +194,14 @@ def candidate_panel(st, ctx, evidence, row):
                     and evidence.stage in order
                     and order.index(stage) <= order.index(evidence.stage)
                 )
+                # R4: Chicago display of the stored UTC gate time; withheld
+                # stages stay withheld and the row order is the stored order.
                 rows.append(
                     {
                         "Event": words(stage),
-                        "Time (UTC)": str(gate.ts_utc) if visible else "Withheld",
+                        "Time (Chicago)": (
+                            _chicago_times([gate.ts_utc])[0] if visible else "Withheld"
+                        ),
                     }
                 )
             st.dataframe(rows, hide_index=True, width="stretch")
@@ -249,7 +279,14 @@ def setup_panel(st, ctx, bundle, evidence, row):
         ]
         table = evidence.events[allowed].copy()
         for column in table.select_dtypes(include=["object", "string"]).columns:
-            table[column] = table[column].map(words)
-        table.columns = [words(column).capitalize() for column in table.columns]
+            if column != "ts_utc":
+                table[column] = table[column].map(words)
+        if "ts_utc" in table:
+            # R4: Chicago display in the stored event order (never re-sorted).
+            table["ts_utc"] = _chicago_times(table["ts_utc"])
+        table.columns = [
+            "Time (Chicago)" if column == "ts_utc" else words(column).capitalize()
+            for column in table.columns
+        ]
         st.dataframe(table, hide_index=True, width="stretch")
     _render_setup_review_section(st, ctx, bundle, evidence)

@@ -96,6 +96,26 @@ def axis_value_name(value_id: str) -> str:
     return label.replace("_", " ")
 
 
+def axis_value_text(value_id: str) -> str | None:
+    """The value alone, complete, without its setting name (None when unregistered).
+
+    Selection chips and summaries sit under a label that already names the
+    setting; prefixing every value with that name made different selections
+    read identically once a chip was shortened.
+    """
+
+    from ..search.axis_registry import AXIS_VALUE_REGISTRY_V1, SEARCH_AXIS_REGISTRY_V1
+    from .axis_values import format_axis_value
+
+    value = AXIS_VALUE_REGISTRY_V1.get(value_id)
+    if value is None:
+        return None
+    axis_key = getattr(value, "axis_technical_key", "")
+    text = (format_axis_value(axis_key, value.payload)
+            if SEARCH_AXIS_REGISTRY_V1.get(axis_key) else value.human_label)
+    return text.replace("_", " ")
+
+
 def configuration_name(values: Mapping[str, str]) -> str:
     from ..search.axis_registry import SEARCH_AXIS_REGISTRY_V1
     from ..study_presentation import human_config_name

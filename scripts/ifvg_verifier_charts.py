@@ -36,12 +36,22 @@ import plotly.graph_objects as go
 from ifvg_lab_charts import TICK_SIZE, ZONE_COLORS, rgba
 from plotly.subplots import make_subplots
 
+from alpha_lab.agents.data_infra.ifvg.presentation.chicago_time import (
+    AXIS_TITLE,
+    CHICAGO,
+    HOVERFORMAT,
+    TICKFORMAT,
+    chicago_label,
+    utc_instant,
+)
+
 __all__ = [
     "LAYER_BUDGETS",
     "VerifierLayers",
     "OmissionReport",
     "build_setup_figure",
     "build_verifier_figure",
+    "display_time",
     "figure_geometry_index",
     "session_band_intervals",
 ]
@@ -225,6 +235,27 @@ def _iso(ts: Any) -> str | None:
     return stamp.isoformat()
 
 
+def display_time(value: Any, *, naive: str = "reject", missing: str = "—") -> str:
+    """Human Chicago time for hover and detail text: ``Jan 7, 2026 4:05 AM CST``.
+
+    Converts the instant (CST/CDT is always named, which also separates the
+    repeated fall-back hour). Seconds and any fraction appear only when the
+    instant carries them, so no precision is dropped. A time without a zone is
+    shown with an explicit flag instead of a guessed conversion unless the
+    caller names the source's UTC convention (``naive="utc"``). Machine fields
+    (the ISO ``meta`` geometry, ledgers, exports) keep their stored values.
+    """
+
+    try:
+        instant = utc_instant(value, naive=naive)
+    except (TypeError, ValueError):
+        return f"{value} (time zone not recorded)"
+    if instant is None:
+        return missing
+    exact = bool(instant.second or instant.microsecond or instant.nanosecond)
+    return chicago_label(instant, seconds=exact, short=True)
+
+
 def build_verifier_figure(
     *,
     evidence: Any,
@@ -381,7 +412,7 @@ def build_verifier_figure(
             f"{zone.role} FVG {zone.fvg_id}<br>"
             f"tf {zone.timeframe_seconds}s · {zone.direction}<br>"
             f"[{y0:.2f}, {y1:.2f}]<br>"
-            f"confirmed {_iso(zone.confirmed_ts_utc)}<br>"
+            f"confirmed {display_time(zone.confirmed_ts_utc)}<br>"
             "lifecycle end unknown (fill/invalidation not persisted)"
         )
         meta["zones"][zone.role] = {
@@ -587,7 +618,9 @@ def build_verifier_figure(
         marker_x.append(gate.ts_utc)
         marker_y.append(anchor * 1.0006)
         marker_symbols.append(_STAGE_MARKER_SYMBOLS.get(stage_name, "circle"))
-        marker_text.append(f"{stage_name} · {_iso(gate.ts_utc)}<br>{gate.source_kind}")
+        marker_text.append(
+            f"{stage_name} · {display_time(gate.ts_utc)}<br>{gate.source_kind}"
+        )
         meta["stage_markers"][stage_name] = _iso(gate.ts_utc)
     if marker_x:
         fig.add_trace(
@@ -697,7 +730,8 @@ def build_verifier_figure(
                     marker={"size": 8, "opacity": 0.01},
                     hovertext=(
                         f"displacement {row['window_kind']} ({row['stage']})<br>"
-                        f"{_iso(window_start)} → {_iso(window_end)} (exact bar interval)<br>"
+                        f"{display_time(window_start)} → {display_time(window_end)} "
+                        "(exact bar interval)<br>"
                         + metrics
                     ),
                     hoverinfo="text",
@@ -754,7 +788,7 @@ def build_verifier_figure(
                     marker={"size": 8, "opacity": 0.01},
                     hovertext=(
                         f"{pool_type.upper()} pool {row['pool_pool_id']}<br>"
-                        f"[{y0:.2f}, {y1:.2f}] · confirmed {_iso(confirmation)}<br>"
+                        f"[{y0:.2f}, {y1:.2f}] · confirmed {display_time(confirmation)}<br>"
                         f"active={row.get('pool_active')} swept={row.get('pool_swept')} "
                         f"reclaimed={row.get('pool_reclaimed')}"
                     ),
@@ -1397,14 +1431,19 @@ def collapse_to_execution_pane(fig):
     return fig
 
 
-DISPLAY_TIMEZONE = "America/New_York"
+#: The one zone every IFVG chart axis and hover is shown in (R4).
+DISPLAY_TIMEZONE = "America/Chicago"
 
 
-def _display_ts(value, tz: str):
-    """UTC-ish datetime-like -> naive wall-clock in ``tz`` (DST-aware);
-    non-datetime values pass through unchanged."""
-    import numpy as np
+def _display_ts(value):
+    """A UTC chart coordinate -> naive Chicago wall-clock time (DST-aware);
+    non-datetime values pass through unchanged.
 
+    Every datetime these builders place on an axis is a UTC instant, and
+    Plotly stores a zone-aware pandas column as naive UTC ``datetime64`` — so
+    a naive datetime here follows that documented UTC convention. A naive
+    *string* has no recorded convention and is left untouched rather than
+    guessed. Only the drawn coordinate changes; the evidence stays UTC."""
     if value is None:
         return None
     if isinstance(value, str):
@@ -1413,44 +1452,52 @@ def _display_ts(value, tz: str):
         except (ValueError, TypeError):
             return value
         if parsed.tzinfo is None:
-            return value  # ambiguous string; leave untouched
-        return parsed.tz_convert(tz).tz_localize(None)
+            return value  # no recorded zone; leave untouched
+        return parsed.tz_convert(CHICAGO).tz_localize(None)
     if isinstance(value, np.datetime64):
-        return pd.Timestamp(value, tz="UTC").tz_convert(tz).tz_localize(None)
+        return pd.Timestamp(value, tz="UTC").tz_convert(CHICAGO).tz_localize(None)
     if isinstance(value, (pd.Timestamp, datetime)):
         ts = pd.Timestamp(value)
         ts = ts.tz_localize("UTC") if ts.tzinfo is None else ts
-        return ts.tz_convert(tz).tz_localize(None)
+        return ts.tz_convert(CHICAGO).tz_localize(None)
     return value
 
 
-def to_display_timezone(fig, tz: str = DISPLAY_TIMEZONE):
+def to_display_timezone(fig, *, title: str = AXIS_TITLE):
     """Display-only: convert every datetime x-coordinate (traces, shapes,
-    axis-anchored annotations, explicit axis ranges) from UTC to wall-clock
-    time in ``tz`` and label ticks on a 12-hour clock. The underlying
-    evidence stays UTC; hover texts that spell out ISO instants keep their
-    explicit +00:00 suffix."""
-    from datetime import datetime as _dt  # noqa: F401  (documentation import)
+    axis-anchored annotations, explicit axis ranges) from UTC to Chicago
+    wall-clock time and label ticks and hovers on a 12-hour clock.
 
+    Every coordinate goes through the same instant conversion, so a marker
+    stays on the candle it was anchored to. The bottom visible time axis is
+    titled with the zone. Stored evidence and the ISO ``meta`` geometry stay
+    UTC; hover texts name CST/CDT themselves (see :func:`display_time`)."""
     for trace in fig.data:
         x = getattr(trace, "x", None)
         if x is not None and len(x):
-            trace.x = [_display_ts(value, tz) for value in x]
+            trace.x = [_display_ts(value) for value in x]
     for shape in fig.layout.shapes or ():
         if str(shape.xref or "x").split(" ")[0].startswith("x") and "domain" not in str(
             shape.xref or ""
         ):
-            shape.x0 = _display_ts(shape.x0, tz)
-            shape.x1 = _display_ts(shape.x1, tz)
+            shape.x0 = _display_ts(shape.x0)
+            shape.x1 = _display_ts(shape.x1)
     for annotation in fig.layout.annotations or ():
         xref = str(annotation.xref or "x")
         if xref.startswith("x") and "domain" not in xref:
-            annotation.x = _display_ts(annotation.x, tz)
+            annotation.x = _display_ts(annotation.x)
+    axes = []
     for axis_name in ("xaxis", "xaxis2", "xaxis3"):
         axis = getattr(fig.layout, axis_name, None)
         if axis is None:
             continue
         if axis.range is not None:
-            axis.range = tuple(_display_ts(value, tz) for value in axis.range)
-        axis.tickformat = "%I:%M %p<br>%b %d"
+            axis.range = tuple(_display_ts(value) for value in axis.range)
+        axis.tickformat = TICKFORMAT
+        axis.hoverformat = HOVERFORMAT
+        axes.append(axis)
+    visible = [axis for axis in axes if axis.visible is not False]
+    if visible:
+        # the lowest pane's axis (a collapsed figure hides xaxis2/xaxis3)
+        visible[-1].title.text = title
     return fig

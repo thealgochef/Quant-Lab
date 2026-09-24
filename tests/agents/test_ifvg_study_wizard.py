@@ -716,19 +716,26 @@ def test_development_dates_are_validated_field_by_field(monkeypatch, tmp_path) -
     date is checked against the backend logical-day contract at the field —
     never as a generic freeze failure."""
 
+    # repair R8: a start/end range resolves to logical trading days (weekends and
+    # closures never enter); June 11, 2026 onward cannot be chosen at all
+    from datetime import date
+
     at, _draft, _roots = _run_at_step(
         monkeypatch, tmp_path, step=6, purpose="development_research"
     )
-    codes = " ".join(str(c.value) for c in at.code)
-    assert "2026-01-01" in codes and "2026-01-12" in codes  # the frozen prefix
-    dates = next(w for w in at.text_area if w.key == f"{wizard._W}full_dates")
-    dates.set_value("2026-01-17\n2026-06-11").run()
+    at.date_input(key=f"{wizard._W}full_start").set_value(date(2026, 1, 17)).run()  # Saturday
+    at.date_input(key=f"{wizard._W}full_end").set_value(date(2026, 6, 11)).run()  # protected
     assert not at.exception
-    errors = _errors(at)
-    assert "not a logical trading day" in errors
-    assert "outside the development evidence window" in errors
-    assert _button(at, "Next").disabled
-    dates.set_value("2026-01-13\n2026-01-14").run()
+    assert at.date_input(key=f"{wizard._W}full_end").value != date(2026, 6, 11)
+    at.date_input(key=f"{wizard._W}full_end").set_value(date(2026, 6, 10)).run()
+    assert not at.exception
+    days = next(str(c.value) for c in at.code if str(c.value).startswith("2026-")).split()
+    assert days[0] == "2026-01-19" and days[-1] == "2026-06-10"  # the weekend left out
+    assert "2026-06-11" not in days and len(days) == 103
+    captions = " ".join(str(c.value) for c in at.caption)
+    assert "2026-01-01" in captions and "2026-01-12" in captions  # the frozen warmup
+    at.date_input(key=f"{wizard._W}full_start").set_value(date(2026, 1, 13)).run()
+    at.date_input(key=f"{wizard._W}full_end").set_value(date(2026, 1, 14)).run()
     assert "real_dates" not in _errors(at)
     assert "Owner authorization is not ready" in _headings(at)
 

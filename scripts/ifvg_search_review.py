@@ -9,6 +9,16 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from alpha_lab.agents.data_infra.ifvg.contracts import RecordTable
+from alpha_lab.agents.data_infra.ifvg.presentation.chicago_time import (
+    chicago_label,
+    chicago_wall,
+    chicago_walls,
+    style_chicago_axis,
+)
+from alpha_lab.agents.data_infra.ifvg.presentation.funded_trade_review import (
+    funded_review_sources,
+    funded_source_label,
+)
 from alpha_lab.agents.data_infra.ifvg.presentation.workspace import configuration_name, load_studies
 from alpha_lab.agents.data_infra.ifvg.search.review_evidence import (
     load_search_day_bars,
@@ -29,7 +39,19 @@ def _bars(repo: str, core_id: str, day: str, _evidence):
 
 
 def render_trade_review(st_module, roots):
-    """Keep the existing context reviewer, and offer exact search executions."""
+    """Keep the existing context reviewer, and offer exact search executions.
+
+    Funded comparisons of this application's registered store that have a
+    saved result are offered in the same Study selector (repair R3); their
+    trades open with the exact run, configuration, firm, account and trade
+    identity. A requested comparison that cannot be offered is never replaced
+    by another study.
+    """
+    funded_pending = st_module.session_state.pop("ifvg_funded_review_pending", None)
+    if funded_pending:
+        st_module.session_state["ifvg_review_source"] = "Study executions"
+        st_module.session_state["ifvg_search_review_search"] = "funded:" + funded_pending["plan_id"]
+        st_module.session_state["ifvg_funded_review_target"] = funded_pending
     pending = st_module.session_state.pop("ifvg_search_review_pending", None)
     if pending:
         st_module.session_state["ifvg_review_source"] = "Study executions"
@@ -49,18 +71,34 @@ def render_trade_review(st_module, roots):
     st_module.header("Study trade review")
     runs = list_search_runs(Path(roots["state_root"]), Path(roots["store_root"]))
     runs = [run for run in runs if not run.archived]
-    if not runs:
+    studies, _issues = load_studies(roots)
+    funded = {"funded:" + study.key: study for study in funded_review_sources(studies)}
+    if funded_pending and "funded:" + funded_pending["plan_id"] not in funded:
+        st_module.session_state.pop("ifvg_search_review_search", None)
+        st_module.session_state.pop("ifvg_funded_review_target", None)
+        st_module.warning("That funded comparison's trades cannot be opened here: it is "
+                          "archived or has no verified saved result. No other study was "
+                          "opened in its place.")
+        return
+    if not runs and not funded:
         st_module.info("No saved searches are available for review.")
         return
-    studies, _issues = load_studies(roots)
     saved_names = {study.key: study.name for study in studies}
     names = {
         run.search_id: saved_names.get(run.search_id, f"Saved study {index + 1}")
         for index, run in enumerate(runs)
     }
+    names.update({key: funded_source_label(study) for key, study in funded.items()})
+    if st_module.session_state.get("ifvg_search_review_search") not in names:
+        st_module.session_state.pop("ifvg_search_review_search", None)
     search = st_module.selectbox(
         "Study", list(names), format_func=names.get, key="ifvg_search_review_search"
     )
+    if search in funded:
+        from ifvg_funded_trade_review import render_funded_trade_review
+
+        render_funded_trade_review(st_module, roots, funded[search])
+        return
     state = load_search_state(Path(roots["state_root"]), search)
     children = [
         c
@@ -94,8 +132,8 @@ def render_trade_review(st_module, roots):
     )
     trade_names = {
         row.trade_id: (
-            f"{i + 1}. {row.entry_ts_utc.tz_convert('America/New_York'):%Y-%m-%d %H:%M} ET · "
-            f"{row.resolution} · {row.entry_ticks * 0.25:.2f}"
+            f"{i + 1}. {chicago_label(row.entry_ts_utc, short=True)} · "
+            f"{row.resolution} · {row.entry_ticks * 0.25:,.2f}"
         )
         for i, row in enumerate(trades.itertuples())
     }
@@ -141,17 +179,7 @@ def render_trade_review(st_module, roots):
                 row.resolution_ts_utc + pd.Timedelta(minutes=20),
             )
         ]
-    x = frame.logical_close_ts_utc.dt.tz_convert("America/New_York")
-    figure = go.Figure(
-        go.Candlestick(
-            x=x,
-            open=frame.open_ticks * 0.25,
-            high=frame.high_ticks * 0.25,
-            low=frame.low_ticks * 0.25,
-            close=frame.close_ticks * 0.25,
-            name="Original bars",
-        )
-    )
+    figure, x = candle_figure(frame)
     for label, price, color in (
         ("Entry", row.entry_ticks, "#2563eb"),
         ("Stop", row.stop_ticks, "#dc2626"),
@@ -163,57 +191,10 @@ def render_trade_review(st_module, roots):
         ("Entry", row.entry_ts_utc),
         ("Exit", row.resolution_ts_utc),
     ):
-        figure.add_shape(
-            type="line",
-            x0=ts.tz_convert("America/New_York"),
-            x1=ts.tz_convert("America/New_York"),
-            y0=0,
-            y1=1,
-            yref="paper",
-            line=dict(color="#64748b", dash="dot"),
-        )
-        figure.add_annotation(
-            x=ts.tz_convert("America/New_York"),
-            y={"Inversion": 1.10, "Entry": 1.05, "Exit": 1.0}[label],
-            yref="paper",
-            text=label,
-            showarrow=False,
-        )
+        mark_time(figure, label, ts, {"Inversion": 1.10, "Entry": 1.05, "Exit": 1.0}[label])
     if st_module.checkbox("Show gap zones", value=True):
-        roles = (
-            ("opposing", "entry_fvg")
-            if timeframe == 60
-            else ("parent",)
-            if timeframe == int(row.geometry_parent_timeframe_seconds)
-            else ("htf",)
-        )
-        for role in roles:
-            prefix = "geometry_" + role
-            low, high = row.get(prefix + "_gap_low_ticks"), row.get(prefix + "_gap_high_ticks")
-            confirmed = row.get(prefix + "_confirmed_ts_utc")
-            if pd.notna(low) and pd.notna(high) and pd.notna(confirmed):
-                figure.add_shape(
-                    type="rect",
-                    x0=confirmed.tz_convert("America/New_York"),
-                    x1=x.max(),
-                    y0=low * 0.25,
-                    y1=high * 0.25,
-                    fillcolor="#f59e0b",
-                    opacity=0.15,
-                    line_width=0,
-                )
-    figure.update_layout(
-        title="Saved execution and original bars",
-        template="plotly_white",
-        paper_bgcolor="#ffffff",
-        plot_bgcolor="#ffffff",
-        font=dict(color="#17212B"),
-        height=530,
-        xaxis_rangeslider_visible=False,
-        xaxis_title="New York time",
-        yaxis_title="NQ price",
-        margin=dict(l=35, r=20, t=60, b=40),
-    )
+        add_gap_zones(figure, row, timeframe, x.max())
+    finish_figure(figure, "Saved execution and original bars")
     st_module.plotly_chart(figure, width="stretch", key="ifvg_search_trade_chart", theme=None)
     with st_module.expander("Execution and lifecycle details"):
         events = {
@@ -227,7 +208,7 @@ def render_trade_review(st_module, roots):
         }
         st_module.dataframe(
             [
-                {"Event": name, "Time (ET)": str(value.tz_convert("America/New_York"))}
+                {"Event": name, "Time (Chicago)": chicago_label(value, seconds=True)}
                 for name, value in events.items()
             ],
             hide_index=True,
@@ -265,3 +246,75 @@ def render_trade_review(st_module, roots):
             detail_fields=_CANDIDATE_DETAIL_VERDICTS,
             on_save=save,
         )
+
+
+def candle_figure(frame):
+    """Original bars at their logical close, on the Chicago clock (instants converted)."""
+
+    x = chicago_walls(frame.logical_close_ts_utc)
+    figure = go.Figure(
+        go.Candlestick(
+            x=x,
+            open=frame.open_ticks * 0.25,
+            high=frame.high_ticks * 0.25,
+            low=frame.low_ticks * 0.25,
+            close=frame.close_ticks * 0.25,
+            name="Original bars",
+        )
+    )
+    return figure, x
+
+
+def mark_time(figure, label, ts, y, *, color="#64748b"):
+    """A vertical marker at an exact recorded instant (converted, never relabeled)."""
+
+    at = chicago_wall(ts)
+    figure.add_shape(
+        type="line", x0=at, x1=at, y0=0, y1=1, yref="paper",
+        line=dict(color=color, dash="dot"),
+    )
+    figure.add_annotation(x=at, y=y, yref="paper", text=label, showarrow=False)
+    return at
+
+
+def add_gap_zones(figure, row, timeframe, x_end):
+    """The saved gap geometry for the chart's timeframe (one-minute, parent or HTF gap)."""
+
+    roles = (
+        ("opposing", "entry_fvg")
+        if timeframe == 60
+        else ("parent",)
+        if timeframe == int(row.geometry_parent_timeframe_seconds)
+        else ("htf",)
+    )
+    for role in roles:
+        prefix = "geometry_" + role
+        low, high = row.get(prefix + "_gap_low_ticks"), row.get(prefix + "_gap_high_ticks")
+        confirmed = row.get(prefix + "_confirmed_ts_utc")
+        if pd.notna(low) and pd.notna(high) and pd.notna(confirmed):
+            figure.add_shape(
+                type="rect",
+                x0=chicago_wall(confirmed),
+                x1=x_end,
+                y0=low * 0.25,
+                y1=high * 0.25,
+                fillcolor="#f59e0b",
+                opacity=0.15,
+                line_width=0,
+            )
+
+
+def finish_figure(figure, title):
+    figure.update_layout(
+        title=title,
+        template="plotly_white",
+        paper_bgcolor="#ffffff",
+        plot_bgcolor="#ffffff",
+        font=dict(color="#17212B"),
+        height=530,
+        xaxis_rangeslider_visible=False,
+        yaxis_title="NQ price",
+        margin=dict(l=35, r=20, t=60, b=40),
+    )
+    style_chicago_axis(figure)
+    return figure

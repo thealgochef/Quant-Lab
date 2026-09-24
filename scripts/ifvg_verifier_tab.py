@@ -23,14 +23,17 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from ifvg_verifier_charts import (  # noqa: E402
-    DISPLAY_TIMEZONE,
     VerifierLayers,
     build_setup_figure,
     build_verifier_figure,
     collapse_to_execution_pane,
+    display_time,
     to_display_timezone,
 )
 
+from alpha_lab.agents.data_infra.ifvg.presentation.chicago_time import (  # noqa: E402
+    chicago_label,
+)
 from alpha_lab.agents.data_infra.ifvg.presentation.replay_selection import (  # noqa: E402
     ReplaySelection,
 )
@@ -88,6 +91,21 @@ _WINDOW_PATH = re.compile(r"(?:[A-Za-z]:\\|/)[^\s'\"]+")
 _SECRET = re.compile(r"(?i)(token|secret|api[_-]?key)\s*[:=]\s*[^\s,}]+")
 
 _STAGE_ORDER = ("tap", "parent", "lock", "opposing", "inversion", "entry", "resolution")
+#: R4: the chart converts instants to Chicago wall time; nothing stored changes.
+_CHART_TIME_CAPTION = (
+    "Chart and hover times are Chicago time (CST/CDT) on a 12-hour clock, "
+    "with daylight saving applied. Stored timestamps are unchanged."
+)
+
+
+def _reviewed_at_label(value) -> str:
+    """A ledger ``reviewed_at`` (UTC ISO) as ``Sep 8, 2026 8:54 AM CDT``.
+
+    Display only; a value without a zone is flagged, never guessed."""
+    try:
+        return chicago_label(value, short=True)
+    except (TypeError, ValueError):
+        return f"{value} (time zone not recorded)"
 
 
 def _sanitize_error(error: BaseException) -> str:
@@ -518,7 +536,12 @@ def _review_form(
         )
         shown = existing[["reviewed_at", "reviewer", "overall_verdict", "tags", "notes"]].copy()
         shown["overall_verdict"] = shown["overall_verdict"].map(label_for_verdict)
-        if not technical_details_enabled():
+        # R4: screen copy only — the ledger rows (and their stored UTC
+        # ``reviewed_at``) are neither rewritten nor re-sorted.
+        shown["reviewed_at"] = shown["reviewed_at"].map(_reviewed_at_label)
+        if technical_details_enabled():
+            shown = shown.rename(columns={"reviewed_at": "reviewed_at (Chicago)"})
+        else:
             shown["tags"] = shown["tags"].map(lambda value: str(value).replace("_", " "))
             shown.columns = [name.replace("_", " ").capitalize() for name in shown.columns]
         st_module.dataframe(shown, hide_index=True, width="stretch")
@@ -982,7 +1005,8 @@ def _filtered_setups(st_module, frame: pd.DataFrame) -> pd.DataFrame:
 
 def _setup_label(row: pd.Series) -> str:
     if not technical_details_enabled():
-        return f"Setup activated {row['activation_ts_utc']}"
+        # R4: the activation column is UTC by definition (``*_ts_utc``).
+        return f"Setup activated {display_time(row['activation_ts_utc'], naive='utc')}"
     day = (
         str(pd.Timestamp(row["activation_ts_utc"]).date())
         if pd.notna(row["activation_ts_utc"])
@@ -1341,10 +1365,7 @@ def _render_setup_section(st_module, pair_ref: ArtifactPairRef) -> ReplaySelecti
             figure = research_figure(figure, title="Selected trade evidence")
         # hold-left-drag pans; mouse wheel zooms (box-zoom stays in the modebar).
         figure.update_layout(dragmode="pan")
-        st_module.caption(
-            f"Axis times: Eastern ({DISPLAY_TIMEZONE}), 12-hour clock, "
-            "DST-aware. Hover ISO timestamps remain UTC (+00:00)."
-        )
+        st_module.caption(_CHART_TIME_CAPTION)
         st_module.plotly_chart(
             figure,
             width="stretch",
@@ -1676,10 +1697,7 @@ def render_verifier_section(st_module, pair, entry: dict) -> ReplaySelection:
             figure = research_figure(figure, title="Selected trade evidence")
         # hold-left-drag pans; mouse wheel zooms (box-zoom stays in the modebar).
         figure.update_layout(dragmode="pan")
-        st_module.caption(
-            f"Axis times: Eastern ({DISPLAY_TIMEZONE}), 12-hour clock, "
-            "DST-aware. Hover ISO timestamps remain UTC (+00:00)."
-        )
+        st_module.caption(_CHART_TIME_CAPTION)
         st_module.plotly_chart(
             figure,
             width="stretch",

@@ -350,7 +350,40 @@ def start_draft_from_card(card: TaskCard, roots: Mapping[str, Any], *, now: str 
         "worker_limit": 1,
     }
     draft.current_step_key = "objective"
+    _start_on_named_baseline(draft)
     return draft
+
+
+def _start_on_named_baseline(draft) -> None:
+    """A NEW Evaluate study starts on the owner's selected configuration (repair R7).
+
+    Only here, at creation — never when a draft is opened or rendered. The
+    Evaluate flow already records a configuration as the registered baseline
+    profile plus fixed setting values, which is exactly how S0_D80_W1_P1 was
+    saved; other study types keep their existing start (see the task record).
+    """
+
+    from alpha_lab.agents.data_infra.ifvg.named_baselines import (  # noqa: PLC0415
+        NamedBaselineUnavailableError,
+        owner_selected_baseline,
+    )
+
+    purpose = (draft.purpose_annotation or {}).get("purpose")
+    if (
+        draft.mode_id != "single_configuration"
+        or draft.steps.get("objective", {}).get("question_id") != "evaluate_one_configuration"
+        or purpose == RunPurpose.IMPLEMENTATION_VERIFICATION.value
+    ):
+        return
+    try:
+        named = owner_selected_baseline()
+    except NamedBaselineUnavailableError:
+        return
+    draft.steps["baseline"] = {
+        "baseline_profile_name": named.profile_name,
+        "fixed_axis_value_ids": dict(named.axis_value_ids),
+        "named_baseline_id": named.baseline_id,
+    }
 
 
 def stash_session_draft(st_module, draft) -> None:

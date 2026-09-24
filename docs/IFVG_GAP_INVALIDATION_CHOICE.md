@@ -29,6 +29,13 @@ configurations resolve to the original rule. Selecting a single fixed policy
 saves one economic configuration; comparing both requires explicitly selecting
 both. Drafts, resolved sections, approvals and workers retain the selected value.
 
+Opening, refreshing or saving a draft without a change never adds this field
+(September 23, 2026 repair; earlier code added it when some legacy Evaluate
+drafts were opened). A configuration saved without it keeps resolving to the
+original rule, and choosing the rule already shown is not a change. The shown
+rule is written into the configuration explicitly only when the owner changes
+one of its fixed settings.
+
 ## Price, time and role contract
 
 An upward starting gap becomes invalid only when a later finalized candle on

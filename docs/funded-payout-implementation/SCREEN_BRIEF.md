@@ -17,6 +17,8 @@ owner can judge the tradeoff. This is one historical path, not a future success 
 - One table of **all** tested configurations, with **TakeProfitTrader** and **MyFundedFutures**
   as separate tabs or clearly separated columns. Never add configurations or firms together
   into a portfolio profit.
+  The application shows one firm at a time through a single firm selector that drives both
+  the ranking and the detail (SPEC.md A8, A12); a tab choice would not reach the detail.
 - Per row: configuration in plain English, payouts received after the split, total account
   costs, net cash earned, largest received payout, accounts purchased, accounts lost before and
   after receiving a payout.

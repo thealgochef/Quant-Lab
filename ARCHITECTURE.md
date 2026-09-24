@@ -1,6 +1,6 @@
 # Architecture — Quant-Lab
 
-Updated: 2026-09-22.
+Updated: 2026-09-23.
 
 The ordinary dependency and IFSM launcher now use the same Strategy-Core commit,
 `7c7111e398c083cf8e966e2e0c5aac8a41cc12c0`, following the owner's September 22
@@ -80,7 +80,8 @@ legacy records remain explicitly unresolved.
 
 IFVG **Study Configuration → Session Policy → Enabled entry sessions** offers
 the registered default sessions, each standard session individually, and
-**NY from 7am to 10:30am (Eastern Time)**. The custom registered value
+**Legacy morning - 6:00 AM to 9:30 AM Chicago time (historical)** (originally
+labeled "NY from 7am to 10:30am (Eastern Time)"). The custom registered value
 `enabled_entry_sessions.ny_0700_1030` composes
 `enabled_entry_sessions=["ny_0700_1030"]` with
 `doc_sessions={"ny_0700_1030": ["07:00", "10:30"]}` in that child's effective
@@ -1840,3 +1841,55 @@ Post-run review additions (September 23, 2026; SPEC.md A11):
   identity (`research_core_sources.find_core_checkout`).
 - `run_ifsm_research_ui.py --research-core PATH` is the explicit, labeled way to run the
   application on such a checkout. The default launch and the pin are unchanged.
+
+### IFVG dashboard repairs (September 23, 2026)
+
+Screen-level repairs (task record `docs/ifvg-dashboard-repairs/`); no replay, cost, account or
+identity semantics changed. New modules: `propsim/funded/comparison_draft.py` (saved-draft
+reading, compatibility, exact saved-plan matching, shared plan rebuild used by the screen and
+the launch check), `ifvg/presentation/chicago_time.py`, `ifvg/presentation/funded_trade_review.py`
+with `scripts/ifvg_funded_trade_review.py`, `ifvg/search/charter_day_threshold.py`,
+`ifvg/named_baselines.py`, `ifvg/research_period.py` with `scripts/ifvg_research_dates.py`.
+The permitted research window for new strategy studies begins at the earliest stored market
+data (owner authorization of September 23, 2026): `DatePolicy`, the validation step and
+`DevelopmentReplayPolicy` accept it with the warmup rule "frozen ten days for evidence from
+January 13, 2026; otherwise the ten store days before the first evidence day". Unchanged on
+purpose: `PERMITTED_DEVELOPMENT_DATES` (preparation default dates and audit hash), the
+registered calendar closures, the 2026-only prepared-input allowlist
+(`require_fixed_exploration_allowlist`), MBP-1 evidence scope, and June 11, 2026 protection at
+every layer. The research listing (`bind_research_subject`) accepts an optional per-listing
+`family_cache`; every other caller keeps fresh verified reads.
+
+Repair behavior and limits:
+
+- A saved funded comparison draft the running Strategy-Core cannot represent (for example a
+  half-exit selection under the pinned engine) opens read-only; a half-exit draft needs
+  `run_ifsm_research_ui.py --research-core` for editing, approval and launch (other
+  unrepresentable drafts stay read-only: clone and edit the copy). Opening, refreshing or navigating never
+  saves; the open page resets when the saved file's digest changes. Launch re-reads the
+  draft, rebuilds the plan and requires the identical approved plan; `job start` refuses a
+  historical plan without a stored owner approval before queuing.
+- Trade review → Study executions lists unarchived funded comparisons that have a saved
+  result (Incomplete and review-only are labelled; a comparison that cannot be offered never
+  opens another study). The recorded path is drawn on the strategy's verified original bars: 1-minute, plus the
+  trade's own parent-gap and higher-timeframe charts when the verified study recorded that
+  trade, otherwise the available 1-hour and 4-hour bars. Movement inside a minute is not drawn, and configurations outside the verified strategy study have
+  no gap zones.
+- New Evaluate studies start on S0_D80_W1_P1 (legacy profile plus its ten saved values;
+  section hash `86261cc9…`) when the verified daily-close package is available. It is not a
+  registered profile: registering it would rename its identity (`74b81e47…`). Other study
+  types keep their existing start. Opening a saved draft never rewrites it: an
+  earlier-engine baseline hash stays until **Update the saved baseline to the current
+  engine**, and the inherited gap-invalidation rule is written explicitly only when the owner
+  changes a fixed setting (before this repair it was injected on opening).
+- Start/end date pickers (`scripts/ifvg_research_dates.py`) replace one-date-per-line entry.
+  `SourceDateClass.EXTENDED_HISTORY` covers 2021-12-02 through 2025-12-31; those days have no
+  verification or authorization record and are accepted only because their files exist. A
+  range whose first replayed day (warmup included) is before 2026-01-01 can be saved and
+  checked but not approved or run.
+- The Feature and model study listing still takes about four minutes on first load (every
+  child is verified once), and all 356 saved children list as unavailable under the current
+  pinned engine (a separate compatibility limitation, not caused or hidden by the repair).
+
+Open owner decisions and known limits: `docs/ifvg-dashboard-repairs/OPEN_DECISIONS.md`.
+

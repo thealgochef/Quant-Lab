@@ -3,3 +3,11 @@
 QL-FSM-PROP-SEARCH-DASHBOARD/** -text whitespace=cr-at-eol
 # Archived Markdown also retains its original hard breaks and final blank lines.
 QL-FSM-PROP-SEARCH-DASHBOARD/**/*.md whitespace=cr-at-eol,-blank-at-eol,-blank-at-eof
+# The IFVG dashboard repair task package (delivered 2026-09-23) has a SHA256 manifest
+# (PACKAGE_MANIFEST.json); its living TASKS.md and OPEN_DECISIONS.md are ordinary text.
+docs/ifvg-dashboard-repairs/TASK.md -text
+docs/ifvg-dashboard-repairs/README.md -text
+docs/ifvg-dashboard-repairs/SOURCE_OBSERVATIONS.md -text
+docs/ifvg-dashboard-repairs/PACKAGE_MANIFEST.json -text
+docs/ifvg-dashboard-repairs/evidence/** -text
+.claude/skills/fix-ifvg-dashboard/SKILL.md -text

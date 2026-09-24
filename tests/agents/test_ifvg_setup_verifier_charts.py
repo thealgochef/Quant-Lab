@@ -402,17 +402,23 @@ def test_collapse_to_execution_pane_hides_tf_panes_and_keeps_q40() -> None:
 
 
 def test_to_display_timezone_converts_and_uses_12_hour_ticks() -> None:
-    """x-coordinates convert UTC -> Eastern wall-clock (DST-aware: EST in
-    January, EDT in June) and the tick format is a 12-hour clock. Domain-
-    anchored annotations are untouched."""
+    """x-coordinates convert UTC -> Chicago wall-clock (DST-aware: CST in
+    January, CDT in June) and the tick and hover formats are a 12-hour clock.
+    Domain-anchored annotations are untouched."""
     import pandas as pd
     import plotly.graph_objects as go
     from ifvg_verifier_charts import DISPLAY_TIMEZONE, to_display_timezone
     from plotly.subplots import make_subplots
 
-    assert DISPLAY_TIMEZONE == "America/New_York"
-    winter = pd.Timestamp("2026-01-13T03:00:00Z")  # EST: 22:00 prior day
-    summer = pd.Timestamp("2026-06-05T15:30:00Z")  # EDT: 11:30
+    from alpha_lab.agents.data_infra.ifvg.presentation.chicago_time import (
+        AXIS_TITLE,
+        HOVERFORMAT,
+        TICKFORMAT,
+    )
+
+    assert DISPLAY_TIMEZONE == "America/Chicago"
+    winter = pd.Timestamp("2026-01-13T03:00:00Z")  # CST: 9:00 PM prior day
+    summer = pd.Timestamp("2026-06-05T15:30:00Z")  # CDT: 10:30 AM
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True)
     fig.add_trace(go.Scatter(x=[winter, summer], y=[1, 2]), row=1, col=1)
     fig.add_shape(
@@ -428,14 +434,21 @@ def test_to_display_timezone_converts_and_uses_12_hour_ticks() -> None:
     out = to_display_timezone(fig)
 
     x0, x1 = out.data[0].x
-    assert pd.Timestamp(x0) == pd.Timestamp("2026-01-12T22:00:00")
+    assert pd.Timestamp(x0) == pd.Timestamp("2026-01-12T21:00:00")
     assert pd.Timestamp(x0).tzinfo is None
-    assert pd.Timestamp(x1) == pd.Timestamp("2026-06-05T11:30:00")
+    assert pd.Timestamp(x1) == pd.Timestamp("2026-06-05T10:30:00")
     shape = out.layout.shapes[0]
-    assert pd.Timestamp(shape.x0) == pd.Timestamp("2026-01-12T22:00:00")
+    assert pd.Timestamp(shape.x0) == pd.Timestamp("2026-01-12T21:00:00")
+    assert pd.Timestamp(shape.x1) == pd.Timestamp("2026-06-05T10:30:00")
     zone_tag = out.layout.annotations[0]
-    assert pd.Timestamp(zone_tag.x) == pd.Timestamp("2026-01-12T22:00:00")
+    assert pd.Timestamp(zone_tag.x) == pd.Timestamp("2026-01-12T21:00:00")
     watermark = out.layout.annotations[1]
     assert watermark.x == 0.99  # domain-anchored: untouched
     for axis_name in ("xaxis", "xaxis2", "xaxis3"):
-        assert getattr(out.layout, axis_name).tickformat == "%I:%M %p<br>%b %d"
+        axis = getattr(out.layout, axis_name)
+        assert axis.tickformat == TICKFORMAT  # 12-hour clock with AM/PM
+        assert "%-I" in axis.tickformat and "%p" in axis.tickformat
+        assert axis.hoverformat == HOVERFORMAT
+    # the zone is named on the bottom (visible) time axis only
+    assert out.layout.xaxis3.title.text == AXIS_TITLE
+    assert out.layout.xaxis.title.text is None

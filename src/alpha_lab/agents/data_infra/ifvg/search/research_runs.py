@@ -249,9 +249,13 @@ def list_source_subjects(store_root: Path) -> list[dict[str, Any]]:
 
     root = Path(store_root)
     rows = []
+    # One verified pass over memberships/neutrality reports for this listing only;
+    # previously every child re-verified every envelope of both families.
+    family_cache: dict = {}
     for path in sorted((root / "core_replays").glob("*/envelope.json")):
         try:
-            rows.append(_subject_row(bind_research_subject(root, path.parent.name), root))
+            subject = bind_research_subject(root, path.parent.name, family_cache=family_cache)
+            rows.append(_subject_row(subject, root))
         except (ValueError, KeyError, OSError, PermissionError) as error:
             rows.append(
                 {

@@ -157,12 +157,44 @@ def verify_loaded_core_source(repo_root: Path) -> str:
     return canonical_contract_sha256(expected)
 
 
-def _neutrality_id(root: Path, core_replay_id: str, accepted_tables: dict) -> str:
+def _verified_family(root: Path, store_name: str, envelope_cls, family_cache: dict | None):
+    """Yield every saved envelope of one immutable family in sorted order.
+
+    Each envelope is loaded through the verified loader. With ``family_cache``
+    (one dict owned by a single listing call) each envelope is verified once for
+    that call instead of once per child; a load failure is stored and re-raised
+    at the same position, so matches and error precedence are unchanged.
+    """
+    paths = sorted((root / store_name).glob("*/envelope.json"))
+    if family_cache is None:  # unchanged lazy behavior for every non-listing caller
+        for path in paths:
+            yield load_verified_envelope(root, store_name, path.parent.name, envelope_cls)
+        return
+    key = (str(root), store_name, envelope_cls)
+    entries = family_cache.get(key)
+    if entries is None:
+        entries = []
+        for path in paths:
+            try:
+                entries.append(
+                    (load_verified_envelope(root, store_name, path.parent.name, envelope_cls), None)
+                )
+            except Exception as error:  # noqa: BLE001 - re-raised below, never swallowed
+                entries.append((None, error))
+        family_cache[key] = entries
+    for envelope, error in entries:
+        if error is not None:
+            raise error
+        yield envelope
+
+
+def _neutrality_id(
+    root: Path, core_replay_id: str, accepted_tables: dict, family_cache: dict | None = None
+) -> str:
     matches = []
-    for path in sorted((root / "neutrality_reports").glob("*/envelope.json")):
-        envelope = load_verified_envelope(
-            root, "neutrality_reports", path.parent.name, ChildAuditNeutralityEnvelope
-        )
+    for envelope in _verified_family(
+        root, "neutrality_reports", ChildAuditNeutralityEnvelope, family_cache
+    ):
         report = envelope.payload
         if report.core_replay_id == core_replay_id:
             if not report.passed or not report.audit_stamp_referential_integrity:
@@ -191,8 +223,13 @@ def bind_research_subject(
     *,
     evaluation_dates: tuple[str, ...] | None = None,
     cohort: Literal["all_candidates", "eligible_decisions"] = "all_candidates",
+    family_cache: dict | None = None,
 ) -> ResearchSubject:
-    """Read saved envelopes/tables only; never replay or infer days from candidates."""
+    """Read saved envelopes/tables only; never replay or infer days from candidates.
+
+    ``family_cache`` is only for a caller that binds many children in one call
+    (listings); every other caller keeps the default fresh verified reads.
+    """
     from .orchestrator import SearchChildMembershipEnvelope  # noqa: PLC0415
     from .strategy_approval import (  # noqa: PLC0415
         StrategySearchApprovalEnvelope,
@@ -216,10 +253,10 @@ def bind_research_subject(
         evidence.dataset.reports["effective_config.json"]["section"]
     )
     memberships = []
-    for path in sorted((root / "memberships").glob("*/envelope.json")):
-        membership = load_verified_envelope(
-            root, "memberships", path.parent.name, SearchChildMembershipEnvelope
-        ).payload
+    for envelope in _verified_family(
+        root, "memberships", SearchChildMembershipEnvelope, family_cache
+    ):
+        membership = envelope.payload
         if membership.parent_search_id == search_id and membership.core_replay_id == core_replay_id:
             memberships.append(membership)
     if len(memberships) != 1:
@@ -256,7 +293,9 @@ def bind_research_subject(
         section_config_hash=evidence.core.payload.resolved_section_config_hash,
         section_json=section.model_dump_json(),
         core_envelope_json=evidence.core.model_dump_json(),
-        neutrality_report_id=_neutrality_id(root, core_replay_id, evidence.dataset.tables),
+        neutrality_report_id=_neutrality_id(
+            root, core_replay_id, evidence.dataset.tables, family_cache
+        ),
         original_search_id=search_id,
         child_spec_json=json.dumps(spec, sort_keys=True),
         replay_dates=dates,
@@ -270,9 +309,12 @@ def bind_research_subject(
 def list_research_subjects(store_root: Path) -> tuple[ResearchSubject, ...]:
     """Discover verified saved children, without scanning source data directories."""
     subjects = []
+    family_cache: dict = {}  # scoped to this one listing call
     for path in sorted((Path(store_root) / "core_replays").glob("*/envelope.json")):
         try:
-            subjects.append(bind_research_subject(store_root, path.parent.name))
+            subjects.append(
+                bind_research_subject(store_root, path.parent.name, family_cache=family_cache)
+            )
         except (ValueError, KeyError, FileNotFoundError, PermissionError):
             continue
     return tuple(subjects)

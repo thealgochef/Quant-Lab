@@ -192,6 +192,28 @@ def _cached_pair(
     return pair
 
 
+def _legacy_configuration_warning(st_module, profile_name) -> None:
+    """Repair R7: say when the research configuration does not follow the daily close."""
+
+    if not profile_name:
+        return
+    from alpha_lab.agents.data_infra.ifvg.named_baselines import legacy_baseline_warning
+    from alpha_lab.agents.data_infra.ifvg.profiles import resolve_profile_config
+
+    try:
+        warning = legacy_baseline_warning(
+            resolve_profile_config({"profile_name": profile_name}).section
+        )
+    except Exception:
+        return
+    if warning:
+        st_module.warning(
+            warning + " The owner's selected configuration (S0_D80_W1_P1) is not offered here "
+            "yet: it needs its own prepared context data, and preparing it has not been "
+            "authorized."
+        )
+
+
 def _load_selected_pair(st_module, *, key: str) -> tuple[VerifiedIfvgPair, dict] | None:
     try:
         options = _ready_pair_options()
@@ -264,6 +286,7 @@ def _load_selected_pair(st_module, *, key: str) -> tuple[VerifiedIfvgPair, dict]
         help=help_text("context.artifact_pair"),
     )
     entry = options[selected]
+    _legacy_configuration_warning(st_module, entry.get("profile_name"))
     try:
         pair = _cached_pair(
             entry["v2_artifact_id"],

@@ -73,6 +73,48 @@ def _research_state_root(roots):
     return PIPELINE_STATE_ROOT
 
 
+# Every immutable family the saved-source listing verifies.
+_SOURCE_FAMILIES = (
+    "core_replays",
+    "memberships",
+    "neutrality_reports",
+    "charters",
+    "strategy_search_approvals",
+    "replay_input_bundles",
+    "v2_datasets",
+)
+
+
+def _source_store_signature(store_root):
+    """Resolved store plus each entry's manifest and envelope stats; any addition or
+    replacement of either changes it."""
+    root = Path(store_root).resolve()
+    signature = [str(root)]
+    for family in _SOURCE_FAMILIES:
+        manifest = "exploration/manifest.json" if family == "v2_datasets" else "manifest.json"
+        base = root / family
+        entries = []
+        if base.is_dir():
+            for entry in sorted(base.iterdir()):
+                stats = []
+                for path in (entry / manifest, (entry / manifest).with_name("envelope.json")):
+                    try:
+                        info = path.stat()
+                        stats.append((info.st_mtime_ns, info.st_size))
+                    except OSError:
+                        stats.append(None)
+                entries.append((entry.name, *stats))
+        signature.append((family, tuple(entries)))
+    return tuple(signature)
+
+
+@_streamlit.cache_data(show_spinner="Verifying saved strategy configurations…", max_entries=4)
+def _cached_source_subjects(store_root: str, signature: tuple):
+    """Display listing only. Preflight, authorization and the worker re-verify from disk."""
+    del signature  # cache key only
+    return _research_api().list_source_subjects(Path(store_root))
+
+
 def _source_label(row):
     return f"{row.get('label') or 'Saved configuration'} · {row['core_replay_id'][:12]}"
 
@@ -366,7 +408,7 @@ def render_research_configuration(st, *, roots, draft=None):
         st.success(notice)
     try:
         api = _research_api()
-        sources = api.list_source_subjects(store_root)
+        sources = _cached_source_subjects(str(store_root), _source_store_signature(store_root))
     except Exception:
         st.error(
             "Saved source evidence could not be verified. Restore it before configuring research."
@@ -544,7 +586,7 @@ def render_research_configuration(st, *, roots, draft=None):
                 {
                     "Configuration": row.get("label"),
                     "Research": row.get("lane"),
-                    "Outcome cutoff (UTC)": row.get("cutoff_ts_utc"),
+                    "Outcome cutoff (Chicago)": _chicago(row.get("cutoff_ts_utc")),
                 }
                 for row in cells
             ],
@@ -864,7 +906,7 @@ def _research_candidate_figure(chart, source, candidate, label, timeframe):
     ].sort_values("close_ts_utc")
     figure = go.Figure(
         go.Candlestick(
-            x=bars["close_ts_utc"].dt.tz_convert("America/New_York"),
+            x=_chicago_walls(bars["close_ts_utc"], naive="utc"),
             open=bars["open_ticks"] * 0.25,
             high=bars["high_ticks"] * 0.25,
             low=bars["low_ticks"] * 0.25,
@@ -889,9 +931,9 @@ def _research_candidate_figure(chart, source, candidate, label, timeframe):
         template="plotly_white",
         height=560,
         xaxis_rangeslider_visible=False,
-        xaxis_title="America/New_York",
         yaxis_title="Price",
     )
+    _style_chicago_axis(figure)
     return figure, bars
 
 
@@ -948,18 +990,20 @@ def _render_research_chart(st, roots, cell, state):
         st.dataframe(
             [
                 {
-                    field: label.get(field)
-                    for field in (
-                        "candidate_id",
-                        "reward_r",
-                        "label",
-                        "censored",
-                        "censor_reason",
-                        "gross_r",
-                        "net_r",
-                        "label_policy_id",
-                        "cutoff_ts_utc",
-                    )
+                    **{
+                        field: label.get(field)
+                        for field in (
+                            "candidate_id",
+                            "reward_r",
+                            "label",
+                            "censored",
+                            "censor_reason",
+                            "gross_r",
+                            "net_r",
+                            "label_policy_id",
+                        )
+                    },
+                    "Outcome cutoff (Chicago)": _chicago(label.get("cutoff_ts_utc")),
                 }
             ],
             hide_index=True,
@@ -1823,3 +1867,26 @@ def _catalog_action(st, study, roots):
             "Required evidence checks have not passed. The study cannot be added to "
             "the research catalog yet."
         )
+
+
+def _chicago(value):
+    """A stored UTC instant as Chicago time for people (the stored value is unchanged)."""
+
+    from alpha_lab.agents.data_infra.ifvg.presentation.chicago_time import chicago_label
+
+    try:
+        return chicago_label(value, naive="utc")
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _chicago_walls(values, *, naive):
+    from alpha_lab.agents.data_infra.ifvg.presentation.chicago_time import chicago_walls
+
+    return chicago_walls(values, naive=naive)
+
+
+def _style_chicago_axis(figure):
+    from alpha_lab.agents.data_infra.ifvg.presentation.chicago_time import style_chicago_axis
+
+    return style_chicago_axis(figure)

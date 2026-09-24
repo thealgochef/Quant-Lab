@@ -101,6 +101,13 @@ def main(argv: list[str] | None = None) -> int:
     if existing and existing.get("status") in ("Running", "Completed"):
         print(json.dumps({"refused": f"plan already {existing['status'].lower()}"}))
         return 1
+    from alpha_lab.propsim.funded.comparison_runner import find_approval, load_plan
+
+    plan = load_plan(Path(args.store_root), plan_id)  # hash-verified envelope or raises
+    if plan.purpose == "historical_comparison" and find_approval(
+            Path(args.store_root), plan_id) is None:
+        print(json.dumps({"refused": "this exact plan has no stored owner approval"}))
+        return 1
     env, core_root = worker_environment(Path(args.store_root), plan_id)
     if env is None:
         print(json.dumps({"refused": "no local Strategy-Core checkout has the exact source "

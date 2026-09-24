@@ -47,6 +47,15 @@ AXIS = "parent_retest_timeout_1m_bars"
 
 @pytest.fixture
 def approved(tmp_path):
+    return build_approved_study(tmp_path)
+
+
+def build_approved_study(tmp_path, *, min_independent_days=1):
+    """A saved exact approval over one evaluated date (after the frozen
+    warmup). The default independent-day threshold equals that one date, so
+    it is reachable (R5); a larger value models an approval saved before the
+    reachability check existed."""
+
     root = tmp_path / "research"
     namespace = initialize_store_namespace(
         root, namespace_class="research", store_instance_id="a" * 32
@@ -55,7 +64,12 @@ def approved(tmp_path):
     payload = example.model_copy(
         update={
             "objective_policy": example.objective_policy.model_copy(
-                update={"pareto_objectives": ("net_expectancy_r",)}
+                update={
+                    "pareto_objectives": ("net_expectancy_r",),
+                    "feasibility_gates": example.objective_policy.feasibility_gates.model_copy(
+                        update={"min_independent_days": min_independent_days}
+                    ),
+                }
             ),
             "axes": {AXIS: tuple(f"{AXIS}.{v}" for v in ("none", "240", "360", "480"))},
             "locked_invariants_registry_sha256": registry_sha256(),

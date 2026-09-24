@@ -1,6 +1,6 @@
 # Alpha Signal Research Lab - Agent Notes
 
-Updated: 2026-09-22.
+Updated: 2026-09-23.
 
 ## Start points
 
@@ -54,6 +54,20 @@ Updated: 2026-09-22.
   authorization record (`PILOT_AUTHORIZATION`). Money is exact cents. The screen
   and review folder read the one saved verified result.
 
+- IFVG dashboard repairs (2026-09-23): record and evidence in
+  `docs/ifvg-dashboard-repairs/TASKS.md`; open owner decisions, known limits and
+  the pre-existing test failures in `docs/ifvg-dashboard-repairs/OPEN_DECISIONS.md`;
+  code summary in `ARCHITECTURE.md`. New strategy studies take start/end dates
+  from 2021-12-14 to 2026-06-10 (`ifvg/research_period.py`; stored blocks
+  2021-12-02–2022-03-10 and 2025-06-02–2026-06-10). Verification/authorization
+  records and prepared inputs exist for 2026 only, so a range whose first
+  replayed day (warmup included) is before 2026-01-01 can be saved and checked
+  but not approved or run. Do not prepare pre-2026 days without owner
+  authorization and a separate cache location: the current layout would
+  overwrite the 2026 prepared inputs. Internal evidence:
+  `../Claude-Quant-Lab-Research-Artifacts/ifvg-dashboard-repairs-20260923/`; the
+  handoff folder/ZIP under `reports/ifvg_dashboard_repairs/` is never committed.
+
 ## Commands
 
 Run from the repo root (`C:\Users\gonza\Documents\Claude-Quant-Lab`, Windows; system Python 3.13 — no venv activation step):
@@ -71,12 +85,26 @@ lint checks. Run the full suite only when it is necessary to establish correctne
 and targeted checks cannot cover the affected behavior. Once relevant checks pass,
 do not broaden testing without a concrete unresolved correctness concern.
 
+Known pre-existing full-suite failures (September 23, 2026; they fail
+identically on the recorded pre-repair tree, outside the repaired areas):
+`tests/agents/data_infra/ifvg/test_catboost_bundle_model.py::test_frozen_m0_m3_catboost_lane_is_byte_and_identity_unchanged`,
+`tests/agents/ifvg_search/test_htf_cap_experiment.py::test_exact_four_effective_profiles_and_distinct_cap_identities`
+and three `tests/agents/test_ifvg_capture_scheme.py` tests (default capture tag
+`92b4ab17…`, expected `035d9e14…`). That full run: 3,540 passed, 5 failed,
+2 skipped. Name them in any full-suite report rather than claiming a clean run
+(`docs/ifvg-dashboard-repairs/OPEN_DECISIONS.md`).
+
 Project metadata requires Python `>=3.13` (`pyproject.toml`); `.python-version` pins `3.13.1`; CI runs 3.13. Do not hardcode other interpreter versions in docs or scripts.
 
 ## Data flow
 
 - Databento batch import: `python scripts/process_batch_download.py <zip>`.
 - Imported tick files are expected at `data/databento/{symbol}/{YYYY-MM-DD}/mbp10.parquet`, `mbp1.parquet`, or `trades.parquet`.
+- Never list or text-search `data/` or `data/databento/` recursively; open named
+  store files or explicit date paths only. Raw market data dated June 11, 2026
+  or later is protected and must not be opened. (A September 23, 2026 unfiltered
+  search over `data/` may have opened raw files; see
+  `docs/ifvg-dashboard-repairs/OPEN_DECISIONS.md`.)
 - The Streamlit ML tab reads local parquet only; it does not call the Databento API.
 - Per-date ML caches are mode-specific:
   - Extrema: `ml_features_{config_hash}.parquet`

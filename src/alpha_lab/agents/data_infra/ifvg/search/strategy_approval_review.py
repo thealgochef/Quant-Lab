@@ -37,6 +37,7 @@ from .axis_registry import (
 )
 from .catalog import append_catalog_event
 from .charter import SearchCharterPayload, validate_charter
+from .charter_day_threshold import charter_day_threshold_check
 from .identities import canonical_contract_sha256, canonicalize_section
 from .orchestrator import _locked_invariant_violations
 from .owner_decisions import verify_complete_owner_authority_chain
@@ -125,6 +126,21 @@ def _validate_request(intent, requirement_set):
         raise ValueError("Choose the permitted development dates for this strategy approval.")
     dates = tuple(intent["date_policy"]["replay_dates"])
     DevelopmentReplayPolicy(dates)  # validates warmup/cutoff before any cache path
+    if dates and dates[0] < "2026-01-01":
+        # repair R8: the extended research window is permitted, but prepared study
+        # inputs exist only from January 1, 2026; preparing earlier days is a
+        # separate authorization (it must not overwrite the 2026 inputs)
+        raise ValueError(
+            "Study inputs for dates before January 1, 2026 have not been prepared. "
+            "Preparing them needs its own authorization and a separate storage location "
+            "so the prepared 2026 inputs are not overwritten. This plan can be saved and "
+            "checked, but it cannot be approved or run yet."
+        )
+    # An unreachable independent-day threshold blocks before any cache path and
+    # before an approval can be saved (the saved threshold is never changed).
+    day_threshold = charter_day_threshold_check(intent)
+    if day_threshold.problem is not None:
+        raise ValueError(day_threshold.problem)
     expected = derive_authorization_requirements(
         "full_authorized_development",
         tuple(f"strategy_profile.{axis}" for axis in sorted(intent["axes"])),

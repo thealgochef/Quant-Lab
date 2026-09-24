@@ -16,9 +16,9 @@ is kept as history; it is not proof of current imports.
 |---|---|
 | `scripts/ifvg_research_wizard.py` `_choose_study` / `render_new_study` | "Funded configuration comparison" in More study types; drafts of mode `funded_configuration_comparison` route to the comparison screen. The earlier type is labeled "Funded five-account operation (earlier budgeted mode)". |
 | `scripts/ifvg_funded_comparison_study.py` | Configurator screen (per-setting multiselects over the registry value ids, firms, size, clock), plan preview, owner approval action, freeze + detached launch, study listing and result routing. |
-| `scripts/ifvg_funded_comparison_job.py` | `start / status / worker / publish` for one frozen plan. |
+| `scripts/ifvg_funded_comparison_job.py` | `start / status / worker / publish` for one frozen plan. `start` refuses a plan already Running or Completed and, before queuing a worker, a historical plan without a stored owner approval (the approval check was added by the IFVG dashboard repair). |
 | `scripts/ifvg_workspace.py` `render_study` | `kind == "funded_comparison"` → `render_comparison_study`. |
-| `src/alpha_lab/agents/data_infra/ifvg/presentation/workspace.py` `load_studies` | Lists comparison runs (`funded_comparison_jobs/<plan>/state.json`) and unfrozen comparison drafts. `axis_value_name` supplies the configurator's own value labels. |
+| `src/alpha_lab/agents/data_infra/ifvg/presentation/workspace.py` `load_studies` | Lists comparison runs (`funded_comparison_jobs/<plan>/state.json`) and unfrozen comparison drafts. `axis_value_name` (setting and value) labels unavailable combinations; `axis_value_text` (the value alone, added by the IFVG dashboard repair) is used by `comparison_draft.value_label` for the "Selected:" line and as the chip fallback when a value has no short variation name (`_chip_label`). |
 | `src/alpha_lab/agents/data_infra/ifvg/search/store.py` `SEARCH_STORE_NAMES` | Adds `funded_comparison_plans`, `funded_comparison_approvals`, `funded_comparison_results`. |
 | `src/alpha_lab/propsim/funded/comparison_study.py` | Axis choices, selection → approved configurations (unapproved combinations listed), size check, plan building, owner-approval recording. |
 | `.../comparison_plan.py` | Plan / approval / result envelopes, question, decisions, limitations. |
@@ -40,6 +40,22 @@ is kept as history; it is not proof of current imports.
 | `scripts/ifvg_funded_comparison_job.py` `worker_environment`, `republish` | Worker launched only on the plan's exact Core source; new export version command. |
 | `scripts/ifvg_funded_comparison_study.py` `_render_variations`, `_approve_and_run` | "Variations around one configuration" in the normal configurator: saved/reopened selections, sizes per exit rule, frozen engine shown, already-run plans not relaunched. |
 | `scripts/run_ifsm_research_ui.py` `--research-core` | Explicit, labeled research Core on the pinned commit (receipt prints the patch hash); default launch unchanged. |
+
+### IFVG dashboard repair anchors (read September 23, 2026, after the repair)
+
+Screen-level changes from `docs/ifvg-dashboard-repairs/` (R1–R4); behavior and limitations in
+SPEC.md A12. No money rule changed.
+
+| Location | Role |
+|---|---|
+| `src/alpha_lab/propsim/funded/comparison_draft.py` `saved_settings`, `saved_study_selections`, `check_saved_comparison` / `SavedComparisonCheck`, `matching_saved_plans`, `rebuild_saved_plan`, `value_label` | Saved drafts read exactly as saved (no defaults merged, nothing dropped or substituted); what the running engine can represent, with an engine-independent configuration count; saved plans that match the draft exactly; the one plan rebuild shared by the screen and the launch check. |
+| `scripts/ifvg_funded_comparison_study.py` `_render_saved_read_only`, `_sync_widget_state` / `_draft_marker`, `_mark_edited` / `_save_edits`, `dispatch_problem`, `_chip_label` | Unrepresentable draft → read-only page (saved settings, count, matching plan with approval and status, the `--research-core` launch command); widget state reset when the saved file's SHA-256 changes; saves only after an owner edit (`on_change`); launch re-reads the draft, rebuilds the plan and requires the identical plan id and its stored approval; chips show the value itself. |
+| `scripts/ifvg_funded_comparison_results.py` `selected_context`, `_comparison`, `_detail`, `_accounts`, `_open_trade_review` | One firm selector drives the ranking and the detail (no tabs); firm, configuration and account kept per saved result id (`funded_comparison_v1_selected_context`); widget keys scoped to the result; "Review these trades in Trade review" carries plan, result, configuration, firm and account. |
+| `.../presentation/funded_comparison.py` `_instant` | Trades and account events ordered by recorded instant, not by text. |
+| `scripts/ifvg_search_review.py` `render_trade_review` | Trade review → Study executions adds funded comparisons of the application's registered store; an unavailable funded target is refused with a message, never replaced by another study. |
+| `.../presentation/funded_trade_review.py` (`REVIEWABLE_STATUSES`, `funded_review_sources`, `pair_trades`, `funded_trade_facts`, `review_keys`, `plan_strategy_package`, `strategy_trade_links`); `scripts/ifvg_funded_trade_review.py` (`render_funded_trade_review`, `_back_to_result`) | Lists Completed, Incomplete and Failed-with-result comparisons (labeled); recorded funded path on the plan's bound verified study bars; gap zones only for configurations of the verified study; funded review-ledger keys (result, pair, account, trade); Back restores configuration, firm and account. |
+| `.../presentation/chicago_time.py` (`utc_instant`, `chicago_label`, `chicago_wall`, `style_chicago_axis`) | Shared Chicago display helper: 12-hour AM/PM, CST/CDT named, naive times refused unless their convention is named, chart positions to the microsecond. |
+| `tests/agents/test_funded_comparison_saved_drafts.py`, `tests/agents/test_funded_trade_review.py`, `tests/agents/test_funded_comparison_screen.py` (updated from tab to selector assertions) | Repair tests for R1–R3. |
 
 ### Strategy-Core seams used (pinned 7c7111e, read only)
 

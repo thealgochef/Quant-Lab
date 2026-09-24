@@ -29,6 +29,9 @@ from .search.axis_registry import (
 from .search.charter import (
     MAX_CHILD_COUNT_CEILING,
     OBJECTIVE_DIRECTIONS,
+    ResolvedPropGateThresholds,
+    ResolvedRobustnessGateThresholds,
+    ResolvedStrategyGateThresholds,
 )
 from .search.failure import FailureReason
 from .study_status import (
@@ -675,6 +678,20 @@ def validate_risk_step(fields: Mapping[str, Any]) -> dict[str, str]:
     return errors
 
 
+#: R5: gates the charter stores as whole counts (trades, days, steps), read
+#: from the gate contracts so a new count gate is covered automatically.
+_WHOLE_NUMBER_GATES: frozenset[tuple[str, str]] = frozenset(
+    (group, name)
+    for group, model in (
+        ("strategy_gates", ResolvedStrategyGateThresholds),
+        ("prop_gates", ResolvedPropGateThresholds),
+        ("robustness_gates", ResolvedRobustnessGateThresholds),
+    )
+    for name, spec in model.model_fields.items()
+    if spec.annotation in (int, int | None)
+)
+
+
 def validate_benchmarks_step(fields: Mapping[str, Any]) -> dict[str, str]:
     errors: dict[str, str] = {}
     for group in ("strategy_gates", "prop_gates", "robustness_gates"):
@@ -690,6 +707,14 @@ def validate_benchmarks_step(fields: Mapping[str, Any]) -> dict[str, str]:
                 0.0 <= float(value) <= 1.0
             ):
                 errors[f"{group}.{name}"] = "probability thresholds live in [0, 1]"
+            elif (group, name) in _WHOLE_NUMBER_GATES and not (
+                float(value) >= 0 and float(value).is_integer()
+            ):
+                # refused, never rounded: the saved value stays as entered
+                errors[f"{group}.{name}"] = (
+                    "this threshold counts whole trades, days or steps; enter a whole "
+                    "number of zero or more"
+                )
     return errors
 
 
@@ -701,27 +726,15 @@ DEVELOPMENT_EVIDENCE_LAST_DAY = "2026-06-10"
 
 
 def development_evidence_day_error(day: str) -> str | None:
-    """``None`` for a lawful development evidence date, else the reason."""
+    """``None`` for a lawful development evidence date, else the reason.
 
-    from datetime import date  # noqa: PLC0415
+    Repair R8: the window begins at the earliest stored market data (owner-
+    authorized September 23, 2026); June 11, 2026 onward stays protected.
+    """
 
-    from .search.trading_calendar import is_logical_trading_day  # noqa: PLC0415
+    from .research_period import evidence_day_error  # noqa: PLC0415
 
-    try:
-        date.fromisoformat(str(day))
-    except ValueError:
-        return f"{day!r} is not an ISO date"
-    if not DEVELOPMENT_EVIDENCE_FIRST_DAY <= str(day) <= DEVELOPMENT_EVIDENCE_LAST_DAY:
-        return (
-            f"{day} lies outside the development evidence window "
-            f"{DEVELOPMENT_EVIDENCE_FIRST_DAY} … {DEVELOPMENT_EVIDENCE_LAST_DAY}"
-        )
-    if not is_logical_trading_day(str(day)):
-        return (
-            f"{day} is not a logical trading day (weekend or registered full "
-            "closure; a physical partition date is never a trading day)"
-        )
-    return None
+    return evidence_day_error(str(day))
 
 
 def validate_validation_step(fields: Mapping[str, Any]) -> dict[str, str]:
@@ -746,12 +759,15 @@ def validate_validation_step(fields: Mapping[str, Any]) -> dict[str, str]:
     elif run_scope == "full_authorized_development":
         # UI-1 (plan F-08): per-field date validation from the backend
         # logical-day contract — never a pydantic error at freeze
-        from .development_access import FROZEN_WARMUP_DATES  # noqa: PLC0415
+        from .research_period import (  # noqa: PLC0415
+            earliest_evidence_day,
+            warmup_dates_for,
+        )
 
         if not real_dates:
             errors["real_dates"] = (
                 "select at least one evidence date — a logical trading day "
-                f"between {DEVELOPMENT_EVIDENCE_FIRST_DAY} and "
+                f"between {earliest_evidence_day()} and "
                 f"{DEVELOPMENT_EVIDENCE_LAST_DAY}"
             )
         else:
@@ -764,10 +780,14 @@ def validate_validation_step(fields: Mapping[str, Any]) -> dict[str, str]:
                 errors["real_dates"] = "; ".join(problems[:3])
             elif list(real_dates) != sorted(set(real_dates)):
                 errors["real_dates"] = "evidence dates must be unique and chronological"
-        if tuple(warmup_dates) != FROZEN_WARMUP_DATES:
+        first_day = min(real_dates) if real_dates else "2026-01-13"
+        if tuple(warmup_dates) != warmup_dates_for(first_day):
             errors["warmup_dates"] = (
-                "the development policy requires the frozen ten-date warmup "
-                "prefix (read-only; derived from the backend contract)"
+                "the development policy requires the frozen ten-date warmup prefix "
+                "(read-only; derived from the backend contract)"
+                if first_day >= "2026-01-13" else
+                "the development policy requires the ten store days before the first "
+                "evidence day as warmup (read-only; derived from the backend contract)"
             )
     seed = fields.get("seed")
     if seed is None or not isinstance(seed, int):

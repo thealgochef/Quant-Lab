@@ -48,7 +48,13 @@ def request_fixture(tmp_path, monkeypatch):
                 access_policy_id="development_explicit_dates_before_path_v2",
             ),
             "objective_policy": payload.objective_policy.model_copy(
-                update={"pareto_objectives": ("net_expectancy_r",)}
+                update={
+                    "pareto_objectives": ("net_expectancy_r",),
+                    # one evaluated date: the threshold must be reachable (R5)
+                    "feasibility_gates": payload.objective_policy.feasibility_gates.model_copy(
+                        update={"min_independent_days": 1}
+                    ),
+                }
             ),
         }
     )
@@ -418,3 +424,18 @@ def test_metadata_seed_chain_carries_day_and_ny_extrema(request_fixture):
     assert not _prepare(request_fixture).blockers
     _write_metadata_pair(cfg, dates[-1], dates, seeds={**seeds, "prev_day": dates[-2]})
     assert "day chain" in _prepare(request_fixture).blockers[0]
+
+
+def test_extended_research_dates_cannot_be_approved_before_their_inputs_exist(request_fixture):
+    """Repair R8: the window is extended, but pre-2026 inputs are not prepared yet."""
+
+    from alpha_lab.agents.data_infra.ifvg.research_period import warmup_dates_for
+
+    root, fields, requirements, _cfg = request_fixture
+    warmup = warmup_dates_for("2025-06-13")
+    extended = {**fields, "date_policy": {**fields["date_policy"],
+                                          "replay_dates": (*warmup, "2025-06-13"),
+                                          "warmup_dates": warmup}}
+    review = service.prepare_strategy_approval_review(extended, requirements, root)
+    assert any("have not been prepared" in blocker for blocker in review.blockers)
+    assert not (root / STORE).exists() or not any((root / STORE).iterdir())

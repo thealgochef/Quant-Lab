@@ -702,6 +702,18 @@ class PairDetail:
     notices: tuple[str, ...]
 
 
+def _instant(value: Any) -> int:
+    """Sort key: the recorded instant in nanoseconds (never its text; repair R4).
+
+    ISO text orders "17:43:00.67Z" before "17:43:00Z"; the instant does not.
+    """
+
+    from alpha_lab.agents.data_infra.ifvg.presentation.chicago_time import utc_instant
+
+    instant = utc_instant(value) if value else None
+    return -1 if instant is None else int(instant.value)
+
+
 def _find_summary(result: dict[str, Any], configuration: str,
                   firm_key: str) -> tuple[str, dict[str, Any]] | None:
     for key, s in (result.get("summaries_cents") or {}).items():
@@ -848,7 +860,7 @@ def present_pair_detail(result: dict[str, Any], configuration: str,
     )
 
     trades = tuple(_trade_row(i, t) for i, t in enumerate(
-        sorted(mine("trades"), key=lambda t: (t.get("entry_utc") or "", t.get("seq") or 0)),
+        sorted(mine("trades"), key=lambda t: (_instant(t.get("entry_utc")), t.get("seq") or 0)),
         start=1))
 
     notices: list[str] = []
@@ -937,7 +949,7 @@ def _account_row(j: dict[str, Any], payouts: list[dict[str, Any]],
                      what=_event_words(e), balance_usd=e.get("balance_usd"),
                      loss_limit_usd=e.get("floor_usd"))
         for e in sorted((e for e in events if e.get("account_number") == number),
-                        key=lambda e: (e.get("ts_utc") or "", e.get("seq") or 0)))
+                        key=lambda e: (_instant(e.get("ts_utc")), e.get("seq") or 0)))
     return AccountRow(
         number=number, label=f"Account {number}",
         created=chicago_text(j.get("created_chicago")),

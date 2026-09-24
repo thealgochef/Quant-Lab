@@ -1,6 +1,6 @@
 # Quant-Lab documentation index
 
-Updated: 2026-09-22.
+Updated: 2026-09-23.
 
 The [current Core setup](../research/core/README.md) records one exact Core pin
 for ordinary Quant-Lab and IFSM, with installation and source verification steps.
@@ -223,3 +223,18 @@ new data, June 11/holdout access or live promotion.
 - **Current research contract:** `IFVG_DAILY_CLOSE_SESSIONS.md` — mandatory daily
   and weekend flatness, the corrected Chicago morning preset, legacy identities,
   priced execution projection and the bounded 32-profile review package.
+
+## IFVG dashboard repairs (September 23, 2026)
+
+The [repair task ledger](ifvg-dashboard-repairs/TASKS.md) records the screen-level repairs
+R1–R8 in both applications (no study, replay or preparation was run) and their acceptance
+evidence. Open owner decisions, known limits, the pre-existing full-suite failures and a
+read-only data-search incident are listed in full in [OPEN_DECISIONS.md](ifvg-dashboard-repairs/OPEN_DECISIONS.md),
+the authoritative list; other guides only summarize them.
+Current screen behavior is summarized in the workbench section
+[IFVG dashboard repairs](ML_TRAINING_WORKBENCH.md#ifvg-dashboard-repairs-september-23-2026).
+The review package under `reports/ifvg_dashboard_repairs/` is local and git-ignored (never
+commit `reports/`); engineering evidence stays in
+`../Claude-Quant-Lab-Research-Artifacts/ifvg-dashboard-repairs-20260923/`. Rules for the funded
+screens remain in [SPEC.md](funded-payout-implementation/SPEC.md) and the owner's decisions in
+[OWNER_DECISIONS.md](funded-payout-implementation/OWNER_DECISIONS.md).

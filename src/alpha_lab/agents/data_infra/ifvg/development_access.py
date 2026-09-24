@@ -79,6 +79,9 @@ class SourceDateClass(StrEnum):
     PROTECTED_BUFFER = "protected_buffer"
     SEALED = "sealed"
     OUTSIDE_POLICY = "outside_policy"
+    #: repair R8 (owner-authorized September 23, 2026): stored days before 2026
+    #: inside the extended research window; counted only when accessed
+    EXTENDED_HISTORY = "extended_history"
 
 
 class AccessOperation(StrEnum):
@@ -104,6 +107,10 @@ def _classify(day: str) -> SourceDateClass:
         return SourceDateClass.PROTECTED_BUFFER
     if parsed >= date(2026, 6, 12):
         return SourceDateClass.SEALED
+    from .research_period import EARLIEST_LOCAL_MARKET_DATE  # noqa: PLC0415
+
+    if date.fromisoformat(EARLIEST_LOCAL_MARKET_DATE) <= parsed < date(2026, 1, 1):
+        return SourceDateClass.EXTENDED_HISTORY
     return SourceDateClass.OUTSIDE_POLICY
 
 
@@ -141,9 +148,14 @@ class DevelopmentAccessAudit:
         result = {
             source_class.value: {operation.value: 0 for operation in AccessOperation}
             for source_class in SourceDateClass
+            if source_class is not SourceDateClass.EXTENDED_HISTORY
         }
         for event in self.events:
-            result[event.source_class.value][event.operation.value] += event.units
+            counts = result.setdefault(
+                event.source_class.value,
+                {operation.value: 0 for operation in AccessOperation},
+            )
+            counts[event.operation.value] += event.units
         return result
 
     def as_dict(self) -> dict[str, Any]:
@@ -296,10 +308,34 @@ class DevelopmentReplayPolicy(ExplorationDataPolicy):
         ordered = tuple(str(day) for day in replay_dates)
         if ordered != tuple(sorted(ordered)) or len(ordered) != len(set(ordered)):
             raise ValueError("replay dates must be unique and chronological")
-        if tuple(day for day in ordered if day < "2026-01-13") != FROZEN_WARMUP_DATES:
-            raise ValueError("development replay requires the frozen ten-date warmup")
-        if any(day not in PERMITTED_DEVELOPMENT_DATES for day in ordered):
-            raise PermissionError("development replay contains a non-permitted date")
+        from .research_period import (  # noqa: PLC0415
+            EARLIEST_LOCAL_MARKET_DATE,
+            FROZEN_EVIDENCE_FIRST_DAY,
+            LAST_PERMITTED_DAY,
+            WARMUP_STORE_DAYS,
+            warmup_dates_for,
+        )
+
+        width = WARMUP_STORE_DAYS
+        if len(ordered) > width and ordered[width] < FROZEN_EVIDENCE_FIRST_DAY:
+            # repair R8: evidence before January 13, 2026 inside the extended
+            # window; warmup = the ten store days before the first evidence day
+            if ordered[:width] != warmup_dates_for(ordered[width]):
+                raise ValueError(
+                    "development replay requires the ten store days before its first "
+                    "evidence day as warmup"
+                )
+            if any(not EARLIEST_LOCAL_MARKET_DATE <= day <= LAST_PERMITTED_DAY
+                   for day in ordered):
+                raise PermissionError("development replay contains a non-permitted date")
+        else:
+            if tuple(day for day in ordered if day < "2026-01-13") != FROZEN_WARMUP_DATES:
+                raise ValueError("development replay requires the frozen ten-date warmup")
+            if any(day not in PERMITTED_DEVELOPMENT_DATES for day in ordered):
+                raise PermissionError("development replay contains a non-permitted date")
+        if any(_classify(day) in {SourceDateClass.PROTECTED_BUFFER, SourceDateClass.SEALED}
+               for day in ordered):  # pragma: no cover - excluded by both branches above
+            raise PermissionError("protected dates cannot enter a development replay")
         super().__init__(audit=DataAccessAudit(), allowlist=frozenset(ordered))
         self.development_audit = development_audit or DevelopmentAccessAudit()
 

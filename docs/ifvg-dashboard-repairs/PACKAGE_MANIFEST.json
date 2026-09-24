@@ -1,0 +1,102 @@
+{
+  "package": "IFVG dashboard repair-only task",
+  "created_on": "2026-09-23",
+  "status": "Prepared instructions; no application implementation or execution performed",
+  "scope": "Existing dashboard correctness and bounded loading investigation, no redesign or new studies",
+  "entry_command": "/fix-ifvg-dashboard",
+  "preservation": "Adds only new task/skill paths. No root instructions, existing task files, settings, or launchers included.",
+  "payload_count": 13,
+  "archive_file_count_including_this_manifest": 14,
+  "manifest_scope": "All package files except this manifest; no self hash",
+  "checked": {
+    "relative_paths_safe": true,
+    "skill_yaml_parsed": true,
+    "referenced_task_files_exist": true,
+    "referenced_evidence_images_exist": true,
+    "images_decoded_and_equal_to_supplied_evidence": true,
+    "no_settings_root_instructions_or_launchers": true
+  },
+  "not_executed": [
+    "Claude Code skill",
+    "User application",
+    "User repository edits",
+    "Tests or financial studies"
+  ],
+  "payloads": [
+    {
+      "path": ".claude/skills/fix-ifvg-dashboard/SKILL.md",
+      "bytes": 1478,
+      "sha256": "908b8192ac9b9d424de603e60cf2f8cc3ff6369540aba74c1562018de7dda784"
+    },
+    {
+      "path": "docs/ifvg-dashboard-repairs/README.md",
+      "bytes": 1396,
+      "sha256": "1cccfe190fdec3adb4a794e769e0d1e8c001ee70e543afe50dc104c18e794ea1"
+    },
+    {
+      "path": "docs/ifvg-dashboard-repairs/SOURCE_OBSERVATIONS.md",
+      "bytes": 5042,
+      "sha256": "e87e4efe863533f2a5fba802e47cc7fa0bd75419dc0d31d45119642691a96485"
+    },
+    {
+      "path": "docs/ifvg-dashboard-repairs/TASK.md",
+      "bytes": 28392,
+      "sha256": "71f3a99f7dcb7d9f577cf21a280c34e6ee7bf2828069f2aa58d3fe7442d22c0b"
+    },
+    {
+      "path": "docs/ifvg-dashboard-repairs/TASKS.md",
+      "bytes": 3224,
+      "sha256": "effafcb867b0196c1037ae1ba87f603bde4409dcc702a3c751fb6fa68b7a41af"
+    },
+    {
+      "path": "docs/ifvg-dashboard-repairs/evidence/01_saved_draft_reopens_as_48.png",
+      "bytes": 219964,
+      "sha256": "c7d2691e0a9ca916d1d0b18281e97141d91d434b97fed6f062f34547843cee2e"
+    },
+    {
+      "path": "docs/ifvg-dashboard-repairs/evidence/02_firm_selection_mismatch.png",
+      "bytes": 346642,
+      "sha256": "7f4b5f1fb311604e22725f8cd6e5255614b7901189eb8ed7a4f0bc7a2f0bde4f"
+    },
+    {
+      "path": "docs/ifvg-dashboard-repairs/evidence/03_chips_show_setting_name.png",
+      "bytes": 201784,
+      "sha256": "df6cec4aab212737b4084ddd32a96185ba180c04a7ded9e817ab123d5b1a5cc8"
+    },
+    {
+      "path": "docs/ifvg-dashboard-repairs/evidence/05_trade_review_wrong_timezone.png",
+      "bytes": 142109,
+      "sha256": "c9ea79aa1de8b63addc2a5222d69239e4124d5a19ce049de3820ebdb696d5ce0"
+    },
+    {
+      "path": "docs/ifvg-dashboard-repairs/evidence/06_funded_trade_review_empty.png",
+      "bytes": 28249,
+      "sha256": "aa0b0bec7016c4db3399350eb09340733614512b98793c4b494fd54c508452bb"
+    },
+    {
+      "path": "docs/ifvg-dashboard-repairs/evidence/07_impossible_days_threshold.png",
+      "bytes": 196579,
+      "sha256": "fadfc67caaf7841f82dea1bb43780c5f169a6f1d6f7af82d061c185cace5af6c"
+    },
+    {
+      "path": "docs/ifvg-dashboard-repairs/evidence/08_default_baseline_legacy_holding.png",
+      "bytes": 161539,
+      "sha256": "7ae0e8903cd9988420975a7b9de7af4f1464471313c38e99a9eb1e50a1a808e4"
+    },
+    {
+      "path": "docs/ifvg-dashboard-repairs/evidence/09_permitted_research_period.png",
+      "bytes": 92115,
+      "sha256": "d915f22db5684e04f0cdc8a1e13c5d07b495646ec5e943cdeed5009458bbb566"
+    }
+  ],
+  "revision": {
+    "revised_on": "2026-09-23",
+    "changes": [
+      "TASK.md: R1 item 9 and acceptance line for readable selection values; new R7 (new-study default baseline) and R8 (owner-authorized backward extension of the permitted research period); preservation exception for R8; handoff contents updated for R1–R8",
+      "TASKS.md: R7 and R8 ledger rows; R8 authorization noted",
+      "SOURCE_OBSERVATIONS.md: observations and evidence for R1 item 9, R7 and R8",
+      "README.md and SKILL.md: eight evidence screenshots; skill description covers R7 and R8",
+      "evidence/: added 03, 08 and 09, byte-identical to the original September 23 capture"
+    ]
+  }
+}

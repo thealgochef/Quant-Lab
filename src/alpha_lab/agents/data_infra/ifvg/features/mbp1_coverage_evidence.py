@@ -137,6 +137,9 @@ _UNREPRESENTABLE_DATE_CLASSES = frozenset(
         SourceDateClass.PROTECTED_BUFFER,
         SourceDateClass.SEALED,
         SourceDateClass.OUTSIDE_POLICY,
+        # repair R8 extends the strategy-study window only; MBP-1 coverage
+        # evidence keeps its 2026 scope exactly as before
+        SourceDateClass.EXTENDED_HISTORY,
     }
 )
 

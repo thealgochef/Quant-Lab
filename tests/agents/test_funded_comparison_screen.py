@@ -238,11 +238,21 @@ def _visible_text(at) -> str:
     return "\n".join(values).replace("\\$", "$")
 
 
+def _widget(at, kind: str, suffix: str):
+    """The result-scoped widget whose key ends with ``suffix``."""
+
+    return next(w for w in at.get(kind) if str(w.key).endswith(suffix))
+
+
 def test_screen_renders_comparison_with_separate_firm_tabs(monkeypatch, result):
+    # one firm selector drives the ranking and the detail (repair R2); each firm
+    # is still its own separately ranked table
     at = _run(monkeypatch, result)
-    assert [t.label for t in at.tabs] == ["TakeProfitTrader", "MyFundedFutures"]
-    tpt = at.tabs[0].dataframe[0].value
-    mff = at.tabs[1].dataframe[0].value
+    firm = _widget(at, "radio", "_firm")
+    assert firm.options == ["TakeProfitTrader", "MyFundedFutures"]
+    tpt = at.dataframe[0].value
+    firm.set_value("myfundedfutures").run()
+    mff = at.dataframe[0].value
     # the settings that differ between configurations are separate readable columns
     assert list(tpt.columns) == [
         "Rank", "Net cash earned", "Entry hours", "Largest opposing distance",
@@ -274,8 +284,8 @@ def test_screen_never_sums_configurations_or_firms(monkeypatch, result):
 def test_screen_text_has_no_hashes_ids_or_paths(monkeypatch, result):
     at = _run(monkeypatch, result)
     assert _clean(_visible_text(at)) == []
-    at.selectbox(key="funded_comparison_v1_configuration").set_value("S3_D80").run()
-    at.radio(key="funded_comparison_v1_firm").set_value("myfundedfutures").run()
+    _widget(at, "selectbox", "_configuration").set_value("S3_D80").run()
+    _widget(at, "radio", "_firm").set_value("myfundedfutures").run()
     assert not at.exception
     assert _clean(_visible_text(at)) == []
 
@@ -289,12 +299,12 @@ def test_screen_detail_selection_shows_the_selected_pair(monkeypatch, result):
     months = next(df.value for df in at.dataframe if "Month" in df.value.columns)
     assert months["Month"].tolist() == [
         "January 2026 (partial month)", "February 2026", "March 2026 (partial month)"]
-    at.selectbox(key="funded_comparison_v1_configuration").set_value("S3_D80").run()
-    at.radio(key="funded_comparison_v1_firm").set_value("myfundedfutures").run()
+    _widget(at, "selectbox", "_configuration").set_value("S3_D80").run()
+    _widget(at, "radio", "_firm").set_value("myfundedfutures").run()
     text = _visible_text(at)
     assert "$800.75 after the split ($889.72 gross, 1 request still processing)" in text
     assert "Processing, not received at the end" in text
-    at.radio(key="funded_comparison_v1_firm").set_value("takeprofittrader").run()
+    _widget(at, "radio", "_firm").set_value("takeprofittrader").run()
     text = _visible_text(at)
     assert "No trades were taken in this period." in text
     assert not at.exception
@@ -305,3 +315,123 @@ def test_screen_with_no_completed_configuration(monkeypatch, result):
     variant["tables"] = {**result["tables"], "configurations": []}
     at = _run(monkeypatch, variant)
     assert "No configuration completed, so there is no detail to show." in _visible_text(at)
+
+
+# ── repair R2: one coherent selected-result context ──────────────────────────
+
+
+def _metrics(at) -> dict[str, str]:
+    return {m.label: m.value for m in at.metric}
+
+
+def test_firm_choice_moves_ranking_detail_and_accounts_together(monkeypatch, result):
+    from alpha_lab.agents.data_infra.ifvg.presentation.funded_results import format_usd
+
+    at = _run(monkeypatch, result)
+    assert "Opened on TakeProfitTrader's top-ranked configuration" in _visible_text(at)
+    assert _metrics(at)["Net cash earned"] == "$2,203.78"
+    _widget(at, "radio", "_firm").set_value("myfundedfutures").run()
+    assert not at.exception, at.exception
+    # the same configuration, now with MyFundedFutures everywhere below the selector
+    assert _widget(at, "selectbox", "_configuration").value == "S0_D160"
+    summary = result["summaries_cents"]["S0_D160|myfundedfutures"]
+    metrics = _metrics(at)
+    for label, field in (("Net cash earned", "net_cash_earned_cents"),
+                         ("Payouts received after the split", "payouts_received_cents"),
+                         ("Account costs", "account_costs_cents")):
+        assert metrics[label] == format_usd(summary[field]), label
+    text = _visible_text(at)
+    assert "with **MyFundedFutures** — rank 2 for this firm" in text
+    assert "TakeProfitTrader**" not in text
+    assert at.dataframe[0].value["Net cash earned"].tolist() == [
+        "-$125.00", "-$250.00", "Not completed"]
+    account = next(w for w in at.selectbox if "_account_" in str(w.key))
+    assert account.label == "Show one account (MyFundedFutures)"
+    assert str(account.key).endswith("_S0_D160_myfundedfutures")
+
+
+def _two_results_app():
+    import ifvg_funded_comparison_results as screen
+    import streamlit as st
+
+    which = st.session_state.get("which", "A")
+    if which == "list":
+        st.write("My studies")
+        return
+    screen.render_funded_comparison_results(st, screen._TEST_RESULTS[which],
+                                            result_id=which * 64)
+
+
+def test_selection_is_scoped_to_its_result_and_survives_leaving_the_page(monkeypatch, result):
+    import ifvg_funded_comparison_results
+    from streamlit.testing.v1 import AppTest
+
+    monkeypatch.setattr(ifvg_funded_comparison_results, "_TEST_RESULTS",
+                        {"A": result, "B": result}, raising=False)
+    at = AppTest.from_function(_two_results_app, default_timeout=60).run()
+    _widget(at, "selectbox", "_configuration").set_value("S3_D80").run()
+    _widget(at, "radio", "_firm").set_value("myfundedfutures").run()
+    # another saved result never inherits this selection
+    at.session_state["which"] = "B"
+    at.run()
+    assert _widget(at, "radio", "_firm").value == "takeprofittrader"
+    assert _widget(at, "selectbox", "_configuration").value == "S0_D160"
+    # leave the results page entirely, then come back to the first result
+    at.session_state["which"] = "list"
+    at.run()
+    at.session_state["which"] = "A"
+    at.run()
+    assert not at.exception, at.exception
+    assert _widget(at, "radio", "_firm").value == "myfundedfutures"
+    assert _widget(at, "selectbox", "_configuration").value == "S3_D80"
+    assert "with **MyFundedFutures** — rank 1 for this firm" in _visible_text(at)
+
+
+def test_account_history_is_ordered_by_instant_not_by_text(result):
+    """Repair R4: an event at 17:43:00.67 comes after one at 17:43:00 exactly."""
+
+    import copy
+
+    from alpha_lab.agents.data_infra.ifvg.presentation.funded_comparison import (
+        present_pair_detail,
+    )
+
+    changed = copy.deepcopy(result)
+    events = [e for e in changed["tables"]["account_events"]
+              if e["pair_id"] == "S0_D160|takeprofittrader" and e["account_number"] == 1]
+    events[0]["ts_utc"], events[1]["ts_utc"] = "2026-01-13T17:43:00.670754143Z", (
+        "2026-01-13T17:43:00Z")
+    detail = present_pair_detail(changed, "S0_D160", "takeprofittrader")
+    path = [p.ts_utc for p in detail.accounts[0].balance_path]
+    assert path.index("2026-01-13T17:43:00Z") < path.index("2026-01-13T17:43:00.670754143Z")
+
+
+def test_the_account_shown_is_sent_to_trade_review_and_restored(monkeypatch, result):
+    """Repair R3 (review finding): the chosen account is carried to Trade review and
+    restored on return, and never carried to another firm."""
+
+    import ifvg_funded_comparison_results
+    from streamlit.testing.v1 import AppTest
+
+    def account(at):
+        return next(w for w in at.selectbox if "_account_" in str(w.key))
+
+    monkeypatch.setattr(ifvg_funded_comparison_results, "_TEST_RESULTS",
+                        {"A": result, "B": result}, raising=False)
+    at = AppTest.from_function(_two_results_app, default_timeout=60).run()
+    assert _widget(at, "selectbox", "_configuration").value == "S0_D160"
+    account(at).set_value("Account 2").run()
+    _widget(at, "button", "_open_review").click().run()
+    assert not at.exception, at.exception
+    pending = at.session_state["ifvg_funded_review_pending"]
+    assert (pending["configuration"], pending["firm_key"], pending["account_number"]) == (
+        "S0_D160", "takeprofittrader", 2)
+    at.session_state["which"] = "list"
+    at.run()
+    at.session_state["which"] = "A"
+    at.run()
+    assert account(at).value == "Account 2"
+    _widget(at, "radio", "_firm").set_value("myfundedfutures").run()
+    assert account(at).label == "Show one account (MyFundedFutures)"
+    assert account(at).value == "Account 1"
+

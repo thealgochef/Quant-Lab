@@ -37,7 +37,10 @@ def render_fixed_settings(st, payload, baseline_name, *, key_prefix="ifvg_fixed_
         "These fixed choices do not add baseline comparisons or combinations."
     )
     base = resolve_profile_config({"profile_name": baseline_name}).effective_config
-    selected = dict(payload.get("fixed_axis_value_ids") or {})
+    saved = dict(payload.get("fixed_axis_value_ids") or {})
+    selected = dict(saved)
+    # repair R7: the inherited explicit gap rule is recorded only with an owner edit
+    inherited_rule = None
     # Imports are applied before widgets are instantiated; they remain ordinary
     # editable fixed choices and cannot import approval or start a replay.
     with st.expander("Import or export one configuration"):
@@ -99,11 +102,10 @@ def render_fixed_settings(st, payload, baseline_name, *, key_prefix="ifvg_fixed_
         )
         if value == KEEP_BASELINE:
             selected.pop(axis, None)
-        elif not (
-            explicit_policy and axis not in (payload.get("fixed_axis_value_ids") or {})
-            and selected.get("enabled_entry_sessions") == LEGACY_MORNING
-            and value == inherited
-        ):
+        elif explicit_policy and axis not in saved and value == inherited:
+            if selected.get("enabled_entry_sessions") != LEGACY_MORNING:
+                inherited_rule = value
+        else:
             selected[axis] = value
         if axis == "enabled_entry_sessions" and value == "enabled_entry_sessions.ny_0700_1030":
             st.caption(
@@ -118,6 +120,11 @@ def render_fixed_settings(st, payload, baseline_name, *, key_prefix="ifvg_fixed_
                 "weekend locks prevent carrying positions across market closures; "
                 "the end of an entry window does not itself close a position."
             )
+    if inherited_rule is not None and selected != saved:
+        # the owner changed this configuration: its gap rule is saved explicitly with
+        # it. Opening a saved draft (nothing changed) returns its settings unchanged;
+        # a missing rule resolves to the original rule, as before.
+        selected["htf_gap_invalidation_policy"] = inherited_rule
     missing = set(selected) - set(SEARCH_AXIS_REGISTRY_V1)
     if missing:
         st.error("This runtime lacks saved settings: " + ", ".join(sorted(missing)))

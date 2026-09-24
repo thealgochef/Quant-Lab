@@ -1,6 +1,6 @@
 # Streamlit ML Training Workbench
 
-Updated: 2026-09-22.
+Updated: 2026-09-23.
 
 Ordinary Quant-Lab and the IFSM launcher use the same current Core,
 `7c7111e398c083cf8e966e2e0c5aac8a41cc12c0`, after the owner's September 22 upgrade.
@@ -65,7 +65,9 @@ overall P&L sign.
 Use **Review this configuration's trades** from Results, or choose **Study
 executions** in Trade review, to inspect that exact run's bars and executions.
 Warmup trades are hidden by default and explicitly marked when included. The
-chart uses New York time and offers the execution, parent and higher timeframes.
+chart shows Chicago time (12-hour clock, CST/CDT) and offers the execution, parent and
+higher timeframes. **Study executions** also lists funded comparisons with a saved result;
+see [IFVG dashboard repairs](#ifvg-dashboard-repairs-september-23-2026).
 Save reviewer notes and labels through the existing **Review → Save Review** form.
 These annotations remain separate from generated labels and execution outcomes.
 
@@ -116,13 +118,15 @@ configurations receive an advisory. Names must be descriptive rather than paths
 or technical identifiers.
 
 Under **Study Configuration → Session Policy → Enabled entry sessions**, choose
-**Asia only**, **London only**, **New York only**, or
-**NY from 7am to 10:30am (Eastern Time)** alongside the existing default option.
-The custom NY window allows new entry confirmations from **7:00am inclusive to
-10:30am exclusive, New York time**, with daylight saving time handled automatically.
-It is continuous through those hours, including time outside the standard doc-session
-windows. Positions opened within the window continue under their configured exit
-rules after 10:30am; other entry conditions still apply. Replay-chart document-session
+**Asia only**, **London only** or **New York only** (each label shows its Chicago hours),
+or **Legacy morning - 6:00 AM to 9:30 AM Chicago time (historical)**, alongside the existing
+default option. That legacy window (`ny_0700_1030`) allows new entry confirmations from
+7:00 AM inclusive to 10:30 AM exclusive New York time (6:00 AM to 9:30 AM Chicago), with
+daylight saving time handled automatically. It is continuous through those hours,
+including time outside the standard doc-session windows. Positions opened within the
+window continue under their configured exit rules after 9:30 AM Chicago (10:30 AM New
+York); other entry conditions still apply. The corrected Morning preset is described in
+[IFSM research: daily close and corrected morning](#ifsm-research-daily-close-and-corrected-morning-september-18-2026). Replay-chart document-session
 bands follow that configuration's saved windows. The default sessions and
 market-data session labels keep their existing definitions.
 
@@ -299,8 +303,8 @@ local receipts. Other dates are not certified, and R5B remains blocked.
 2. Set the evaluation window within the common saved evaluation dates. Targets
    and costs are inherited independently for each child. The research population
    includes all candidates in that window and excludes stamped warmup rows.
-   Preflight displays the exact outcome cutoff: 17:00 ET on the final evaluation
-   date, capped by the protected data boundary.
+   Preflight displays the exact outcome cutoff in Chicago time: 4:00 PM Chicago
+   (17:00 New York) on the final evaluation date, capped by the protected data boundary.
 3. Choose core (B0), core plus structure (B1), or core plus structure/liquidity
    (B4) and the headline model. Results identify the frozen headline protocol
    and open its saved report first; all model rungs remain available for review.
@@ -823,3 +827,57 @@ the corrected stop-difference measure.
 To publish a new review folder of an existing result (the result is never recomputed), run
 `python scripts/ifvg_funded_comparison_job.py republish --plan-id <plan>`, optionally adding
 `--review-findings`, `--approximated-minutes` and `--reference-reconciliation`.
+
+### IFVG dashboard repairs (September 23, 2026)
+
+Repair-only changes to the existing IFVG Lab screens in both applications; task record in
+`docs/ifvg-dashboard-repairs/` (no redesign, no new studies).
+
+- **Saved funded comparison drafts** are read exactly as saved. If the running Strategy-Core
+  cannot represent a saved value (for example the half-exit rule under the pinned engine), the
+  draft is shown read-only with its real configuration count, its saved settings, any exactly
+  matching saved plan and the launcher prerequisite; approval and launch are unavailable.
+  Opening or refreshing a draft never saves it; only a change to a setting does. The launch
+  re-reads the draft on disk, rebuilds the plan and requires the identical plan and its
+  approval. A page left open while the draft is saved in another window resets to the saved
+  draft (its approval tick is cleared), so a stale click cannot approve a plan no longer
+  saved. Selected chips show the value itself, with a full "Selected:" line.
+- **Funded comparison results**: one firm selector drives the ranking and the detail; the
+  selected firm and configuration are kept per saved result (Back, Trade review and other
+  results never change them). The review-folder caption states that it covers the full study.
+- **Trade review → Study executions** also lists funded comparisons with a saved result
+  (Incomplete and review-only results are labelled as such); a requested comparison that
+  cannot be offered is never replaced by another study. A funded trade opens with its result,
+  configuration, firm, account (the one shown on the results page) and trade identity and shows the
+  recorded path (entry, quantity, initial stop, half fill, remaining quantity, moved stop,
+  final exit, account liquidation) on the strategy's verified original bars from the plan's
+  bound study package; gap zones appear only for configurations of the verified study.
+  Funded reviews use their own ledger keys. "Review these trades in Trade review" and "Back to
+  this funded result" keep the context.
+- **Chicago time** (`presentation/chicago_time.py`): selectors, chart axes and hovers, event
+  tables, review times and funded fills show America/Chicago with a 12-hour clock and CST/CDT.
+  Stored instants, trading-day labels, session rules, ledgers and exports are unchanged.
+- **Independent-day threshold**: a minimum above the study's evaluated trading days (warmup
+  excluded) is refused at review, approval, charter validation and the worker entry, with a
+  plain message; the saved value is never changed.
+- **Named baseline**: a new Evaluate study starts on the owner's selected configuration
+  S0_D80_W1_P1 (read from the verified daily-close package, mandatory 3:55 PM Chicago close).
+  The legacy baseline is unchanged and is warned about; review steps state a holding rule other
+  than the daily close. Opening a saved draft no longer rewrites its baseline hash or adds keys,
+  including the inherited gap-invalidation rule (recorded explicitly only when a fixed
+  setting is changed; a missing rule resolves to the original rule as before).
+- **Research period**: start and end date pickers replace one-date-per-line entry; the range
+  resolves to logical trading days with the existing
+  calendar (left-out days listed with reasons); the permitted window begins at the earliest
+  stored market data (December 2, 2021; first evidence day December 14, 2021) and June 11,
+  2026 onward stays protected. Prepared study inputs exist only for 2026, so ranges whose
+  first replayed day (warmup included) is earlier can be saved and checked but not approved
+  or run until preparation is separately authorized. A saved list the pickers cannot show is
+  kept as saved; a changed range that cannot be used saves no dates.
+- **Feature and model setup** verifies each saved envelope once per listing and reuses the
+  listing while the store is unchanged (spinner shown while verifying).
+- **Open owner decisions and known limits** (R5 threshold for draft `9aa2072d…`; S0_D80_W1_P1
+  for the other study types and the Trade review default; the stored data block, two market
+  closures, pre-2026 preparation and whether stored pre-2026 days count as already
+  authorized; the first Feature and model load of about four minutes) are listed in full in
+  [ifvg-dashboard-repairs/OPEN_DECISIONS.md](ifvg-dashboard-repairs/OPEN_DECISIONS.md).

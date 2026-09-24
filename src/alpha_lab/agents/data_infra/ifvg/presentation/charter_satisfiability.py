@@ -25,6 +25,10 @@ Rules (owner Q4 and the revision-2 clarifications):
   with the verification gates only: no challengers, no prop / robustness
   research gates, no firm contracts.
 * A synthetic fixture is confined to Implementation Verification.
+* R5 (mandatory integrity, when the caller supplies the strategy gates): the
+  minimum independent trading days must be reachable within the evaluated
+  (non-warmup) dates; the five-day verification policy is exempt. The saved
+  threshold is reported, never clamped or replaced.
 """
 
 from __future__ import annotations
@@ -33,8 +37,15 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from math import prod
+from typing import Any
 
 from ..search.charter import OBJECTIVE_DIRECTIONS
+from ..search.charter_day_threshold import (
+    DEFAULT_MIN_INDEPENDENT_DAYS,
+    DEVELOPMENT_ACCESS_POLICY_ID,
+    VERIFICATION_ACCESS_POLICY_ID,
+    check_day_threshold,
+)
 from ..search.strategy_metrics import StrategyMetrics
 from .run_purpose import EvidenceClass, RunPurpose
 
@@ -159,7 +170,17 @@ def evaluate_charter_satisfiability(
     prop_gates_configured: bool,
     robustness_gates_configured: bool,
     challenger_configurations: Sequence[Mapping[str, str]] | None = None,
+    strategy_gates: Mapping[str, Any] | None = None,
+    replay_dates: Sequence[str] = (),
+    warmup_dates: Sequence[str] = (),
+    access_policy_id: str | None = None,
 ) -> CharterSatisfiabilityReport:
+    """``strategy_gates`` (the draft's saved strategy gate values) enables the
+    reachable independent-day rule over ``replay_dates`` minus
+    ``warmup_dates`` (evidence-only dates are fine). ``access_policy_id``
+    defaults to the policy the purpose freezes under: the verification policy
+    for Implementation Verification, else the development policy."""
+
     goal = StudyGoal(goal)
     purpose = RunPurpose(purpose)
     evidence = EvidenceClass(evidence_class)
@@ -305,6 +326,27 @@ def evaluate_charter_satisfiability(
         else f"a synthetic fixture cannot carry the {purpose.value} purpose; research "
         "purposes require real owner authorization",
     )
+    if strategy_gates is not None:
+        policy = access_policy_id or (
+            VERIFICATION_ACCESS_POLICY_ID
+            if purpose is RunPurpose.IMPLEMENTATION_VERIFICATION
+            else DEVELOPMENT_ACCESS_POLICY_ID
+        )
+        day_threshold = check_day_threshold(
+            min_independent_days=strategy_gates.get(
+                "min_independent_days", DEFAULT_MIN_INDEPENDENT_DAYS
+            ),
+            replay_dates=tuple(replay_dates or ()),
+            warmup_dates=tuple(warmup_dates or ()),
+            access_policy_id=policy,
+        )
+        if day_threshold.applies:
+            _rule(
+                "independent_day_threshold_reachable",
+                "Minimum independent trading days fits the evaluated dates",
+                day_threshold.passed,
+                day_threshold.detail,
+            )
     unregistered = tuple(
         metric
         for metric in (*objectives, *ties)

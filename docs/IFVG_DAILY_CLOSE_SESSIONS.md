@@ -20,6 +20,18 @@ mandatory daily close: the explicit policy still selects that behavior. Do not
 resume incompatible checkpoints or assign the current identity to old studies.
 The sections below preserve the original bounded experiment's execution contract.
 
+Since September 23, 2026 a new Evaluate study starts on this experiment's
+**S0_D80_W1_P1**: the registered legacy profile plus the ten values saved in the
+verified study package, offered only if it re-resolves to section hash
+`86261cc9…`. It is deliberately not a registered profile, because registering
+it would rename its identity (to `74b81e47…`). Compare, Search, Prop
+feasibility, Strategy across firms and Full workflow keep their existing start:
+using S0 there needs the worker to treat a non-registry configuration as the
+baseline child, a research-semantics change awaiting an owner decision. The
+Trade review and context-research default is also unchanged until prepared S0
+context data exist, which needs a run that has not been authorized. See
+[open decisions and known limits](ifvg-dashboard-repairs/OPEN_DECISIONS.md).
+
 ## Owner rules and research buffer
 
 The owner requires every position to close **before 4:00 PM Chicago time**, with

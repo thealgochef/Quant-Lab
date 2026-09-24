@@ -158,8 +158,6 @@ from alpha_lab.agents.data_infra.ifvg.study_drafts import (
 )
 from alpha_lab.agents.data_infra.ifvg.study_presentation import (
     AXIS_GROUP_ORDER,
-    DEVELOPMENT_EVIDENCE_FIRST_DAY,
-    DEVELOPMENT_EVIDENCE_LAST_DAY,
     INTERPRETATIONS,
     MAX_ACCOUNTS_PER_FIRM,
     OBJECTIVE_TEMPLATES,
@@ -819,7 +817,22 @@ def _satisfiability_for_draft(
         robustness_gates_configured=_gates_configured(
             benchmarks.get("robustness_gates"), _ROBUSTNESS_GATE_DEFAULTS
         ),
+        # repair R5: the independent-day threshold is compared with the evaluated dates
+        **_day_threshold_inputs(draft, benchmarks),
     )
+
+
+def _day_threshold_inputs(draft: StudyDraft, benchmarks: Mapping[str, Any]) -> dict[str, Any]:
+    validation = draft.steps.get("validation") or {}
+    evidence = tuple(validation.get("real_dates") or ())
+    if not evidence:
+        return {}
+    warmup = tuple(validation.get("warmup_dates") or FROZEN_WARMUP_DATES)
+    return {
+        "strategy_gates": dict(benchmarks.get("strategy_gates") or {}),
+        "replay_dates": (*warmup, *evidence),
+        "warmup_dates": warmup,
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -976,6 +989,25 @@ def _step_baseline(st_module, draft: StudyDraft) -> dict[str, Any]:
             "computed at freeze time and ride the replay identity. Seed and "
             "date-policy references are shown in the Validation step."
         )
+    stored_hash = payload.get("baseline_section_config_hash")
+    if (
+        stored_hash
+        and section_hash
+        and stored_hash != section_hash
+        and payload.get("baseline_profile_name") == selected
+    ):
+        # Saved under an earlier strategy engine: shown, never rewritten on render (R7).
+        st_module.warning(
+            "This draft saved its baseline with an earlier version of the strategy engine, "
+            "and the same baseline now resolves differently. Your saved draft has not been "
+            "changed. Update it to continue with the current version."
+        )
+        if not st_module.button(
+            "Update the saved baseline to the current engine", key=f"{_W}rehash",
+            help="Records the baseline as the current strategy engine resolves it. The "
+                 "draft is saved only when you click; opening it never changes it.",
+        ):
+            section_hash = stored_hash
     fixed = {}
     if (
         draft.mode_id == "single_configuration"
@@ -987,15 +1019,19 @@ def _step_baseline(st_module, draft: StudyDraft) -> dict[str, Any]:
         fixed = render_fixed_settings(
             st_module, payload, selected, key_prefix=f"{_W}fixed_{draft.draft_id}_"
         )
+    from ifvg_research_wizard import _legacy_warning  # noqa: PLC0415
+
+    _legacy_warning(st_module, selected, fixed)
     result = {
         "baseline_profile_name": selected,
         "baseline_section_config_hash": section_hash,
         "baseline_blocked_reason": blocked_reason,
-        "fixed_axis_value_ids": fixed,
     }
+    if "fixed_axis_value_ids" in payload or fixed:
+        result["fixed_axis_value_ids"] = fixed
     # Opening a saved draft must not inject absent historical metadata and
     # trigger autosave. Deliberate configuration edits still use the normal path.
-    for key in ("replication_recipe_id", "historical_search_id"):
+    for key in ("replication_recipe_id", "historical_search_id", "named_baseline_id"):
         if key in payload:
             result[key] = payload[key]
     return result
@@ -1056,8 +1092,9 @@ def _axis_card(
         if axis_key == "enabled_entry_sessions":
             st_module.caption(
                 "Each selected preset is a separate configuration, with the registered "
-                "default retained for comparison. The NY morning configuration only "
-                "opens trades from 7:00am up to, but not including, 10:30am Eastern Time."
+                "default retained for comparison. The legacy morning preset opens trades "
+                "from 6:00 AM up to, but not including, 9:30 AM Chicago time; the Morning "
+                "preset from 7:00 AM up to, but not including, 10:30 AM Chicago time."
             )
     else:
         st_module.caption(
@@ -1743,25 +1780,11 @@ def _step_validation(
             "this store, and — for Full Authorized Development — the typed second "
             "confirmation in Review & Launch."
         )
-        st_module.write(
-            "Frozen warmup prefix (read-only; the development date policy "
-            "requires it before any evidence date):"
+        from ifvg_research_dates import render_research_dates
+
+        real_dates, warmup_dates = render_research_dates(
+            st_module, payload, f"{_W}full_", Path(resolution.roots["repo_root"])
         )
-        st_module.code("\n".join(FROZEN_WARMUP_DATES), language="text")
-        raw = st_module.text_area(
-            "Evidence dates — logical trading days between "
-            f"{DEVELOPMENT_EVIDENCE_FIRST_DAY} and {DEVELOPMENT_EVIDENCE_LAST_DAY}, "
-            "one ISO date per line",
-            value="\n".join(payload.get("real_dates") or ()),
-            key=f"{_W}full_dates",
-            help=(
-                "Weekends, registered full closures, the protected buffer "
-                "2026-06-11 and the sealed range are refused field-by-field here, "
-                "never as a generic freeze failure."
-            ),
-        )
-        real_dates = tuple(line.strip() for line in raw.splitlines() if line.strip())
-        warmup_dates = FROZEN_WARMUP_DATES
         st_module.download_button(
             "Download resolved date list",
             data=json.dumps(
@@ -1772,7 +1795,7 @@ def _step_validation(
             help=help_text("wizard.download_dates"),
         )
         st_module.caption(
-            f"Warmup: {len(warmup_dates)} frozen days · evidence: {len(real_dates)}"
+            f"Warmup: {len(warmup_dates)} days · evidence: {len(real_dates)}"
         )
         readiness = resolution.readiness
         if readiness is not None:
@@ -1878,6 +1901,11 @@ def _step_review(
     st_module, draft: StudyDraft, roots: Mapping[str, Any], resolution: DraftResolution
 ) -> dict[str, Any]:
     objective = draft.step_payload("objective")
+    from ifvg_research_wizard import holding_statement  # noqa: PLC0415
+
+    holding = holding_statement(draft, resolution.flow)
+    if holding:  # repair R7: stated before approval; nothing is converted
+        st_module.warning(holding)
     risk = _effective_payload(draft, resolution.flow, "risk_policies")
     validation = draft.step_payload("validation")
     resolved = resolution.resolved
@@ -2139,9 +2167,17 @@ def _charter_fields(
         )
     else:
         evidence_dates = tuple(validation.get("real_dates") or ())
+        # repair R8: the ten warmup days precede the first evidence day (exactly the
+        # frozen January 2026 warmup for every evidence range starting January 13, 2026)
+        from alpha_lab.agents.data_infra.ifvg.research_period import (  # noqa: PLC0415
+            warmup_dates_for,
+        )
+
+        warmup = warmup_dates_for(min(evidence_dates)) if evidence_dates else (
+            FROZEN_WARMUP_DATES)
         date_policy = DatePolicy(
-            replay_dates=(*FROZEN_WARMUP_DATES, *evidence_dates),
-            warmup_dates=FROZEN_WARMUP_DATES,
+            replay_dates=(*warmup, *evidence_dates),
+            warmup_dates=warmup,
             access_policy_id="development_explicit_dates_before_path_v2",
         )
     withdrawal_ids = tuple(
@@ -2630,6 +2666,20 @@ def render_new_study(st_module=st, *, roots: Mapping[str, Any]) -> None:
         _saved_chip(st_module, "session", draft)
 
     fields = _render_step_body(st_module, step_key, draft, purpose_roots, resolution)
+    if (step_key == "objective" and not draft.steps.get("baseline")
+            and fields.get("question_id") == "evaluate_one_configuration"
+            and draft.step_payload("objective").get("question_id") != fields["question_id"]):
+        # repair R7: a study that becomes Evaluate here (the header's Start new draft)
+        # starts on the named baseline too; a saved Evaluate draft is never changed
+        import copy  # noqa: PLC0415
+
+        from ifvg_study_tab import _start_on_named_baseline  # noqa: PLC0415
+
+        probe = copy.deepcopy(draft)
+        probe.steps["objective"] = dict(fields)
+        _start_on_named_baseline(probe)
+        if probe.steps.get("baseline"):
+            draft.steps["baseline"] = probe.steps["baseline"]
     errors = _STEP_VALIDATORS_BY_KEY[step_key](fields)
     for field, message in errors.items():
         st_module.error(f"{field}: {message}")

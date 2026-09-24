@@ -130,8 +130,10 @@ review folder read only that result.
 
 ## A8. Screen and review folder
 
-See SCREEN_BRIEF.md. One comparison of all configurations with separate firm tabs; detail per
-configuration and firm; no summed totals; no credit/growth widgets. One compact automatic
+See SCREEN_BRIEF.md. One comparison of all configurations; one firm selector (one firm at a
+time) drives both the ranking and the detail per configuration and firm, and the chosen firm,
+configuration and account are kept per saved result (A12). No summed totals; no credit/growth
+widgets. One compact automatic
 review folder per completed study (`reports/funded_comparison/...`), documents and necessary
 data only; credit and growth tables are not exported in this mode; actual reviewer findings,
 when recorded, are a separate document from the review instructions.
@@ -234,6 +236,38 @@ unchanged; nothing here reruns it.
   change.
 - **Immutable source snapshot.** An internal immutable snapshot of the research Core's
   uncommitted source is kept (`snapshot_core_source`).
+
+## A12. Saved drafts, launch checks and Trade review (IFVG dashboard repair, September 23, 2026)
+
+Screen-level repairs (`docs/ifvg-dashboard-repairs/TASKS.md`, rows R1–R4). No money rule,
+plan, approval, result, export or ledger entry changed.
+
+- **Saved drafts are read as saved** (`propsim/funded/comparison_draft.py`): no default is
+  merged in and no value is dropped or substituted. Opening, refreshing or navigating never
+  saves; only an owner edit does. When the draft is saved in another window, the open page
+  resets to it (keyed on the saved file's SHA-256).
+- **A draft the running engine cannot represent opens read-only.** Example: the saved
+  half-exit variation draft under the pinned Strategy-Core, which has no exit-rule setting.
+  The page shows the saved settings, the engine-independent count (64 configurations), the
+  saved plan that matches exactly with its approval and status, and the command that starts
+  the application with the research engine (`--research-core`). Editing, approving or
+  running it needs that engine; it is never reduced to what the pinned engine offers.
+- **Launch** re-reads the draft from disk, rebuilds the plan and requires the identical plan
+  id and its stored approval. `job start` refuses a historical plan without a stored owner
+  approval before queuing a worker.
+- **Results screen:** one firm selector (one firm at a time) drives the ranking and the
+  detail. The firm, configuration and account are kept per saved result; another result
+  never inherits them. Trades and account events are ordered by their recorded instant.
+- **Trade review → Study executions** lists funded comparisons that have a saved result
+  (Incomplete and review-only results are labeled; an unavailable one is refused, never
+  replaced by another study). A trade shows its recorded funded path (entry, quantity,
+  initial stop, half fill, remaining quantity, moved stop, final exit, liquidation and
+  replacement) on the strategy's verified bars from the plan's bound study package, in
+  Chicago 12-hour AM/PM time (CST/CDT). "Review these trades" carries the configuration,
+  firm and account; Back restores them. Funded review notes use their own keys (result,
+  pair, account, trade).
+- **Limitations:** movement inside a minute is not drawn; configurations that were not in
+  the verified strategy study have no gap zones.
 
 ---
 

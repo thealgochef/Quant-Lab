@@ -120,6 +120,9 @@ def configured_study(monkeypatch, tmp_path):
     draft.steps["validation"].update(
         {"real_dates": ["2026-01-13", "2026-01-14"], "seed": 7, "worker_limit": 1}
     )
+    # Two (or, after the date-change case, one) evaluated dates: keep the
+    # independent-day threshold reachable so approval is the step under test.
+    draft.steps["benchmarks"] = {"strategy_gates": {"min_independent_days": 1}}
     draft.steps["review"] = {"n_children": 8}
     draft.current_step_key = "review"
     save_draft(roots["draft_root"], draft)

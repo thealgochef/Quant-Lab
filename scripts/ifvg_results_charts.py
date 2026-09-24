@@ -22,6 +22,7 @@ from ifvg_verifier_charts import (
     to_display_timezone,
 )
 
+from alpha_lab.agents.data_infra.ifvg.presentation.chicago_time import AXIS_TITLE
 from alpha_lab.agents.data_infra.ifvg.search.charter import OBJECTIVE_DIRECTIONS
 from alpha_lab.agents.data_infra.ifvg.study_status import (
     HEATMAP_GLYPHS,
@@ -572,7 +573,7 @@ def build_account_timeline_figure(
             )
         )
     figure.update_layout(
-        xaxis_title=f"time ({DISPLAY_TIMEZONE} display)",
+        xaxis_title=AXIS_TITLE,  # R4: Chicago wall time (CST/CDT)
         yaxis_title="account value ($)",
         margin=dict(l=8, r=8, t=24, b=8),
         height=420,

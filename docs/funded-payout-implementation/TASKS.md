@@ -18,8 +18,9 @@ Next action: owner decision on the bounded follow-ups listed below. No run, retr
 queued.
 Owner dependency: the proposed follow-ups need an explicit owner approval (none started).
 (Root AGENTS.md sentence noted below.)
-Source roots: Quant-Lab `C:/Users/gonza/Documents/Claude-Quant-Lab` (`main`, HEAD `5ece4d6`,
-all funded work uncommitted); Strategy-Core pinned checkout
+Source roots: Quant-Lab `C:/Users/gonza/Documents/Claude-Quant-Lab` (`main`; recorded at HEAD
+`5ece4d6` with all funded work uncommitted; committed to `main` in its own commit immediately
+before the IFVG dashboard repair commit — see `git log`); Strategy-Core pinned checkout
 `../Claude-Quant-Lab-Research-Artifacts/ifsm-research-core/7c7111e398c083cf8e966e2e0c5aac8a41cc12c0`
 (read only, unmodified). Strategy source: verified daily-close study package
 `archived-reports/ifvg_daily_close_sessions_20260918/final_extracted_4e5ce379c54731dd`
@@ -136,6 +137,10 @@ historical run above (control after the fix: $11,251.93 / $11,254.17).
   `tests/agents/data_infra/ifvg/test_funded_comparison_review.py`,
   `tests/propsim/funded/comparison_fixture.py`.
 - No study workers or Streamlit servers running (checked after the run).
+
+### Cross-reference: IFVG dashboard repair task (September 23, 2026)
+
+A separate repair-only task (`docs/ifvg-dashboard-repairs/TASKS.md`, rows R1–R4; finished, no job running) changed the funded comparison configurator and the results screen (one firm selector instead of tabs; firm, configuration and account kept per saved result), and connected funded trades to Trade review → Study executions. Behavior and limitations: SPEC.md A12. New and changed files: CODE_MAP.md "IFVG dashboard repair anchors". Read both ledgers before editing those files. Operational point for this work: the saved half-exit variation draft opens read-only under the pinned Strategy-Core and is never rewritten. Editing, approving or running it needs the application started with `--research-core`, and `job start` refuses a historical plan without a stored owner approval. No funded plan, approval, result, export or ledger entry in the real stores was changed and no comparison was run (22,581 snapshotted files identical before and after; one pre-repair test queued a worker only in pytest's temporary store, and it refused for lack of approval). Evidence: internal `../Claude-Quant-Lab-Research-Artifacts/ifvg-dashboard-repairs-20260923/`; review package `reports/ifvg_dashboard_repairs/ifvg_dashboard_repairs_20260923_v1/` and its `.zip` (`reports/` is git-ignored; never commit it).
 
 ### Root-instruction notes (reported, not rewritten)
 

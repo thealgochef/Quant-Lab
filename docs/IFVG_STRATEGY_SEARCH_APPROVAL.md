@@ -1,6 +1,6 @@
 # Saved approval for a strategy search
 
-Updated: 2026-09-08.
+Updated: 2026-09-23.
 
 An owner can approve a saved strategy-only search without starting it. The
 research store must first have an explicitly initialized research namespace.
@@ -13,6 +13,19 @@ warmup, costs, target, seed, and thresholds. It checks local bars/levels metadat
 cache provenance and warmup continuity without replaying or fitting. Missing or
 inconsistent evidence is shown as a specific blocker. Full input verification
 still occurs in the runner.
+
+Two further blockers apply since September 23, 2026. A minimum independent
+trading-day threshold above the study's evaluated days (warmup excluded) is
+refused in plain English on Review, before an approval is saved, at charter
+validation and at worker entry. It is never clamped: the saved value stays for
+the owner to change, as for draft `9aa2072d…` (2,050 against 107 evaluated
+days; the replacement value is an open owner decision). A date range whose
+first replayed day, warmup included, is before January 1, 2026 can be saved and
+checked but not approved or run. Prepared study inputs and the verification and
+authorization records cover 2026 only; earlier days are accepted in the date
+pickers only because their files exist, and preparing them needs its own
+authorization and a separate cache location so the prepared 2026 inputs are not
+overwritten. See [open decisions and known limits](ifvg-dashboard-repairs/OPEN_DECISIONS.md).
 
 Review those terms, enter **Reviewer name**, check **I approve this exact
 strategy study**, and click **Save study approval**. This saves the existing

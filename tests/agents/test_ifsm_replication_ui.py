@@ -72,6 +72,21 @@ def _with_explicit_gap_policy(values=None):
     return selected
 
 
+def _named_start():
+    """S0_D80_W1_P1's saved values and id, or nothing where its verified package is
+    absent (a new Evaluate study then keeps the registered baseline, repair R7)."""
+
+    from alpha_lab.agents.data_infra.ifvg.named_baselines import (
+        NamedBaselineUnavailableError,
+        owner_selected_baseline,
+    )
+
+    try:
+        return dict(owner_selected_baseline().axis_value_ids), "S0_D80_W1_P1"
+    except NamedBaselineUnavailableError:
+        return {}, None
+
+
 def _roots(monkeypatch, tmp_path):
     roots = {
         "research": tmp_path / "search" / "v1",
@@ -381,11 +396,16 @@ def test_ordinary_new_evaluate_study_config_edits_survive_save_and_reopen(monkey
     draft_id = app.session_state[f"{wizard.STATE_PREFIX}draft_id"]
     stored = load_draft(roots["draft_root"], draft_id)
     assert stored.step_payload("objective")["question_id"] == "evaluate_one_configuration"
-    assert stored.step_payload("baseline")["fixed_axis_value_ids"] == choices
+    # repair R7: a new Evaluate study starts on the owner's selected configuration
+    # (S0_D80_W1_P1's saved values); the edits made here are applied on top of it
+    start, named_id = _named_start()
+    expected = {**start, **choices}
+    assert stored.step_payload("baseline")["fixed_axis_value_ids"] == expected
+    assert stored.step_payload("baseline").get("named_baseline_id") == named_id
     assert stored.step_payload("baseline").get("replication_recipe_id") is None
     assert stored.step_payload("baseline").get("historical_search_id") is None
     fields = wizard._charter_fields(stored, roots)
-    assert fields["axes"] == {axis: (value,) for axis, value in choices.items()}
+    assert fields["axes"] == {axis: (value,) for axis, value in expected.items()}
     assert fields["max_child_count"] == 1
     assert len(_enumerate_fixture(fields)) == 1
 
@@ -439,9 +459,9 @@ def test_completed_recipe_roundtrips_full_section_dates_and_gates(
     app = _open(draft, roots)
     stored = _save(app, draft, roots)
     fixed = stored.step_payload("baseline")["fixed_axis_value_ids"]
-    assert fixed == _with_explicit_gap_policy(
-        draft.step_payload("baseline")["fixed_axis_value_ids"]
-    )
+    # repair R7: saving without a change keeps the recipe's settings exactly; the
+    # missing gap rule resolves to the original rule (checked below)
+    assert fixed == draft.step_payload("baseline")["fixed_axis_value_ids"]
     assert stored.step_payload("baseline")["historical_search_id"] == recipe["search_id"]
     fields = wizard._charter_fields(stored, roots)
     assert fields["axes"] == {axis: (value,) for axis, value in fixed.items()}

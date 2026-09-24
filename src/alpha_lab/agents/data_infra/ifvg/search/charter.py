@@ -203,22 +203,42 @@ class DatePolicy(FrozenContract):
         ordered = self.replay_dates
         if ordered != tuple(sorted(ordered)) or len(ordered) != len(set(ordered)):
             raise ValueError("replay dates must be unique and chronological")
+        from ..research_period import (  # noqa: PLC0415
+            EARLIEST_LOCAL_MARKET_DATE,
+            FROZEN_EVIDENCE_FIRST_DAY,
+            WARMUP_STORE_DAYS,
+            warmup_dates_for,
+        )
+
+        verification = self.access_policy_id == "verification_fixed_allowlist_max5_v1"
+        # repair R8 (owner-authorized September 23, 2026): the research window
+        # begins at the earliest stored market data; June 11, 2026 onward stays
+        # protected exactly as before; the verification fixture stays in 2026
+        first_permitted = "2026-01-01" if verification else EARLIEST_LOCAL_MARKET_DATE
         for day in (*ordered, *self.warmup_dates):
             if day >= _PROTECTED_BUFFER_DAY:
                 raise ValueError(
                     "protected or sealed dates can never enter a search date policy"
                 )
-            if day < "2026-01-01":
+            if day < first_permitted:
                 raise ValueError(
                     "dates before the permitted development window can never "
                     "enter a search date policy"
                 )
-        if self.access_policy_id == "verification_fixed_allowlist_max5_v1":
+        if verification:
             if self.warmup_dates:
                 raise ValueError("the verification fixture uses zero real warmup days")
             if len(ordered) > 5:
                 raise ValueError(
                     "the verification allowlist admits at most five real trading days"
+                )
+        elif len(ordered) > WARMUP_STORE_DAYS and (
+            ordered[WARMUP_STORE_DAYS] < FROZEN_EVIDENCE_FIRST_DAY
+        ):
+            if ordered[:WARMUP_STORE_DAYS] != warmup_dates_for(ordered[WARMUP_STORE_DAYS]):
+                raise ValueError(
+                    "development replay requires the ten store days before its first "
+                    "evidence day as warmup"
                 )
         else:
             if tuple(day for day in ordered if day < "2026-01-13") != FROZEN_WARMUP_DATES:
@@ -413,6 +433,17 @@ def validate_charter(
             "universal_prop_search requires at least two firm contracts (one firm "
             "cannot be universal)"
         )
+
+    # R5 integrity (not a strategy preference): a minimum independent-day
+    # threshold above the evaluated (non-warmup) date count fails every
+    # configuration by construction. Refused for real and synthetic charters
+    # alike, never clamped; the saved threshold and stored charters are
+    # untouched (this is not a model validator, so historic charters load).
+    from .charter_day_threshold import charter_day_threshold_check  # noqa: PLC0415
+
+    day_threshold = charter_day_threshold_check(payload)
+    if day_threshold.problem is not None:
+        raise CharterValidationError(day_threshold.problem)
 
     prop_modes = {
         "historical_closed_trade",

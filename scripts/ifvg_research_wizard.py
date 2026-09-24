@@ -6,6 +6,7 @@ from datetime import date
 from pathlib import Path
 
 import ifvg_study_wizard as w
+from ifvg_research_dates import render_research_dates
 from ifvg_ui_common import SESSION_DRAFT_KEY, STATE_PREFIX
 
 from alpha_lab.agents.data_infra.ifvg.presentation.workspace import (
@@ -407,25 +408,51 @@ def render_step(st, draft, step, resolution):
         except Exception:
             blocked = "The selected configuration could not be verified."
             st.error(blocked)
-        fixed = {}
+        stored_hash = payload.get("baseline_section_config_hash")
         if (
+            stored_hash
+            and section_hash
+            and stored_hash != section_hash
+            and payload.get("baseline_profile_name") == selected
+        ):
+            # Saved under an earlier strategy engine: shown, never rewritten on render.
+            st.warning(
+                "This draft saved its baseline with an earlier version of the strategy "
+                "engine, and the same baseline now resolves differently. Your saved draft "
+                "has not been changed. Update it to continue with the current version."
+            )
+            if not st.button(
+                "Update the saved baseline to the current engine", key=key + "rehash",
+                help="Records the baseline as the current strategy engine resolves it. The "
+                     "draft is saved only when you click; opening it never changes it.",
+            ):
+                section_hash = stored_hash
+        fixed = {}
+        evaluate = (
             draft.mode_id == "single_configuration"
             and draft.step_payload("objective").get("question_id") == "evaluate_one_configuration"
             and (draft.purpose_annotation or {}).get("purpose") != "implementation_verification"
-        ):
+        )
+        if evaluate:
+            _named_baseline_note(st, payload)
             from ifsm_replication_controls import render_fixed_settings
 
             fixed = render_fixed_settings(
                 st, payload, selected, key_prefix=f"{_PREFIX}fixed_{draft.draft_id}_"
             )
-        return {
+        _legacy_warning(st, selected, fixed)
+        out = {
             "baseline_profile_name": selected,
             "baseline_section_config_hash": section_hash,
             "baseline_blocked_reason": blocked,
-            "fixed_axis_value_ids": fixed,
-            "replication_recipe_id": payload.get("replication_recipe_id"),
-            "historical_search_id": payload.get("historical_search_id"),
         }
+        if "fixed_axis_value_ids" in payload or fixed:
+            out["fixed_axis_value_ids"] = fixed
+        # Optional saved keys are carried exactly; none is added by opening a draft.
+        for optional in ("replication_recipe_id", "historical_search_id", "named_baseline_id"):
+            if optional in payload:
+                out[optional] = payload[optional]
+        return out
     if step == "search_space":
         baseline_section = w._search_space_baseline(st, draft)
         selections = {}
@@ -493,18 +520,9 @@ def render_step(st, draft, step, resolution):
             "interpretation": interpretation,
         }
     if step == "validation":
-        st.write(
-            f"Permitted research period: {w.DEVELOPMENT_EVIDENCE_FIRST_DAY} "
-            f"to {w.DEVELOPMENT_EVIDENCE_LAST_DAY}."
+        days, warmup = render_research_dates(
+            st, payload, key, Path(resolution.roots["repo_root"])
         )
-        raw = st.text_area(
-            "Trading days (one date per line)",
-            value="\n".join(payload.get("real_dates") or ()),
-            placeholder="YYYY-MM-DD",
-            key=key + "days",
-        )
-        days = tuple(line.strip() for line in raw.splitlines() if line.strip())
-        st.caption(f"{len(days)} evidence days · {len(w.FROZEN_WARMUP_DATES)} fixed warmup days")
         with st.expander("Advanced research settings"):
             seed = int(
                 st.number_input(
@@ -524,7 +542,7 @@ def render_step(st, draft, step, resolution):
             "run_scope": resolution.resolved.run_scope,
             "evidence_class": "real",
             "real_dates": days,
-            "warmup_dates": w.FROZEN_WARMUP_DATES,
+            "warmup_dates": warmup,
             "seed": seed,
             "worker_limit": 1,
         }
@@ -739,6 +757,9 @@ def _review(st, draft, resolution, key):
     )
     for rule in report.failures:
         st.warning(_validation_message("review", rule.rule_id, rule.detail))
+    holding = holding_statement(draft, resolution.flow)
+    if holding:
+        st.warning(holding)
     approval_handled, approval_block = render_strategy_approval(st, draft, resolution)
     if not resolved.freeze_allowed and not approval_handled:
         st.warning(
@@ -766,3 +787,112 @@ def _review(st, draft, resolution, key):
         "freeze_block_reason": approval_block or resolved.freeze_block_reason,
         "approval_panel_shown": approval_handled,
     }
+
+
+def _named_baseline_note(st, payload) -> None:
+    """Which named starting point a new Evaluate study began on (repair R7)."""
+
+    if payload.get("named_baseline_id") is None:
+        return
+    from alpha_lab.agents.data_infra.ifvg.named_baselines import (
+        NamedBaselineUnavailableError,
+        owner_selected_baseline,
+    )
+
+    try:
+        named = owner_selected_baseline()
+    except NamedBaselineUnavailableError as error:
+        st.warning(str(error))
+        return
+    if payload.get("named_baseline_id") != named.baseline_id:
+        return
+    changed = sorted(
+        axis for axis, value in named.axis_value_ids
+        if (payload.get("fixed_axis_value_ids") or {}).get(axis) != value
+    )
+    st.success(
+        f"Starting point: {named.label}. Its ten saved settings are applied below, exactly as "
+        "the completed daily-close study saved them."
+        + (f" {len(changed)} of them have since been changed in this draft." if changed else "")
+    )
+
+
+def _legacy_warning(st, profile_name, fixed) -> None:
+    """Warn when the configuration does not follow the mandatory daily close."""
+
+    from alpha_lab.agents.data_infra.ifvg.named_baselines import legacy_baseline_warning
+
+    try:
+        from alpha_lab.agents.data_infra.ifvg.search.axis_registry import (
+            resolve_axis_overrides,
+        )
+
+        overrides = resolve_axis_overrides(dict(fixed)) if fixed else {}
+        section = w.resolve_profile_config(
+            {"profile_name": profile_name, "section_overrides": dict(overrides)}
+            if overrides else {"profile_name": profile_name}
+        ).section
+        note = ""
+    except Exception:
+        # saved settings this engine cannot read: describe the baseline alone, and say so
+        try:
+            section = w.resolve_profile_config({"profile_name": profile_name}).section
+        except Exception:
+            return
+        note = (" Some saved settings could not be read, so this describes the baseline "
+                "alone.")
+    warning = legacy_baseline_warning(section)
+    if warning:
+        st.warning(warning + note)
+
+
+def holding_statement(draft, flow) -> str | None:
+    """Say before approval when configurations do not use the mandatory daily close."""
+
+    from alpha_lab.agents.data_infra.ifvg.named_baselines import (
+        DAILY_CLOSE,
+        holding_rule_statement,
+    )
+    from alpha_lab.agents.data_infra.ifvg.search.axis_registry import (
+        SEARCH_AXIS_REGISTRY_V1,
+        resolve_axis_overrides,
+    )
+
+    profile = draft.step_payload("baseline").get("baseline_profile_name")
+    if not profile:
+        return None
+    try:
+        fixed = w.fixed_axis_values(draft)
+        overrides = resolve_axis_overrides(dict(fixed)) if fixed else {}
+        section = w.resolve_profile_config(
+            {"profile_name": profile, "section_overrides": dict(overrides)}
+            if overrides else {"profile_name": profile}
+        ).section
+        if fixed:
+            closes = getattr(section, "holding_policy", DAILY_CLOSE) == DAILY_CLOSE
+            return holding_rule_statement([] if closes else ["one"], 1)
+        selections = w._challenger_selections(draft, flow)
+        total = w.enumerate_child_count(selections) if selections else 1
+        spec = SEARCH_AXIS_REGISTRY_V1.get("holding_policy")
+        if spec is None or "holding_policy" not in selections:
+            closes = getattr(section, "holding_policy", DAILY_CLOSE) == DAILY_CLOSE
+            return holding_rule_statement([] if closes else ["all"] * total, total)
+        values = list(dict.fromkeys((spec.baseline_value_id, *selections["holding_policy"])))
+
+        def closes_daily(value_id: str) -> bool:
+            # resolved, not read from a payload: the daily-close value is a composite
+            # setting with no single payload
+            held = w.resolve_profile_config({
+                "profile_name": profile,
+                "section_overrides": {**dict(overrides), **dict(
+                    resolve_axis_overrides({"holding_policy": value_id}))},
+            }).section
+            return getattr(held, "holding_policy", None) == DAILY_CLOSE
+
+        open_values = [v for v in values if not closes_daily(v)]
+        count = total * len(open_values) // len(values)
+        return holding_rule_statement(["x"] * count, total)
+    except Exception:
+        return ("The holding rule could not be checked for this draft: some saved settings "
+                "could not be read. Confirm it uses the mandatory 3:55 PM Chicago daily close "
+                "before approving.")

@@ -6,6 +6,8 @@ In this mode each resolved configuration and each selected firm is one separate 
 
 Read applicable repository instructions, including AGENTS.md. Do not replace existing instructions or silently resolve a conflict in money or access rules. Check running jobs before a launch, retry or new writer. Do not manufacture approvals, launch unrequested sweeps, use new dates or change live settings. Use normal permissions.
 
+A saved comparison draft that the running Strategy-Core cannot represent opens read-only and must never be re-saved from that app. A half-exit draft can be edited, approved or run only in `python scripts/run_ifsm_research_ui.py --research-core <checkout>`. Any other unrepresentable draft (missing study, unknown firm or value) stays read-only; clone it and edit the copy, which needs its own approval. A launch must match the identical approved plan rebuilt from the saved draft (ARCHITECTURE.md, IFVG dashboard repairs).
+
 Explain outcomes in plain English with full firm names, full chart timeframes and Chicago times in 12-hour AM/PM format. Rank by received cash after all account costs; account longevity and trade frequency are not winning criteria. Label assumptions and unverified price paths.
 
 Separate documentation, code changes, passing tests, simulated historical results and unverified work. Review exports contain only the specified documents and necessary financial evidence; scripts and raw dumps stay internal.
