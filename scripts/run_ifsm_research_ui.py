@@ -3,6 +3,12 @@
 The launcher selects the same commit as the ordinary dependency. It does not
 install packages or rewrite historical studies. Starting this UI initializes
 its separate store, never a replay.
+
+``--research-core PATH`` is an explicit, labeled exception for version-2
+funded variation plans: a research checkout whose base commit is the pinned
+commit, with uncommitted research changes (for example the half-exit rule). The
+receipt prints its exact commit and uncommitted-change hash. It is never chosen
+implicitly and does not change the pin.
 """
 
 from __future__ import annotations
@@ -53,9 +59,18 @@ require(Path(strategy_core.__file__).resolve().is_relative_to(launcher.CORE),
         'Strategy-Core import is outside the selected research checkout')
 require(Path(alpha_lab.__file__).resolve().is_relative_to(launcher.ROOT / 'src'),
         'Quant-Lab import is outside the current source checkout')
-commit, identity = strategy_core_source_identity(repository_root=launcher.CORE)
-require((commit, identity) == (launcher.CORE_COMMIT, launcher.CORE_SOURCE),
-        'Core commit or source identity differs from the current pinned runtime')
+import os
+research = os.environ.get('IFSM_RESEARCH_CORE_MODE') == 'research_branch'
+if research:
+    from alpha_lab.propsim.funded.core_identity import source_identity_at
+    funded = source_identity_at(launcher.CORE)
+    commit, identity = funded['base_commit'], funded['patch_sha256']
+    require(commit == launcher.CORE_COMMIT,
+            'the research Core must be based on the pinned commit')
+else:
+    commit, identity = strategy_core_source_identity(repository_root=launcher.CORE)
+    require((commit, identity) == (launcher.CORE_COMMIT, launcher.CORE_SOURCE),
+            'Core commit or source identity differs from the current pinned runtime')
 recipes = catalog()['recipes']
 for recipe in recipes:
     recipe_axis_values(recipe)
@@ -76,6 +91,8 @@ for preset in ('all_open_market_v1', 'daytime_chicago_0700_1555_v1',
 print(json.dumps({'strategy_core_import':strategy_core.__file__,
  'alpha_lab_import':alpha_lab.__file__, 'core_commit':commit,
  'core_source_identity':identity, 'exact_recipes_verified':len(recipes),
+ 'core_mode':'explicit research branch (uncommitted changes on the pinned commit)'
+             if research else 'pinned',
  'daily_close_time_chicago':'15:55', 'daily_close_buffer_minutes':5,
  'entry_schedule_presets_verified':3,
  'gap_invalidation_default':'execution_wick_full_fill_v1',
@@ -124,10 +141,18 @@ def main(argv=None) -> int:
     parser.add_argument("--port", type=int, default=8502)
     parser.add_argument("--core", type=Path, help="Exact prepared research checkout")
     parser.add_argument(
+        "--research-core", type=Path,
+        help="Explicit research checkout on the pinned commit with uncommitted changes "
+             "(version-2 funded variation plans only; not a pin change)")
+    parser.add_argument(
         "--check", action="store_true", help="Read-only imports/configuration check"
     )
     args = parser.parse_args(argv)
-    env = environment(select_core(args.core))
+    if args.core and args.research_core:
+        parser.error("choose --core or --research-core, not both")
+    env = environment(select_core(args.research_core or args.core))
+    if args.research_core:
+        env["IFSM_RESEARCH_CORE_MODE"] = "research_branch"
     receipt = verify_runtime(env)
     print(json.dumps(receipt), flush=True)
     if args.check:

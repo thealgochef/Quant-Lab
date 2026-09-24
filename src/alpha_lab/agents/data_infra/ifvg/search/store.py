@@ -118,6 +118,13 @@ SEARCH_STORE_NAMES: tuple[str, ...] = (
     # HARDENING-BACKEND §5.3 — separately authorized seed production
     "seed_production_authorizations",
     "seed_production_runs",
+    # funded payout lane — frozen study plans and verified results
+    "funded_payout_plans",
+    "funded_payout_results",
+    # funded configuration comparison (one account per configuration and firm)
+    "funded_comparison_plans",
+    "funded_comparison_approvals",
+    "funded_comparison_results",
     # HARDENING-BACKEND §6.2 / §6.3 — the R1 baseline gate report and the
     # release-specific bounded control-flow report (verification-only)
     "r1_baseline_gate_reports",

@@ -25,6 +25,7 @@ dependencies = [
     "rich>=13.7",
     "streamlit>=1.54",
     "plotly>=5.18",
+    "matplotlib>=3.8",
     "catboost>=1.2",
     "scikit-learn>=1.4",
     "protobuf>=6.31,<7",

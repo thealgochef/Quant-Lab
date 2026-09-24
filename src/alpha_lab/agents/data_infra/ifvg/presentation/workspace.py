@@ -421,8 +421,91 @@ def load_studies(
                 charter_id=charter_id,
             )
         )
+    funded_mode = "funded_payout_simulation"
+    try:
+        from ifvg_funded_study import list_funded_runs
+
+        funded_runs = list_funded_runs(roots, drafts)
+    except ImportError:  # the funded screen lives in scripts/
+        funded_runs = []
+    except Exception:
+        funded_runs = []
+        issues.append("Funded payout simulations could not be listed. Refresh to retry.")
+    for run in funded_runs:
+        name = run.draft.display_name if run.draft else "Funded payout simulation"
+        result.append(
+            StudySummary(
+                key=run.plan_id,
+                kind="funded",
+                name=human_name(name, "Funded payout simulation"),
+                question="Earlier five-account check (shared signal): which funded operation "
+                         "earned the most cash after account costs?",
+                dates=run.dates,
+                status=str(run.state.get("status", "Evidence unavailable")),
+                scope="research",
+                updated=str(run.state.get("updated_at_utc", "")),
+                archived=bool(run.draft and run.draft.archived),
+                draft=run.draft,
+                state=run.state,
+            )
+        )
+    comparison_mode = "funded_configuration_comparison"
+    try:
+        from ifvg_funded_comparison_study import list_comparison_runs
+
+        comparison_runs = list_comparison_runs(roots, drafts)
+    except ImportError:  # the comparison screen lives in scripts/
+        comparison_runs = []
+    except Exception:
+        comparison_runs = []
+        issues.append("Funded configuration comparisons could not be listed. Refresh to retry.")
+    for run in comparison_runs:
+        title = getattr(run, "title", "Funded configuration comparison")
+        name = human_name(run.draft.display_name, title) if run.draft else title
+        result.append(
+            StudySummary(
+                key=run.plan_id,
+                kind="funded_comparison",
+                name=human_name(name, "Funded configuration comparison"),
+                question="Which configuration earned the most cash after every account cost?",
+                dates=run.dates,
+                status=str(run.state.get("status", "Evidence unavailable")),
+                scope="research",
+                updated=str(run.state.get("updated_at_utc", "")),
+                archived=bool(run.draft and run.draft.archived),
+                draft=run.draft,
+                state=run.state,
+            )
+        )
     for draft in drafts:
         if draft.frozen_search_id in seen_charters:
+            continue
+        if draft.mode_id == comparison_mode:
+            if draft.frozen_search_id:
+                continue  # listed through its run above
+            result.append(
+                StudySummary(
+                    key=draft.draft_id, kind="draft", name=human_name(draft.display_name),
+                    question="Which configuration earned the most cash after every account "
+                             "cost?",
+                    dates="Dates of the chosen completed study", status="Draft",
+                    scope="research",
+                    updated=draft.updated_at_utc, archived=draft.archived, draft=draft,
+                )
+            )
+            continue
+        if draft.mode_id == funded_mode:
+            if draft.frozen_search_id:
+                continue  # listed through its run above
+            result.append(
+                StudySummary(
+                    key=draft.draft_id, kind="draft", name=human_name(draft.display_name),
+                    question="Which funded operation earned the most cash after account costs?",
+                    dates="Dates of the chosen completed study", status="Draft",
+                    scope="research",
+                    updated=draft.updated_at_utc, archived=draft.archived, draft=draft,
+                )
+            )
             continue
         scope = _draft_scope(draft)
         store = None

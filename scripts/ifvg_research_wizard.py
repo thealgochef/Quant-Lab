@@ -56,6 +56,8 @@ def _choose_study(st, roots):
                 "Strategy across firms",
                 "Full workflow",
                 "Context feature study",
+                "Funded configuration comparison",
+                "Funded five-account operation (earlier budgeted mode)",
             ),
         )
         if more != "Use selection above":
@@ -65,8 +67,26 @@ def _choose_study(st, roots):
                 "Strategy across firms": "prop_feasibility",
                 "Full workflow": "advanced_end_to_end",
                 "Context feature study": "context",
+                "Funded configuration comparison": "funded_comparison",
+                "Funded five-account operation (earlier budgeted mode)": "funded_payout",
             }[more]
     if st.button("Configure study", type="primary"):
+        if card_id == "funded_comparison":
+            from ifvg_funded_comparison_study import _sources, start_comparison_draft
+
+            sources = list(_sources().values())
+            draft = start_comparison_draft(f"Funded configuration comparison — {date.today()}",
+                                           sources[0] if sources else None)
+            w.save_draft(Path(roots["draft_root"]), draft)
+            st.session_state[_DRAFT] = draft.draft_id
+            st.rerun()
+        if card_id == "funded_payout":
+            from ifvg_funded_study import start_funded_draft
+
+            draft = start_funded_draft(f"Funded payout simulation — {date.today()}")
+            w.save_draft(Path(roots["draft_root"]), draft)
+            st.session_state[_DRAFT] = draft.draft_id
+            st.rerun()
         if card_id == "context":
             st.session_state["ifvg_workspace_screen"] = "context"
             st.rerun()
@@ -108,6 +128,16 @@ def render_new_study(st, *, roots):
             return
     if draft.archived or draft.status == "frozen":
         st.info("This study is saved as history. Return to My studies to restore or clone it.")
+        return
+    from ifvg_funded_study import FUNDED_MODE, render_funded_configuration
+
+    if draft.mode_id == FUNDED_MODE:
+        render_funded_configuration(st, draft, roots)
+        return
+    from ifvg_funded_comparison_study import COMPARISON_MODE, render_comparison_configuration
+
+    if draft.mode_id == COMPARISON_MODE:
+        render_comparison_configuration(st, draft, roots)
         return
     if st.session_state.get(_PREFIX + "active") != draft_id:
         for key in list(st.session_state):

@@ -48,6 +48,12 @@ Updated: 2026-09-22.
   isolating normalization or independent confirmation across overlapping children.
   No MBP, regime or activation scope is implied.
 
+- Funded payout lane (2026-09-22): `src/alpha_lab/propsim/funded/` plus
+  `scripts/ifvg_funded_study.py`. Task record, decisions and limits are in
+  `docs/funded-payout-implementation/`. Historical runs need an exact
+  authorization record (`PILOT_AUTHORIZATION`). Money is exact cents. The screen
+  and review folder read the one saved verified result.
+
 ## Commands
 
 Run from the repo root (`C:\Users\gonza\Documents\Claude-Quant-Lab`, Windows; system Python 3.13 — no venv activation step):

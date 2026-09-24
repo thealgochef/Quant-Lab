@@ -763,3 +763,63 @@ archives to `../Claude-Quant-Lab-Research-Artifacts/archived-reports/`, retainin
 their original names. Use those preserved archives for detailed reconstruction;
 the light folders contain the performance review. This is a storage change,
 not a new replay, refit or revision to historical results.
+
+### Funded payout simulation (September 22, 2026)
+
+In the IFSM study screen choose **New study → More study types → Funded payout
+simulation**. The draft saves automatically and reopens from My studies. It
+records the completed strategy study and profile, the contract and size, the
+cost per fill, the payout processing clock and the price-evidence policy. Sizes
+above either firm's limit are refused, never clipped. **Run funded simulation**
+works only for an exactly authorized plan; today that is only the owner's
+September 22 pilot. The run freezes an immutable plan (`funded_payout_plans`)
+and starts `scripts/ifvg_funded_payout_job.py`, which saves one verified result
+(`funded_payout_results`). The completed screen and the automatic review folder
+`reports/funded_payout/funded_payout_<result>_export_v<n>/` both read that saved
+result. If publication fails, **Publish the review folder again** makes a new
+export version without recomputing money. The cumulative lane ledger is
+`data/ifsm_ui_replication/search/funded_payout_research_ledger.jsonl`. Rules,
+decisions and limits are in `docs/funded-payout-implementation/`.
+
+That study type is now listed as **Funded five-account operation (earlier budgeted
+mode)**.
+
+### Funded configuration comparison (September 23, 2026)
+
+Choose **New study → More study types → Funded configuration comparison**. Pick
+the values of each strategy setting (entry hours, opposing-gap distance, smallest
+opposing gap, supporting charts); every combination that the verified study
+approved becomes its own configuration (unapproved combinations are listed, not
+dropped). Choose the firms, contract, size, cost per fill and processing clock.
+The draft saves automatically and reopens. A historical run needs **Record my
+approval** for that exact plan; changing any setting makes a different plan.
+**Run funded comparison** starts `scripts/ifvg_funded_comparison_job.py`, which
+replays each configuration with its own account at each firm and saves one
+verified result (`funded_comparison_results`). The completed screen ranks all
+configurations per firm (never added together) with a detail view per
+configuration and firm; the automatic review folder is
+`reports/funded_comparison/funded_comparison_<result>_export_v<n>/`. A run with
+configurations that could not complete is marked Incomplete and can be run again.
+
+**Variations around one configuration** (same screen, "What to compare"):
+
+- Pick a base configuration of the verified study and the values to vary: entry hours,
+  target, gap charts, parent charts, direction, and the exit rule when available.
+- Set the size for whole-position exits (E-mini contracts) and for half exits (an even
+  number of micro contracts), each with its cost per fill.
+- Combinations that cannot run are listed with the reason; for example, the half exit only
+  applies to the 1R target.
+- The plan freezes the exact Strategy-Core the application imports. The half-exit rule needs
+  the research Core, started explicitly with
+  `python scripts/run_ifsm_research_ui.py --research-core <checkout>`; the default launch
+  uses the pinned Core and offers no exit choice.
+- A plan that already ran shows as completed and is never relaunched.
+
+The results screen shows the settings that differ between configurations as separate
+columns, next to net cash. The detail view opens on the top-ranked configuration and lists
+every setting, the traded product and price sources, the median and largest payouts, and
+the corrected stop-difference measure.
+
+To publish a new review folder of an existing result (the result is never recomputed), run
+`python scripts/ifvg_funded_comparison_job.py republish --plan-id <plan>`, optionally adding
+`--review-findings`, `--approximated-minutes` and `--reference-reconciliation`.

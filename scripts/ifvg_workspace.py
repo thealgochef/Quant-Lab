@@ -217,6 +217,16 @@ def render_study(st_module, study: StudySummary, roots):
             and st_module.button("Continue and resolve scope")
         ):
             _open_draft(st_module, study.draft)
+    elif study.kind == "funded":
+        from ifvg_funded_study import render_funded_study
+
+        render_funded_study(st_module, study, roots)
+        return
+    elif study.kind == "funded_comparison":
+        from ifvg_funded_comparison_study import render_comparison_study
+
+        render_comparison_study(st_module, study, roots)
+        return
     elif study.kind == "context":
         from ifvg_research_context import render_context_study
 

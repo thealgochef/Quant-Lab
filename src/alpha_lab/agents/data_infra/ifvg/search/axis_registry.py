@@ -697,7 +697,29 @@ _register_axis(
     classification=AxisClassification.APPROVED_SEARCH_AXIS,
     value_spec=_POS_FLOAT,
     replay=True,
+    extra_values=_search_values(
+        "tp_r_multiple", (2.0, 3.0),
+        effect="the fixed target moves to 2 or 3 times the initial risk",
+        readable_labels=True,
+    ),
 )
+if "exit_policy" in _B:  # Strategy-Core builds with the scale-out exit
+    _register_axis(
+        "exit_policy",
+        label="Exit rule",
+        description=("How an open trade exits: the whole position at the target, or half "
+                     "at the target with the rest held at break-even to the daily close."),
+        classification=AxisClassification.APPROVED_SEARCH_AXIS,
+        value_spec=_STR,
+        replay=True,
+        dependencies=("holding_policy", "tp_r_multiple"),
+        extra_values=_search_values(
+            "exit_policy", ("scale_out_half_breakeven_hold_to_close_v1",),
+            effect=("half exits at the target level, the rest moves to break-even and is "
+                    "held to that stop or the scheduled daily close"),
+            readable_labels=True,
+        ),
+    )
 
 # ── searchable session policy / caps / sides ─────────────────────────────────
 _entry_schedule_presets = ()
@@ -889,6 +911,11 @@ _register_axis(
     replay=True,
     artifacts=True,
     artifact_effect="new artifacts_tag — full sequential day-artifact rebuild",
+    extra_values=_search_values(
+        "htf_timeframes", (("1H",),),
+        effect="setups start only from one-hour gaps (four-hour gaps are not used)",
+        readable_labels=True,
+    ),
 )
 _register_axis(
     "parent_timeframes",
@@ -899,11 +926,18 @@ _register_axis(
     replay=True,
     artifacts=True,
     artifact_effect="new artifacts_tag — full sequential day-artifact rebuild",
-    extra_values=_search_values(
-        "parent_timeframes", (("1m", "3m", "5m", "10m", "15m", "30m"),),
-        effect=("adds fresh one-minute supporting parents while retaining all "
-                "original parent charts"),
-        readable_labels=True,
+    extra_values=(
+        *_search_values(
+            "parent_timeframes", (("1m", "3m", "5m", "10m", "15m", "30m"),),
+            effect=("adds fresh one-minute supporting parents while retaining all "
+                    "original parent charts"),
+            readable_labels=True,
+        ),
+        *_search_values(
+            "parent_timeframes", (("1m", "5m", "10m", "15m", "30m"),),
+            effect="one-minute supporting parents added and three-minute parents removed",
+            readable_labels=True,
+        ),
     ),
 )
 

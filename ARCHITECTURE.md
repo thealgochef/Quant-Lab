@@ -1768,3 +1768,75 @@ outside the checkout. Existing output folders must be empty. The FSM audit and
 timeframe-variant CLIs also reject checkout paths and every directory named
 `reports` for diagnostic output, including symlink aliases; their ordinary
 saved-study readers and caches keep existing paths.
+
+## Funded payout lane (September 22, 2026)
+
+`src/alpha_lab/propsim/funded/` is the event-time lane for funded-only
+comparisons. It is separate from the day-block `AccountWalk`, which remains
+unchanged for historical studies. Two independent firm instances replay the
+same verified strategy executions on one market clock.
+
+- `profiles`: owner-defined TakeProfitTrader and MyFundedFutures terms.
+- `positions`: floor movement is separate from enforcement. Enforcement runs on
+  every ordered observation of open equity, and liquidation fills at the
+  observed print (gap-through).
+- `instance`: credits, vacancies, the secured → day-end request → processing →
+  receipt lifecycle, wallet and growth.
+- `campaign`: a resumable event queue with fixed same-time precedence.
+- `result`: the one immutable result and its money reconciliation.
+- `price_evidence`: MBP-1 trade prints are accepted only when the rebuilt minute
+  candles equal the study's candles.
+- `sources`: verified completed-study packages.
+- `runner`: the worker.
+
+Strategy-Core is read only. All money is integer cents and all prices are
+integer ticks. Presentation: `presentation/funded_results.py`, rendered by
+`scripts/ifvg_funded_results.py`. Export: `funded_review_package.py`, an exact
+allowlist that is staged, verified and then published atomically.
+
+### Funded configuration comparison (September 23, 2026)
+
+The current funded research mode. Each configuration resolved in the study
+configurator, at each selected firm, is a separate *pair* with at most one live
+funded account; failures are replaced at once at the firm's price with no credit
+limit (SPEC.md Part A in `docs/funded-payout-implementation/`). The lane above is
+kept as the deferred budgeted mode and the September 22 pilot.
+
+- `strategy_driver`: each pair's own Strategy-Core `DayOrchestrator` chain. The
+  account's payout refusal is appended to the reducer's execution-time admission
+  check (only a candidate blocked solely by the account is a refusal, and its
+  setup is discarded); an account liquidation clears the reducer's position slot.
+  Core is not modified.
+- `pair_engine` / `pair_ledger`: the candle loop and the one-account ledger.
+- `position_walk` / `print_minutes`: execution model
+  `ordered_prints_stop_market_v2` (stop-market gap fills, target limits, breach
+  before stop) on per-minute prints that must rebuild Core's candle, otherwise a
+  labeled approximation.
+- `comparison_source` / `comparison_run` / `comparison_runner`: verified study
+  configurations resolved through the normal configurator path, the no-account
+  equivalence replay, mid-period resume check, one process per configuration.
+- `comparison_plan` / `comparison_study` / `comparison_result`: plan, owner
+  approval (`funded_comparison_approvals`) and the one verified result.
+
+Screen: `scripts/ifvg_funded_comparison_study.py` (configurator) and
+`scripts/ifvg_funded_comparison_results.py` over
+`presentation/funded_comparison.py`. Export: `funded_comparison_review.py`
+(`reports/funded_comparison/`).
+
+Post-run review additions (September 23, 2026; SPEC.md A11):
+
+- `comparison_result.apply_reporting_corrections` runs when a saved result is loaded, after
+  the hash check. It re-derives summary-only fields from the saved rows (the stop difference
+  counts only the contracts closed at the final stop) and records them under
+  `reporting_corrections`. The saved bytes and money never change.
+- `comparison_evidence` (bindings, calendar, trade-boundary check) and optional analyses
+  feed the export.
+- `funded_comparison_review.verify_published_folder` re-reads each published folder against
+  its manifest.
+- `job republish` publishes the next export version of the same result.
+- Version-2 variation plans can be built in the normal configurator
+  (`comparison_study.variation_variants`).
+- `job start` launches their worker only on the local checkout with the plan's exact Core
+  identity (`research_core_sources.find_core_checkout`).
+- `run_ifsm_research_ui.py --research-core PATH` is the explicit, labeled way to run the
+  application on such a checkout. The default launch and the pin are unchanged.

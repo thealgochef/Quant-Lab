@@ -14,6 +14,25 @@ def render_strategy_rules(
     selected_core_replay_id=None,
     show_heading=True,
 ):
+    draft = getattr(study, "draft", None)
+    if study.kind == "funded" or getattr(draft, "mode_id", "") == "funded_payout_simulation":
+        if show_heading and not compact:
+            st.markdown("**Account rules**")
+        st.caption(
+            "Funded accounts only, started fresh. TakeProfitTrader and MyFundedFutures are "
+            "simulated separately with their own accounts, credits and payout money."
+        )
+        return None
+    if (study.kind == "funded_comparison"
+            or getattr(draft, "mode_id", "") == "funded_configuration_comparison"):
+        if show_heading and not compact:
+            st.markdown("**Account rules**")
+        st.caption(
+            "One live funded account at a time per configuration and firm; a lost account is "
+            "replaced at the firm's price. Each configuration's strategy settings are listed "
+            "with its results."
+        )
+        return None
     description = load_study_rules(study, roots, selected_core_replay_id)
     if show_heading:
         st.markdown("**Strategy rules**")

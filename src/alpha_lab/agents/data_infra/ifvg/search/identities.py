@@ -611,6 +611,10 @@ def name_free_section_hash(section: IfvgSmcSection) -> str:
 
     payload = section.model_dump(mode="json")
     payload.pop("profile_name")
+    # Strategy-Core builds with the scale-out exit add ``exit_policy``; its default
+    # (the only behavior of earlier Core builds) stays out, as in ifvg_profile_hash
+    if payload.get("exit_policy") == "fixed_target_v1":
+        payload.pop("exit_policy")
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
