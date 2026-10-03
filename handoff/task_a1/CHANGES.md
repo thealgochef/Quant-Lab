@@ -47,6 +47,7 @@ Paths below are relative to Quant-Lab.
 | `src/alpha_lab/agents/data_infra/ifvg/presentation/strategy_rules.py` | Classify four A1 fields as optional rules with neutral legacy defaults; describe enabled context/gates in the existing entry group while retaining default descriptions. |
 | `src/alpha_lab/agents/data_infra/ifvg/profiles.py` | Exclude only neutral A1 values from effective config projections, preserving historical settings shape while typed sections retain the fields. |
 | `src/alpha_lab/agents/data_infra/ifvg/search/identities.py` | Use the same neutral map in name-free section hashes, preserving saved canonical profile recognition and hashing every active value. |
+| `scripts/ifvg_strategy_approval.py` | Read displayed registry-axis baseline values from the typed section's JSON projection; keep neutral effective settings sparse. Owner-authorized follow-up after the second full run. |
 | `pyproject.toml` | Exact Core re-pin, no other dependency changes. |
 | `research/core/current.json` | Exact new commit, canonical LF source receipts and source identity. Historical manifest/bundle unchanged. |
 | `tests/agents/data_infra/ifvg/test_menthorq_levels.py` | Lookup/cash-close/validation boundaries and source-fixture tests. |
@@ -54,6 +55,7 @@ Paths below are relative to Quant-Lab.
 | `tests/agents/ifvg_search/test_menthorq_axes.py` | Registry choices, atomic slot payloads and context dependency. |
 | `tests/agents/data_infra/ifvg/test_menthorq_rules.py` | Nine pure rule-description cases, including exact unchanged default descriptions and enabled gate explanations. |
 | `tests/agents/ifvg_search/test_menthorq_identity_compatibility.py` | Two pure compatibility tests for historical effective settings, canonical naming, registered typed axes and every valid nondefault value. |
+| `tests/agents/test_ifvg_strategy_approval_ui.py` | One consumer compatibility case renders the actual approval table, checks all four neutral context defaults, and preserves sparse effective settings and the no-launch/no-approval review behavior. |
 | `tests/agents/data_infra/ifvg/fixtures/menthorq_a1/eod_gamma_levels_daily_wide.csv.fixture` | Exact supplied fixture bytes; suffix avoids ignored generated CSV rule. |
 | `tests/agents/data_infra/ifvg/fixtures/menthorq_a1/daily_total_dealer_gamma_and_regime.csv.fixture` | Exact supplied regime fixture bytes; portable tests do not require C:\tasks. |
 | `AGENTS.md` | Current Core pairing and A1 entry points/limits. |
@@ -278,9 +280,11 @@ dependency update is included.
   passing tests is satisfied. The expected Quant-Lab acceptance count is
   `3,986 + 54 = 4,040`, plus the separately verified 30 Core cases gives 4,070.
   The second full run is short by 11 Quant-Lab passes and has 11 failures beyond
-  the documented five. **Acceptance is not met; A1 is not reported done.**
+  the documented five. Acceptance was not met at the end of this second run.
+  The subsequent owner-authorized fix and scoped acceptance are recorded as
+  verification step 3 below.
 
-## Remaining approval-table regression — recorded, not changed
+## Second-run approval-table regression
 
 All 11 additional failures are in
 `tests/agents/test_ifvg_strategy_approval_ui.py`:
@@ -304,13 +308,15 @@ effective settings correctly omit neutral A1 fields; the typed section retains
 them. This approval-table consumer was missed when applying that compatibility
 projection. The closest existing pattern is the registry's typed JSON section
 projection: use `baseline.section.model_dump(mode="json")[axis]` for the table
-value. This is a concrete proposed fix, **not applied**, because the owner's
-second-run instruction explicitly says "No other changes." No source, test,
-dependency, capacity, guard or first-run receipt is changed in this closeout.
+value. The second-run closeout recorded this proposed fix without applying it
+because that instruction explicitly said "No other changes." The owner then
+authorized the exact fix and one consumer compatibility test; step 3 below
+records its implementation and verification.
 
-The only versioned closeout changes are this `CHANGES.md` and `test_run_2.log`.
-The required local command receipt is refreshed. The owner's existing untracked
-`handoff.zip` is preserved and is not committed or rewritten.
+That second-run receipt-only closeout changed `CHANGES.md` and `test_run_2.log`,
+in commit `d0fb7f6cb9d966ce9c42e652ce4f4b033cca78ea`. Both full-run logs retain
+their original bytes. The owner's existing untracked `handoff.zip` is preserved
+and is not committed or rewritten.
 
 The five known full-suite failures remain untouched:
 
@@ -319,3 +325,50 @@ The five known full-suite failures remain untouched:
 3. `tests/agents/test_ifvg_capture_scheme.py::test_default_tags_regression_locked`
 4. `tests/agents/test_ifvg_capture_scheme.py::test_default_times_round_trip_to_canonical_tags`
 5. `tests/agents/test_ifvg_capture_scheme.py::test_list_profiles_default_first_and_upsert`
+
+## Verification step 3 — approval-table consumer fix (targeted only)
+
+After `test_run_2.log`, the owner authorized the proposed lookup exactly as
+written: each displayed registry axis now reads
+`baseline.section.model_dump(mode="json")[axis]`. This follows the registry's
+existing typed-section projection. It restores the baseline table without
+widening the historical effective configuration or changing approval policy.
+No new module, field, value, reason, column or policy is introduced.
+
+One new compatibility test,
+`test_approval_baseline_table_retains_neutral_context_defaults`, uses the existing
+Configure study AppTest fixture. It verifies the displayed null/off/allow/false
+defaults, sparse effective settings, and review's unchanged no-approval/no-launch
+behavior. Its source is copied to
+`tests/Quant-Lab/tests/agents/test_ifvg_strategy_approval_ui.py` in this handoff.
+The cumulative new-test inventory is now 55 Quant-Lab cases and 30 Core cases;
+the earlier 84 passing cases retain their recorded receipts, and this run proves
+the added case passes.
+
+The grep-style search `rg -n 'ifvg_strategy_approval' tests -g '*.py'` found:
+
+- `tests/agents/test_ifvg_strategy_approval_ui.py`: direct script imports and the
+  AppTest consumer, including the new compatibility case.
+- `tests/agents/ifvg_search/test_charter_day_threshold.py`: imports the approval
+  UI module's shared fixture and helpers; the whole module is included.
+
+The exact scoped command was:
+
+```text
+python -B -m pytest -v -p no:cacheprovider tests/agents/test_ifvg_strategy_approval_ui.py tests/agents/ifvg_search/test_charter_day_threshold.py
+```
+
+`test_run_3_targeted.log` records **35 passed / 0 failed / 0 skipped in 24.42
+seconds**, exit code 0: all 12 approval UI cases (the prior 11 plus the new case)
+and all 23 threshold cases pass. This is the third verification step and is a
+targeted receipt, not a third full-suite run. The latest owner acceptance is met;
+no full-suite pass count is inferred from this scoped run.
+
+This display-only fix changes no Core or replay source, dataset contents,
+manifests, gates, capacity limits, dependencies or known failing tests. The existing parity,
+smoke, capacity and Core-pin receipts remain valid; none is rerun or rewritten.
+Only the script, its one new test, this change record, the copied test and the
+new targeted receipt change in this follow-up. Final feature heads and push
+results are recorded in the refreshed local `run_log.txt`; Core remains at the
+already published `b062bfc` implementation commit. Neither branch is merged to
+main. All required handoff files are present.

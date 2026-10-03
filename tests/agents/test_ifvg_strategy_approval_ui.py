@@ -138,6 +138,38 @@ def configured_study(monkeypatch, tmp_path):
     return roots, draft, render
 
 
+def test_approval_baseline_table_retains_neutral_context_defaults(configured_study):
+    import ifvg_study_wizard as wizard
+
+    from alpha_lab.agents.data_infra.ifvg.search.axis_registry import SEARCH_AXIS_REGISTRY_V1
+
+    roots, draft, render = configured_study
+    neutral_defaults = {
+        "menthorq_context_version": "Not set (None)",
+        "regime_gate_policy": "off",
+        "regime_unknown_policy": "allow",
+        "nearest_support_gex1_block": "Disabled",
+    }
+    baseline = wizard.resolve_profile_config(
+        {"profile_name": draft.steps["baseline"]["baseline_profile_name"]}
+    )
+    assert neutral_defaults.keys().isdisjoint(baseline.effective_config)
+    original_files = set(roots["store_root"].rglob("*"))
+
+    at = render()
+    table = next(
+        element.value for element in at.dataframe
+        if list(element.value.columns) == ["Setting", "Baseline value"]
+    )
+    values = table.set_index("Setting")["Baseline value"].to_dict()
+    for axis, expected in neutral_defaults.items():
+        assert values[SEARCH_AXIS_REGISTRY_V1[axis].human_label] == expected
+    assert neutral_defaults.keys().isdisjoint(baseline.effective_config)
+    assert not _approval_paths(roots)
+    assert not roots["state_root"].exists()
+    assert set(roots["store_root"].rglob("*")) == original_files
+
+
 def test_review_requires_explicit_name_and_confirmation_without_writing(configured_study):
     roots, _draft, render = configured_study
     original_files = set(roots["store_root"].rglob("*"))

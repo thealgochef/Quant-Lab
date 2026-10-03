@@ -84,7 +84,9 @@ def _review_terms(st, intent):
         st.dataframe(
             [
                 {"Setting": spec.human_label,
-                 "Baseline value": format_axis_value(axis, baseline.effective_config[axis])}
+                 "Baseline value": format_axis_value(
+                     axis, baseline.section.model_dump(mode="json")[axis]
+                 )}
                 for axis, spec in SEARCH_AXIS_REGISTRY_V1.items()
                 if w.axis_renders_widget(spec) and axis not in intent["axes"]
             ],
