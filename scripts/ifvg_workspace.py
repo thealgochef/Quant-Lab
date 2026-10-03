@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import replace
 from pathlib import Path
 
@@ -44,25 +45,43 @@ def _go(st_module, screen, key=None):
     st_module.rerun()
 
 
+#: screens of the redesigned shell and which rail item they belong to
+_NEW_STUDY_SCREENS = ("new", "new_funded", "approve_funded", "context", "research_new")
+_REDESIGNED_SCREENS = ("list", "funded", "funded_detail", "new_funded", "approve_funded")
+
+
+def rail_destination(st_module, clicked):
+    """A rail click: My studies → the library; New study → the funded setup."""
+
+    st_module.session_state[_NAV] = clicked
+    # a new destination: the old page address (a draft, a result) no longer applies
+    with contextlib.suppress(Exception):  # headless tests have no page address
+        st_module.query_params.clear()
+    if clicked == "My studies":
+        st_module.session_state[_SCREEN] = "list"
+    elif clicked == "New study":
+        from ifvg_ui_common import SESSION_DRAFT_KEY, STATE_PREFIX
+
+        st_module.session_state.pop(SESSION_DRAFT_KEY, None)
+        st_module.session_state.pop(f"{STATE_PREFIX}draft_id", None)
+        st_module.session_state[_SCREEN] = "new_funded"
+    st_module.rerun()
+
+
+#: the earlier private name, kept for callers written before it was public
+_rail_destination = rail_destination
+
+
 def render_workspace(st_module=st, *, roots=None):
     roots = roots or workspace_roots()
-    st_module.title("IFVG Lab")
-    st_module.caption("Exploratory research")
+    from ifvg_lab_nav import apply_deep_link, sync_url
+    from ifvg_lab_ui import inject_theme, rail
+
+    inject_theme(st_module)
+    apply_deep_link(roots, st_module)
     pending_replay = st_module.session_state.pop("ifvg_study_v1_open_review", False)
     if pending_replay:
         st_module.session_state[_NAV] = "Trade review"
-    destination = st_module.radio(
-        "IFVG workspace",
-        ("My studies", "Trade review"),
-        horizontal=True,
-        key=_NAV,
-        label_visibility="collapsed",
-    )
-    if destination == "Trade review":
-        from ifvg_search_review import render_trade_review
-
-        render_trade_review(st_module, roots)
-        return
     # Existing freeze handlers queue an exact selected run and a route.
     pending = st_module.session_state.pop("ifvg_study_v1_pending_route", None)
     if pending in ("Active Runs", "Results"):
@@ -71,10 +90,52 @@ def render_workspace(st_module=st, *, roots=None):
         key = st_module.session_state.get(f"{STATE_PREFIX}monitor_search_id")
         st_module.session_state[_SELECTED] = key
         st_module.session_state[_SCREEN] = "detail"
+        st_module.session_state[_NAV] = "My studies"
+    destination = st_module.session_state.get(_NAV, "My studies")
     screen = st_module.session_state.get(_SCREEN, "list")
-    if screen != "list" and st_module.button("← My studies", key="ifvg_workspace_back"):
+    if destination != "Trade review":
+        # the rail follows the screen (a launch from New study lands on the study page)
+        destination = "New study" if screen in _NEW_STUDY_SCREENS else "My studies"
+        st_module.session_state[_NAV] = destination
+    active = destination
+    note = st_module.session_state.pop("ifvg_lab_v1_link_note", None)
+    if note:
+        from ifvg_lab_ui import show
+
+        from alpha_lab.agents.data_infra.ifvg.presentation.lab.html import note as note_block
+
+        show(note_block(note, "orange"), st_module)
+    clicked = rail(active, st_module)
+    if clicked:
+        rail_destination(st_module, clicked)
+    if destination == "Trade review":
+        from ifvg_lab_trade_review import render_trade_review_page
+
+        render_trade_review_page(st_module, roots)
+        sync_url(st_module)
+        return
+    if screen not in _REDESIGNED_SCREENS and st_module.button(
+            "← My studies", key="ifvg_workspace_back",
+            help="Return to the list of every study."):
+        st_module.session_state[_NAV] = "My studies"
         _go(st_module, "list")
-    if screen == "new":
+    if screen == "funded":
+        from ifvg_lab_funded import render_funded_results
+
+        render_funded_results(st_module, roots)
+    elif screen == "funded_detail":
+        from ifvg_lab_funded import render_funded_detail
+
+        render_funded_detail(st_module, roots)
+    elif screen == "new_funded":
+        from ifvg_lab_new_funded import render_funded_setup
+
+        render_funded_setup(st_module, roots)
+    elif screen == "approve_funded":
+        from ifvg_lab_new_funded import render_funded_review
+
+        render_funded_review(st_module, roots)
+    elif screen == "new":
         from ifvg_research_wizard import render_new_study
 
         render_new_study(st_module, roots=roots)
@@ -109,7 +170,10 @@ def render_workspace(st_module=st, *, roots=None):
             else:
                 render_study(st_module, study, roots)
         else:
-            render_my_studies(st_module, studies, roots)
+            from ifvg_lab_library import render_library
+
+            render_library(st_module, studies, roots)
+    sync_url(st_module)
 
 
 def render_my_studies(st_module, studies, roots):
@@ -199,6 +263,27 @@ def _open_draft(st_module, draft):
     _go(st_module, "new")
 
 
+#: funded comparison runs whose saved result the redesigned screens can show
+_FUNDED_RESULT_STATUSES = ("Completed", "Incomplete", "Failed")
+
+
+def funded_result_target(study: StudySummary, roots, *, app: str | None = None):
+    """The saved result of a funded comparison run, or None while it has none."""
+
+    from ifvg_lab_nav import current_app
+
+    state = study.state or {}
+    result_id = state.get("result_id")
+    if study.kind != "funded_comparison" or not result_id \
+            or study.status not in _FUNDED_RESULT_STATUSES:
+        return None
+    return {"study_key": study.key, "result_id": str(result_id),
+            "plan_id": str(state.get("plan_id") or study.key),
+            "store_root": str(roots["store_root"]), "name": study.name,
+            "status": study.status, "dates": study.dates,
+            "app": app or current_app(roots)}
+
+
 def render_study(st_module, study: StudySummary, roots):
     from ifvg_rules import render_strategy_rules
 
@@ -223,6 +308,13 @@ def render_study(st_module, study: StudySummary, roots):
         render_funded_study(st_module, study, roots)
         return
     elif study.kind == "funded_comparison":
+        target = funded_result_target(study, roots)
+        if target is not None:
+            # a saved result opens on the redesigned funded results screen
+            from ifvg_lab_nav import open_funded_results
+
+            open_funded_results(target, st_module)
+            return
         from ifvg_funded_comparison_study import render_comparison_study
 
         render_comparison_study(st_module, study, roots)

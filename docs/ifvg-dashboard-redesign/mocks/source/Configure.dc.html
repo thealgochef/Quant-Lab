@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>New funded comparison</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;family=Newsreader:opsz,wght@6..72,500;6..72,600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:'IBM Plex Sans',system-ui,sans-serif;color:#16181B;background:#F4F2EC}
+a{color:#1D4E89}a:hover{color:#143A67}
+</style>
+</helmet>
+<div style="width: 1440px; height: 1960px; display: flex; background: #F4F2EC; font-family: 'IBM Plex Sans', system-ui, sans-serif; color: #16181B">
+<nav aria-label="Main" style="width: 232px; flex-shrink: 0; background: #16181B; color: #E9E6DE; display: flex; flex-direction: column; gap: 32px; padding: 32px 20px; box-sizing: border-box">
+<div style="font-family: 'Newsreader', Georgia, serif; font-size: 28px; font-weight: 600">IFVG Lab</div>
+<div style="display: flex; flex-direction: column; gap: 4px">
+<a href="Library.dc.html" style="display: block; padding: 12px 14px; border-radius: 8px; color: #E9E6DE; text-decoration: none; font-size: 15px">My studies</a>
+<a href="TradeReview.dc.html" style="display: block; padding: 12px 14px; border-radius: 8px; color: #E9E6DE; text-decoration: none; font-size: 15px">Trade review</a>
+<a href="Configure.dc.html" style="display: block; padding: 12px 14px; border-radius: 8px; background: #2B2E33; color: #FFFFFF; text-decoration: none; font-size: 15px; font-weight: 500">New study</a>
+</div>
+<div style="margin-top: auto; font-size: 13px; line-height: 1.5; color: #B3AFA6">All times Chicago, 12-hour</div>
+</nav>
+<main style="flex-grow: 1; padding: 40px 48px; box-sizing: border-box; display: grid; grid-template-columns: 1fr 340px; gap: 24px; align-items: start">
+<div style="display: flex; flex-direction: column; gap: 20px">
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="font-size: 14px; color: #54585E"><a href="Library.dc.html">My studies</a> / New study</div>
+<h1 style="margin: 0; font-family: 'Newsreader', Georgia, serif; font-size: 36px; font-weight: 600; letter-spacing: -0.3px">New funded comparison</h1>
+<div style="font-size: 15px; color: #3C4046">Which configuration earns the most cash after every account cost?</div>
+<div style="display: flex; gap: 8px; margin-top: 6px; font-size: 13px">
+<span style="padding: 6px 12px; border-radius: 999px; background: #16181B; color: #FFFFFF; font-weight: 600">1 · Set up</span>
+<a href="ConfigureReview.dc.html" style="padding: 6px 12px; border-radius: 999px; background: #FFFFFF; border: 1px solid #BDB8AC; color: #16181B; text-decoration: none">2 · Review and approve</a>
+</div>
+</div>
+<section aria-labelledby="s1" style="background: #FFFFFF; border: 1px solid #DAD6CC; border-radius: 12px; padding: 22px 24px; display: flex; flex-direction: column; gap: 14px">
+<h2 id="s1" style="margin: 0; font-size: 17px; font-weight: 600">Starting configuration</h2>
+<div style="display: flex; flex-direction: column; gap: 6px">
+<label for="base" style="font-size: 13px; color: #54585E">Baseline</label>
+<select id="base" onChange="{{pickBase}}" style="padding: 10px 12px; min-height: 44px; border: 1px solid #BDB8AC; border-radius: 8px; font: inherit; font-size: 15px; background: #FFFFFF; color: #16181B">
+<option value="named">S0_D80_W1_P1 — original three windows, opposing distance 80 ticks, 1-tick minimum, one-minute parents, flat by 3:55 PM</option>
+<option value="legacy">Legacy baseline — fresh entries, static 1R</option>
+</select>
+</div>
+<sc-if value="{{isLegacy}}" hint-placeholder-val="{{ false }}">
+<div role="alert" style="display: flex; gap: 12px; padding: 14px 16px; background: #F8E9DD; border: 1px solid #E2B48F; border-radius: 10px; font-size: 14px; line-height: 1.5; color: #4F2308">
+<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#A34A12" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0; margin-top: 1px"><path d="M12 3l9 16H3z"></path><path d="M12 10v4M12 17h.01"></path></svg>
+<div><div style="font-weight: 600">This baseline doesn't follow the 3:55 PM close.</div><div>It holds positions across the daily close and weekends, and waits for a parent retest with no time limit. It's here so older studies still open exactly as saved.</div></div>
+</div>
+</sc-if>
+<sc-if value="{{isNamed}}" hint-placeholder-val="{{ true }}">
+<div style="font-size: 14px; color: #3C4046; line-height: 1.5">Default for new studies. Built from that configuration's saved identity, not retyped.</div>
+</sc-if>
+</section>
+<section aria-labelledby="s2" style="background: #FFFFFF; border: 1px solid #DAD6CC; border-radius: 12px; padding: 22px 24px; display: flex; flex-direction: column; gap: 14px">
+<h2 id="s2" style="margin: 0; font-size: 17px; font-weight: 600">Dates</h2>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px">
+<div style="display: flex; flex-direction: column; gap: 6px"><label for="start" style="font-size: 13px; color: #54585E">Start date</label><input id="start" value="[earliest stored date]" style="padding: 10px 12px; min-height: 44px; box-sizing: border-box; border: 1px solid #BDB8AC; border-radius: 8px; font: inherit; font-size: 15px; background: #FFFFFF; color: #16181B"></div>
+<div style="display: flex; flex-direction: column; gap: 6px"><label for="end" style="font-size: 13px; color: #54585E">End date</label><input id="end" value="June 10, 2026" style="padding: 10px 12px; min-height: 44px; box-sizing: border-box; border: 1px solid #BDB8AC; border-radius: 8px; font: inherit; font-size: 15px; background: #FFFFFF; color: #16181B"></div>
+</div>
+<div style="display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; background: #F7F5F0; border-radius: 8px; font-size: 14px">
+<div><span style="font-family: 'IBM Plex Mono', monospace; font-weight: 500">[resolved count]</span> trading days, plus 10 warmup days · holidays and closed sessions removed</div>
+<a href="#" style="font-weight: 500">See every date</a>
+</div>
+<div style="font-size: 14px; color: #A34A12; font-weight: 500">June 11, 2026 onward is protected for confirmation runs and can't be selected here.</div>
+</section>
+<section aria-labelledby="s3" style="background: #FFFFFF; border: 1px solid #DAD6CC; border-radius: 12px; padding: 22px 24px; display: flex; flex-direction: column; gap: 18px">
+<h2 id="s3" style="margin: 0; font-size: 17px; font-weight: 600">Settings to compare</h2>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="font-size: 14px; font-weight: 600">Entry hours</div>
+<div style="display: flex; flex-wrap: wrap; gap: 8px">
+<div style="display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 14px; border: 1px solid #1D4E89; background: #E4ECF6; border-radius: 8px; font-size: 14px">Original three windows: 3:00 PM–12:45 AM, 1:00–6:00 AM, 7:00 AM–1:00 PM<button type="button" aria-label="Remove original three windows" style="width: 28px; height: 28px; border: none; background: transparent; cursor: pointer; font-size: 16px; color: #1D4E89">×</button></div>
+<div style="display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 14px; border: 1px solid #1D4E89; background: #E4ECF6; border-radius: 8px; font-size: 14px">All open-market hours<button type="button" aria-label="Remove all open-market hours" style="width: 28px; height: 28px; border: none; background: transparent; cursor: pointer; font-size: 16px; color: #1D4E89">×</button></div>
+<button type="button" style="padding: 8px 14px; min-height: 44px; border: 1px dashed #A9A498; background: #FFFFFF; border-radius: 8px; font: inherit; font-size: 14px; color: #3C4046; cursor: pointer">+ Add</button>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="font-size: 14px; font-weight: 600">Profit target</div>
+<div style="display: flex; flex-wrap: wrap; gap: 8px">
+<div style="display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 14px; border: 1px solid #1D4E89; background: #E4ECF6; border-radius: 8px; font-size: 14px">1× the stop distance<button type="button" aria-label="Remove 1R target" style="width: 28px; height: 28px; border: none; background: transparent; cursor: pointer; font-size: 16px; color: #1D4E89">×</button></div>
+<div style="display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 14px; border: 1px solid #1D4E89; background: #E4ECF6; border-radius: 8px; font-size: 14px">3× the stop distance<button type="button" aria-label="Remove 3R target" style="width: 28px; height: 28px; border: none; background: transparent; cursor: pointer; font-size: 16px; color: #1D4E89">×</button></div>
+<button type="button" style="padding: 8px 14px; min-height: 44px; border: 1px dashed #A9A498; background: #FFFFFF; border-radius: 8px; font: inherit; font-size: 14px; color: #3C4046; cursor: pointer">+ Add</button>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; align-items: center; gap: 10px"><div style="font-size: 14px; font-weight: 600">When a big gap stops counting</div><div style="padding: 2px 8px; border-radius: 999px; background: #F8E9DD; color: #6E300B; font-size: 12px; font-weight: 600">New here</div></div>
+<div style="display: flex; flex-wrap: wrap; gap: 8px">
+<div style="display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 14px; border: 1px solid #1D4E89; background: #E4ECF6; border-radius: 8px; font-size: 14px">A candle on its own chart closes through it<button type="button" aria-label="Remove body close rule" style="width: 28px; height: 28px; border: none; background: transparent; cursor: pointer; font-size: 16px; color: #1D4E89">×</button></div>
+<div style="display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 14px; border: 1px solid #1D4E89; background: #E4ECF6; border-radius: 8px; font-size: 14px">A one-minute wick reaches the far edge<button type="button" aria-label="Remove wick rule" style="width: 28px; height: 28px; border: none; background: transparent; cursor: pointer; font-size: 16px; color: #1D4E89">×</button></div>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="font-size: 14px; font-weight: 600">Exit</div>
+<div style="display: flex; flex-wrap: wrap; gap: 8px">
+<div style="display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 14px; border: 1px solid #1D4E89; background: #E4ECF6; border-radius: 8px; font-size: 14px">Whole position at the target<button type="button" aria-label="Remove whole position exit" style="width: 28px; height: 28px; border: none; background: transparent; cursor: pointer; font-size: 16px; color: #1D4E89">×</button></div>
+<div style="display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 14px; border: 1px solid #1D4E89; background: #E4ECF6; border-radius: 8px; font-size: 14px">Half at the target, rest held to break-even or 3:55 PM<button type="button" aria-label="Remove half exit" style="width: 28px; height: 28px; border: none; background: transparent; cursor: pointer; font-size: 16px; color: #1D4E89">×</button></div>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; align-items: center; gap: 10px"><div style="font-size: 14px; font-weight: 600">Withdraw when the surplus above $2,100 reaches</div><div style="padding: 2px 8px; border-radius: 999px; background: #F8E9DD; color: #6E300B; font-size: 12px; font-weight: 600">New here</div></div>
+<div style="display: flex; flex-wrap: wrap; gap: 8px">
+<div style="display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 14px; border: 1px solid #1D4E89; background: #E4ECF6; border-radius: 8px; font-size: 14px; font-family: 'IBM Plex Mono', monospace">$500<button type="button" aria-label="Remove 500 dollars" style="width: 28px; height: 28px; border: none; background: transparent; cursor: pointer; font-size: 16px; color: #1D4E89">×</button></div>
+<div style="display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 14px; border: 1px solid #1D4E89; background: #E4ECF6; border-radius: 8px; font-size: 14px; font-family: 'IBM Plex Mono', monospace">$1,000<button type="button" aria-label="Remove 1,000 dollars" style="width: 28px; height: 28px; border: none; background: transparent; cursor: pointer; font-size: 16px; color: #1D4E89">×</button></div>
+<div style="display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 14px; border: 1px solid #1D4E89; background: #E4ECF6; border-radius: 8px; font-size: 14px; font-family: 'IBM Plex Mono', monospace">$2,000<button type="button" aria-label="Remove 2,000 dollars" style="width: 28px; height: 28px; border: none; background: transparent; cursor: pointer; font-size: 16px; color: #1D4E89">×</button></div>
+</div>
+<div style="font-size: 13px; color: #54585E">Each firm's own minimum request still applies.</div>
+</div>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; border-top: 1px solid #E8E4DA">
+<div style="display: flex; flex-direction: column; gap: 4px; padding-top: 12px"><div style="font-size: 13px; color: #54585E">Direction</div><div style="font-size: 14px">Long only</div></div>
+<div style="display: flex; flex-direction: column; gap: 4px; padding-top: 12px"><div style="font-size: 13px; color: #54585E">Big gaps</div><div style="font-size: 14px">1-hour and 4-hour</div></div>
+<div style="display: flex; flex-direction: column; gap: 4px; padding-top: 12px"><div style="font-size: 13px; color: #54585E">Supporting charts</div><div style="font-size: 14px">1, 3, 5, 10, 15 and 30 minutes</div></div>
+</div>
+</section>
+<section aria-labelledby="s4" style="background: #FFFFFF; border: 1px solid #DAD6CC; border-radius: 12px; padding: 22px 24px; display: flex; flex-direction: column; gap: 14px">
+<h2 id="s4" style="margin: 0; font-size: 17px; font-weight: 600">Firms, size and costs</h2>
+<div style="display: flex; flex-wrap: wrap; gap: 8px">
+<div style="display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 14px; border: 1px solid #1D4E89; background: #E4ECF6; border-radius: 8px; font-size: 14px">TakeProfitTrader · $102 per account · 80% share<button type="button" aria-label="Remove TakeProfitTrader" style="width: 28px; height: 28px; border: none; background: transparent; cursor: pointer; font-size: 16px; color: #1D4E89">×</button></div>
+<div style="display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 14px; border: 1px solid #1D4E89; background: #E4ECF6; border-radius: 8px; font-size: 14px">MyFundedFutures · $125 per account · 90% share<button type="button" aria-label="Remove MyFundedFutures" style="width: 28px; height: 28px; border: none; background: transparent; cursor: pointer; font-size: 16px; color: #1D4E89">×</button></div>
+</div>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px">
+<div style="display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; background: #F7F5F0; border-radius: 8px"><div style="font-size: 13px; color: #54585E">Whole-position exits</div><div style="font-size: 14px">1 E-mini · $5.14 per fill</div></div>
+<div style="display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; background: #F7F5F0; border-radius: 8px"><div style="font-size: 13px; color: #54585E">Half exits</div><div style="font-size: 14px">10 micros · $0.514 per micro per fill</div></div>
+</div>
+</section>
+</div>
+<aside aria-label="Plan summary" style="display: flex; flex-direction: column; gap: 16px; margin-top: 150px">
+<div style="background: #FFFFFF; border: 1px solid #DAD6CC; border-radius: 12px; padding: 22px 22px; display: flex; flex-direction: column; gap: 14px">
+<h2 style="margin: 0; font-family: 'Newsreader', Georgia, serif; font-size: 22px; font-weight: 600">This plan</h2>
+<div style="display: flex; flex-direction: column; gap: 4px; font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: #2A2D31"><div>2 entry hours</div><div>× 2 targets</div><div>× 2 gap rules</div><div>× 2 exits</div><div>× 3 withdrawal triggers</div></div>
+<div style="border-top: 1px solid #E8E4DA; padding-top: 12px; display: flex; flex-direction: column; gap: 4px">
+<div style="font-family: 'IBM Plex Mono', monospace; font-size: 26px; font-weight: 500">48 configurations</div>
+<div style="font-size: 14px; color: #3C4046">× 2 firms = 96 separate results</div>
+</div>
+<div style="padding: 12px 14px; background: #E4ECF6; border-radius: 8px; font-size: 14px; line-height: 1.5; color: #143A67">Needs the engine version that supports half exits. Checked at approval and again at launch.</div>
+<a href="ConfigureReview.dc.html" style="display: flex; justify-content: center; align-items: center; padding: 12px 16px; min-height: 48px; box-sizing: border-box; background: #16181B; color: #FFFFFF; border-radius: 8px; font-size: 15px; font-weight: 500; text-decoration: none">Continue to review</a>
+<button type="button" style="padding: 12px 16px; min-height: 48px; border: 1px solid #BDB8AC; background: #FFFFFF; color: #16181B; border-radius: 8px; font: inherit; font-size: 15px; cursor: pointer">Save draft</button>
+</div>
+</aside>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1960}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { base: 'named' }; }
+  renderVals() {
+    var self = this;
+    return {
+      isLegacy: this.state.base === 'legacy',
+      isNamed: this.state.base === 'named',
+      pickBase: function (e) { self.setState({ base: e.target.value }); }
+    };
+  }
+}
+</script>
+</body>
+</html>

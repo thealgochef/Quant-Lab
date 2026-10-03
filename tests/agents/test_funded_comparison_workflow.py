@@ -77,6 +77,25 @@ def _app():
     ifvg_workspace.render_workspace(st, roots=ifvg_workspace._TEST_ROOTS)
 
 
+def _study_types(at):
+    """New study (left rail) opens the funded setup; "Other study types" the earlier chooser."""
+
+    at.button(key="ifvg_lab_v1_rail_New_study").click().run()
+    at.button(key="ifvg_lab_v1_other_types").click().run()
+    assert not at.exception, at.exception
+
+
+def _continue(draft_root, timeout):
+    """Reopen the saved draft in a fresh session as My studies' "Continue" does."""
+
+    (saved,) = Path(draft_root).glob("*/draft.json")
+    at = AppTest.from_function(_app, default_timeout=timeout)
+    at.session_state["ifvg_workspace_destination"] = "New study"
+    at.session_state["ifvg_workspace_screen"] = "new"
+    at.session_state["ifvg_study_v1_draft_id"] = saved.parent.name
+    return at.run()
+
+
 def _fake_configuration_run(requests: list):
     days = weekdays(date(2026, 3, 2), 6)
 
@@ -113,7 +132,7 @@ def _fake_configuration_run(requests: list):
 def test_two_configurations_save_reopen_approve_and_reach_the_worker(env):
     roots = env["roots"]
     at = AppTest.from_function(_app, default_timeout=120).run()
-    at.button(key="ifvg_workspace_new").click().run()
+    _study_types(at)
     at.selectbox[0].select("Funded configuration comparison").run()
     next(b for b in at.button if b.label == "Configure study").click().run()
     assert not at.exception, at.exception
@@ -134,8 +153,7 @@ def test_two_configurations_save_reopen_approve_and_reach_the_worker(env):
     assert any("MyFundedFutures" in e.value for e in at.error)
     at.number_input(key="ifvg_fcmp_quantity").set_value(2).run()
     # reopen in a fresh session: the saved selection comes back
-    fresh = AppTest.from_function(_app, default_timeout=120).run()
-    next(b for b in fresh.button if b.label == "Continue").click().run()
+    fresh = _continue(roots["draft_root"], 120)
     assert fresh.multiselect(key="ifvg_fcmp_axis_enabled_entry_sessions").value == [S0, S3]
     assert fresh.number_input(key="ifvg_fcmp_quantity").value == 2
     # no run without the owner's approval of this exact plan
@@ -247,7 +265,7 @@ def test_variation_plan_saves_reopens_and_launches_only_on_its_frozen_core(
     monkeypatch.setattr(core_identity, "core_source_identity", lambda: dict(FAKE_CORE))
     roots = env["roots"]
     at = AppTest.from_function(_app, default_timeout=180).run()
-    at.button(key="ifvg_workspace_new").click().run()
+    _study_types(at)
     at.selectbox[0].select("Funded configuration comparison").run()
     next(b for b in at.button if b.label == "Configure study").click().run()
     at.radio(key="ifvg_fcmp_plan_kind").set_value("variations").run()
@@ -264,8 +282,7 @@ def test_variation_plan_saves_reopens_and_launches_only_on_its_frozen_core(
         "tp_r_multiple.1.0", "tp_r_multiple.2.0"]
     assert settings["variation"]["whole_quantity"] == 2
     # reopen in a fresh session: the variation choices come back
-    fresh = AppTest.from_function(_app, default_timeout=180).run()
-    next(b for b in fresh.button if b.label == "Continue").click().run()
+    fresh = _continue(roots["draft_root"], 180)
     assert fresh.radio(key="ifvg_fcmp_plan_kind").value == "variations"
     assert fresh.multiselect(key="ifvg_fcmp_var_tp_r_multiple").value == [
         "tp_r_multiple.1.0", "tp_r_multiple.2.0"]

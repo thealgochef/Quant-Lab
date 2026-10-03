@@ -1893,3 +1893,109 @@ Repair behavior and limits:
 
 Open owner decisions and known limits: `docs/ifvg-dashboard-repairs/OPEN_DECISIONS.md`.
 
+
+### IFVG Lab redesign (September 24, 2026)
+
+Presentation-only rebuild of the IFVG workspace to the owner-approved mocks (task record
+`docs/ifvg-dashboard-redesign/`: TASK.md, CALCULATIONS.md, TASKS.md, `handoff/`). No
+replay, cost, account, payout, calendar or identity semantics changed; every screen reads
+saved records only, and the funded simulator is called only through its public ledger API.
+
+- Shared, Streamlit-free package `ifvg/presentation/lab/`: `format` (money, percentages,
+  prices, "April 12, 2026, 7:07 PM" Chicago times through `chicago_time`), `html` (escaped
+  design-system building blocks), `theme` (tokens, workspace CSS, chart layout),
+  `funded_data` (one verified saved comparison result + its plan's calendar; per-pair ordered
+  trades and daily results; the source package's saved gate thresholds), `funded_measures`
+  (ranking row, Sharpe/Sortino over every study day, drawdown, bootstrap ranges,
+  probabilistic and deflated Sharpe, quality gates on the stored strategy measures,
+  concentration, verdict, findings), `trade_stats`, `resampling` (fixed closed-profit
+  boundary diagnostic, resampled-path fans drawn with replacement — "keep streaks together"
+  10-trade blocks and "draw single trades" — streaks, sampled closed-profit drawdown; seeded,
+  default seed 20260923), `firm_race` (conditional resampling of the recorded trades through
+  `propsim/funded/pair_ledger.PairLedger` with each firm's saved terms; replaying the saved
+  order reproduces, for all 128 pairs, the five summary figures, the number of trades and each
+  trade's net result and account-loss flag (`check_original`), a separate integration check; the
+  results are conditional for both firms — see the analytical corrections below), `market`
+  (one-minute E-mini bars of the verified package, daily closes, beta, buy and hold,
+  retrospective and entry-known rising/falling × volatile/quiet labels, entry measures),
+  `names`, `library`, `funded_setup`, `setup_records` (links a funded trade to its own
+  configuration's saved setup record by trade id, otherwise to another configuration's record
+  by the package's own entry-match key plus the same stop — related context only),
+  `review_chart` and `review_panels`. Reference values of CALCULATIONS.md:
+  `tests/agents/ifvg_lab/test_reference_values.py`.
+- Streamlit shell `scripts/ifvg_lab_ui.py` (tokens, the left rail, a components-v2
+  clickable-HTML renderer, switches drawn from horizontal radios, the cached verified study),
+  `ifvg_lab_nav.py` (screen state, the one firm/configuration/account/tab selection per saved
+  result, both applications' store roots, deep links mirrored in the page address),
+  `ifvg_lab_cache.py`; screens `ifvg_lab_funded.py` (funded results, detail shell),
+  `ifvg_lab_detail_{summary,payouts,risk,trades,market,settings}.py`,
+  `ifvg_lab_trade_review.py`, `ifvg_lab_library.py`, `ifvg_lab_new_funded.py`.
+  `ifvg_workspace.render_workspace` replaces the top My studies / Trade review switch with the
+  rail and routes the new screens; every earlier screen (study page, wizards, context and
+  research-group pages, developer area) is unchanged and reachable. A funded comparison with
+  a saved result opens on the new overview from every route.
+- New funded comparison drafts keep the existing `steps.review.funded_comparison` plan
+  settings; the redesign's extra choices (baseline, gap rules, withdrawal triggers, dates,
+  pass/fail checks) live under `steps.review.funded_comparison_redesign`, which the existing
+  compatibility check ignores. Choices the engine or simulator can't run yet (withdrawal
+  triggers other than $500, a gap rule other than the base configuration's, other dates,
+  changed checks, the legacy baseline) are saved but block approval with a plain message.
+  Approval and launch still go only through `save_plan`, `record_owner_approval`,
+  `_freeze_and_launch` and `dispatch_problem`; repair R1's read-only and save-on-edit rules
+  hold.
+- Trade review saves through the existing visual review ledger with the existing funded keys;
+  `REVIEW_TAGS` gained four tags additively (no format change). `ifvg_search_review` and
+  `ifvg_funded_trade_review` gained keyword options with defaults that keep earlier behavior.
+- Known limits and placeholders: `docs/ifvg-dashboard-redesign/handoff/DATA_GAPS.md`;
+  decisions: `handoff/DECISIONS_LOG.md`; feature placements: `handoff/FEATURE_MAP.csv`.
+- Theme (September 25, 2026): the IFVG Lab follows the application's own theme instead of
+  forcing the light palette. `presentation/lab/theme.py` holds one set of color names with a
+  light (`COLORS`) and a dark (`DARK_COLORS`) value, publishes them as `--lab-*` CSS
+  variables for both themes and gives chart code `palette()` / `rgba()` read at render time;
+  screens never write a color value (`tests/agents/ifvg_lab/test_theme.py` guards it).
+  `ifvg_lab_ui.inject_theme` takes the theme the framework reports with the run
+  (`st.context.theme`), and a small components-v2 probe confirms it from the page's real
+  background, marks `<html data-lab-theme>` so the variables switch at once, and asks for one
+  rerun on a change so the charts follow. Both applications open with the rail expanded, and
+  the header's reopen-rail and menu buttons are styled readable on both themes. Dark values:
+  `docs/ifvg-dashboard-redesign/DESIGN_SYSTEM.md`; decisions FX17–FX19; report
+  `docs/ifvg-redesign-fixes/handoff/THEME_FIX_REPORT.md`.
+
+### IFVG Lab analytical corrections (September 25, 2026)
+
+Presentation and derived-analysis corrections (A1–A11 of
+`docs/ifvg-redesign-fixes/ANALYTICAL_CORRECTIONS_ADDENDUM.md`); definitions in
+`docs/ifvg-redesign-fixes/followup-1/CALCULATION_DEFINITIONS.md` (maintained since follow-up 1;
+the closeout's copy is the delivered version), which supersedes `docs/ifvg-dashboard-redesign/CALCULATIONS.md` where they differ.
+No engine, funded-simulator, account, payout, cost or calendar code changed.
+
+- `presentation/lab/market.py`: `buy_and_hold` v2 (`BENCHMARK_VERSION`, one entry instant);
+  `condition_labels` is the retrospective set (`RETROSPECTIVE_VERSION`), and
+  `entry_known_days` / `entry_known_labels` (`ENTRY_KNOWN_VERSION`) use only stored trading
+  days whose close instant precedes the day's 5:00 PM Chicago open (`trading_day_open_utc`,
+  `trading_day_of`).
+- `presentation/lab/firm_race.py`: `MODEL_ID = "conditional_firm_ledger_resampling_v1"`,
+  `LIMITATIONS`, `PathOutcome` / `path_outcome` (first-account endpoints and clocks from the
+  ledger's `eligibility_secured`, `requested` and `received` events; failed and open accounts;
+  unresolved requests) and `race_from_outcomes`; `terms_digest` feeds the in-process cache key
+  built by `ifvg_lab_cache.firm_race_key`.
+- `presentation/lab/resampling.py`: `share_below_ties_half` (the one percentile rule),
+  `running_fall`; `funded_measures.py`: `held_to_deadline_legs` / `held_legs_from_rows`
+  (legs from quantities and exact per-fill costs), the corrected `findings` and `verdict`;
+  `ifvg_lab_cache.pair_findings` is the one findings builder for the Summary and the overview.
+- `presentation/lab/setup_records.SetupRecord.identity_established` (own record by trade id
+  only); `review_panels` and `review_chart` label related context and keep point-in-time views
+  independent of later records (`review_chart.chart_window` uses the scheduled day).
+  `review_panels.SetupEvent` / `setup_events` (follow-up 1) give each formation event one
+  availability instant: a gap's confirmation, or a tap's or close-through's candle close. The
+  candle's opening minute is only its name. `setup_steps`, `setup_key`, `moments` and
+  `review_chart.setup_figure` read it.
+- New `presentation/lab/minute_companion.py`: links the latest published review folder's
+  hash-checked `approximated_minutes.csv` to a funded trade by exact identity with interval,
+  uniqueness and count checks (`link_from_review_folder`).
+- `presentation/lab/funded_setup.py`: neutral time-under-water message; `ifvg_lab_new_funded`
+  keeps `rebuild_saved_plan`'s left-out combinations and states them before approval.
+- Tests: `tests/agents/ifvg_lab/test_ac_{risk,market,trade_review,approval_paths}.py`;
+  follow-up 1: `tests/agents/ifvg_lab/test_setup_event_timing.py`, and the historical-order
+  wording tests in `test_detail_risk.py` (`ifvg_lab_detail_risk.validation_text` names the
+  fields `firm_race.check_original` compares).

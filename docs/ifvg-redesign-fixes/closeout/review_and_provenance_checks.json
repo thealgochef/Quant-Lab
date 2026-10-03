@@ -1,0 +1,692 @@
+{
+ "what": "Point-in-time option sets (pre-task source against final source), setup-record classification, the minute-record join, and the isolated A8 reproduction's ledger lines. Identifiers, times and compact fields only; no bar arrays.",
+ "probe": {
+  "pre_task_source_tree": "811f4b3889a53467a58b5c100f8a0075d65ec4b9",
+  "pre_task_modules_equal_that_tree": {
+   "review_panels.py": true,
+   "review_chart.py": true,
+   "setup_records.py": true,
+   "funded_data.py": true
+  },
+  "final_source_tree": "76bb3b0c514b0d1fba2fcfec17beb1694943b6c7",
+  "final_modules_equal_that_tree": {
+   "review_panels.py": true,
+   "review_chart.py": true,
+   "setup_records.py": true,
+   "funded_data.py": true
+  },
+  "how": "the same probe script imported each tree's own functions; the pre-task run imported a git-archive extraction of the pre-task tree, and each imported module's git blob id was checked against the named tree"
+ },
+ "study": {
+  "result_id": "5fa65149843484b143b64701a20aa063fb1e2da34708db8b4d6a2a2acbf4d09b",
+  "configuration": "S1-T1-H14-P1-L-SO",
+  "firm": "TakeProfitTrader"
+ },
+ "cases": {
+  "early_january": {
+   "trade": {
+    "seq": 4,
+    "account": 1,
+    "entry_chicago": "January 12, 2026, 10:31 PM",
+    "half_exit_chicago": null,
+    "half_exit_utc_exact": null,
+    "exit_chicago": "January 12, 2026, 10:41 PM",
+    "trading_day": "2026-01-13"
+   },
+   "point_in_time_option_sets": {
+    "pre_task_source": {
+     "cursor_chicago": "January 12, 2026, 10:35 PM",
+     "account_options": [
+      "All accounts",
+      "Account 1"
+     ],
+     "trade_options": [
+      "Jan 12, 10:31 PM \u00b7 result hidden"
+     ],
+     "trade_option_count": 1,
+     "context_line": "\u2026 \u00b7 Account 1 \u00b7 trade 1 at this firm",
+     "moments": [
+      "9:47 PM \u00b7 the 9:46 PM candle has tapped the four-hour gap",
+      "10:10 PM \u00b7 the parent gap has formed",
+      "10:26 PM \u00b7 the opposing gap has formed",
+      "10:30 PM \u00b7 the 10:29 PM candle has closed through the opposing gap",
+      "10:31 PM \u00b7 entry",
+      "10:35 PM",
+      "10:40 PM",
+      "10:45 PM",
+      "10:50 PM",
+      "10:55 PM",
+      "11:00 PM",
+      "11:05 PM",
+      "11:10 PM",
+      "11:15 PM",
+      "11:20 PM",
+      "11:25 PM",
+      "11:30 PM",
+      "Jan 13, 12:00 AM",
+      "Jan 13, 1:00 AM",
+      "Jan 13, 2:00 AM",
+      "Jan 13, 3:00 AM",
+      "Jan 13, 4:00 AM",
+      "Jan 13, 5:00 AM",
+      "Jan 13, 6:00 AM",
+      "Jan 13, 7:00 AM",
+      "Jan 13, 8:00 AM",
+      "Jan 13, 9:00 AM",
+      "Jan 13, 10:00 AM",
+      "Jan 13, 11:00 AM",
+      "Jan 13, 12:00 PM",
+      "Jan 13, 1:00 PM",
+      "Jan 13, 2:00 PM",
+      "Jan 13, 3:00 PM",
+      "Jan 13, 4:00 PM"
+     ],
+     "recorded_line_labels": [
+      "10:31 PM",
+      "Initial stop"
+     ],
+     "half_exit_shown": false,
+     "chart_x_range_chicago": [
+      "January 12, 2026, 5:00 PM",
+      "January 13, 2026, 4:00 PM"
+     ],
+     "chart_window_rule": "trading_window (first/last stored bar of the day)",
+     "chart_layout_x_range": [
+      "2026-01-12 17:00:00",
+      "2026-01-13 16:00:00"
+     ]
+    },
+    "final_source": {
+     "cursor_chicago": "January 12, 2026, 10:35 PM",
+     "account_options": [
+      "All accounts",
+      "Account 1"
+     ],
+     "trade_options": [
+      "Jan 12, 10:31 PM \u00b7 result hidden"
+     ],
+     "trade_option_count": 1,
+     "context_line": "\u2026 \u00b7 Account 1 \u00b7 trade 1 at this firm",
+     "moments": [
+      "10:31 PM \u00b7 entry",
+      "10:35 PM",
+      "10:40 PM",
+      "10:45 PM",
+      "10:50 PM",
+      "10:55 PM",
+      "11:00 PM",
+      "11:05 PM",
+      "11:10 PM",
+      "11:15 PM",
+      "11:20 PM",
+      "11:25 PM",
+      "11:30 PM",
+      "Jan 13, 12:00 AM",
+      "Jan 13, 1:00 AM",
+      "Jan 13, 2:00 AM",
+      "Jan 13, 3:00 AM",
+      "Jan 13, 4:00 AM",
+      "Jan 13, 5:00 AM",
+      "Jan 13, 6:00 AM",
+      "Jan 13, 7:00 AM",
+      "Jan 13, 8:00 AM",
+      "Jan 13, 9:00 AM",
+      "Jan 13, 10:00 AM",
+      "Jan 13, 11:00 AM",
+      "Jan 13, 12:00 PM",
+      "Jan 13, 1:00 PM",
+      "Jan 13, 2:00 PM",
+      "Jan 13, 3:00 PM",
+      "Jan 13, 4:00 PM"
+     ],
+     "recorded_line_labels": [
+      "10:31 PM",
+      "Initial stop"
+     ],
+     "half_exit_shown": false,
+     "chart_x_range_chicago": [
+      "January 12, 2026, 5:00 PM",
+      "January 13, 2026, 4:00 PM"
+     ],
+     "chart_window_rule": "chart_window (scheduled day in point in time)",
+     "chart_layout_x_range": [
+      "2026-01-12 17:00:00",
+      "2026-01-13 16:00:00"
+     ]
+    }
+   },
+   "full_history_option_sets_final": {
+    "account_options": [
+     "All accounts",
+     "Account 1",
+     "Account 2",
+     "Account 3",
+     "Account 4",
+     "Account 5",
+     "Account 6"
+    ],
+    "trade_option_count": 114,
+    "context_line": "\u2026 \u00b7 Account 1 \u00b7 trade 1 of 114 at this firm"
+   },
+   "setup_record": {
+    "pre_task_source": {
+     "link": "same_execution",
+     "record_configuration": "S1_D80_W1_P1",
+     "record_trade_id": "f5c8f044-17c8-5c93-bbcc-5d95364a6922",
+     "setup_id": "9a49ebf9-ed1d-5bf1-9cf8-f6e4f6f6cf09",
+     "same_target": true,
+     "settings_differences": 1,
+     "identity_established": null,
+     "source_sentence": "Zones come from the saved setup record of configuration S1_D80_W1_P1 for the same execution: same entry time, entry, stop and target",
+     "matched_fields": "package entry_match_key (entry instant, direction, entry family, entry price) + initial stop + target",
+     "record_htf_gap": {
+      "timeframe_seconds": 14400,
+      "low_ticks": 103000,
+      "high_ticks": 103455,
+      "confirmed_chicago": "January 12, 2026, 1:00 PM"
+     },
+     "review_step_label": "Four-hour gap is valid"
+    },
+    "final_source": {
+     "link": "same_execution",
+     "record_configuration": "S1_D80_W1_P1",
+     "record_trade_id": "f5c8f044-17c8-5c93-bbcc-5d95364a6922",
+     "setup_id": "9a49ebf9-ed1d-5bf1-9cf8-f6e4f6f6cf09",
+     "same_target": true,
+     "settings_differences": 1,
+     "identity_established": false,
+     "source_sentence": "Related context from configuration S1_D80_W1_P1's saved setup record for the same entry time, direction, entry price and stop, and target; exact setup identity for this configuration is not established.",
+     "matched_fields": "package entry_match_key (entry instant, direction, entry family, entry price) + initial stop + target",
+     "record_htf_gap": {
+      "timeframe_seconds": 14400,
+      "low_ticks": 103000,
+      "high_ticks": 103455,
+      "confirmed_chicago": "January 12, 2026, 1:00 PM"
+     },
+     "review_step_label": "Higher-timeframe gap is valid"
+    }
+   },
+   "funded_trade_strategy_trade_id": "6cf5586e-d610-59fa-85d2-3b52270fbe70",
+   "minute_companion_final": {
+    "status": "none",
+    "reason": "",
+    "checks": {
+     "times_readable": true,
+     "no_mismatched_rows": true,
+     "identity_unique": true,
+     "minutes_inside_trade": true,
+     "minute_times_agree": true,
+     "no_duplicate_minutes": true,
+     "count_matches": true
+    },
+    "source": {
+     "folder": "funded_comparison_5fa65149843484b1_export_v4",
+     "version": 4,
+     "result_id": "5fa65149843484b143b64701a20aa063fb1e2da34708db8b4d6a2a2acbf4d09b",
+     "sha256": "6201ef47e5d052772d00958b34462b7f481c3f32f72fb4c706aa172235694867"
+    },
+    "rows": [],
+    "trade_minutes_approximated": 0,
+    "evidence_sentence_full_history": "11 minutes on recorded exchange trades. The exit was priced from recorded trades."
+   }
+  },
+  "april": {
+   "trade": {
+    "seq": 380,
+    "account": 6,
+    "entry_chicago": "April 12, 2026, 7:07 PM",
+    "half_exit_chicago": "April 12, 2026, 7:10 PM",
+    "half_exit_utc_exact": "2026-04-13T00:10:27.251840803+00:00",
+    "exit_chicago": "April 13, 2026, 3:55 PM",
+    "trading_day": "2026-04-13"
+   },
+   "point_in_time_option_sets": {
+    "pre_task_source": {
+     "cursor_chicago": "April 12, 2026, 7:10 PM",
+     "account_options": [
+      "All accounts",
+      "Account 1",
+      "Account 2",
+      "Account 3",
+      "Account 4",
+      "Account 5",
+      "Account 6"
+     ],
+     "trade_options": [
+      "Jan 12, 10:31 PM \u00b7 result hidden",
+      "Jan 13, 5:02 PM \u00b7 result hidden",
+      "Jan 13, 6:54 PM \u00b7 result hidden",
+      "Jan 14, 1:35 AM \u00b7 result hidden",
+      "Jan 15, 2:22 AM \u00b7 result hidden",
+      "Jan 16, 3:03 AM \u00b7 result hidden",
+      "Jan 16, 2:10 PM \u00b7 result hidden",
+      "Jan 19, 8:31 PM \u00b7 result hidden",
+      "Jan 21, 1:00 PM \u00b7 result hidden",
+      "Jan 22, 5:10 AM \u00b7 result hidden",
+      "Jan 23, 3:45 PM \u00b7 result hidden",
+      "Jan 27, 11:43 AM \u00b7 result hidden",
+      "Jan 27, 1:15 PM \u00b7 result hidden",
+      "Jan 27, 3:30 PM \u00b7 result hidden",
+      "Jan 27, 10:59 PM \u00b7 result hidden",
+      "Jan 28, 9:13 PM \u00b7 result hidden",
+      "Jan 30, 5:02 AM \u00b7 result hidden",
+      "Feb 1, 6:10 PM \u00b7 result hidden",
+      "Feb 6, 12:59 AM \u00b7 result hidden",
+      "Feb 9, 6:22 AM \u00b7 result hidden",
+      "Feb 9, 12:11 PM \u00b7 result hidden",
+      "Feb 9, 12:53 PM \u00b7 result hidden",
+      "Feb 9, 8:08 PM \u00b7 result hidden",
+      "Feb 9, 10:05 PM \u00b7 result hidden",
+      "Feb 10, 1:30 AM \u00b7 result hidden",
+      "Feb 10, 9:28 AM \u00b7 result hidden",
+      "Feb 10, 11:43 AM \u00b7 result hidden",
+      "Feb 10, 6:34 PM \u00b7 result hidden",
+      "Feb 11, 6:22 AM \u00b7 result hidden",
+      "Feb 11, 10:14 AM \u00b7 result hidden",
+      "Feb 11, 12:29 PM \u00b7 result hidden",
+      "Feb 11, 2:55 PM \u00b7 result hidden",
+      "Feb 11, 7:27 PM \u00b7 result hidden",
+      "Feb 11, 9:29 PM \u00b7 result hidden",
+      "Feb 12, 1:24 AM \u00b7 result hidden",
+      "Feb 16, 5:25 AM \u00b7 result hidden",
+      "Feb 18, 12:52 AM \u00b7 result hidden",
+      "Feb 18, 2:02 AM \u00b7 result hidden",
+      "Feb 20, 7:28 AM \u00b7 result hidden",
+      "Feb 20, 2:03 PM \u00b7 result hidden",
+      "Feb 24, 6:14 AM \u00b7 result hidden",
+      "Feb 24, 7:20 AM \u00b7 result hidden",
+      "Feb 24, 9:11 AM \u00b7 result hidden",
+      "Mar 2, 2:06 PM \u00b7 result hidden",
+      "Mar 2, 7:25 PM \u00b7 result hidden",
+      "Mar 4, 6:58 AM \u00b7 result hidden",
+      "Mar 9, 2:22 AM \u00b7 result hidden",
+      "Mar 10, 2:22 AM \u00b7 result hidden",
+      "Mar 10, 5:13 PM \u00b7 result hidden",
+      "Mar 11, 1:59 AM \u00b7 result hidden",
+      "Mar 12, 12:28 AM \u00b7 result hidden",
+      "Mar 12, 11:01 AM \u00b7 result hidden",
+      "Mar 12, 11:35 AM \u00b7 result hidden",
+      "Mar 13, 1:08 AM \u00b7 result hidden",
+      "Mar 13, 4:45 AM \u00b7 result hidden",
+      "Mar 16, 11:06 PM \u00b7 result hidden",
+      "Mar 17, 2:41 AM \u00b7 result hidden",
+      "Mar 17, 1:04 PM \u00b7 result hidden",
+      "Mar 18, 5:44 AM \u00b7 result hidden",
+      "Mar 20, 12:44 AM \u00b7 result hidden",
+      "Mar 20, 3:08 AM \u00b7 result hidden",
+      "Mar 23, 12:57 PM \u00b7 result hidden",
+      "Mar 24, 5:02 PM \u00b7 result hidden",
+      "Mar 24, 10:47 PM \u00b7 result hidden",
+      "Mar 25, 3:05 AM \u00b7 result hidden",
+      "Mar 25, 12:27 PM \u00b7 result hidden",
+      "Mar 25, 10:03 PM \u00b7 result hidden",
+      "Mar 26, 5:23 AM \u00b7 result hidden",
+      "Mar 31, 6:12 AM \u00b7 result hidden",
+      "Apr 2, 6:58 PM \u00b7 result hidden",
+      "Apr 5, 5:51 PM \u00b7 result hidden",
+      "Apr 8, 5:02 PM \u00b7 result hidden",
+      "Apr 9, 5:22 AM \u00b7 result hidden",
+      "Apr 9, 8:06 AM \u00b7 result hidden",
+      "Apr 9, 11:53 AM \u00b7 result hidden",
+      "Apr 9, 9:53 PM \u00b7 result hidden",
+      "Apr 12, 7:07 PM \u00b7 result hidden"
+     ],
+     "trade_option_count": 77,
+     "context_line": "\u2026 \u00b7 Account 6 \u00b7 trade 77 at this firm",
+     "moments": [
+      "5:19 PM \u00b7 the 5:18 PM candle has tapped the four-hour gap",
+      "7:00 PM \u00b7 the parent gap has formed",
+      "7:03 PM \u00b7 the opposing gap has formed",
+      "7:06 PM \u00b7 the 7:05 PM candle has closed through the opposing gap",
+      "7:07 PM \u00b7 entry",
+      "7:10 PM",
+      "7:15 PM",
+      "7:20 PM",
+      "7:25 PM",
+      "7:30 PM",
+      "7:35 PM",
+      "7:40 PM",
+      "7:45 PM",
+      "7:50 PM",
+      "7:55 PM",
+      "8:00 PM",
+      "8:05 PM",
+      "9:00 PM",
+      "10:00 PM",
+      "11:00 PM",
+      "Apr 13, 12:00 AM",
+      "Apr 13, 1:00 AM",
+      "Apr 13, 2:00 AM",
+      "Apr 13, 3:00 AM",
+      "Apr 13, 4:00 AM",
+      "Apr 13, 5:00 AM",
+      "Apr 13, 6:00 AM",
+      "Apr 13, 7:00 AM",
+      "Apr 13, 8:00 AM",
+      "Apr 13, 9:00 AM",
+      "Apr 13, 10:00 AM",
+      "Apr 13, 11:00 AM",
+      "Apr 13, 12:00 PM",
+      "Apr 13, 1:00 PM",
+      "Apr 13, 2:00 PM",
+      "Apr 13, 3:00 PM",
+      "Apr 13, 4:00 PM"
+     ],
+     "recorded_line_labels": [
+      "7:07 PM",
+      "Initial stop"
+     ],
+     "half_exit_shown": false,
+     "chart_x_range_chicago": [
+      "April 12, 2026, 5:00 PM",
+      "April 13, 2026, 4:00 PM"
+     ],
+     "chart_window_rule": "trading_window (first/last stored bar of the day)",
+     "chart_layout_x_range": [
+      "2026-04-12 17:00:00",
+      "2026-04-13 16:00:00"
+     ]
+    },
+    "final_source": {
+     "cursor_chicago": "April 12, 2026, 7:10 PM",
+     "account_options": [
+      "All accounts",
+      "Account 1",
+      "Account 2",
+      "Account 3",
+      "Account 4",
+      "Account 5",
+      "Account 6"
+     ],
+     "trade_options": [
+      "Jan 12, 10:31 PM \u00b7 result hidden",
+      "Jan 13, 5:02 PM \u00b7 result hidden",
+      "Jan 13, 6:54 PM \u00b7 result hidden",
+      "Jan 14, 1:35 AM \u00b7 result hidden",
+      "Jan 15, 2:22 AM \u00b7 result hidden",
+      "Jan 16, 3:03 AM \u00b7 result hidden",
+      "Jan 16, 2:10 PM \u00b7 result hidden",
+      "Jan 19, 8:31 PM \u00b7 result hidden",
+      "Jan 21, 1:00 PM \u00b7 result hidden",
+      "Jan 22, 5:10 AM \u00b7 result hidden",
+      "Jan 23, 3:45 PM \u00b7 result hidden",
+      "Jan 27, 11:43 AM \u00b7 result hidden",
+      "Jan 27, 1:15 PM \u00b7 result hidden",
+      "Jan 27, 3:30 PM \u00b7 result hidden",
+      "Jan 27, 10:59 PM \u00b7 result hidden",
+      "Jan 28, 9:13 PM \u00b7 result hidden",
+      "Jan 30, 5:02 AM \u00b7 result hidden",
+      "Feb 1, 6:10 PM \u00b7 result hidden",
+      "Feb 6, 12:59 AM \u00b7 result hidden",
+      "Feb 9, 6:22 AM \u00b7 result hidden",
+      "Feb 9, 12:11 PM \u00b7 result hidden",
+      "Feb 9, 12:53 PM \u00b7 result hidden",
+      "Feb 9, 8:08 PM \u00b7 result hidden",
+      "Feb 9, 10:05 PM \u00b7 result hidden",
+      "Feb 10, 1:30 AM \u00b7 result hidden",
+      "Feb 10, 9:28 AM \u00b7 result hidden",
+      "Feb 10, 11:43 AM \u00b7 result hidden",
+      "Feb 10, 6:34 PM \u00b7 result hidden",
+      "Feb 11, 6:22 AM \u00b7 result hidden",
+      "Feb 11, 10:14 AM \u00b7 result hidden",
+      "Feb 11, 12:29 PM \u00b7 result hidden",
+      "Feb 11, 2:55 PM \u00b7 result hidden",
+      "Feb 11, 7:27 PM \u00b7 result hidden",
+      "Feb 11, 9:29 PM \u00b7 result hidden",
+      "Feb 12, 1:24 AM \u00b7 result hidden",
+      "Feb 16, 5:25 AM \u00b7 result hidden",
+      "Feb 18, 12:52 AM \u00b7 result hidden",
+      "Feb 18, 2:02 AM \u00b7 result hidden",
+      "Feb 20, 7:28 AM \u00b7 result hidden",
+      "Feb 20, 2:03 PM \u00b7 result hidden",
+      "Feb 24, 6:14 AM \u00b7 result hidden",
+      "Feb 24, 7:20 AM \u00b7 result hidden",
+      "Feb 24, 9:11 AM \u00b7 result hidden",
+      "Mar 2, 2:06 PM \u00b7 result hidden",
+      "Mar 2, 7:25 PM \u00b7 result hidden",
+      "Mar 4, 6:58 AM \u00b7 result hidden",
+      "Mar 9, 2:22 AM \u00b7 result hidden",
+      "Mar 10, 2:22 AM \u00b7 result hidden",
+      "Mar 10, 5:13 PM \u00b7 result hidden",
+      "Mar 11, 1:59 AM \u00b7 result hidden",
+      "Mar 12, 12:28 AM \u00b7 result hidden",
+      "Mar 12, 11:01 AM \u00b7 result hidden",
+      "Mar 12, 11:35 AM \u00b7 result hidden",
+      "Mar 13, 1:08 AM \u00b7 result hidden",
+      "Mar 13, 4:45 AM \u00b7 result hidden",
+      "Mar 16, 11:06 PM \u00b7 result hidden",
+      "Mar 17, 2:41 AM \u00b7 result hidden",
+      "Mar 17, 1:04 PM \u00b7 result hidden",
+      "Mar 18, 5:44 AM \u00b7 result hidden",
+      "Mar 20, 12:44 AM \u00b7 result hidden",
+      "Mar 20, 3:08 AM \u00b7 result hidden",
+      "Mar 23, 12:57 PM \u00b7 result hidden",
+      "Mar 24, 5:02 PM \u00b7 result hidden",
+      "Mar 24, 10:47 PM \u00b7 result hidden",
+      "Mar 25, 3:05 AM \u00b7 result hidden",
+      "Mar 25, 12:27 PM \u00b7 result hidden",
+      "Mar 25, 10:03 PM \u00b7 result hidden",
+      "Mar 26, 5:23 AM \u00b7 result hidden",
+      "Mar 31, 6:12 AM \u00b7 result hidden",
+      "Apr 2, 6:58 PM \u00b7 result hidden",
+      "Apr 5, 5:51 PM \u00b7 result hidden",
+      "Apr 8, 5:02 PM \u00b7 result hidden",
+      "Apr 9, 5:22 AM \u00b7 result hidden",
+      "Apr 9, 8:06 AM \u00b7 result hidden",
+      "Apr 9, 11:53 AM \u00b7 result hidden",
+      "Apr 9, 9:53 PM \u00b7 result hidden",
+      "Apr 12, 7:07 PM \u00b7 result hidden"
+     ],
+     "trade_option_count": 77,
+     "context_line": "\u2026 \u00b7 Account 6 \u00b7 trade 77 at this firm",
+     "moments": [
+      "7:07 PM \u00b7 entry",
+      "7:10 PM",
+      "7:15 PM",
+      "7:20 PM",
+      "7:25 PM",
+      "7:30 PM",
+      "7:35 PM",
+      "7:40 PM",
+      "7:45 PM",
+      "7:50 PM",
+      "7:55 PM",
+      "8:00 PM",
+      "8:05 PM",
+      "9:00 PM",
+      "10:00 PM",
+      "11:00 PM",
+      "Apr 13, 12:00 AM",
+      "Apr 13, 1:00 AM",
+      "Apr 13, 2:00 AM",
+      "Apr 13, 3:00 AM",
+      "Apr 13, 4:00 AM",
+      "Apr 13, 5:00 AM",
+      "Apr 13, 6:00 AM",
+      "Apr 13, 7:00 AM",
+      "Apr 13, 8:00 AM",
+      "Apr 13, 9:00 AM",
+      "Apr 13, 10:00 AM",
+      "Apr 13, 11:00 AM",
+      "Apr 13, 12:00 PM",
+      "Apr 13, 1:00 PM",
+      "Apr 13, 2:00 PM",
+      "Apr 13, 3:00 PM",
+      "Apr 13, 4:00 PM"
+     ],
+     "recorded_line_labels": [
+      "7:07 PM",
+      "Initial stop"
+     ],
+     "half_exit_shown": false,
+     "chart_x_range_chicago": [
+      "April 12, 2026, 5:00 PM",
+      "April 13, 2026, 4:00 PM"
+     ],
+     "chart_window_rule": "chart_window (scheduled day in point in time)",
+     "chart_layout_x_range": [
+      "2026-04-12 17:00:00",
+      "2026-04-13 16:00:00"
+     ]
+    }
+   },
+   "full_history_option_sets_final": {
+    "account_options": [
+     "All accounts",
+     "Account 1",
+     "Account 2",
+     "Account 3",
+     "Account 4",
+     "Account 5",
+     "Account 6"
+    ],
+    "trade_option_count": 114,
+    "context_line": "\u2026 \u00b7 Account 6 \u00b7 trade 77 of 114 at this firm"
+   },
+   "setup_record": {
+    "pre_task_source": {
+     "link": "same_execution",
+     "record_configuration": "S1_D80_W1_P1",
+     "record_trade_id": "f606eb74-139b-598c-8792-6c9e70c9cfa2",
+     "setup_id": "07489b82-711f-5b16-885f-a76b7b600a53",
+     "same_target": true,
+     "settings_differences": 1,
+     "identity_established": null,
+     "source_sentence": "Zones come from the saved setup record of configuration S1_D80_W1_P1 for the same execution: same entry time, entry, stop and target",
+     "matched_fields": "package entry_match_key (entry instant, direction, entry family, entry price) + initial stop + target",
+     "record_htf_gap": {
+      "timeframe_seconds": 14400,
+      "low_ticks": 97806,
+      "high_ticks": 100347,
+      "confirmed_chicago": "April 8, 2026, 1:00 AM"
+     },
+     "review_step_label": "Four-hour gap is valid"
+    },
+    "final_source": {
+     "link": "same_execution",
+     "record_configuration": "S1_D80_W1_P1",
+     "record_trade_id": "f606eb74-139b-598c-8792-6c9e70c9cfa2",
+     "setup_id": "07489b82-711f-5b16-885f-a76b7b600a53",
+     "same_target": true,
+     "settings_differences": 1,
+     "identity_established": false,
+     "source_sentence": "Related context from configuration S1_D80_W1_P1's saved setup record for the same entry time, direction, entry price and stop, and target; exact setup identity for this configuration is not established.",
+     "matched_fields": "package entry_match_key (entry instant, direction, entry family, entry price) + initial stop + target",
+     "record_htf_gap": {
+      "timeframe_seconds": 14400,
+      "low_ticks": 97806,
+      "high_ticks": 100347,
+      "confirmed_chicago": "April 8, 2026, 1:00 AM"
+     },
+     "review_step_label": "Higher-timeframe gap is valid"
+    }
+   },
+   "funded_trade_strategy_trade_id": "e3dcb3e9-a0d2-526c-892c-99a3ab649b57",
+   "minute_companion_final": {
+    "status": "linked",
+    "reason": "",
+    "checks": {
+     "times_readable": true,
+     "no_mismatched_rows": true,
+     "identity_unique": true,
+     "minutes_inside_trade": true,
+     "minute_times_agree": true,
+     "no_duplicate_minutes": true,
+     "count_matches": true
+    },
+    "source": {
+     "folder": "funded_comparison_5fa65149843484b1_export_v4",
+     "version": 4,
+     "result_id": "5fa65149843484b143b64701a20aa063fb1e2da34708db8b4d6a2a2acbf4d09b",
+     "sha256": "6201ef47e5d052772d00958b34462b7f481c3f32f72fb4c706aa172235694867"
+    },
+    "rows": [
+     {
+      "configuration": "S1-T1-H14-P1-L-SO",
+      "firm": "TakeProfitTrader",
+      "account_number": "6",
+      "trade_entry_chicago": "April 12, 2026 07:07 PM CDT",
+      "trade_exit_chicago": "April 13, 2026 03:55 PM CDT",
+      "trade_exit_kind": "scheduled_close",
+      "trade_net_result_usd": "6,254.72",
+      "minute_open_utc": "2026-04-13T07:03:00+00:00",
+      "minute_chicago": "April 13, 2026 2:03:00 AM CDT",
+      "why_recorded_trades_did_not_rebuild_the_candle": "2 trades share the minute's first exchange timestamp (one matching event, prices 25,124.00, 25,124.75); the file lists 25,124.75 first, the candle opened at 25,124.00. High, low, last trade and trade count agree",
+      "what_the_minute_can_decide": "No stop, target, break-even stop or loss limit lies inside the minute's price range, so no ordering inside it can change the half exit, the final exit or account survival; it only moves the open-position mark between its high and low",
+      "ordering_can_change_final_exit_or_result": "False",
+      "ordering_can_change_account_survival": "False",
+      "ordering_can_change_payout_qualification": "False"
+     }
+    ],
+    "trade_minutes_approximated": 1,
+    "evidence_sentence_full_history": "1,247 minutes on recorded exchange trades, 1 approximated from the one-minute bar: April 13, 2:03 AM \u2014 2 trades share the minute's first exchange timestamp; the file lists 25,124.75 first, the candle opened at 25,124.00. No stop, target, break-even stop or loss limit lies inside the minute's price range, so no ordering inside it can change the half exit, the final exit or account survival; it only moves the open-position mark between its high and low. Source: the published review folder (export 4 of this result), approximated_minutes.csv, hash-checked. The exit was priced from recorded trades."
+   }
+  }
+ },
+ "a8_isolated_reproduction": {
+  "ledger": "the redesign's ISOLATED copy's review ledger (never the owner's)",
+  "seed": {
+   "ledger": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifvg-dashboard-redesign-20260924\\isolated\\app\\data\\ifvg_visual_review\\review_v1.jsonl",
+   "backup_sha256": "e861127e085749a16b65e2af000c454cd65d2d8d4500e0b7eb2e663b3ca59661",
+   "after_seed_sha256": "e6411a3a8a64b2eb1a3ed5268c897ff7954ed494a6541f821022f7e4a63f57ed",
+   "seeded_review_id": "7ed05e3c3ad249fabf38feab227fa5a1",
+   "case_key": "funded:5fa65149843484b143b64701a20aa063fb1e2da34708db8b4d6a2a2acbf4d09b:S1-T1-H14-P1-L-SO|takeprofittrader#6:e3dcb3e9-a0d2-526c-892c-99a3ab649b57",
+   "chart_key": "funded_comparison_result:5fa65149843484b143b64701a20aa063fb1e2da34708db8b4d6a2a2acbf4d09b"
+  },
+  "last_two_ledger_lines_after_the_ui_notes_only_save": [
+   {
+    "review_id": "7ed05e3c3ad249fabf38feab227fa5a1",
+    "reviewed_at": "2026-09-25T17:52:16.536703+00:00",
+    "candidate_id": "funded:5fa65149843484b143b64701a20aa063fb1e2da34708db8b4d6a2a2acbf4d09b:S1-T1-H14-P1-L-SO|takeprofittrader#6:e3dcb3e9-a0d2-526c-892c-99a3ab649b57",
+    "reviewer": "A8 check",
+    "overall_verdict": "correct",
+    "htf_verdict": null,
+    "parent_verdict": null,
+    "entry_verdict": "correct",
+    "stop_verdict": "incorrect",
+    "outcome_verdict": null,
+    "notes": "old mixed judgment"
+   },
+   {
+    "review_id": "39da61a910924b6cb926d37230e7534a",
+    "reviewed_at": "2026-09-25T17:52:35.245827+00:00",
+    "candidate_id": "funded:5fa65149843484b143b64701a20aa063fb1e2da34708db8b4d6a2a2acbf4d09b:S1-T1-H14-P1-L-SO|takeprofittrader#6:e3dcb3e9-a0d2-526c-892c-99a3ab649b57",
+    "reviewer": "A8 check",
+    "overall_verdict": "correct",
+    "htf_verdict": null,
+    "parent_verdict": null,
+    "entry_verdict": null,
+    "stop_verdict": null,
+    "outcome_verdict": null,
+    "notes": "notes-only save; steps left Not reviewed"
+   }
+  ],
+  "restored_sha256": "e861127e085749a16b65e2af000c454cd65d2d8d4500e0b7eb2e663b3ca59661"
+ },
+ "previously_cited_captures": {
+  "10_setup_new_8637.png": {
+   "present": true,
+   "bytes": 180963,
+   "sha256": "26abb4f4f8ef0be85dedfa0beb8afd14bf6f15807e514ec3b87c44852c2a880b",
+   "relied_on_by_this_closeout": false
+  },
+  "11b_review_threshold_pinned.png": {
+   "present": true,
+   "bytes": 214711,
+   "sha256": "52c6d3db3c376166558d806511bb1f423698ad519ebdc494fad75a3c5fbf8365",
+   "relied_on_by_this_closeout": false
+  },
+  "10_setup_readonly_830868_pinned.png": {
+   "present": true,
+   "bytes": 196220,
+   "sha256": "3ccd56e4cdca462e907d1bceb3c7c8b69bd1f6243a44626500020aa8c731328d",
+   "relied_on_by_this_closeout": false
+  },
+  "11b_review_blocked_830868_pinned.png": {
+   "present": true,
+   "bytes": 192606,
+   "sha256": "c15b234e0cb646198eee96d55e60d9aa41d240218539e8c2dadfb30ce621ca18",
+   "relied_on_by_this_closeout": false
+  }
+ }
+}

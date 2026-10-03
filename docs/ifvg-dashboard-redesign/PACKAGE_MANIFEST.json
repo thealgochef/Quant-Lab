@@ -1,0 +1,209 @@
+{
+  "package": "IFVG Lab redesign build task",
+  "created": "2026-09-23",
+  "skill": "/build-ifvg-redesign",
+  "prerequisite": "docs/ifvg-dashboard-repairs (R1–R8) complete",
+  "payload_count": 38,
+  "archive_file_count_including_this_manifest": 39,
+  "payloads": [
+    {
+      "path": ".claude/skills/build-ifvg-redesign/SKILL.md",
+      "bytes": 2155,
+      "sha256": "4d44f983d947e9459d0c9142ea78b874e029c5970bae024d36a135c4d56b0e92"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/CALCULATIONS.md",
+      "bytes": 11723,
+      "sha256": "45e1133d0cb0b1fe6352449989634d6bbb21c22b7257c400c18d56090747dd1a"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/DECISION_RULES.md",
+      "bytes": 5271,
+      "sha256": "caa83990306fd50004c19dbb3fe8e0268854faf7ecf4efd3debb4602626225ac"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/DESIGN_SYSTEM.md",
+      "bytes": 4334,
+      "sha256": "5add856b36a8e03ddb6de6b188d9246edce34cca7b925d30a6b6d5c991edf2fd"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/README.md",
+      "bytes": 2001,
+      "sha256": "838e4a80d1a061469dc90f3a63bc555511530d2c87fdf9141c5dcdd0d2007427"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/SCREENS.md",
+      "bytes": 9481,
+      "sha256": "9ea9e828a4a84176b7b7c43096e4834e626716458581821ad4163105a5c5a784"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/TASK.md",
+      "bytes": 10147,
+      "sha256": "f8d60922d3730a5e3626debd52c685b22b8b4c8fa59259b6626626f1a4a9096a"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/TASKS.md",
+      "bytes": 2573,
+      "sha256": "8cc4933c4af3b503909f2165b4c34e30d813fcd8804599da16ae5c819233bd6c"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/mocks/README.md",
+      "bytes": 3426,
+      "sha256": "7d2b721c3a96b02ba49e7ac62a9573cb40db03e3289033574e8a183bc6e5872a"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/mocks/images/01_my_studies.png",
+      "bytes": 120510,
+      "sha256": "a32fd2a99061642d201b9fe1b74458960c2e5bc15e6897d30f80bafddb94de02"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/mocks/images/02_funded_results.png",
+      "bytes": 220603,
+      "sha256": "7a92864d38c0e8527775be7a8afad1f64460e19a0ff4bdd626a07276b8e561a3"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/mocks/images/02b_funded_results_state_myfundedfutures.png",
+      "bytes": 221036,
+      "sha256": "0235641ff2133cd8ea83430af886794db3ff20811e36976f62583509790e63dc"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/mocks/images/03_detail_summary.png",
+      "bytes": 225455,
+      "sha256": "a7649f5491c1e8c274b5fa3f9fd6c84247e24f1abe397d38501937b6703af139"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/mocks/images/03b_detail_summary_state_68_percent_range.png",
+      "bytes": 225638,
+      "sha256": "61ad82cf749a340e326866f8371dae177c8b880e6f70b1e0bb884b961aef8359"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/mocks/images/04_detail_payouts_and_accounts.png",
+      "bytes": 244632,
+      "sha256": "f8119212b7c5d5da12915b6efd8870e4c306e488c5178059d417d91de56eb921"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/mocks/images/05_detail_risk_and_simulation.png",
+      "bytes": 333252,
+      "sha256": "445acb2e749447fcc0e39d397160eed79c6258b7b84a6ae6a3b4c7ebde7b02ca"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/mocks/images/05b_detail_risk_state_shuffle_every_trade.png",
+      "bytes": 294075,
+      "sha256": "3fccfdbe7ae6b70f939bd153919b19a983dfedb5dd814934d402fbec2f1b3547"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/mocks/images/06_detail_trades.png",
+      "bytes": 177766,
+      "sha256": "6cce493156f7f28aa9ef485daea8e3159d17f23ae705ce805a0f0483fe2943dd"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/mocks/images/07_detail_market_conditions.png",
+      "bytes": 170357,
+      "sha256": "d5af68f57da41daf793add00ee87c2511c29252c66e0946365fadd32ca172e49"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/mocks/images/08_detail_settings_and_evidence.png",
+      "bytes": 277653,
+      "sha256": "4f60f4b5d9f1abef05dfefd6b9890f7b20c099f571eb8c2621e4cf31d9662f8e"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/mocks/images/09_trade_review.png",
+      "bytes": 221439,
+      "sha256": "4cba5ab2a781a7930e090c5fc62708f7c1540ed6948d9101b91f25b83d569939"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/mocks/images/09b_trade_review_state_point_in_time.png",
+      "bytes": 191500,
+      "sha256": "86d05373e2b2da3ea40f715f71fbc418c49cf5ca97d647d10bbc7c3a4e14b816"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/mocks/images/10_new_funded_comparison_setup.png",
+      "bytes": 148701,
+      "sha256": "b7b192742925cc46a867e79c45d61974b71dd7895913afdc78643f3655590890"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/mocks/images/10b_setup_state_legacy_baseline_warning.png",
+      "bytes": 151441,
+      "sha256": "5d1f10e8fe6005678ebe6dc07ac2194c7ba0f2cab5782d813df7df8467fe5d15"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/mocks/images/11_review_and_approve.png",
+      "bytes": 145465,
+      "sha256": "ada5ef59f0749254e47f598442f4c6747a5e7618203834fa63f90d8504b1acbe"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/mocks/images/11b_review_state_blocked_engine_and_bad_threshold.png",
+      "bytes": 162064,
+      "sha256": "215ff901f553c8c83a40a192a5018eb2eea07ccc7c8df86cd274d9469754d5df"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/mocks/source/Configure.dc.html",
+      "bytes": 17811,
+      "sha256": "a1e78d02d47787cae24993b365d9231e0c632a5f84d13032a9b9bc3fdde63dd4"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/mocks/source/ConfigureReview.dc.html",
+      "bytes": 13743,
+      "sha256": "2e64914c6150c04b728f8563052e72e21b200140bba44fe80132a517d27e95bf"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/mocks/source/Detail.dc.html",
+      "bytes": 23351,
+      "sha256": "42e2b1716e566cecac87e3e7dbc07023d341395c644b1ff79c685ca25011f4da"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/mocks/source/DetailEvidence.dc.html",
+      "bytes": 18791,
+      "sha256": "4c9cb3967963accc71e123bfe819471f9b900e545c8c697f8b9220977523fbb7"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/mocks/source/DetailMarket.dc.html",
+      "bytes": 24494,
+      "sha256": "273f6b04c168ce7b46b55dae5dbc3fa83b2277177ea8d29f3ed047b743d2c110"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/mocks/source/DetailPayouts.dc.html",
+      "bytes": 28493,
+      "sha256": "67545b6597553276af3d8b70e3e447f0189a47af6eaf406286a8274bc1a26497"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/mocks/source/DetailRisk.dc.html",
+      "bytes": 52626,
+      "sha256": "33e9cfca5e72300369a173094e59ccce3e27355dcc4b21ee9b11bf64dc9fd6be"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/mocks/source/DetailTrades.dc.html",
+      "bytes": 26348,
+      "sha256": "f69fa54078732ed56b9981fcdbb97fe8e97eeb4db1e422b8cf169540da46bf31"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/mocks/source/Library.dc.html",
+      "bytes": 12352,
+      "sha256": "5966e813b7f48f38533c403fd966d3dd96f6690fa9f69174fdf47c788e7f61fa"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/mocks/source/Main.dc.html",
+      "bytes": 17609,
+      "sha256": "eced5cc73d64ea93c31c59382963db117e33f93ca32f9284397af02e164b6af7"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/mocks/source/TradeReview.dc.html",
+      "bytes": 36205,
+      "sha256": "f68ad11bcab8d921005d749d16ac2264c6475999f211f83c51c60c5f30bdb232"
+    },
+    {
+      "path": "docs/ifvg-dashboard-redesign/mocks/source/support.js",
+      "bytes": 185864,
+      "sha256": "82ab863dabf94f79db1b4ced13046a03425dcd255e97a5e42c60b6e8035fea34"
+    }
+  ],
+  "checked": {
+    "relative_paths_only": true,
+    "skill_frontmatter_valid": true,
+    "skill_file_references_exist": true,
+    "mock_images_decode": true,
+    "image_references_resolve": true,
+    "mock_images_rendered_from_source_files_in_headless_browser": true
+  },
+  "not_checked": "Did not run Claude Code, operate the dashboard, or edit any repository."
+}

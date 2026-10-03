@@ -1,0 +1,287 @@
+{
+ "source_tree": "76bb3b0c514b0d1fba2fcfec17beb1694943b6c7",
+ "model_id": "conditional_firm_ledger_resampling_v1",
+ "model_name": "Conditional resampling of recorded trades using the selected firm's ledger rules",
+ "limitations": [
+  "Source selection: every path redraws this configuration's recorded funded trades, which already reflect the historical accounts' entry selection and the opportunities they skipped.",
+  "Fixed slots: each redrawn trade is placed in one of the study's fixed trade slots (the recorded entry time, exit time and trading day), not where the strategy would have traded on a fresh account.",
+  "Shortened liquidation outcomes: a trade cut short when a historical account was lost keeps its shortened result.",
+  "Compressed intratrade path: each trade is reduced to its entry, lowest, highest and exit points, so a reversal between them, a missing intermediate observation, is not represented."
+ ],
+ "not_claimed": [
+  "not an exact model of a fresh account at either firm",
+  "not a regenerated full-strategy scenario; no new strategy research was run",
+  "the historical-order parity below is an integration check of the adapter, not proof that other sampled orders are modelled exactly"
+ ],
+ "source": {
+  "funded_result_id": "5fa65149843484b143b64701a20aa063fb1e2da34708db8b4d6a2a2acbf4d09b",
+  "funded_plan_id": "78406b15cdd9c1363b7cf626f7e45d48e58f6aa4e634a25dc00a3e57bdb28336",
+  "saved_result_file": "data/ifsm_ui_replication/search/v1/funded_comparison_results/5fa65149843484b143b64701a20aa063fb1e2da34708db8b4d6a2a2acbf4d09b/result.json",
+  "saved_result_sha256": "8af24879965eff7aa86fd0eb6c6091f09153c3b4e92b9794d51651c29a7654dd",
+  "strategy_package_root": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\archived-reports\\ifvg_daily_close_sessions_20260918\\final_extracted_4e5ce379c54731dd",
+  "strategy_package_manifest_sha256": "11d49020e43eeff29ba809946b8ee0d5c1fd71eb3ea4b4133142d05412f4fa73",
+  "stored_minute_bars_rows": 156125
+ },
+ "parameters": {
+  "configuration": "S1-T1-H14-P1-L-SO",
+  "paths": 1000,
+  "seed": 20260923,
+  "method": "blocks",
+  "block_size": 10,
+  "draw_length": 200,
+  "extension_seed": 270876963,
+  "sampling": "each path draws trade indices with replacement: blocks of 10 consecutive recorded trades at random starts (the fixed-boundary diagnostic's own draw for the first 200 slots; later slots from the extension seed)"
+ },
+ "slot_and_compression_rules": [
+  "Slots: the study's own recorded trades of this configuration at this firm, in execution order; each slot keeps its entry instant, exit instant and trading day.",
+  "Each path puts one recorded trade's outcome into each slot; a slot whose account refuses entries (finished for the day, or payout processing) is skipped.",
+  "Each trade is compressed to entry, lowest equity point, highest equity point and exit (plus the recorded half exit); order of lowest and highest from the record or the stored one-minute bars, otherwise highest first by convention.",
+  "Trades an account loss cut short keep their recorded shortened result.",
+  "Costs, quantity, tick value, firm terms and processing clock are the saved result's frozen settings."
+ ],
+ "denominators": {
+  "average_payouts_among_failed_within_horizon": "payouts received by accounts that failed before the cutoff \u00f7 accounts that failed before the cutoff (all paths pooled)",
+  "pooled_net_cash_per_purchased_account": "(all paths' payouts received after the split \u2212 all account purchases) \u00f7 all accounts purchased (all paths pooled; not a mean of per-path ratios)",
+  "first_account_shares": "share of paths whose FIRST account received a payout first / failed first / neither by the cutoff",
+  "recorded_percentile": "(paths with net cash below the recorded net cash + half of ties) \u00f7 paths",
+  "unresolved": "payout requests with no receipt by the cutoff; their amounts are never counted as received"
+ },
+ "clocks": {
+  "eligibility": "ledger event eligibility_secured: realized balance \u2265 retained cushion + minimum request right after a closed trade, account alive and flat; no more entries that day",
+  "request": "ledger event requested: at the end of that trading day",
+  "receipt": "ledger event received: after the saved processing clock",
+  "failure": "account failed_ns",
+  "trades_to_endpoint": "the first account's trades closed at or before the event",
+  "days_to_endpoint": "calendar days from the first account's purchase"
+ },
+ "firms": {
+  "takeprofittrader": {
+   "firm_name": "TakeProfitTrader",
+   "slots": 114,
+   "horizon": {
+    "first_trading_day": "2026-01-13",
+    "last_trading_day": "2026-06-10",
+    "first_slot_trading_day": "2026-01-13",
+    "last_slot_trading_day": "2026-06-05",
+    "cutoff_chicago": "June 10, 2026, 4:00 PM"
+   },
+   "application_cache_key": {
+    "fields": [
+     "store_root",
+     "result_id",
+     "configuration",
+     "firm_key",
+     "model_id",
+     "method",
+     "seed",
+     "paths",
+     "slots",
+     "cutoff_ns",
+     "terms_digest"
+    ],
+    "values": [
+     "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab\\data\\ifsm_ui_replication\\search\\v1",
+     "5fa65149843484b143b64701a20aa063fb1e2da34708db8b4d6a2a2acbf4d09b",
+     "S1-T1-H14-P1-L-SO",
+     "takeprofittrader",
+     "conditional_firm_ledger_resampling_v1",
+     "blocks",
+     20260923,
+     1000,
+     114,
+     1781125200000000000,
+     "18f938a7809a1ba4a12704db00a862b0f03a1583addcfa5cf1b41df70b2293a8"
+    ],
+    "cutoff_utc": "2026-06-10T21:00:00Z",
+    "terms_digest_function": "firm_race.terms_digest(saved firm terms, saved processing clock)"
+   },
+   "recorded_net_cash_usd": 30781.88,
+   "screen_summary": {
+    "firm_key": "takeprofittrader",
+    "firm_name": "TakeProfitTrader",
+    "paths": 1000,
+    "seed": 20260923,
+    "method": "blocks",
+    "slots": 114,
+    "paid_share": 0.584,
+    "died_share": 0.416,
+    "still_going_share": 0.0,
+    "typical_to_payout": 6.0,
+    "typical_to_limit": 6.0,
+    "payouts_before_death": 1.8379970544918998,
+    "lost_accounts": 3395,
+    "cash_per_account": 5327.744689419796,
+    "accounts_bought": 4395,
+    "net_cash_bad": 9809.972500000002,
+    "net_cash_typical": 23144.355000000003,
+    "net_cash_good": 38058.489499999996,
+    "seconds": 7.6,
+    "model_id": "conditional_firm_ledger_resampling_v1",
+    "payouts_by_failed": 6240,
+    "failed_accounts": 3395,
+    "open_accounts": 1000,
+    "payouts_by_open": 4616,
+    "unresolved_requests": 0,
+    "unresolved_trader_cents": 0,
+    "received_cents_total": 2386372791,
+    "costs_cents_total": 44829000,
+    "median_trades_to_eligibility": 6.0,
+    "median_trades_to_request": 6.0,
+    "median_trades_to_receipt": 6.0,
+    "median_trades_to_failure": 6.0,
+    "median_days_to_eligibility": 3.499897937440648,
+    "median_days_to_request": 3.9583333333333335,
+    "median_days_to_receipt": 8.958333333333334,
+    "median_days_to_failure": 3.479610953080486,
+    "horizon_first_day": "2026-01-13",
+    "horizon_last_day": "2026-06-10"
+   },
+   "recorded_percentile": 0.818
+  },
+  "myfundedfutures": {
+   "firm_name": "MyFundedFutures",
+   "slots": 114,
+   "horizon": {
+    "first_trading_day": "2026-01-13",
+    "last_trading_day": "2026-06-10",
+    "first_slot_trading_day": "2026-01-13",
+    "last_slot_trading_day": "2026-06-05",
+    "cutoff_chicago": "June 10, 2026, 4:00 PM"
+   },
+   "application_cache_key": {
+    "fields": [
+     "store_root",
+     "result_id",
+     "configuration",
+     "firm_key",
+     "model_id",
+     "method",
+     "seed",
+     "paths",
+     "slots",
+     "cutoff_ns",
+     "terms_digest"
+    ],
+    "values": [
+     "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab\\data\\ifsm_ui_replication\\search\\v1",
+     "5fa65149843484b143b64701a20aa063fb1e2da34708db8b4d6a2a2acbf4d09b",
+     "S1-T1-H14-P1-L-SO",
+     "myfundedfutures",
+     "conditional_firm_ledger_resampling_v1",
+     "blocks",
+     20260923,
+     1000,
+     114,
+     1781125200000000000,
+     "bc98ede2e49d806a46c1e0ceffc6bef121f4567d501485a567ef6d38c43e01fa"
+    ],
+    "cutoff_utc": "2026-06-10T21:00:00Z",
+    "terms_digest_function": "firm_race.terms_digest(saved firm terms, saved processing clock)"
+   },
+   "recorded_net_cash_usd": 34818.11,
+   "screen_summary": {
+    "firm_key": "myfundedfutures",
+    "firm_name": "MyFundedFutures",
+    "paths": 1000,
+    "seed": 20260923,
+    "method": "blocks",
+    "slots": 114,
+    "paid_share": 0.679,
+    "died_share": 0.321,
+    "still_going_share": 0.0,
+    "typical_to_payout": 6.0,
+    "typical_to_limit": 10.0,
+    "payouts_before_death": 2.477893890675241,
+    "lost_accounts": 2488,
+    "cash_per_account": 7542.235911697248,
+    "accounts_bought": 3488,
+    "net_cash_bad": 11799.3495,
+    "net_cash_typical": 25900.545,
+    "net_cash_good": 42784.474,
+    "seconds": 7.2,
+    "model_id": "conditional_firm_ledger_resampling_v1",
+    "payouts_by_failed": 6165,
+    "failed_accounts": 2488,
+    "open_accounts": 1000,
+    "payouts_by_open": 4622,
+    "unresolved_requests": 0,
+    "unresolved_trader_cents": 0,
+    "received_cents_total": 2674331886,
+    "costs_cents_total": 43600000,
+    "median_trades_to_eligibility": 6.0,
+    "median_trades_to_request": 6.0,
+    "median_trades_to_receipt": 6.0,
+    "median_trades_to_failure": 10.0,
+    "median_days_to_eligibility": 3.5404719061609837,
+    "median_days_to_request": 3.9583333333333335,
+    "median_days_to_receipt": 8.958333333333334,
+    "median_days_to_failure": 9.50757465961147,
+    "horizon_first_day": "2026-01-13",
+    "horizon_last_day": "2026-06-10"
+   },
+   "recorded_percentile": 0.823
+  }
+ },
+ "historical_order_parity": {
+  "leader_pairs": {
+   "takeprofittrader": {
+    "exact": true,
+    "saved": {
+     "net_cash_cents": 3078188,
+     "received_cents": 3139388,
+     "payouts": 13,
+     "accounts": 6,
+     "costs_cents": 61200
+    },
+    "replayed": {
+     "net_cash_cents": 3078188,
+     "received_cents": 3139388,
+     "payouts": 13,
+     "accounts": 6,
+     "costs_cents": 61200
+    },
+    "trades_matching": 114,
+    "trades": 114,
+    "unpinned_shapes": 0,
+    "inexact_shapes": 0
+   },
+   "myfundedfutures": {
+    "exact": true,
+    "saved": {
+     "net_cash_cents": 3481811,
+     "received_cents": 3531811,
+     "payouts": 13,
+     "accounts": 4,
+     "costs_cents": 50000
+    },
+    "replayed": {
+     "net_cash_cents": 3481811,
+     "received_cents": 3531811,
+     "payouts": 13,
+     "accounts": 4,
+     "costs_cents": 50000
+    },
+    "trades_matching": 114,
+    "trades": 114,
+    "unpinned_shapes": 0,
+    "inexact_shapes": 0
+   }
+  },
+  "all_128_pairs": {
+   "status": "reported, not re-run here",
+   "detail": "no saved per-pair receipt exists from the redesign; the existing integration test tests/agents/ifvg_lab/test_firm_race.py asserts that all 128 configuration-and-firm pairs replay exactly and runs in the final full-suite run (see validation_summary.json)"
+  }
+ },
+ "cache_identity": {
+  "note": "each firm's application_cache_key above is the exact key the application stores this default-draw result under (process memory only; never written to a store). A result under another model id or terms digest is refused."
+ },
+ "summary_statistics_rules": {
+  "percentiles": "numpy.percentile, linear interpolation (5th, 50th, 95th of path net cash)",
+  "recorded_percentile": "(paths with net cash below the recorded value by more than $0.005 + half the paths within $0.005) / paths",
+  "median_trades_and_days_to_eligibility_request_receipt": "median over paths whose first account reached that event by the cutoff",
+  "median_trades_and_days_to_failure": "median over paths whose FIRST account failed before any payout was received (first_account_endpoint == failed)",
+  "endpoint_shares": "counts of first_account_endpoint received / failed / open, divided by paths"
+ },
+ "seconds": 16.7,
+ "created_local": "2026-09-25 01:33:36 PM Central Daylight Time"
+}

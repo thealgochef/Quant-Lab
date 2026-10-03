@@ -1,0 +1,104 @@
+{
+  "package": "IFVG Lab redesign fixes (owner review)",
+  "created": "2026-09-24",
+  "skill": "/fix-ifvg-redesign-review",
+  "follows": "docs/ifvg-dashboard-redesign (redesign complete, handoff reviewed)",
+  "payload_count": 17,
+  "archive_file_count_including_this_manifest": 18,
+  "payloads": [
+    {
+      "path": ".claude/skills/fix-ifvg-redesign-review/SKILL.md",
+      "bytes": 1760,
+      "sha256": "360c17cc1e5fbc42e8096e967dfebe51aa627ed08966fba1df68bcd54a2512f8"
+    },
+    {
+      "path": "docs/ifvg-redesign-fixes/README.md",
+      "bytes": 1278,
+      "sha256": "fcd7927e4b9dbe1e6e986f3406378fa2b64189cfeb6d0dc2067f3522d189a485"
+    },
+    {
+      "path": "docs/ifvg-redesign-fixes/SOURCE_OBSERVATIONS.md",
+      "bytes": 4995,
+      "sha256": "fee288b9931790e495f4e5a448fab608d0ceb9306bc93ef44e7875d722f3c2db"
+    },
+    {
+      "path": "docs/ifvg-redesign-fixes/TASK.md",
+      "bytes": 13951,
+      "sha256": "f57cfbb3b40526a496e277818ce0a863b3107ee2a08b562ca58cfc16f65fbfa7"
+    },
+    {
+      "path": "docs/ifvg-redesign-fixes/TASKS.md",
+      "bytes": 2099,
+      "sha256": "b628df3a3f36cc3f28a78dcad4848d87b401bce7ac95bc0e78ee533409db54fc"
+    },
+    {
+      "path": "docs/ifvg-redesign-fixes/evidence/02_summary_early_losses_flat_22_percent.png",
+      "bytes": 46763,
+      "sha256": "d7a86b59e62b9d2c4e72e20e8d6ebbbfb2ee5d072190c8e3e376cbfca7ea043e"
+    },
+    {
+      "path": "docs/ifvg-redesign-fixes/evidence/03_firm_rules_race_actual_vs_typical.png",
+      "bytes": 142791,
+      "sha256": "2e92d92e8394c5cbfa07368c6c5002d09198fbb786b4200d85530453cb063ad7"
+    },
+    {
+      "path": "docs/ifvg-redesign-fixes/evidence/04a_library_draft_6_configurations.png",
+      "bytes": 28544,
+      "sha256": "254d96a9cd79fd56a032735a6087d652409ed9188fcf38ece3fcb980fc9c95cf"
+    },
+    {
+      "path": "docs/ifvg-redesign-fixes/evidence/04b_setup_same_draft_36_configurations.png",
+      "bytes": 36039,
+      "sha256": "02b8fb3fcc1ec27627361c9639ec1f11666be17195ad72f0160d622d09e4a98e"
+    },
+    {
+      "path": "docs/ifvg-redesign-fixes/evidence/05_point_in_time_count_and_accounts.png",
+      "bytes": 33887,
+      "sha256": "848fdbcacf330e0bc91cd42a9d646d529b603622ce84db5a6bbf3a109f04c92e"
+    },
+    {
+      "path": "docs/ifvg-redesign-fixes/evidence/08a_breadcrumb_generic_label.png",
+      "bytes": 54734,
+      "sha256": "a8571f401190694cdad09dc6346bfa35e5b0460015f21d9dd299c1e4c326ec6c"
+    },
+    {
+      "path": "docs/ifvg-redesign-fixes/evidence/08b_breadcrumb_study_name.png",
+      "bytes": 49974,
+      "sha256": "be0a1317289d6c4f5ecb7497dc980d7ef7c3abfbecf947bc09bed665c63a461e"
+    },
+    {
+      "path": "docs/ifvg-redesign-fixes/evidence/09a_earlier_wizard_red_bar_iso_name.png",
+      "bytes": 60374,
+      "sha256": "6e428c3a3d9dcfc49491a28ebfc5a674fba389171a2c43ee89a44c5048851c37"
+    },
+    {
+      "path": "docs/ifvg-redesign-fixes/evidence/09b_rail_labels_my_studies.png",
+      "bytes": 9629,
+      "sha256": "e6573894f3841309ba134b41adb2134188108c33b2fe55770630c062201ae281"
+    },
+    {
+      "path": "docs/ifvg-redesign-fixes/evidence/09c_rail_labels_wizard.png",
+      "bytes": 8859,
+      "sha256": "8c1fb3a548dcd8bd1c930090a1fe42371b751b04a1365ce7a1250cdee5d515e8"
+    },
+    {
+      "path": "docs/ifvg-redesign-fixes/evidence/10a_mixed_number_formats.png",
+      "bytes": 34240,
+      "sha256": "222fde1d62085d244323ffe538a87abce4f8def44f01b7f54df3c2f36795e758"
+    },
+    {
+      "path": "docs/ifvg-redesign-fixes/evidence/10b_ranking_names_wrap_three_lines.png",
+      "bytes": 93954,
+      "sha256": "decaa27484dfc6dfe5b57257bdb92372f036899e135376057bcdecd23d540cdc"
+    }
+  ],
+  "checked": {
+    "relative_paths_only": true,
+    "skill_frontmatter_valid": true,
+    "skill_file_references_exist": true,
+    "evidence_images_decode": true,
+    "evidence_references_resolve": true,
+    "evidence_crops_taken_unchanged_from_handoff_screenshots": true
+  },
+  "not_checked": "Did not run Claude Code, operate the dashboard, or edit any repository."
+}

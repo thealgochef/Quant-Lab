@@ -67,7 +67,9 @@ def _app():
 
 
 def _open_funded(at):
-    at.button(key="ifvg_workspace_new").click().run()
+    # New study (left rail) opens the funded setup; "Other study types" the earlier chooser
+    at.button(key="ifvg_lab_v1_rail_New_study").click().run()
+    at.button(key="ifvg_lab_v1_other_types").click().run()
     at.selectbox[0].select("Funded five-account operation (earlier budgeted mode)").run()
     next(b for b in at.button if b.label == "Configure study").click().run()
     assert not at.exception, at.exception
@@ -90,9 +92,12 @@ def test_settings_save_reopen_reach_the_worker_and_publish(env):
     assert any("MyFundedFutures" in e.value for e in at.error)
     # reopen from My studies in a fresh session: the saved value comes back
     at.number_input(key="ifvg_funded_quantity").set_value(2).run()
-    fresh = AppTest.from_function(_app, default_timeout=60).run()
-    draft_button = next(b for b in fresh.button if b.label == "Continue")
-    draft_button.click().run()
+    # (reopened as My studies' "Continue" opens a saved draft)
+    fresh = AppTest.from_function(_app, default_timeout=60)
+    fresh.session_state["ifvg_workspace_destination"] = "New study"
+    fresh.session_state["ifvg_workspace_screen"] = "new"
+    fresh.session_state["ifvg_study_v1_draft_id"] = saved[0].parent.name
+    fresh.run()
     assert fresh.number_input(key="ifvg_funded_quantity").value == 2
     # the authorized plan launches exactly one worker for the frozen plan
     assert not fresh.button(key="ifvg_funded_run").disabled
@@ -132,7 +137,8 @@ def test_settings_save_reopen_reach_the_worker_and_publish(env):
     assert [e["event_type"] for e in ledger[1:]] == ["run_started", "run_completed"]
     # the completed study is listed and its verified result renders
     listed = AppTest.from_function(_app, default_timeout=60).run()
-    open_button = next(b for b in listed.button if b.label == "View results")
+    # My studies lists it with the library's "Open results" action
+    open_button = next(b for b in listed.button if b.label == "Open results")
     open_button.click().run()
     assert not listed.exception, listed.exception
     text = " ".join(str(m.value) for m in listed.markdown)

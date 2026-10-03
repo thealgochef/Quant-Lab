@@ -16,6 +16,7 @@ from alpha_lab.agents.data_infra.ifvg.presentation.workspace import (
     human_name,
     profile_name,
 )
+from alpha_lab.agents.data_infra.ifvg.study_drafts import date_in_words
 
 _DRAFT = f"{STATE_PREFIX}draft_id"
 _PREFIX = "ifvg_research_wizard_"
@@ -76,15 +77,16 @@ def _choose_study(st, roots):
             from ifvg_funded_comparison_study import _sources, start_comparison_draft
 
             sources = list(_sources().values())
-            draft = start_comparison_draft(f"Funded configuration comparison — {date.today()}",
-                                           sources[0] if sources else None)
+            draft = start_comparison_draft(
+                f"Funded configuration comparison — {date_in_words(date.today())}",
+                sources[0] if sources else None)
             w.save_draft(Path(roots["draft_root"]), draft)
             st.session_state[_DRAFT] = draft.draft_id
             st.rerun()
         if card_id == "funded_payout":
             from ifvg_funded_study import start_funded_draft
 
-            draft = start_funded_draft(f"Funded payout simulation — {date.today()}")
+            draft = start_funded_draft(f"Funded payout simulation — {date_in_words(date.today())}")
             w.save_draft(Path(roots["draft_root"]), draft)
             st.session_state[_DRAFT] = draft.draft_id
             st.rerun()
@@ -101,7 +103,8 @@ def _choose_study(st, roots):
         card = next(card for card in TASK_CARDS if card.card_id == card_id)
         draft = start_draft_from_card(card, roots)
         draft.display_name = (
-            f"{more if more != 'Use selection above' else selected} study — {date.today()}"
+            f"{more if more != 'Use selection above' else selected} study — "
+            f"{date_in_words(date.today())}"
         )
         if more == "Strategy across firms":
             draft.mode_id = "universal_prop_search"

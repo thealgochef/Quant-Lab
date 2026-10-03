@@ -58,6 +58,11 @@ REVIEW_TAGS = (
     "wrong_slot_death_evidence",
     "parentless_interval_mismatch",
     "fill_depth_disputed",
+    # trade-review tags of the redesigned Trade review (additive; mock 09)
+    "a_plus_setup",
+    "stop_too_tight",
+    "stale_parent",
+    "news_time",
 )
 _VERDICT_FIELDS = (
     "overall_verdict",

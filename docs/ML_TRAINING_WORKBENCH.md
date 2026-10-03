@@ -881,3 +881,101 @@ Repair-only changes to the existing IFVG Lab screens in both applications; task 
   closures, pre-2026 preparation and whether stored pre-2026 days count as already
   authorized; the first Feature and model load of about four minutes) are listed in full in
   [ifvg-dashboard-repairs/OPEN_DECISIONS.md](ifvg-dashboard-repairs/OPEN_DECISIONS.md).
+
+### IFVG Lab redesign (September 24, 2026)
+
+Both applications show the redesigned IFVG Lab (task record `docs/ifvg-dashboard-redesign/`).
+It is presentation only: no study, replay, cost, account or payout rule changed, and every
+screen reads saved records.
+
+- **Left rail** — My studies, Trade review, New study and the note "All times Chicago,
+  12-hour". In the main application the rail also links the other workspaces. The page
+  address mirrors the open screen, so reloading or sharing a link opens the same view. A link
+  only selects what to show; it never saves, approves or launches anything.
+- **My studies** lists every study of both applications' stores. Its tabs are Funded
+  comparisons, Strategy studies, Model studies, Drafts and Archived. There are two actions,
+  **Open results** and **Continue draft**. Clone, rename, archive and the earlier status
+  actions stay on each study's page, which opens from the study's name. A funded result saved
+  by the other application opens read-only. Other rows from the other application name the
+  application that opens them.
+- **Funded results** shows:
+  - a status line whose Details list every verification notice;
+  - the selection and unseen windows;
+  - the merged ranking by net cash, driven by the firm switch;
+  - checks on the leader: drop the largest payout, the 95% range of the result per trade,
+    deflated Sharpe for N configurations, and quality gates.
+
+  The firm switch sets the one firm that every detail tab and Trade review show. Firms are
+  never added together.
+- **Configuration detail** has six tabs:
+  - **Summary**: tiles, the four-part verdict, findings, key measures with a 68/90/95% range
+    switch, concentration and quality gates. A gate the strategy replay did not store shows
+    "Not in export".
+  - **Payouts and accounts**: every earlier panel, and one account's balance against its loss
+    limit by trade.
+  - **Risk and simulation**: a fixed closed-profit boundary diagnostic, resampled paths with
+    a method switch (both methods draw the recorded trades with replacement), end values,
+    losing streaks and a sampled closed-profit drawdown chart. It uses a fixed seed; **Run
+    again** draws a new one and says so. **Run conditional resampling with <firm>'s rules**
+    puts the same resampled draws through the funded ledger, with its limitations shown (see
+    "IFVG Lab analytical corrections" below).
+  - **Trades**: the result distribution, a performance summary, excursions and the trade
+    list. A row opens that trade in Trade review.
+  - **Market conditions**, with a **Labels** switch: Retrospective (each day's own close)
+    or Known at entry (only closes completed before the day's open).
+  - **Settings and evidence**: settings with their sources, verification, corrections,
+    limitations, decisions, and a download of the published review folder.
+- **Trade review** has four sources: Funded trades, Strategy trades, Verified context and
+  Setups not taken. A funded trade is drawn on the stored one-minute E-mini candles, with
+  setup zones from the configuration's own saved setup record, or — for a configuration that
+  is not a member of the verified study — another configuration's record of the same
+  execution, labelled "Related context …; exact setup identity for this configuration is not
+  established", or the placeholder "Setup zones weren't recorded for this study". Point in
+  time hides everything after the chosen moment, including the result. Reviews save per
+  result, firm, account and trade in the existing ledger.
+- **New study** opens **New funded comparison**, and **Other study types** opens the earlier
+  chooser.
+  - The setup page defaults to S0_D80_W1_P1, warns on the legacy baseline, and takes the date
+    range, readable setting chips and the two new settings (withdrawal trigger and gap rule).
+  - **Review and approve** shows what changes first, the pass/fail checks (an impossible value
+    is flagged, never trimmed), and a lock when the running engine can't represent the saved
+    plan.
+  - Settings the engine or simulator can't run yet are saved in the draft but block approval
+    with a plain message.
+  - Approval and launch use only the existing gated path. The earlier configurator stays
+    under More.
+- Limits and placeholders: `docs/ifvg-dashboard-redesign/handoff/DATA_GAPS.md`.
+
+### IFVG Lab analytical corrections (September 25, 2026)
+
+Wording and derived analyses corrected on the redesigned screens (task record
+`docs/ifvg-redesign-fixes/`; definitions `docs/ifvg-redesign-fixes/followup-1/CALCULATION_DEFINITIONS.md`,
+maintained since follow-up 1). No study, account, exit, payout, cost or
+calendar rule changed and no saved record was written.
+
+- **Summary**: findings name the model they quote ("Early losses in the fixed-boundary
+  diagnostic" or "Early account failures (conditional model)"); the held-to-deadline finding
+  quotes the held halves; the index finding is "Low daily linear association with the index";
+  the Sharpe tile is the "Probabilistic Sharpe ratio" with a line saying what it assumes; the
+  Edge verdict can read "Not supported"; buy and hold is measured from one entry instant.
+- **Risk and simulation**: "Fixed closed-profit boundaries: which is crossed first?" (lower
+  and upper boundary inputs) and "Sampled closed-profit drawdown from a previous high" are
+  diagnostics, not payout or failure models. "Conditional resampling of recorded trades with
+  <firm>'s ledger rules" shows its limitations, the average payouts among accounts that failed
+  within the tested horizon (with numerator, denominator, open accounts and requests still
+  processing), pooled net cash per purchased account, and separate eligibility, request and
+  receipt clocks. Percentile sentences are descriptive (ties count half); there is no
+  lucky/unlucky wording. The historical-order sentence names what the check compares: the
+  five summary figures, the number of trades, and each trade's net result and account-loss
+  flag. It does not compare fill times, prices or quantities, which account took each trade,
+  payout or failure times, or setup lineage.
+- **Market conditions**: the Labels switch; Known at entry labels trades by their entry's
+  trading day only.
+- **Trade review**: related setup context is labelled as such; point in time also hides the
+  five-largest note, earlier reviews and later loss-limit events, and uses the scheduled day as
+  the chart range; the price-evidence line links the published approximated-minute record.
+  "How the setup formed" dates each step by when it became known. A tap or a close-through
+  appears when its candle closes ("The 7:05 PM candle closes through it · 7:06 PM"), so at a
+  point in time the text, key and chart agree.
+- **Review and approve**: the time-under-water check is a neutral pending decision; left-out
+  combinations are explained before approval.

@@ -1,0 +1,107 @@
+{
+ "no_write_preservation": {
+  "scope_roots": [
+   "data/ifsm_ui_replication",
+   "data/ifvg_study_drafts",
+   "data/ifvg_search_jobs",
+   "data/ifvg_pipeline_jobs",
+   "data/ifvg_preparation_jobs",
+   "data/ifvg_visual_review",
+   "data/ifvg_profiles.json",
+   "data/ifvg_datasets/search/v1",
+   "data/ifvg_datasets/search_test/v1",
+   "data/ifvg_experiments",
+   "reports/funded_comparison",
+   "reports/funded_payout",
+   "data/ifvg_datasets/context_views",
+   "data/ifvg_datasets/replay_chart",
+   "data/ifvg_datasets/replay_chart_catalog_v1.json",
+   "data/ifvg_datasets/context_pair_catalog_v1.json",
+   "research/core",
+   "pyproject.toml"
+  ],
+  "before": {
+   "label": "pre",
+   "created_local": "2026-09-25 11:01:05 AM Central Daylight Time",
+   "files": 22619,
+   "inventory_digest": "80f477e0ed5c7358c0f86f3cb05933b505b8065dc7ec9af707b54351c35440e8"
+  },
+  "after": {
+   "label": "post",
+   "created_local": "2026-09-25 02:14:08 PM Central Daylight Time",
+   "files": 22619,
+   "inventory_digest": "80f477e0ed5c7358c0f86f3cb05933b505b8065dc7ec9af707b54351c35440e8"
+  },
+  "files_per_root_before": {
+   "data/ifsm_ui_replication": 41,
+   "data/ifvg_datasets/context_pair_catalog_v1.json": 1,
+   "data/ifvg_datasets/context_views": 4,
+   "data/ifvg_datasets/replay_chart": 32,
+   "data/ifvg_datasets/replay_chart_catalog_v1.json": 1,
+   "data/ifvg_datasets/search/v1": 22128,
+   "data/ifvg_experiments": 101,
+   "data/ifvg_pipeline_jobs": 61,
+   "data/ifvg_preparation_jobs": 6,
+   "data/ifvg_profiles.json": 1,
+   "data/ifvg_search_jobs": 12,
+   "data/ifvg_study_drafts": 33,
+   "data/ifvg_visual_review": 1,
+   "pyproject.toml": 1,
+   "reports/funded_comparison": 165,
+   "reports/funded_payout": 27,
+   "research/core": 4
+  },
+  "changed": [],
+  "added": [],
+  "removed": [],
+  "identical": true,
+  "meaning": "Byte-identical saved study, draft, approval, review, export and payout records before and after this task (SHA-256 per file). This shows no writes to these files; it does not show that nothing read them.",
+  "isolated_copy": {
+   "review_ledger_sha256_before_and_after": "e861127e085749a16b65e2af000c454cd65d2d8d4500e0b7eb2e663b3ca59661",
+   "note": "The only write in the isolated copy was the A8 reproduction, restored byte for byte. Other isolated files were not snapshotted before the task; no save, approve or run control was pressed in the application."
+  }
+ },
+ "source_bindings": {
+  "saved_result": {
+   "path": "data/ifsm_ui_replication/search/v1/funded_comparison_results/5fa65149843484b143b64701a20aa063fb1e2da34708db8b4d6a2a2acbf4d09b/result.json",
+   "sha256": "8af24879965eff7aa86fd0eb6c6091f09153c3b4e92b9794d51651c29a7654dd",
+   "isolated_copy_sha256": "8af24879965eff7aa86fd0eb6c6091f09153c3b4e92b9794d51651c29a7654dd",
+   "isolated_copy_identical": true
+  },
+  "plan_id": "78406b15cdd9c1363b7cf626f7e45d48e58f6aa4e634a25dc00a3e57bdb28336",
+  "strategy_package": {
+   "root": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\archived-reports\\ifvg_daily_close_sessions_20260918\\final_extracted_4e5ce379c54731dd",
+   "manifest_sha256": "11d49020e43eeff29ba809946b8ee0d5c1fd71eb3ea4b4133142d05412f4fa73",
+   "market_bars_last_trading_day": "2026-06-10 (last bar closes 2026-06-10T21:00:00Z)"
+  },
+  "published_export_v4": {
+   "folder": "reports/funded_comparison/funded_comparison_5fa65149843484b1_export_v4",
+   "run_manifest_sha256": "96343fc26e2aa323536fb62101e601b5126f18d39140299eaad1af915bfa8133",
+   "approximated_minutes_csv_sha256": "6201ef47e5d052772d00958b34462b7f481c3f32f72fb4c706aa172235694867",
+   "matches_manifest": true
+  },
+  "firm_terms_digests": {
+   "takeprofittrader": "18f938a7809a1ba4a12704db00a862b0f03a1583addcfa5cf1b41df70b2293a8",
+   "myfundedfutures": "bc98ede2e49d806a46c1e0ceffc6bef121f4567d501485a567ef6d38c43e01fa"
+  }
+ },
+ "access_evidence": {
+  "kind": "declared, not audited: file hashes cannot prove the absence of reads",
+  "read_on_purpose": [
+   "the saved funded result (store and isolated copy) through its verified reader",
+   "the plan's verified strategy package: data/trades.csv (setup records), configs.json, run_context.json, MANIFEST.json, shared/market_bars.parquet (stored one-minute bars; the file ends at the June 10, 2026, 4:00 PM close)",
+   "the published export v4 folder: run_manifest.json, approximated_minutes.csv, trades.csv, settings.json, firm_rules.json, configuration_bindings.json",
+   "the saved-record roots listed above, read in full by the hashing itself"
+  ],
+  "not_read": [
+   "raw market data under data/databento (no file opened)",
+   "anything dated June 11, 2026 or later"
+  ],
+  "uncertainties": [
+   "A disk-usage command was run inside the isolated copy, which holds a data/databento junction; a scratch test showed this du does not follow junctions (0 bytes counted through one), and du reads directory metadata only.",
+   "The application process was not instrumented; the funded screens read bars from the verified package, but no read audit proves the process never touched other files."
+  ],
+  "lead_notes": "# Data-access notes (lead session, September 25, 2026)\n\nChronological notes of every read outside source/docs that could matter for the no-read boundary.\n\n- 11:00 AM: `snapshot_state.py pre` hashed the saved-record roots it lists (stores under data/ifsm_ui_replication, data/ifvg_study_drafts, data/ifvg_search_jobs, data/ifvg_pipeline_jobs, data/ifvg_preparation_jobs, data/ifvg_visual_review, data/ifvg_profiles.json, data/ifvg_datasets/search/v1, search_test/v1, context_views, replay_chart and two catalogs, data/ifvg_experiments, reports/funded_comparison, reports/funded_payout, research/core, pyproject.toml). Hashing reads those files' bytes. data/databento is not among the roots.\n- 10:55\u201311:05 AM: read the published export folder reports/funded_comparison/funded_comparison_5fa65149843484b1_export_v4 (run_manifest.json, approximated_minutes.csv, trades.csv, settings.json, firm_rules.json, configuration_bindings.json) \u2014 published review files, not raw market data.\n- 11:06 AM: benchmark check read the verified strategy package's shared/market_bars.parquet through market.load_index_minutes with the study cutoff (the same stored one-minute bars the app reads; rows after the June 10, 2026 cutoff are filtered by the reader after loading the file's selected columns).\n- ~11:12 AM: ran `du -sh .` inside the isolated app copy (\u2026/ifvg-dashboard-redesign-20260924/isolated/app), which contains data/databento as a directory junction to the live data/databento. Verified at 11:14 AM with a scratch junction that this Git Bash `du` does NOT follow directory junctions without -L (a folder holding only a junction to 4.8 MB reported 0; with -L it reported 4.8 MB). So the junction was not traversed; du reads directory metadata only, no file contents. Recorded here because AGENTS.md forbids recursive listing of data/databento.\n- ~11:41 AM: provenance probe read the saved result, the verified package's data/trades.csv (setup records), shared/market_bars.parquet (through load_index_minutes with the cutoff) and the published export v4 approximated_minutes.csv/run_manifest.json; the pre-task run imported code from a git-archive extraction in the session scratchpad.\n- ~11:46 AM: race_evidence.py read the same saved result, package calendar and stored bars.\n- 11:56 AM: A8 UI reproduction on the ISOLATED copy's review ledger (\u2026/ifvg-dashboard-redesign-20260924/isolated/app/data/ifvg_visual_review/review_v1.jsonl): backed up (sha256 e861127e\u2026), one seeded review appended through visual_review_store.append_review, one notes-only save through the page, then the backed-up bytes restored (sha256 e861127e\u2026 verified). The owner's ledger under the repository's data/ was never opened for writing.\n- Isolated app (port 8661) reads the isolated store copy; the funded screens captured here read one-minute bars from the verified strategy package through the app's own readers. The isolated copy also holds a read-only data/databento junction used by the application's other reviewers; no captured screen opens it, but the app process is not instrumented to prove that (no read audit).\n"
+ },
+ "june_11_2026_onward": "not read (the only bar file used ends at the June 10, 2026, 4:00 PM close)"
+}

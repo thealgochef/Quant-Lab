@@ -68,6 +68,22 @@ Updated: 2026-09-23.
   `../Claude-Quant-Lab-Research-Artifacts/ifvg-dashboard-repairs-20260923/`; the
   handoff folder/ZIP under `reports/ifvg_dashboard_repairs/` is never committed.
 
+- IFVG Lab redesign (2026-09-24): task record, ledger and handoff in
+  `docs/ifvg-dashboard-redesign/` (TASKS.md; `handoff/` holds the report, feature map,
+  decisions log, data gaps and screenshots). Shared Streamlit-free code in
+  `src/alpha_lab/agents/data_infra/ifvg/presentation/lab/`; the shell and screens are
+  `scripts/ifvg_lab_*.py`, routed by `scripts/ifvg_workspace.py`. Every number follows
+  `docs/ifvg-dashboard-redesign/CALCULATIONS.md` as corrected on September 25, 2026 by
+  `docs/ifvg-redesign-fixes/followup-1/CALCULATION_DEFINITIONS.md` (the maintained copy; the
+  closeout's copy is the delivered version, kept unchanged). It wins where they differ:
+  diagnostics are not payout or failure models, the firm-ledger race is conditional, market
+  labels are retrospective or known at entry, and a setup's tap or close-through is known when
+  its candle closes. Reference tests are in
+  `tests/agents/ifvg_lab/test_reference_values.py` (skipped where the saved study is absent).
+  Screens read saved records only; approval and launch still go through the existing gated
+  funded path. Browser checks ran on an isolated store copy in
+  `../Claude-Quant-Lab-Research-Artifacts/ifvg-dashboard-redesign-20260924/`.
+
 ## Commands
 
 Run from the repo root (`C:\Users\gonza\Documents\Claude-Quant-Lab`, Windows; system Python 3.13 — no venv activation step):

@@ -351,7 +351,8 @@ def test_duplicate_detection_and_the_proposed_name(tmp_path) -> None:
         "Compare one configuration with the baseline",
         baseline_profile_name="ifvg_v2_doc_default_fresh_static_1r",
         day="2026-09-04",
-    ) == "Compare one configuration with the baseline — doc default fresh static 1r — 2026-09-04"
+    ) == ("Compare one configuration with the baseline — doc default fresh static 1r — "
+          "September 4, 2026")
     assert proposed_draft_name(
         "Search FSM parameters", baseline_profile_name=None, day="2026-09-04"
-    ) == ("Search FSM parameters — 2026-09-04")
+    ) == ("Search FSM parameters — September 4, 2026")

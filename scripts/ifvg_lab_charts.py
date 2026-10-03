@@ -33,6 +33,7 @@ from strategy_core.constants import IFVG_DOC_SESSIONS, RESEARCH_SESSION_SCHEME
 
 # Single sources of truth: sealed boundary + both ET session schemes.
 from alpha_lab.agents.data_infra.ifvg.config import SEALED_HOLDOUT_START
+from alpha_lab.agents.data_infra.ifvg.presentation.lab import theme
 
 __all__ = [
     "TICK_SIZE",
@@ -45,6 +46,7 @@ __all__ = [
     "dedup_zones",
     "zone_style",
     "level_series",
+    "level_style",
     "stage_markers",
     "manipulation_swing_price",
     "trade_overlays",
@@ -301,18 +303,29 @@ def zone_style(role: str, selected: bool, *, recomputed: bool = False) -> dict:
 
 # ── levels: step-series honoring available_from ───────────────────────────────
 
+#: Level line styles. The session levels keep their own colors (they read on both
+#: themes); the neutral grays name the palette key ``muted``, which
+#: :func:`level_style` resolves for the active theme when a figure is built.
 LEVEL_STYLE = {
-    "pdh": {"color": "#54585E", "dash": "solid"},
-    "pdl": {"color": "#54585E", "dash": "solid"},
+    "pdh": {"color": "muted", "dash": "solid"},
+    "pdl": {"color": "muted", "dash": "solid"},
     "asia_high": {"color": "#2E9990", "dash": "dash"},
     "asia_low": {"color": "#2E9990", "dash": "dash"},
     "london_high": {"color": "#B8860B", "dash": "dash"},
     "london_low": {"color": "#B8860B", "dash": "dash"},
     "ny_high": {"color": "#4C78A8", "dash": "dash"},
     "ny_low": {"color": "#4C78A8", "dash": "dash"},
-    "prev_ny_high": {"color": "#8C8C8C", "dash": "dot"},
-    "prev_ny_low": {"color": "#8C8C8C", "dash": "dot"},
+    "prev_ny_high": {"color": "muted", "dash": "dot"},
+    "prev_ny_low": {"color": "muted", "dash": "dot"},
 }
+_LEVEL_FALLBACK = {"color": "muted", "dash": "dot"}
+
+
+def level_style(name: str) -> dict:
+    """One level's line style, its palette key resolved for the active theme."""
+    style = LEVEL_STYLE.get(name, _LEVEL_FALLBACK)
+    colors = theme.palette()
+    return {"color": colors.get(style["color"], style["color"]), "dash": style["dash"]}
 
 
 def level_series(levels: pd.DataFrame) -> pd.DataFrame:
@@ -665,6 +678,17 @@ def _bar_high_at(tf_bars: pd.DataFrame, ts: pd.Timestamp) -> float | None:
     return float(tf_bars["high_ticks"].iloc[idx]) * TICK_SIZE
 
 
+def _ground(fig: go.Figure) -> go.Figure:
+    """The active palette's chart ground: transparent paper, the chart-ground plot
+    area, body-colored text and grid lines, read when the figure is built."""
+    colors = theme.palette()
+    fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor=colors["chart_ground"],
+                      font={"color": colors["body"]})
+    fig.update_xaxes(gridcolor=colors["grid"])
+    fig.update_yaxes(gridcolor=colors["grid"])
+    return fig
+
+
 # Possible later upgrade: streamlit-lightweight-charts for TradingView-feel
 # panning/zooming — the payload builders above are renderer-agnostic on purpose.
 def build_replay_figure(
@@ -701,9 +725,10 @@ def build_replay_figure(
         .reset_index(drop=True)
     )
     fig = go.Figure()
+    c = theme.palette()
     if tf_bars.empty:
         fig.update_layout(title=f"{day} — no bars at {timeframe_seconds}s")
-        return fig
+        return _ground(fig)
     if max_bar_index is not None:
         tf_bars = tf_bars.iloc[: max(1, max_bar_index + 1)]
     start_ts = pd.Timestamp(tf_bars["open_ts_utc"].iloc[0])
@@ -726,7 +751,7 @@ def build_replay_figure(
                 annotation_text=f"{band['name']} ({scheme_key})",
                 annotation_position="top left" if scheme_key == "engine" else "bottom left",
                 annotation_font_size=9,
-                annotation_font_color="#8C8C8C",
+                annotation_font_color=c["muted"],
             )
 
     # 3) levels, availability-windowed, labeled.
@@ -736,7 +761,7 @@ def build_replay_figure(
         for name, group in series.groupby("name"):
             if group["price"].isna().all():
                 continue
-            style = LEVEL_STYLE.get(str(name), {"color": "#8C8C8C", "dash": "dot"})
+            style = level_style(str(name))
             fig.add_trace(
                 go.Scatter(
                     x=group["close_ts_utc"],
@@ -790,7 +815,7 @@ def build_replay_figure(
                     x=hover_x,
                     y=hover_y,
                     mode="markers",
-                    marker={"size": 5, "color": "#8C8C8C", "opacity": 0.4},
+                    marker={"size": 5, "color": c["muted"], "opacity": 0.4},
                     hovertext=hover_t,
                     hoverinfo="text",
                     name="FVG zones",
@@ -844,7 +869,7 @@ def build_replay_figure(
                     textfont={"size": 9},
                     marker={
                         "size": 10,
-                        "color": "#333333",
+                        "color": c["ink"],
                         "symbol": [
                             _STAGE_SYMBOLS.get(m["stage"], "circle") for m in vis
                         ],
@@ -865,7 +890,7 @@ def build_replay_figure(
                     x=[x0, min(sel_overlay["entry_ts"], cutoff)],
                     y=[sel_overlay["swing_price"]] * 2,
                     mode="lines",
-                    line={"color": "#333333", "dash": "dashdot", "width": 1},
+                    line={"color": c["ink"], "dash": "dashdot", "width": 1},
                     name="manipulation swing (stop -/+ 1t)",
                     legendgroup="stages",
                     hoverinfo="name+y",
@@ -887,8 +912,8 @@ def build_replay_figure(
                             marker={
                                 "symbol": "x-thin",
                                 "size": 9,
-                                "color": "#8C8C8C",
-                                "line": {"width": 1.5, "color": "#8C8C8C"},
+                                "color": c["muted"],
+                                "line": {"width": 1.5, "color": c["muted"]},
                             },
                             opacity=0.55,
                             hovertext=(
@@ -963,7 +988,7 @@ def build_replay_figure(
                         x=[o["entry_ts"], end_x],
                         y=[price] * 2,
                         mode="lines",
-                        line={"color": "#8C8C8C", "dash": "dot", "width": 1},
+                        line={"color": c["muted"], "dash": "dot", "width": 1},
                         name=label,
                         legendgroup="trades",
                         showlegend=False,
@@ -981,7 +1006,7 @@ def build_replay_figure(
                     showarrow=True,
                     arrowhead=2,
                     font={"size": 10},
-                    bgcolor="rgba(255,255,255,0.75)",
+                    bgcolor=theme.rgba("panel", 0.75),
                 )
 
     # 1) the candlesticks themselves (top layer).
@@ -1011,7 +1036,7 @@ def build_replay_figure(
         legend={"orientation": "h", "y": -0.06},
         hovermode="closest",
     )
-    return fig
+    return _ground(fig)
 
 
 # ── experiment result figures ─────────────────────────────────────────────────
@@ -1037,12 +1062,12 @@ def build_equity_figure(trade_stats: dict, unit: str = "usd") -> go.Figure:
     fig.add_trace(
         go.Scatter(x=ts, y=-dd, mode="lines", name=f"drawdown ({label})",
                    line={"color": "#D62728", "width": 1.5}, fill="tozeroy",
-                   fillcolor="rgba(214,39,40,0.15)"),
+                   fillcolor=_rgba("#D62728", 0.15)),
         row=2, col=1,
     )
     fig.update_layout(height=440, margin={"l": 40, "r": 20, "t": 30, "b": 24},
                       legend={"orientation": "h", "y": 1.08})
-    return fig
+    return _ground(fig)
 
 
 def build_r_histogram_figure(r_histogram: dict) -> go.Figure:
@@ -1055,7 +1080,7 @@ def build_r_histogram_figure(r_histogram: dict) -> go.Figure:
         height=320, xaxis_title="net R bin", yaxis_title="trades",
         margin={"l": 40, "r": 20, "t": 30, "b": 60}, bargap=0.15,
     )
-    return fig
+    return _ground(fig)
 
 
 def build_calibration_figure(model_section: dict) -> go.Figure:
@@ -1064,11 +1089,12 @@ def build_calibration_figure(model_section: dict) -> go.Figure:
     actual = [r["actual"] for r in rows]
     ns = [r["n"] for r in rows]
     fig = go.Figure()
+    c = theme.palette()
     lo = min([0.0, *mean_p, *actual])
     hi = max([1.0, *mean_p, *actual])
     fig.add_trace(
         go.Scatter(x=[lo, hi], y=[lo, hi], mode="lines", name="perfect",
-                   line={"color": "#8C8C8C", "dash": "dot", "width": 1})
+                   line={"color": c["muted"], "dash": "dot", "width": 1})
     )
     fig.add_trace(
         go.Scatter(
@@ -1082,7 +1108,7 @@ def build_calibration_figure(model_section: dict) -> go.Figure:
         height=340, xaxis_title="mean predicted p(win)", yaxis_title="actual win rate",
         margin={"l": 40, "r": 20, "t": 30, "b": 40},
     )
-    return fig
+    return _ground(fig)
 
 
 def _coverage_rows(payload) -> list[dict]:
@@ -1149,7 +1175,7 @@ def build_coverage_figure(payload) -> go.Figure:
                       xaxis2_title="p(win) threshold")
     fig.update_yaxes(title_text="coverage", range=[0, 1.02], row=1, col=1)
     fig.update_yaxes(title_text=net_label, row=2, col=1)
-    return fig
+    return _ground(fig)
 
 
 def build_reliability_figure(bins: pd.DataFrame) -> go.Figure:
@@ -1161,10 +1187,11 @@ def build_reliability_figure(bins: pd.DataFrame) -> go.Figure:
     observed = frame["observed_rate"].astype(float).tolist()
     counts = frame["count"].tolist() if "count" in frame else [None] * len(frame)
     fig = go.Figure()
+    c = theme.palette()
     fig.add_trace(
         go.Scatter(x=[0.0, 1.0], y=[0.0, 1.0], mode="lines",
                    name="perfect calibration (diagonal)",
-                   line={"color": "#8C8C8C", "dash": "dot", "width": 1})
+                   line={"color": c["muted"], "dash": "dot", "width": 1})
     )
     fig.add_trace(
         go.Scatter(
@@ -1181,7 +1208,7 @@ def build_reliability_figure(bins: pd.DataFrame) -> go.Figure:
         margin={"l": 40, "r": 20, "t": 30, "b": 40},
         legend={"orientation": "h", "y": 1.08},
     )
-    return fig
+    return _ground(fig)
 
 
 # ── config flatten/diff (compare + run-configuration panels) ──────────────────

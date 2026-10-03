@@ -238,3 +238,17 @@ commit `reports/`); engineering evidence stays in
 `../Claude-Quant-Lab-Research-Artifacts/ifvg-dashboard-repairs-20260923/`. Rules for the funded
 screens remain in [SPEC.md](funded-payout-implementation/SPEC.md) and the owner's decisions in
 [OWNER_DECISIONS.md](funded-payout-implementation/OWNER_DECISIONS.md).
+
+## IFVG Lab redesign (September 24, 2026)
+
+The [redesign task](ifvg-dashboard-redesign/TASK.md) rebuilt the IFVG workspace screens to the
+owner-approved mocks, on the saved study records only (no study, replay or preparation was
+run). Progress and acceptance are in the [ledger](ifvg-dashboard-redesign/TASKS.md); the
+handoff folder holds the [report](ifvg-dashboard-redesign/handoff/REDESIGN_REPORT.md), the
+[feature map](ifvg-dashboard-redesign/handoff/FEATURE_MAP.csv), the
+[decisions log](ifvg-dashboard-redesign/handoff/DECISIONS_LOG.md), the
+[data gaps](ifvg-dashboard-redesign/handoff/DATA_GAPS.md) and side-by-side screenshots of every
+mock. Every number is defined in [CALCULATIONS.md](ifvg-dashboard-redesign/CALCULATIONS.md).
+Current screen behavior is summarized in the workbench section
+[IFVG Lab redesign](ML_TRAINING_WORKBENCH.md#ifvg-lab-redesign-september-24-2026). Engineering
+evidence stays in `../Claude-Quant-Lab-Research-Artifacts/ifvg-dashboard-redesign-20260924/`.

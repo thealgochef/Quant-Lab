@@ -246,7 +246,8 @@ def test_start_cards_derive_purpose_namespace_and_create_annotated_drafts(
     assert draft["steps"]["validation"]["run_scope"] == "full_authorized_development"
     assert draft["steps"]["validation"]["evidence_class"] == "real"
     assert draft["steps"]["validation"]["worker_limit"] == 1
-    assert draft["display_name"].startswith("Compare one configuration with the baseline — 2026-")
+    assert draft["display_name"].startswith("Compare one configuration with the baseline — ")
+    assert draft["display_name"].endswith(", 2026") and "2026-" not in draft["display_name"]
     assert at.session_state[study_tab.ROUTE_KEY] == "New Study"
 
 
@@ -307,5 +308,7 @@ def test_top_level_shell_uses_focused_research_navigation(monkeypatch, tmp_path)
     at.run()
     assert not at.exception
     assert not at.tabs
-    assert at.radio[0].options == ["My studies", "Trade review"]
+    rail = ("ifvg_lab_v1_rail_My_studies", "ifvg_lab_v1_rail_Trade_review",
+            "ifvg_lab_v1_rail_New_study")
+    assert {button.key for button in at.button} >= set(rail)  # the left rail, not a radio
     assert not at.code and not at.json

@@ -1,0 +1,532 @@
+{
+ "source": {
+  "head_commit": "1b9d4077ffc4f68fab51c2ba9333f135e7308fd4",
+  "pre_task_tree": "811f4b3889a53467a58b5c100f8a0075d65ec4b9",
+  "final_tree": "76bb3b0c514b0d1fba2fcfec17beb1694943b6c7",
+  "tree_note": "git tree ids of HEAD plus every uncommitted, non-ignored file, built in a temporary index (real index and working tree untouched)",
+  "task_only_patch_sha256": "f582fe37ef175a3590730d3e2252851cdb4138a5b992f4b6cdfe2f4186d12b91",
+  "task_only_patch_bytes": 672735,
+  "uncommitted_vs_head_patch_sha256": "fa4fca6ba5def21f039d8f8ec9115d8f005bb02467e684aa4b44868205d7fa7b",
+  "task_only_files": [
+   [
+    "M",
+    "AGENTS.md"
+   ],
+   [
+    "M",
+    "ARCHITECTURE.md"
+   ],
+   [
+    "M",
+    "docs/ML_TRAINING_WORKBENCH.md"
+   ],
+   [
+    "M",
+    "docs/ifvg-dashboard-redesign/CALCULATIONS.md"
+   ],
+   [
+    "M",
+    "docs/ifvg-dashboard-redesign/DECISION_RULES.md"
+   ],
+   [
+    "M",
+    "docs/ifvg-dashboard-redesign/SCREENS.md"
+   ],
+   [
+    "M",
+    "docs/ifvg-dashboard-redesign/handoff/DATA_GAPS.md"
+   ],
+   [
+    "M",
+    "docs/ifvg-dashboard-redesign/handoff/DECISIONS_LOG.md"
+   ],
+   [
+    "M",
+    "docs/ifvg-dashboard-redesign/handoff/REDESIGN_REPORT.md"
+   ],
+   [
+    "M",
+    "docs/ifvg-redesign-fixes/TASKS.md"
+   ],
+   [
+    "A",
+    "docs/ifvg-redesign-fixes/closeout/CALCULATION_DEFINITIONS.md"
+   ],
+   [
+    "A",
+    "docs/ifvg-redesign-fixes/closeout/FIX_REPORT.md"
+   ],
+   [
+    "A",
+    "docs/ifvg-redesign-fixes/closeout/REVIEW_FINDINGS.md"
+   ],
+   [
+    "A",
+    "docs/ifvg-redesign-fixes/closeout/SCREEN_EVIDENCE.md"
+   ],
+   [
+    "M",
+    "docs/ifvg-redesign-fixes/handoff/FIX_REPORT.md"
+   ],
+   [
+    "M",
+    "scripts/ifvg_lab_cache.py"
+   ],
+   [
+    "M",
+    "scripts/ifvg_lab_detail_market.py"
+   ],
+   [
+    "M",
+    "scripts/ifvg_lab_detail_risk.py"
+   ],
+   [
+    "M",
+    "scripts/ifvg_lab_detail_summary.py"
+   ],
+   [
+    "M",
+    "scripts/ifvg_lab_funded.py"
+   ],
+   [
+    "M",
+    "scripts/ifvg_lab_new_funded.py"
+   ],
+   [
+    "M",
+    "scripts/ifvg_lab_trade_review.py"
+   ],
+   [
+    "M",
+    "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/firm_race.py"
+   ],
+   [
+    "M",
+    "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/funded_measures.py"
+   ],
+   [
+    "M",
+    "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/funded_setup.py"
+   ],
+   [
+    "M",
+    "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/market.py"
+   ],
+   [
+    "A",
+    "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/minute_companion.py"
+   ],
+   [
+    "M",
+    "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/resampling.py"
+   ],
+   [
+    "M",
+    "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/review_chart.py"
+   ],
+   [
+    "M",
+    "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/review_panels.py"
+   ],
+   [
+    "M",
+    "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/setup_records.py"
+   ],
+   [
+    "A",
+    "tests/agents/ifvg_lab/test_ac_approval_paths.py"
+   ],
+   [
+    "A",
+    "tests/agents/ifvg_lab/test_ac_market.py"
+   ],
+   [
+    "A",
+    "tests/agents/ifvg_lab/test_ac_risk.py"
+   ],
+   [
+    "A",
+    "tests/agents/ifvg_lab/test_ac_trade_review.py"
+   ],
+   [
+    "M",
+    "tests/agents/ifvg_lab/test_detail_market.py"
+   ],
+   [
+    "M",
+    "tests/agents/ifvg_lab/test_detail_risk.py"
+   ],
+   [
+    "M",
+    "tests/agents/ifvg_lab/test_firm_race.py"
+   ],
+   [
+    "M",
+    "tests/agents/ifvg_lab/test_new_funded.py"
+   ],
+   [
+    "M",
+    "tests/agents/ifvg_lab/test_reference_values.py"
+   ],
+   [
+    "M",
+    "tests/agents/ifvg_lab/test_review_fixes.py"
+   ],
+   [
+    "M",
+    "tests/agents/ifvg_lab/test_setup_records.py"
+   ],
+   [
+    "M",
+    "tests/agents/ifvg_lab/test_trade_review.py"
+   ]
+  ],
+  "full_suite_ran_on": {
+   "tree_at_start": "76bb3b0c514b0d1fba2fcfec17beb1694943b6c7",
+   "tree_at_end": "76bb3b0c514b0d1fba2fcfec17beb1694943b6c7",
+   "equals_final_tree": true
+  },
+  "changes_after_the_final_tree": {
+   "delivered_tree_when_collected": "abfa4e35766e3b646df4863361f793ebabce8610",
+   "files": [
+    [
+     "M",
+     "docs/ifvg-redesign-fixes/TASKS.md"
+    ],
+    [
+     "M",
+     "docs/ifvg-redesign-fixes/closeout/FIX_REPORT.md"
+    ],
+    [
+     "M",
+     "docs/ifvg-redesign-fixes/closeout/REVIEW_FINDINGS.md"
+    ],
+    [
+     "M",
+     "docs/ifvg-redesign-fixes/closeout/SCREEN_EVIDENCE.md"
+    ]
+   ],
+   "only_files_under_docs": true,
+   "note": "documentation and closeout files written after the full suite; no source or test file changed after it (the list above is the full difference between the final tree and the delivered tree, taken when these facts were collected, before the closeout's own JSON, screenshots, manifest and ZIPs were written)"
+  }
+ },
+ "environment": {
+  "python": "3.13.1",
+  "libraries": {
+   "numpy": "2.3.1",
+   "pandas": "2.3.1",
+   "scipy": "1.16.0",
+   "streamlit": "1.54.0",
+   "plotly": "6.5.2",
+   "pytest": "9.0.2"
+  },
+  "ruff": "ruff 0.15.2",
+  "engine_default": {
+   "strategy_core_file": "C:\\Users\\gonza\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\strategy_core\\__init__.py",
+   "strategy_core_version": "0.1.0",
+   "strategy_core_source_identity": [
+    "1b9d4077ffc4f68fab51c2ba9333f135e7308fd4",
+    "7e97226b788ea9a934c1c2b27e7b7b2a62ff6e1568b862194ba546522f9a008c"
+   ]
+  },
+  "engine_pin": {
+   "file": "research/core/current.json",
+   "target_commit": "7c7111e398c083cf8e966e2e0c5aac8a41cc12c0",
+   "source_identity": "9247f16e223c9226f9afa17832c8810e31ce8853bfad9a0b5452e31845377bf3"
+  },
+  "engine_half_exit": {
+   "root": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\strategy-core-scale-out-exit",
+   "base_commit": "7c7111e398c083cf8e966e2e0c5aac8a41cc12c0",
+   "branch": "funded-scale-out-exit",
+   "patch_sha256": "962ad56a36471c85b1b05ea1e106eddce7bea2dcfc3a523ee6a01ab6b1011a6f"
+  }
+ },
+ "final_validation": {
+  "commands": [
+   "python -m ruff check src tests scripts",
+   "python -m pytest -q -p no:cacheprovider -rfs"
+  ],
+  "runner": "scripts/run_full_suite.sh (internal), detached Git Bash process",
+  "started_utc": "2026-09-25T18:34:06Z",
+  "finished_utc": "2026-09-25T19:12:31Z",
+  "ruff_exit_code": 0,
+  "pytest_exit_code": 1,
+  "collected": 3968,
+  "counts": {
+   "failed": 5,
+   "passed": 3959,
+   "skipped": 4
+  },
+  "duration_seconds": 2300.27,
+  "summary_line": "5 failed, 3959 passed, 4 skipped in 2300.27s (0:38:20)",
+  "failed_tests_with_baseline_comparison": [
+   {
+    "test": "tests/agents/data_infra/ifvg/test_catboost_bundle_model.py::test_frozen_m0_m3_catboost_lane_is_byte_and_identity_unchanged",
+    "failure_now": [
+     "E   AssertionError: assert 'f108eb345978...61011d151281b' == 'e9cd1be94514...59057adb41bd1'",
+     "E",
+     "E     - e9cd1be94514fe5564cf060a80329967f561af814d6fbf68a8459057adb41bd1"
+    ],
+    "earlier_receipts": {
+     "redesign_fixes_F1_run (September 25, 12:04 AM)": {
+      "failed": true,
+      "same_assertion": true
+     },
+     "theme_fix_run (September 25, 2:34 AM)": {
+      "failed": true,
+      "same_assertion": true
+     },
+     "this_task_run_1_on_tree_97ac9c15 (September 25, 12:50-1:26 PM)": {
+      "failed": true,
+      "same_assertion": true
+     }
+    },
+    "pre_existing_per_AGENTS_md": true
+   },
+   {
+    "test": "tests/agents/ifvg_search/test_htf_cap_experiment.py::test_exact_four_effective_profiles_and_distinct_cap_identities",
+    "failure_now": [
+     "E   ValueError: A_cap1_opp80_control: full effective configuration differs from baseline"
+    ],
+    "earlier_receipts": {
+     "redesign_fixes_F1_run (September 25, 12:04 AM)": {
+      "failed": true,
+      "same_assertion": true
+     },
+     "theme_fix_run (September 25, 2:34 AM)": {
+      "failed": true,
+      "same_assertion": true
+     },
+     "this_task_run_1_on_tree_97ac9c15 (September 25, 12:50-1:26 PM)": {
+      "failed": true,
+      "same_assertion": true
+     }
+    },
+    "pre_existing_per_AGENTS_md": true
+   },
+   {
+    "test": "tests/agents/test_ifvg_capture_scheme.py::test_default_tags_regression_locked",
+    "failure_now": [
+     "E   AssertionError: assert '92b4ab1709c2e164' == '035d9e14ff3276ed'",
+     "E",
+     "E     - 035d9e14ff3276ed"
+    ],
+    "earlier_receipts": {
+     "redesign_fixes_F1_run (September 25, 12:04 AM)": {
+      "failed": true,
+      "same_assertion": true
+     },
+     "theme_fix_run (September 25, 2:34 AM)": {
+      "failed": true,
+      "same_assertion": true
+     },
+     "this_task_run_1_on_tree_97ac9c15 (September 25, 12:50-1:26 PM)": {
+      "failed": true,
+      "same_assertion": true
+     }
+    },
+    "pre_existing_per_AGENTS_md": true
+   },
+   {
+    "test": "tests/agents/test_ifvg_capture_scheme.py::test_default_times_round_trip_to_canonical_tags",
+    "failure_now": [
+     "E   AssertionError: assert '92b4ab1709c2e164' == '035d9e14ff3276ed'",
+     "E",
+     "E     - 035d9e14ff3276ed"
+    ],
+    "earlier_receipts": {
+     "redesign_fixes_F1_run (September 25, 12:04 AM)": {
+      "failed": true,
+      "same_assertion": true
+     },
+     "theme_fix_run (September 25, 2:34 AM)": {
+      "failed": true,
+      "same_assertion": true
+     },
+     "this_task_run_1_on_tree_97ac9c15 (September 25, 12:50-1:26 PM)": {
+      "failed": true,
+      "same_assertion": true
+     }
+    },
+    "pre_existing_per_AGENTS_md": true
+   },
+   {
+    "test": "tests/agents/test_ifvg_capture_scheme.py::test_list_profiles_default_first_and_upsert",
+    "failure_now": [
+     "E   AssertionError: assert '92b4ab1709c2e164' == '035d9e14ff3276ed'",
+     "E",
+     "E     - 035d9e14ff3276ed"
+    ],
+    "earlier_receipts": {
+     "redesign_fixes_F1_run (September 25, 12:04 AM)": {
+      "failed": true,
+      "same_assertion": true
+     },
+     "theme_fix_run (September 25, 2:34 AM)": {
+      "failed": true,
+      "same_assertion": true
+     },
+     "this_task_run_1_on_tree_97ac9c15 (September 25, 12:50-1:26 PM)": {
+      "failed": true,
+      "same_assertion": true
+     }
+    },
+    "pre_existing_per_AGENTS_md": true
+   }
+  ],
+  "skipped_tests": [
+   {
+    "test": "tests/agents/ifvg_lab/test_ac_approval_paths.py::test_a11_review_explains_the_left_out_half_exits_before_approval",
+    "reason": "needs the half-exit engine: on the pinned engine the half-exit study is read-only and can't be approved"
+   },
+   {
+    "test": "tests/agents/ifvg_lab/test_new_funded.py::test_research_engine_opens_the_half_exit_draft_editable_and_reviews_all_64",
+    "reason": "needs the research engine with the half exit"
+   },
+   {
+    "test": "tests/agents/ifvg_search/test_ifsm_replication_values.py::test_pinned_repaired_runtime_registry_supports_exact_research_choices",
+    "reason": "Optional pinned IFSM research checkout is not present on this host"
+   },
+   {
+    "test": "tests/agents/test_funded_comparison_saved_drafts.py::test_research_engine_rebuilds_all_64_configurations_and_both_firms",
+    "reason": "needs the research engine with the half exit"
+   }
+  ],
+  "earlier_run_on_this_task": {
+   "tree": "97ac9c158fea6e08c9aee5c29e56310d49565085",
+   "tree_at_end": "97ac9c158fea6e08c9aee5c29e56310d49565085",
+   "started_utc": "2026-09-25T17:50:20Z",
+   "finished_utc": "2026-09-25T18:26:34Z",
+   "ruff_exit_code": 0,
+   "pytest_exit_code": 1,
+   "counts": {
+    "failed": 6,
+    "passed": 3958,
+    "skipped": 4
+   },
+   "summary_line": "6 failed, 3958 passed, 4 skipped in 2168.84s (0:36:08)",
+   "failed": [
+    "tests/agents/data_infra/ifvg/test_catboost_bundle_model.py::test_frozen_m0_m3_catboost_lane_is_byte_and_identity_unchanged",
+    "tests/agents/ifvg_search/test_htf_cap_experiment.py::test_exact_four_effective_profiles_and_distinct_cap_identities",
+    "tests/agents/test_funded_payout_workflow.py::test_settings_save_reopen_reach_the_worker_and_publish",
+    "tests/agents/test_ifvg_capture_scheme.py::test_default_tags_regression_locked",
+    "tests/agents/test_ifvg_capture_scheme.py::test_default_times_round_trip_to_canonical_tags",
+    "tests/agents/test_ifvg_capture_scheme.py::test_list_profiles_default_first_and_upsert"
+   ],
+   "receipt": "test_receipts/run1_tree_97ac9c15/full_suite.log (internal)",
+   "new_failure": {
+    "test": "tests/agents/test_funded_payout_workflow.py::test_settings_save_reopen_reach_the_worker_and_publish",
+    "assertion": [
+     "E   assert not ElementList(_list=[Exception(message='the real alpha_lab.agents.data_infra.ifvg.study_drafts.mark_frozen must never ru...ac_approval_paths.py\", line 338, in fail\\n    raise AssertionError(f\"the real {name} must never run in this test\")'])])"
+    ],
+    "cause": "Test isolation, caused by this task's new test. The fixture ac_env in tests/agents/ifvg_lab/test_ac_approval_paths.py replaces the real draft writer study_drafts.mark_frozen with a guard that raises. The earlier configurator's screen module scripts/ifvg_funded_study.py imports mark_frozen by name when first loaded; in the full run it was first loaded during an approval-path test, so it kept the guard after that test, and the later workflow test reached it. No application code was at fault.",
+    "reproduced": "With the fixture put back to its tree-97ac9c15 form, the two files run together: 1 failed, 7 passed, 1 skipped with the same assertion (run interactively at about 1:30 PM; output not kept as a file). With the fix: 8 passed, 1 skipped.",
+    "fix": "Test only (+7 lines in ac_env): import ifvg_funded_study and ifvg_study_wizard before installing the guards, and guard their own mark_frozen bindings too, so pytest restores them after each test.",
+    "files_changed_between_the_two_trees": [
+     [
+      "M",
+      "tests/agents/ifvg_lab/test_ac_approval_paths.py"
+     ]
+    ],
+    "retest_after_the_fix": {
+     "pinned": {
+      "receipt": "test_receipts/leak_fix_pair_pinned.log (internal)",
+      "result": [
+       "# started 2026-09-25T19:13:00Z (02:13 PM CDT Chicago) pinned engine, tree 76bb3b0c514b0d1fba2fcfec17beb1694943b6c7",
+       "======================== 8 passed, 1 skipped in 14.37s ========================",
+       "exit=0"
+      ]
+     },
+     "half_exit": {
+      "receipt": "test_receipts/leak_fix_pair_half_exit.log (internal)",
+      "result": [
+       "# started 2026-09-25T19:13:16Z (02:13 PM CDT Chicago) half-exit engine PYTHONPATH=/c/Users/gonza/Documents/Claude-Quant-Lab-Research-Artifacts/strategy-core-scale-out-exit/src, tree 76bb3b0c514b0d1fba2fcfec17beb1694943b6c7",
+       "============================= 9 passed in 17.86s ==============================",
+       "exit=0"
+      ]
+     }
+    }
+   },
+   "other_failures_equal_the_final_runs_failures": true
+  },
+  "earlier_receipts_for_comparison": {
+   "this task, run 1 (tree 97ac9c15)": "3,958 passed, 6 failed, 4 skipped (September 25, 12:50-1:26 PM; superseded)",
+   "F1 run (fixes handoff)": "3,793 passed, 5 failed, 3 skipped (September 25, 12:04 AM)",
+   "theme fix run": "3,846 passed, 5 failed, 3 skipped (September 25, 2:34 AM)",
+   "repair task baseline (AGENTS.md)": "3,540 passed, 5 failed, 2 skipped"
+  }
+ },
+ "half_exit_availability": {
+  "browser": "The half-exit engine is available on this computer as a separate research checkout; the application uses it only when started with --research-core (as the redesign's browser checks did on port 8622).",
+  "pytest_default_environment": "The default environment imports the installed pinned engine, which has no half-exit setting, so two half-exit tests skip there (listed above).",
+  "compatible_environment_run": {
+   "command": "scripts/run_half_exit_targeted.sh (PYTHONPATH = src; scripts; strategy-core-scale-out-exit/src)",
+   "result": [
+    "strategy_core C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\strategy-core-scale-out-exit\\src\\strategy_core\\__init__.py",
+    "half-exit axis present: True",
+    "============================== 2 passed in 2.24s ==============================",
+    "exit=0"
+   ]
+  },
+  "approval_matrix_on_both_engines": {
+   "pinned": [
+    "======================== 6 passed, 1 skipped in 12.56s ========================",
+    "exit=0"
+   ],
+   "half_exit": [
+    "============================= 7 passed in 16.21s ==============================",
+    "exit=0"
+   ]
+  },
+  "third_skip": "test_pinned_repaired_runtime_registry_supports_exact_research_choices needs the optional pinned IFSM checkout under reports/ifsm_parent_selection_20260909/workspace, which is not on this computer; not executed."
+ },
+ "test_sequence": "# Test and change sequence (lead log, September 25, 2026, Chicago times)\n\n- 11:00 AM: pre-task source recorded (tree 811f4b3889a53467a58b5c100f8a0075d65ec4b9 = HEAD 1b9d407 + uncommitted work); 22,619 saved files hashed.\n- 11:07 AM: lead changed market.buy_and_hold (benchmark v2, A10), its reference test and the Summary tile caption; ran tests/agents/ifvg_lab/test_reference_values.py -k buy_and_hold: 1 passed.\n- ~11:10 AM: four implementation streams started on disjoint files (specs/01\u201304).\n- 11:24 AM: half-exit engine environment probe (PYTHONPATH = src; scripts; strategy-core-scale-out-exit/src): strategy_core imported from the research checkout, half-exit axis present. Engine identity: base 7c7111e398c083cf8e966e2e0c5aac8a41cc12c0, branch funded-scale-out-exit, patch sha256 962ad56a36471c85b1b05ea1e106eddce7bea2dcfc3a523ee6a01ab6b1011a6f. Default environment: site-packages strategy_core 0.1.0, no half-exit axis.\n- ~11:25 AM: stream 2 (A1) finished: tests/agents/ifvg_lab/test_ac_market.py + test_detail_market.py 34 passed; ruff clean (its report).\n- 11:28 AM: lead wording edits to the two definition lines (labeled; \"last close (4:00 PM, earlier on a shortened day)\"; \"that day's and earlier days' measures\"; \"volatility measures up to that day\") + market.py module docstring; reran the two files: 34 passed; ruff clean.\n- ~11:29 AM: stream 4 (A11, section 3) finished: pinned engine 45 passed, 2 skipped; half-exit engine 45 passed, 1 skipped, 1 xfailed (its finding: Review and approve did not explain the 32 left-out half exits before approval).\n- 11:30\u201311:34 AM: lead fixed that finding (scripts/ifvg_lab_new_funded.py: _Review.skipped kept from rebuild_saved_plan; fs.skipped_sentence shown above the approval card) and removed the xfail; fixed the no-saved-limit wording in funded_setup.gate_rows (first attempt shadowed the `saved` parameter \u2192 1 failure, renamed `limit_words`); added test_a11_under_water_message_when_the_source_study_saved_no_limit. Reruns: pinned test_ac_approval_paths.py + test_new_funded.py 45 passed, 2 skipped (before the new test); half-exit engine 46 passed, 1 skipped; new test 1 passed; ruff clean.\n- ~11:39 AM: stream 3 (A6, A7, A8, A10-minute) finished: test_ac_trade_review.py + test_trade_review.py + test_setup_records.py 85 passed; with test_review_fixes.py 111 passed; ruff clean (its report). Mid-session it saw 10 transient failures in test_review_fixes.py (F2/F3/F10) caused by stream 1's unfinished edits; gone in its final run.\n- ~11:43 AM: stream 1 (A2, A3, A4, A5, A9, A11 wording) finished: its six files 120 passed; neighbours 100 passed; ruff clean (its report).\n- 11:45 AM: lead aligned the ledger failure clock with the \"failed before any payout\" endpoint (firm_race.race_from_outcomes medians; Risk table \"to failure before a payout\"; endpoint note). Integrated targeted run: ruff check src tests scripts \u2192 All checks passed!; pytest tests/agents/ifvg_lab + test_ifvg_lab_tab + test_funded_comparison_saved_drafts + test_funded_trade_review + test_funded_comparison_workflow \u2192 441 passed, 3 skipped (the two half-exit-engine skips and test_ac_approval_paths' half-exit-only test), 89.6 s.\n- 11:45\u201311:48 AM: evidence generated: race_evidence (TakeProfitTrader and MyFundedFutures, 1,000 paths each, 24 s), regression_evidence (43 records, 0 expected/actual mismatches), provenance probe under pre-task and final source, approval matrix on both engines (pinned 5 passed 1 skipped; half-exit 6 passed).\n- 11:49\u201311:52 AM: docs: CALCULATION_DEFINITIONS.md completed; supersession notices/marks in CALCULATIONS.md, DECISION_RULES.md, SCREENS.md, DATA_GAPS.md, REDESIGN_REPORT.md, DECISIONS_LOG.md (18 entries marked, AC1\u2013AC13 appended), old FIX_REPORT pointer; AGENTS.md, ARCHITECTURE.md, ML_TRAINING_WORKBENCH.md updated.\n- 11:52 AM: source identity review1 (tree 078d8a95\u2026, 40 files) and three read-only reviewers started.\n- 11:53\u201311:57 AM: isolated IFSM app on port 8661 (light theme) started; preliminary captures C01\u2013C09 and the A8 UI trial (seed, notes-only save through the page, ledger restored to e861127e\u2026).\n- 11:57 AM: payouts_detail says \"no payout request was still processing\" when none is pending; new test test_a4_detail_says_plainly_when_no_request_is_still_processing; test_ac_risk.py 23 passed; ruff clean.\n- Note: times marked with ~ were estimated when written; the entries above were checked against file modification times and the system clock at 11:57 AM.\n- ~12:07 PM: reviews R1 (analytics), R2 (point in time, identity, reviews, labels), R3 (evidence, approval paths) returned (read-only; each ran only targeted test files).\n- 12:17 PM: lead fixes for R1 and R3 evidence points: F6 conclusion corrected (seed 11 reproduces all six whole-dollar bounds; interval_investigation.py extended and rerun), pooled amounts \u00d7100 fixed in the definitions, Edge verdict Partly checked/Weak/Not supported/Not available with the missing check named, A/B example quoted in full (\"miss or create\"), Sharpe wording as a confidence score, overview prior-research caveat, source-selection clause in the finding, ledger key from the saved cutoff (refuses a mismatch), still-going share counted; tests: test_ac_risk.py 27 passed (4 new), test_review_fixes/test_detail_risk/test_reference_values/test_firm_race updated expectations (3 wording asserts); race_evidence rerun (application cache keys 18f938a7\u2026/bc98ede2\u2026, slot-day fields, statistics rules); regression_evidence harvester rewritten (every expected field recomputed or flagged); provenance probe anchored to tree blobs (pre-task: all four modules equal tree 811f4b3). Streams 3 and 4 resumed on R2 and R3 findings.\n- ~12:17 PM: stream 4 follow-up (R3 approval-path points): pinned 47 passed, 2 skipped; half-exit 48 passed, 1 skipped (its report).\n- ~12:20 PM: stream 3 follow-up (R2 points 1\u20137): 137 passed (its report).\n- ~12:21 PM: integrated targeted run: ruff check src tests scripts clean; tests/agents/ifvg_lab + 4 neighbour files \u2192 473 passed, 3 skipped (77.7 s).\n- ~12:23 PM: docs updated for the review fixes; source identity review2 = e6534b1c7d9da36c097e2d70fad7b4deed32bf15 (42 task files); regression_evidence rerun \u2192 48 records, 0 problems; provenance final probe (modules equal tree e6534b1c); approval matrix rerun on both engines (pinned 6 passed 1 skipped; half-exit 7 passed); focused re-review of the material corrections started.\n- ~12:26\u201312:31 PM: isolated app restarted on the corrected code; final captures S01\u2013S10; A8 reproduction S11a/S11b (isolated ledger restored to e861127e\u2026); DOM check confirmed the two formation steps are disabled (aria/input disabled) though not visibly greyed.\n- 12:32 PM: CSS: disabled review-form selects dimmed (opacity 0.5) in scripts/ifvg_lab_trade_review.py; ruff clean; test_theme + test_trade_review + test_ac_trade_review \u2192 136 passed.\n- ~12:45 PM: focused re-review of the material corrections returned: 5 of 6 confirmed; M1 (stale matrix inside regression_evidence.json) open; minors m1\u2013m4 and notes N1\u2013N8.\n- 12:50 PM: lead fixes: evidence_note says an unrecorded count isn't recorded on a conflicting record (+ test_a10_a_conflicting_record_never_reads_an_unrecorded_count_as_zero); Risk tab states why the run is off when the key refuses a mismatch; Edge text gives example reasons; docs (mode switch keeps the configuration; FX6 superseded by AC7; path counts tried at seed 20260923 only; old report pointer \"checked\"); regression_evidence.py anchored to the tree (module blobs must equal it), requires approval_matrix.json from the same tree, records ACCOUNT_LISTING/EVIDENCE_WORDING cases and PAGE_CASES (test-only), states the float tolerance; race_evidence anchored. Affected tests 118 passed; integrated targeted run 474 passed, 3 skipped (79 s); ruff clean. Final source frozen: tree 97ac9c158fea6e08c9aee5c29e56310d49565085.\n- 12:50 PM: full suite run 1 started (detached; 17:50:20Z) on tree 97ac9c15. Its receipt header printed the UTC time labelled \"GMT\" instead of Chicago time (a label bug in run_full_suite.sh only; the UTC stamps are right); the runner now prints the local Chicago time.\n- 12:51 PM: isolated app restarted on the frozen code (process start 12:51:01 PM); final captures S01\u2013S10 at 12:51\u201312:52 PM; A8 reproduction: isolated ledger seeded 12:52:16 PM, notes-only save through the page, ledger kept as evidence and restored at 12:52:35 PM (SHA-256 e861127e\u2026, checked again at about 1:36 PM).\n- 12:53\u201312:54 PM: on tree 97ac9c15, approval matrix on both engines (pinned 6 passed 1 skipped; half-exit 7 passed), regression_evidence (56 records, 0 problems), provenance final probe, half-exit targeted run (2 passed).\n- 1:26 PM: run 1 finished (18:26:34Z): ruff clean; pytest 6 failed, 3,958 passed, 4 skipped in 2,168.84 s (0:36:08); tree 97ac9c15 at start and end. Five failures are the pre-existing ones; the sixth, tests/agents/test_funded_payout_workflow.py::test_settings_save_reopen_reach_the_worker_and_publish (\"the real alpha_lab.agents.data_infra.ifvg.study_drafts.mark_frozen must never run in this test\"), was caused by this task's new test: test_ac_approval_paths.py's fixture ac_env guards study_drafts.mark_frozen, and scripts/ifvg_funded_study.py, first imported during an approval-path test (the earlier configurator's page imports it lazily), bound the guard by name and kept it after the test. Receipt kept: test_receipts/run1_tree_97ac9c15/full_suite.log.\n- ~1:29 PM: fix in the test only (tests/agents/ifvg_lab/test_ac_approval_paths.py, fixture ac_env, +7 lines): import ifvg_funded_study and ifvg_study_wizard before installing the guards, and guard their own mark_frozen bindings too so pytest restores them after each test. The two files run together: 8 passed, 1 skipped (pinned engine); ruff clean.\n- ~1:30 PM: reproduction: with the fixture temporarily put back to its tree-97ac9c15 form, the same two files run together gave 1 failed, 7 passed, 1 skipped with the same assertion; the fixed file was then restored (SHA-256 baa08859\u2026 before and after). Half-exit engine, fixed: the two files 9 passed. (Run interactively; the outputs were not kept as files.)\n- 1:32 PM: source frozen again: tree 76bb3b0c514b0d1fba2fcfec17beb1694943b6c7 (43 task files; differs from 97ac9c15 only in test_ac_approval_paths.py). Run-1 receipts and evidence kept in test_receipts/run1_tree_97ac9c15/ and evidence/run1_tree_97ac9c15/.\n- 1:32\u20131:34 PM: evidence regenerated on tree 76bb3b0c, in order: approval matrix (pinned 6 passed 1 skipped; half-exit 7 passed), half-exit targeted run (2 passed), regression_evidence (56 records, 0 problems, module blobs equal the tree), race_evidence (16.7 s), provenance final probe (identical to run 1's apart from its tree and creation time).\n- 1:34 PM: full suite run 2 started (detached; 18:34:06Z) on tree 76bb3b0c; ruff clean. An independent read-only reviewer checked the fixture fix and its diagnosis while it ran (no tests run by the reviewer).\n- 1:36\u20131:42 PM: the fifth read-only reviewer confirmed the diagnosis and that the fix covers every module binding a guarded writer by name today; two minor hardening points and a note recorded as follow-ups (closeout REVIEW_FINDINGS rows 27\u201329); its report is evidence/leak_fix_review_report.md.\n- 2:12 PM: run 2, the final validation, finished (19:12:31Z): ruff clean (exit 0); pytest 3,959 passed, 5 failed, 4 skipped in 2,300.27 s (0:38:20), exit 1 for the five pre-existing failures (each with the same assertion as in the F1 run, the theme-fix run and run 1); tree 76bb3b0c at start and end. test_funded_payout_workflow.py passed.\n- 2:13 PM: receipts for the fix's retest on tree 76bb3b0c: the two files together, pinned engine 8 passed, 1 skipped; half-exit engine 9 passed (test_receipts/leak_fix_pair_*.log).\n- 2:14 PM: preservation: the 22,619 saved-record files hashed again; 0 changed, added or removed against the 11:00 AM snapshot.\n- 2:15 PM onward: facts collected; closeout documents filled (FIX_REPORT sections 4 and 5, REVIEW_FINDINGS, SCREEN_EVIDENCE, TASKS.md) and the closeout assembled and verified. No source or test file changed after run 2.\n",
+ "log_excerpt": [
+  "# started 2026-09-25T18:34:06Z (01:34 PM CDT Chicago) HEAD 1b9d4077ffc4f68fab51c2ba9333f135e7308fd4",
+  "# source tree at start 76bb3b0c514b0d1fba2fcfec17beb1694943b6c7",
+  "## ruff check src tests scripts",
+  "All checks passed!",
+  "ruff_exit=0",
+  "## pytest",
+  "platform win32 -- Python 3.13.1, pytest-9.0.2, pluggy-1.6.0",
+  "collected 3968 items",
+  "FAILED tests/agents/data_infra/ifvg/test_catboost_bundle_model.py::test_frozen_m0_m3_catboost_lane_is_byte_and_identity_unchanged",
+  "FAILED tests/agents/ifvg_search/test_htf_cap_experiment.py::test_exact_four_effective_profiles_and_distinct_cap_identities",
+  "FAILED tests/agents/test_ifvg_capture_scheme.py::test_default_tags_regression_locked",
+  "FAILED tests/agents/test_ifvg_capture_scheme.py::test_default_times_round_trip_to_canonical_tags",
+  "FAILED tests/agents/test_ifvg_capture_scheme.py::test_list_profiles_default_first_and_upsert",
+  "SKIPPED [1] tests\\agents\\ifvg_lab\\test_ac_approval_paths.py:956: needs the half-exit engine: on the pinned engine the half-exit study is read-only and can't be approved",
+  "SKIPPED [1] tests\\agents\\ifvg_lab\\test_new_funded.py:731: needs the research engine with the half exit",
+  "SKIPPED [1] tests\\agents\\ifvg_search\\test_ifsm_replication_values.py:159: Optional pinned IFSM research checkout is not present on this host",
+  "SKIPPED [1] tests\\agents\\test_funded_comparison_saved_drafts.py:173: needs the research engine with the half exit",
+  "=========== 5 failed, 3959 passed, 4 skipped in 2300.27s (0:38:20) ============",
+  "exit=1",
+  "# source tree at end 76bb3b0c514b0d1fba2fcfec17beb1694943b6c7",
+  "# finished 2026-09-25T19:12:31Z (02:12 PM CDT Chicago)"
+ ],
+ "not_tested": [
+  "The optional pinned IFSM checkout test (not on this computer).",
+  "The earlier feature-and-model first-load delay (about 4 minutes) and the 356 saved children listed as unavailable under the pinned engine: route not measured here.",
+  "F7-F10 screens were not re-captured (their tests ran in the full suite).",
+  "Dark-theme captures were not repeated for the corrected screens (the theme guard test ran in the full suite; no color literal was added).",
+  "No real approval, launch or study run (by design)."
+ ],
+ "created_local": "2026-09-25 02:16:30 PM Central Daylight Time",
+ "source_review_attachment": {
+  "file": "closeout_source_review.zip",
+  "bytes": 536463,
+  "sha256": "10717c2141ec567bf44cc8b982b34b765b61bda6ac57ba39a41818063b6bcde8",
+  "payloads": 49,
+  "verified_by_extraction": true,
+  "standalone_smoke": {
+   "imported_from_attachment_only": true,
+   "split_entry_cost_5_2_1030": [
+    206,
+    309
+   ],
+   "share_below_ties_half": 0.6,
+   "trading_day_of_evening_entry": "2026-04-13",
+   "parse_chicago_text": "2026-04-13 07:03:00+00:00"
+  }
+ }
+}

@@ -38,7 +38,8 @@ def _bars(repo: str, core_id: str, day: str, _evidence):
     return load_search_day_bars(Path(repo), _evidence, day)
 
 
-def render_trade_review(st_module, roots):
+def render_trade_review(st_module, roots, *, source: str | None = None,
+                        include_funded: bool = True):
     """Keep the existing context reviewer, and offer exact search executions.
 
     Funded comparisons of this application's registered store that have a
@@ -46,8 +47,17 @@ def render_trade_review(st_module, roots):
     trades open with the exact run, configuration, firm, account and trade
     identity. A requested comparison that cannot be offered is never replaced
     by another study.
+
+    Additive options for the redesigned Trade review page (defaults keep the
+    behavior above): ``source`` ("Verified context" or "Study executions")
+    renders that source directly, without this screen's own source radio and
+    header, because the page draws its own source switch and title;
+    ``include_funded=False`` leaves funded comparisons out of the Study
+    selector, because that page reviews them under its own "Funded trades"
+    source.
     """
-    funded_pending = st_module.session_state.pop("ifvg_funded_review_pending", None)
+    funded_pending = (st_module.session_state.pop("ifvg_funded_review_pending", None)
+                      if include_funded else None)
     if funded_pending:
         st_module.session_state["ifvg_review_source"] = "Study executions"
         st_module.session_state["ifvg_search_review_search"] = "funded:" + funded_pending["plan_id"]
@@ -57,22 +67,26 @@ def render_trade_review(st_module, roots):
         st_module.session_state["ifvg_review_source"] = "Study executions"
         st_module.session_state["ifvg_search_review_search"] = pending[0]
         st_module.session_state["ifvg_search_review_core"] = pending[1]
-    source = st_module.radio(
-        "Review source",
-        ("Verified context", "Study executions"),
-        horizontal=True,
-        key="ifvg_review_source",
-    )
-    if source == "Verified context":
+    chosen = source
+    if chosen is None:
+        chosen = st_module.radio(
+            "Review source",
+            ("Verified context", "Study executions"),
+            horizontal=True,
+            key="ifvg_review_source",
+        )
+    if chosen == "Verified context":
         from ifvg_lab_tab import render_ifvg_replay_tab
 
         render_ifvg_replay_tab(st_module)
         return
-    st_module.header("Study trade review")
+    if source is None:
+        st_module.header("Study trade review")
     runs = list_search_runs(Path(roots["state_root"]), Path(roots["store_root"]))
     runs = [run for run in runs if not run.archived]
     studies, _issues = load_studies(roots)
-    funded = {"funded:" + study.key: study for study in funded_review_sources(studies)}
+    funded = ({"funded:" + study.key: study for study in funded_review_sources(studies)}
+              if include_funded else {})
     if funded_pending and "funded:" + funded_pending["plan_id"] not in funded:
         st_module.session_state.pop("ifvg_search_review_search", None)
         st_module.session_state.pop("ifvg_funded_review_target", None)

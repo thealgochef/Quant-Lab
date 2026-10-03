@@ -10,7 +10,7 @@ def main():
     import strategy_core
     from run_ifsm_research_ui import CORE, WORKSPACE
 
-    st.set_page_config(page_title="IFVG Lab", layout="wide")
+    st.set_page_config(page_title="IFVG Lab", layout="wide", initial_sidebar_state="expanded")
     if not Path(strategy_core.__file__).resolve().is_relative_to(CORE):
         st.error("Start this page with: python scripts/run_ifsm_research_ui.py")
         st.stop()

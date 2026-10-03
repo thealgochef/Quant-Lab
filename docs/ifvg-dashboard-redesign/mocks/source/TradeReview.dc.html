@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Trade review — funded trade</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;family=Newsreader:opsz,wght@6..72,500;6..72,600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:'IBM Plex Sans',system-ui,sans-serif;color:#16181B;background:#F4F2EC}
+a{color:#1D4E89}a:hover{color:#143A67}
+</style>
+</helmet>
+<div style="width: 1440px; height: 2180px; display: flex; background: #F4F2EC; font-family: 'IBM Plex Sans', system-ui, sans-serif; color: #16181B">
+<nav aria-label="Main" style="width: 232px; flex-shrink: 0; background: #16181B; color: #E9E6DE; display: flex; flex-direction: column; gap: 32px; padding: 32px 20px; box-sizing: border-box">
+<div style="font-family: 'Newsreader', Georgia, serif; font-size: 28px; font-weight: 600">IFVG Lab</div>
+<div style="display: flex; flex-direction: column; gap: 4px">
+<a href="Library.dc.html" style="display: block; padding: 12px 14px; border-radius: 8px; color: #E9E6DE; text-decoration: none; font-size: 15px">My studies</a>
+<a href="TradeReview.dc.html" style="display: block; padding: 12px 14px; border-radius: 8px; background: #2B2E33; color: #FFFFFF; text-decoration: none; font-size: 15px; font-weight: 500">Trade review</a>
+<a href="Configure.dc.html" style="display: block; padding: 12px 14px; border-radius: 8px; color: #E9E6DE; text-decoration: none; font-size: 15px">New study</a>
+</div>
+<div style="margin-top: auto; font-size: 13px; line-height: 1.5; color: #B3AFA6">All times Chicago, 12-hour</div>
+</nav>
+<main style="flex-grow: 1; padding: 40px 48px; box-sizing: border-box; display: flex; flex-direction: column; gap: 16px">
+<div style="display: flex; justify-content: space-between; align-items: flex-end">
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="font-size: 14px; color: #54585E"><a href="DetailTrades.dc.html">Back to this configuration's trades</a></div>
+<h1 style="margin: 0; font-family: 'Newsreader', Georgia, serif; font-size: 36px; font-weight: 600; letter-spacing: -0.3px">Trade review</h1>
+</div>
+<div role="group" aria-label="Review source" style="display: flex">
+<button type="button" style="padding: 10px 16px; min-height: 44px; font: inherit; font-size: 14px; font-weight: 500; background: #16181B; color: #FFFFFF; border: 1px solid #16181B; border-radius: 8px 0 0 8px; cursor: pointer">Funded trades</button>
+<button type="button" style="padding: 10px 16px; min-height: 44px; font: inherit; font-size: 14px; background: #FFFFFF; color: #16181B; border: 1px solid #BDB8AC; margin-left: -1px; cursor: pointer">Strategy trades</button>
+<button type="button" style="padding: 10px 16px; min-height: 44px; font: inherit; font-size: 14px; background: #FFFFFF; color: #16181B; border: 1px solid #BDB8AC; margin-left: -1px; cursor: pointer">Verified context</button>
+<button type="button" style="padding: 10px 16px; min-height: 44px; font: inherit; font-size: 14px; background: #FFFFFF; color: #16181B; border: 1px solid #BDB8AC; border-radius: 0 8px 8px 0; margin-left: -1px; cursor: pointer">Setups not taken</button>
+</div>
+</div>
+<div style="display: grid; grid-template-columns: 1.1fr 1.3fr 1fr 0.8fr 1.1fr auto; gap: 10px; align-items: end">
+<div style="display: flex; flex-direction: column; gap: 4px"><label for="st" style="font-size: 12px; color: #54585E">Study</label><select id="st" style="padding: 9px 10px; min-height: 42px; border: 1px solid #BDB8AC; border-radius: 8px; font: inherit; font-size: 14px; background: #FFFFFF; color: #16181B"><option>Funded variation study</option></select></div>
+<div style="display: flex; flex-direction: column; gap: 4px"><label for="cf" style="font-size: 12px; color: #54585E">Configuration</label><select id="cf" style="padding: 9px 10px; min-height: 42px; border: 1px solid #BDB8AC; border-radius: 8px; font: inherit; font-size: 14px; background: #FFFFFF; color: #16181B"><option>All hours · Long · Half at 1R</option></select></div>
+<div style="display: flex; flex-direction: column; gap: 4px"><label for="fm" style="font-size: 12px; color: #54585E">Firm</label><select id="fm" style="padding: 9px 10px; min-height: 42px; border: 1px solid #BDB8AC; border-radius: 8px; font: inherit; font-size: 14px; background: #FFFFFF; color: #16181B"><option>TakeProfitTrader</option><option>MyFundedFutures</option></select></div>
+<div style="display: flex; flex-direction: column; gap: 4px"><label for="ac" style="font-size: 12px; color: #54585E">Account</label><select id="ac" style="padding: 9px 10px; min-height: 42px; border: 1px solid #BDB8AC; border-radius: 8px; font: inherit; font-size: 14px; background: #FFFFFF; color: #16181B"><option>Account 6</option></select></div>
+<div style="display: flex; flex-direction: column; gap: 4px"><label for="tr" style="font-size: 12px; color: #54585E">Trade</label><select id="tr" style="padding: 9px 10px; min-height: 42px; border: 1px solid #BDB8AC; border-radius: 8px; font: inherit; font-size: 14px; background: #FFFFFF; color: #16181B"><option>Apr 12, 7:07 PM · +$6,254.72</option></select></div>
+<div style="display: flex; gap: 6px"><button type="button" aria-label="Previous trade" style="width: 42px; height: 42px; border: 1px solid #BDB8AC; background: #FFFFFF; border-radius: 8px; cursor: pointer"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#16181B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"></path></svg></button><button type="button" aria-label="Next trade" style="width: 42px; height: 42px; border: 1px solid #BDB8AC; background: #FFFFFF; border-radius: 8px; cursor: pointer"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#16181B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"></path></svg></button></div>
+</div>
+<div style="display: flex; align-items: center; gap: 16px; padding: 10px 14px; background: #FFFFFF; border: 1px solid #DAD6CC; border-radius: 10px">
+<div role="group" aria-label="What the charts show" style="display: flex">
+<button type="button" onClick="{{setFull}}" style="{{fullStyle}}">Full history</button>
+<button type="button" onClick="{{setPit}}" style="{{pitStyle}}">Point in time</button>
+</div>
+<div style="font-size: 13px; color: #3C4046; flex-grow: 1">{{modeNote}}</div>
+<div style="display: flex; gap: 14px; font-size: 13px">
+<label style="display: flex; align-items: center; gap: 6px"><input type="checkbox" checked="{{ true }}" style="width: 16px; height: 16px">Gap zones</label>
+<label style="display: flex; align-items: center; gap: 6px"><input type="checkbox" checked="{{ true }}" style="width: 16px; height: 16px">Stops and target</label>
+<label style="display: flex; align-items: center; gap: 6px"><input type="checkbox" checked="{{ true }}" style="width: 16px; height: 16px">Midnight and 3:55 PM</label>
+</div>
+<div style="display: flex; align-items: center; gap: 6px; font-size: 13px"><label for="tf">Candles</label><select id="tf" style="padding: 6px 8px; min-height: 36px; border: 1px solid #BDB8AC; border-radius: 6px; font: inherit; font-size: 13px; background: #FFFFFF; color: #16181B"><option>10 minutes</option><option>1 minute</option><option>5 minutes</option><option>15 minutes</option><option>1 hour</option></select></div>
+</div>
+
+<section aria-labelledby="whole" style="background: #FFFFFF; border: 1px solid #DAD6CC; border-radius: 12px; padding: 18px 20px 14px; display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; justify-content: space-between; align-items: baseline">
+<h2 id="whole" style="margin: 0; font-size: 16px; font-weight: 600">Whole trade · E-mini Nasdaq-100 · 10-minute candles · Chicago time</h2>
+<div style="font-size: 13px; color: #54585E">April 12, 5:00 PM open – April 13, 4:00 PM close</div>
+</div>
+<div style="display: flex">
+<div style="width: 64px; position: relative; height: 400px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #54585E">
+<span style="position: absolute; right: 8px; top: -2px">25,600</span><span style="position: absolute; right: 8px; top: 54px">25,500</span><span style="position: absolute; right: 8px; top: 110px">25,400</span><span style="position: absolute; right: 8px; top: 166px">25,300</span><span style="position: absolute; right: 8px; top: 222px">25,200</span><span style="position: absolute; right: 8px; top: 278px">25,100</span><span style="position: absolute; right: 8px; top: 334px">25,000</span>
+</div>
+<div style="position: relative; width: 1000px; height: 400px; background: #FBFAF7; border: 1px solid #E8E4DA; overflow: hidden">
+<div style="position: absolute; left: 0; top: 292.4px; width: 1000px; height: 108px; background: #DCE6F2; opacity: 0.55"></div>
+<div style="position: absolute; left: 92px; top: 0; width: 904.4px; height: 400px; background: #1D4E89; opacity: 0.04"></div>
+<div style="position: absolute; left: 0; top: 5.2px; width: 1000px; height: 1px; background: #EFECE4"></div><div style="position: absolute; left: 0; top: 61.1px; width: 1000px; height: 1px; background: #EFECE4"></div><div style="position: absolute; left: 0; top: 117.1px; width: 1000px; height: 1px; background: #EFECE4"></div><div style="position: absolute; left: 0; top: 173.1px; width: 1000px; height: 1px; background: #EFECE4"></div><div style="position: absolute; left: 0; top: 229px; width: 1000px; height: 1px; background: #EFECE4"></div><div style="position: absolute; left: 0; top: 285px; width: 1000px; height: 1px; background: #EFECE4"></div><div style="position: absolute; left: 0; top: 341px; width: 1000px; height: 1px; background: #EFECE4"></div>
+<sc-for list="{{big}}" as="c" hint-placeholder-count="30"><div style="position: absolute; left: {{c.wx}}px; top: {{c.wt}}px; width: 1px; height: {{c.wh}}px; background: {{c.col}}"></div><div style="position: absolute; left: {{c.x}}px; top: {{c.bt}}px; width: 5px; height: {{c.bh}}px; background: {{c.col}}"></div></sc-for>
+<svg width="1000" height="400" viewBox="0 0 1000 400" aria-hidden="true" style="position: absolute; left: 0; top: 0">
+<text x="520" y="392" font-family="IBM Plex Sans, sans-serif" font-size="12" font-weight="600" fill="#143A67">Four-hour gap below 25,086.75 · confirmed Apr 8, 1:00 AM</text>
+<line x1="304.3" y1="0" x2="304.3" y2="400" stroke="#8A857A" stroke-dasharray="4 4"></line>
+<text x="310" y="392" font-family="IBM Plex Sans, sans-serif" font-size="12" fill="#54585E">Midnight · same trading day</text>
+<line x1="92" y1="369.1" x2="94.2" y2="369.1" stroke="#A34A12" stroke-width="2"></line>
+<polygon points="92,357 84,367 100,367" fill="#16181B"></polygon>
+<text x="104" y="385" font-family="IBM Plex Sans, sans-serif" font-size="12" font-weight="600" fill="#16181B">Entry 24,971.00 · 7:07 PM</text>
+<circle cx="94.2" cy="345.3" r="5" fill="#1D4E89" stroke="#FFFFFF" stroke-width="1.5"></circle>
+<g style="{{fullShow}}">
+<line x1="94.2" y1="357.2" x2="996.4" y2="357.2" stroke="#1D4E89" stroke-width="1.5" stroke-dasharray="6 4"></line>
+<text x="620" y="352" font-family="IBM Plex Sans, sans-serif" font-size="12" fill="#143A67">Stop on the last 5 moved to entry, 24,971.00</text>
+<line x1="996.4" y1="0" x2="996.4" y2="400" stroke="#A34A12" stroke-dasharray="4 4"></line>
+<circle cx="996.4" cy="18.5" r="6" fill="#1D4E89" stroke="#FFFFFF" stroke-width="1.5"></circle>
+<rect x="772" y="30" width="216" height="46" rx="6" fill="#16181B"></rect>
+<text x="782" y="49" font-family="IBM Plex Sans, sans-serif" font-size="12" fill="#FFFFFF">3:55 PM close · last 5 at 25,576.25</text>
+<text x="782" y="67" font-family="IBM Plex Sans, sans-serif" font-size="12" font-weight="600" fill="#FFFFFF">Trade result +$6,254.72</text>
+</g>
+</svg>
+<div style="{{pitCover}}">
+<div style="font-size: 14px; color: #3C4046; background: #FFFFFF; padding: 8px 12px; border-radius: 6px; border: 1px solid #DAD6CC">Hidden: everything after 7:10 PM</div>
+</div>
+</div>
+</div>
+<div style="display: flex; padding-left: 64px">
+<div style="position: relative; width: 1000px; height: 20px; font-size: 12px; color: #54585E">
+<span style="position: absolute; left: 22px">6:00 PM</span><span style="position: absolute; left: 152px">9:00 PM</span><span style="position: absolute; left: 280px">12:00 AM</span><span style="position: absolute; left: 413px">3:00 AM</span><span style="position: absolute; left: 543px">6:00 AM</span><span style="position: absolute; left: 674px">9:00 AM</span><span style="position: absolute; left: 802px">12:00 PM</span><span style="position: absolute; left: 935px">3:00 PM</span>
+</div>
+</div>
+<div style="display: flex; gap: 18px; padding-left: 64px; font-size: 12px; color: #3C4046; flex-wrap: wrap">
+<span style="display: flex; align-items: center; gap: 6px"><span style="width: 10px; height: 12px; background: #1D4E89"></span>Up candle</span>
+<span style="display: flex; align-items: center; gap: 6px"><span style="width: 10px; height: 12px; background: #A34A12"></span>Down candle</span>
+<span style="display: flex; align-items: center; gap: 6px"><span style="width: 16px; height: 12px; background: #DCE6F2"></span>Four-hour gap</span>
+<span style="display: flex; align-items: center; gap: 6px"><span style="width: 16px; height: 12px; background: #EDF1F6; border: 1px solid #DCE6F2"></span>In the trade</span>
+<span>Zones come from the study's saved setup record</span>
+</div>
+</section>
+
+<div style="display: grid; grid-template-columns: 590px 1fr; gap: 16px; align-items: start">
+<section aria-labelledby="setup" style="background: #FFFFFF; border: 1px solid #DAD6CC; border-radius: 12px; padding: 18px 20px 14px; display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; justify-content: space-between; align-items: baseline">
+<h2 id="setup" style="margin: 0; font-size: 16px; font-weight: 600">The setup · 1-minute candles</h2>
+<div style="font-size: 13px; color: #54585E">6:40 – 7:25 PM</div>
+</div>
+<div style="display: flex">
+<div style="width: 50px; position: relative; height: 320px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #54585E">
+<span style="position: absolute; right: 6px; top: 36px">25,000</span><span style="position: absolute; right: 6px; top: 105px">24,980</span><span style="position: absolute; right: 6px; top: 173px">24,960</span><span style="position: absolute; right: 6px; top: 242px">24,940</span><span style="position: absolute; right: 6px; top: 310px">24,920</span>
+</div>
+<div style="position: relative; width: 500px; height: 320px; background: #FBFAF7; border: 1px solid #E8E4DA; overflow: hidden">
+<div style="position: absolute; left: 54.3px; top: 157.4px; width: 446px; height: 100.1px; background: #DCE6F2; opacity: 0.7"></div>
+<div style="position: absolute; left: 217.4px; top: 170.4px; width: 54.3px; height: 4px; background: #A34A12; opacity: 0.85"></div>
+<div style="position: absolute; left: 271.7px; top: 0; width: 8px; height: 320px; background: #16181B; opacity: 0.06"></div>
+<div style="position: absolute; left: 0; top: 42.8px; width: 500px; height: 1px; background: #EFECE4"></div><div style="position: absolute; left: 0; top: 111.2px; width: 500px; height: 1px; background: #EFECE4"></div><div style="position: absolute; left: 0; top: 179.7px; width: 500px; height: 1px; background: #EFECE4"></div><div style="position: absolute; left: 0; top: 248.1px; width: 500px; height: 1px; background: #EFECE4"></div>
+<sc-for list="{{small}}" as="c" hint-placeholder-count="30"><div style="position: absolute; left: {{c.wx}}px; top: {{c.wt}}px; width: 1px; height: {{c.wh}}px; background: {{c.col}}"></div><div style="position: absolute; left: {{c.x}}px; top: {{c.bt}}px; width: 7px; height: {{c.bh}}px; background: {{c.col}}"></div></sc-for>
+<svg width="500" height="320" viewBox="0 0 500 320" aria-hidden="true" style="position: absolute; left: 0; top: 0">
+<g font-family="IBM Plex Sans, sans-serif" font-size="11" font-weight="600" text-anchor="middle">
+<circle cx="66" cy="176" r="9" fill="#16181B"></circle><text x="66" y="180" fill="#FFFFFF">1</text>
+<circle cx="204" cy="172" r="9" fill="#16181B"></circle><text x="204" y="176" fill="#FFFFFF">2</text>
+<circle cx="276" cy="14" r="9" fill="#16181B"></circle><text x="276" y="18" fill="#FFFFFF">3</text>
+<circle cx="293.5" cy="166" r="9" fill="#16181B"></circle><text x="293.5" y="170" fill="#FFFFFF">4</text>
+<circle cx="326.1" cy="42" r="9" fill="#16181B"></circle><text x="326.1" y="46" fill="#FFFFFF">5</text>
+</g>
+<line x1="293.5" y1="214.8" x2="326.1" y2="214.8" stroke="#A34A12" stroke-width="2" stroke-dasharray="4 3"></line>
+<text x="332" y="218" font-family="IBM Plex Sans, sans-serif" font-size="11" fill="#6E300B">Initial stop 24,949.75</text>
+<line x1="293.5" y1="69.3" x2="326.1" y2="69.3" stroke="#1D4E89" stroke-width="2" stroke-dasharray="4 3"></line>
+<polygon points="293.5,142 287,152 300,152" fill="#16181B"></polygon>
+<circle cx="326.1" cy="69.3" r="5" fill="#1D4E89" stroke="#FFFFFF" stroke-width="1.5"></circle>
+<g style="{{fullShow}}">
+<line x1="326.1" y1="142" x2="500" y2="142" stroke="#1D4E89" stroke-width="1.5" stroke-dasharray="6 4"></line>
+<text x="360" y="136" font-family="IBM Plex Sans, sans-serif" font-size="11" fill="#143A67">Stop moved to entry</text>
+</g>
+</svg>
+<div style="{{pitCoverSmall}}"></div>
+</div>
+</div>
+<div style="display: flex; padding-left: 50px">
+<div style="position: relative; width: 500px; height: 18px; font-size: 11px; color: #54585E">
+<span style="position: absolute; left: 44px">6:45</span><span style="position: absolute; left: 153px">6:55</span><span style="position: absolute; left: 262px">7:05</span><span style="position: absolute; left: 370px">7:15</span><span style="position: absolute; left: 470px">7:25</span>
+</div>
+</div>
+<div style="display: grid; grid-template-columns: 22px 1fr; gap: 6px 8px; padding: 6px 0 0 50px; font-size: 12px; line-height: 1.45; color: #2A2D31">
+<div style="font-weight: 600">1</div><div>Five-minute parent gap, 24,937.25–24,966.50, confirmed 7:00 PM</div>
+<div style="font-weight: 600">2</div><div>Opposing one-minute gap, 24,961.75–24,962.50, confirmed 7:03 PM</div>
+<div style="font-weight: 600">3</div><div>The 7:05 candle closes through it</div>
+<div style="font-weight: 600">4</div><div>Entry 24,971.00 at 7:07 PM · initial stop 24,949.75</div>
+<div style="font-weight: 600">5</div><div>Half out at 24,992.25 (1R), 7:10 PM · stop on the rest moves to entry</div>
+</div>
+</section>
+<div style="display: flex; flex-direction: column; gap: 16px">
+<section aria-labelledby="facts" style="background: #FFFFFF; border: 1px solid #DAD6CC; border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column; gap: 12px">
+<h2 id="facts" style="margin: 0; font-size: 16px; font-weight: 600">What was recorded</h2>
+<div style="display: grid; grid-template-columns: 150px 1fr; gap: 8px 12px; font-size: 14px">
+<div style="color: #54585E">7:07 PM</div><div>Bought 10 micros at <span style="font-family: 'IBM Plex Mono', monospace">24,971.00</span></div>
+<div style="color: #54585E">Initial stop</div><div><span style="font-family: 'IBM Plex Mono', monospace">24,949.75</span> · risk $425.00</div>
+<div style="color: #54585E">7:10 PM</div><div>Sold 5 at <span style="font-family: 'IBM Plex Mono', monospace">24,992.25</span> · target reached, stop on the rest moved to entry</div>
+</div>
+<div style="{{fullBlock}}">
+<div style="display: grid; grid-template-columns: 150px 1fr; gap: 8px 12px; font-size: 14px">
+<div style="color: #54585E">Apr 13, 3:55 PM</div><div>Sold 5 at <span style="font-family: 'IBM Plex Mono', monospace">25,576.25</span> · scheduled daily close</div>
+<div style="color: #54585E">Result</div><div><span style="font-family: 'IBM Plex Mono', monospace; font-weight: 600">+$6,254.72</span> after $10.28 costs</div>
+<div style="color: #54585E">Account 6 balance</div><div style="font-family: 'IBM Plex Mono', monospace">$1,821.10 → $8,075.82</div>
+</div>
+<div style="padding: 10px 12px; background: #F8E9DD; border-radius: 8px; font-size: 13px; line-height: 1.5; color: #6E300B">One of the five trades that carry 74% of this configuration's profit.</div>
+</div>
+<div style="{{pitBlock}}">
+<div style="padding: 10px 12px; background: #F7F5F0; border-radius: 8px; font-size: 14px; line-height: 1.5; color: #3C4046">Exit and result hidden, so you judge the setup as it looked at 7:10 PM.</div>
+</div>
+</section>
+<section aria-labelledby="chain" style="background: #FFFFFF; border: 1px solid #DAD6CC; border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column; gap: 10px">
+<h2 id="chain" style="margin: 0; font-size: 16px; font-weight: 600">How the setup formed</h2>
+<div style="display: grid; grid-template-columns: 24px 1fr auto; gap: 8px 10px; font-size: 14px; align-items: baseline">
+<div style="font-family: 'IBM Plex Mono', monospace; color: #54585E">1</div><div>Four-hour gap, 24,451.50–25,086.75</div><div style="color: #54585E">Apr 8, 1:00 AM</div>
+<div style="font-family: 'IBM Plex Mono', monospace; color: #54585E">2</div><div>Price taps into it</div><div style="color: #54585E">Apr 12, 5:18 PM</div>
+<div style="font-family: 'IBM Plex Mono', monospace; color: #54585E">3</div><div>Five-minute parent gap forms</div><div style="color: #54585E">7:00 PM</div>
+<div style="font-family: 'IBM Plex Mono', monospace; color: #54585E">4</div><div>Opposing 1-minute gap, 3 ticks, inside 80</div><div style="color: #54585E">7:03 PM</div>
+<div style="font-family: 'IBM Plex Mono', monospace; color: #54585E">5</div><div>A candle closes through it</div><div style="color: #54585E">7:05 PM</div>
+<div style="font-family: 'IBM Plex Mono', monospace; color: #143A67; font-weight: 600">6</div><div style="font-weight: 600">Entry</div><div style="font-weight: 600">7:07 PM</div>
+</div>
+<div style="font-size: 12px; line-height: 1.5; color: #54585E; border-top: 1px solid #E8E4DA; padding-top: 8px">1,247 minutes on recorded exchange trades, 1 approximated (Apr 13, 2:03 AM: two trades share the minute's first timestamp). No effect on the exit.</div>
+</section>
+</div>
+</div>
+
+<section aria-labelledby="judge" style="background: #FFFFFF; border: 1px solid #DAD6CC; border-radius: 12px; padding: 20px 22px; display: flex; flex-direction: column; gap: 16px">
+<div style="display: flex; justify-content: space-between; align-items: baseline">
+<h2 id="judge" style="margin: 0; font-size: 16px; font-weight: 600">Your review</h2>
+<div style="font-size: 13px; color: #54585E">Saved for this firm, account and trade only — it can't overwrite another review</div>
+</div>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px">
+<fieldset style="border: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px">
+<legend style="font-size: 14px; font-weight: 600; margin-bottom: 8px">Overall</legend>
+<label style="display: flex; align-items: center; gap: 8px; font-size: 14px"><input type="radio" name="v" style="width: 18px; height: 18px">Correct — matches how I'd trade it</label>
+<label style="display: flex; align-items: center; gap: 8px; font-size: 14px"><input type="radio" name="v" style="width: 18px; height: 18px">Incorrect — I wouldn't take this</label>
+<label style="display: flex; align-items: center; gap: 8px; font-size: 14px"><input type="radio" name="v" style="width: 18px; height: 18px">Needs investigation</label>
+<label style="display: flex; align-items: center; gap: 8px; font-size: 14px"><input type="radio" name="v" style="width: 18px; height: 18px">Unclear</label>
+<label style="display: flex; align-items: center; gap: 8px; font-size: 14px"><input type="radio" name="v" style="width: 18px; height: 18px">Not applicable</label>
+</fieldset>
+<div style="display: flex; flex-direction: column; gap: 10px">
+<div style="font-size: 14px; font-weight: 600">Step by step</div>
+<div style="display: grid; grid-template-columns: 1fr 170px; gap: 8px; align-items: center; font-size: 14px"><label for="d1">Four-hour gap is valid</label><select id="d1" style="padding: 8px 10px; min-height: 40px; border: 1px solid #BDB8AC; border-radius: 8px; font: inherit; font-size: 14px; background: #FFFFFF; color: #16181B"><option>Not reviewed</option><option>Agree</option><option>Disagree</option><option>Unclear</option></select></div>
+<div style="display: grid; grid-template-columns: 1fr 170px; gap: 8px; align-items: center; font-size: 14px"><label for="d2">Parent gap and retest are right</label><select id="d2" style="padding: 8px 10px; min-height: 40px; border: 1px solid #BDB8AC; border-radius: 8px; font: inherit; font-size: 14px; background: #FFFFFF; color: #16181B"><option>Not reviewed</option><option>Agree</option><option>Disagree</option><option>Unclear</option></select></div>
+<div style="display: grid; grid-template-columns: 1fr 170px; gap: 8px; align-items: center; font-size: 14px"><label for="d3">Entry and stop are right</label><select id="d3" style="padding: 8px 10px; min-height: 40px; border: 1px solid #BDB8AC; border-radius: 8px; font: inherit; font-size: 14px; background: #FFFFFF; color: #16181B"><option>Not reviewed</option><option>Agree</option><option>Disagree</option><option>Unclear</option></select></div>
+<div style="display: grid; grid-template-columns: 1fr 170px; gap: 8px; align-items: center; font-size: 14px"><label for="d4">Exit handling is right</label><select id="d4" style="padding: 8px 10px; min-height: 40px; border: 1px solid #BDB8AC; border-radius: 8px; font: inherit; font-size: 14px; background: #FFFFFF; color: #16181B"><option>Not reviewed</option><option>Agree</option><option>Disagree</option><option>Unclear</option></select></div>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="font-size: 14px; font-weight: 600">Tags</div>
+<div style="display: flex; flex-wrap: wrap; gap: 8px">
+<button type="button" style="padding: 6px 12px; min-height: 36px; border: 1px solid #BDB8AC; background: #FFFFFF; border-radius: 999px; font: inherit; font-size: 13px; cursor: pointer">A+ setup</button>
+<button type="button" style="padding: 6px 12px; min-height: 36px; border: 1px solid #BDB8AC; background: #FFFFFF; border-radius: 999px; font: inherit; font-size: 13px; cursor: pointer">Late entry</button>
+<button type="button" style="padding: 6px 12px; min-height: 36px; border: 1px solid #BDB8AC; background: #FFFFFF; border-radius: 999px; font: inherit; font-size: 13px; cursor: pointer">Stop too tight</button>
+<button type="button" style="padding: 6px 12px; min-height: 36px; border: 1px solid #BDB8AC; background: #FFFFFF; border-radius: 999px; font: inherit; font-size: 13px; cursor: pointer">Stale parent</button>
+<button type="button" style="padding: 6px 12px; min-height: 36px; border: 1px solid #BDB8AC; background: #FFFFFF; border-radius: 999px; font: inherit; font-size: 13px; cursor: pointer">News time</button>
+<button type="button" style="padding: 6px 12px; min-height: 36px; border: 1px dashed #A9A498; background: #FFFFFF; border-radius: 999px; font: inherit; font-size: 13px; cursor: pointer">+ New tag</button>
+</div>
+</div>
+<div style="display: grid; grid-template-columns: 1fr 240px; gap: 16px; align-items: end">
+<div style="display: flex; flex-direction: column; gap: 6px"><label for="notes" style="font-size: 14px; font-weight: 600">Notes</label><textarea id="notes" rows="3" style="padding: 10px 12px; border: 1px solid #BDB8AC; border-radius: 8px; font: inherit; font-size: 14px; background: #FFFFFF; color: #16181B; resize: vertical"></textarea></div>
+<div style="display: flex; flex-direction: column; gap: 6px"><label for="who" style="font-size: 14px; font-weight: 600">Reviewer</label><input id="who" value="Luis" style="padding: 10px 12px; min-height: 44px; box-sizing: border-box; border: 1px solid #BDB8AC; border-radius: 8px; font: inherit; font-size: 14px; background: #FFFFFF; color: #16181B"></div>
+</div>
+<div style="display: flex; justify-content: flex-end; gap: 10px">
+<button type="button" style="padding: 10px 16px; min-height: 44px; border: 1px solid #BDB8AC; background: #FFFFFF; border-radius: 8px; font: inherit; font-size: 14px; cursor: pointer">Save and next trade</button>
+<button type="button" style="padding: 10px 16px; min-height: 44px; border: 1px solid #16181B; background: #16181B; color: #FFFFFF; border-radius: 8px; font: inherit; font-size: 14px; font-weight: 500; cursor: pointer">Save review</button>
+</div>
+</section>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":2180}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { mode: 'full' }; }
+  renderVals() {
+    var BIG=[[1.1,336.5,57.9,345.4,6.8,1],[8.3,330.2,32.9,345.4,15.8,0],[15.6,351.2,21.9,361.4,5.3,0],[22.8,360.3,20.8,365.4,1,1],[30.1,365.2,12.4,366.6,7.2,0],[37.3,362.6,12.2,365.4,8.0,1],[44.6,364.3,16.1,364.9,8.4,0],[51.8,366.6,10.0,372.9,1,1],[59.1,371.7,6.2,372.0,1.0,1],[66.3,371.5,9.6,371.7,6.5,0],[73.6,376.1,8.5,377.9,4.1,0],[80.8,347.0,34.8,349.9,31.9,1],[88.1,345.7,23.2,347.1,2.8,1],[95.3,335.6,13.6,341.1,6.0,1],[102.5,336.9,9.2,341.5,1.4,0],[109.8,328.9,18.5,334.8,8.4,1],[117.0,325.3,10.9,326.3,7.9,1],[124.3,309.6,17.9,310.2,15.8,1],[131.5,300.8,11.1,307.8,2.1,1],[138.8,294.4,14.1,303.5,4.7,1],[146.0,297.3,9.7,299.7,3.1,1],[153.3,292.8,11.5,299.8,1,1],[160.5,297.0,10.9,299.7,1.2,0],[167.8,288.5,12.7,294.5,6.2,1],[175.0,293.1,9.7,294.4,7.7,0],[182.3,301.4,7.5,301.5,2.0,0],[189.5,301.1,8.2,303.9,2.6,0],[196.8,303.7,5.6,306.0,1,1],[204.0,297.6,9.6,304.6,1.7,1],[211.2,294.8,10.5,297.7,7.2,1],[218.5,293.8,12.7,297.4,8.6,0],[225.7,305.6,5.1,306.0,2.9,0],[233.0,297.6,12.0,300.7,8.5,1],[240.2,299.5,9.7,301.1,7.3,0],[247.5,301.4,7.5,307.1,1.3,1],[254.7,305.3,3.5,306.1,1.4,0],[262.0,306.7,6.6,307.5,1,0],[269.2,298.4,11.4,299.3,8.4,1],[276.5,298.4,9.5,298.7,2.7,0],[283.7,298.8,6.3,300.8,3.8,0],[291.0,298.3,7.3,302.6,1,1],[298.2,287.2,17.7,295.6,7.7,1],[305.4,294.2,7.2,295.6,5.6,0],[312.7,299.3,8.5,301.2,4.9,0],[319.9,291.0,15.5,297.0,8.6,1],[327.2,296.2,8.9,296.3,4.5,0],[334.4,296.5,6.4,299.0,2.4,1],[341.7,293.4,8.4,296.3,2.3,1],[348.9,289.2,8.1,293.0,3.2,1],[356.2,280.5,15.3,282.6,9.4,1],[363.4,274.4,11.0,280.2,3.3,1],[370.7,277.0,9.4,279.5,4.1,0],[377.9,278.3,6.8,282.8,1,1],[385.2,276.3,7.0,276.3,5.6,1],[392.4,269.2,10.9,276.3,2.7,0],[399.7,273.0,8.1,274.5,4.2,1],[406.9,273.2,18.5,274.2,5.3,0],[414.1,275.5,9.4,279.1,1,0],[421.4,277.3,10.8,280.1,4.6,0],[428.6,283.0,5.9,284.2,1,1],[435.9,268.1,17.0,278.0,6.4,1],[443.1,274.9,7.7,277.9,1,0],[450.4,272.8,10.0,274.6,4.1,1],[457.6,272.1,16.1,274.8,12.4,0],[464.9,279.0,11.7,282.5,5.0,1],[472.1,279.4,7.0,282.6,3.7,0],[479.4,269.2,17.1,278.6,7.5,1],[486.6,273.5,8.1,273.9,4.1,1],[493.9,268.5,6.8,272.7,1.7,1],[501.1,266.5,6.7,270.9,1.8,1],[508.3,269.2,8.7,271.4,5.8,0],[515.6,272.5,8.0,276.0,1.6,1],[522.8,272.0,5.9,273.9,1.9,1],[530.1,271.7,8.0,273.5,3.8,0],[537.3,274.2,5.3,274.4,3.5,1],[544.6,270.9,6.4,273.4,1.5,0],[551.8,267.5,10.8,270.0,5.2,1],[559.1,249.0,23.1,253.2,17.0,1],[566.3,232.0,21.4,251.1,2.3,1],[573.6,248.9,9.8,251.3,4.9,0],[580.8,251.4,14.3,256.0,7.2,0],[588.1,261.8,21.0,263.7,12.6,0],[595.3,268.6,12.9,276.5,2.1,0],[602.5,278.7,15.0,278.7,12.3,0],[609.8,278.7,21.1,280.9,9.6,1],[617.0,272.8,9.3,275.2,6.4,1],[624.3,268.8,9.2,271.1,4.2,1],[631.5,259.4,14.3,262.3,8.3,1],[638.8,243.2,19.7,247.2,15.1,1],[646.0,240.5,8.7,246.5,1,1],[653.3,239.5,13.9,246.8,3.2,0],[660.5,234.5,17.6,235.6,14.7,1],[667.8,219.2,19.3,220.5,15.2,1],[675.0,207.6,36.0,220.2,10.4,0],[682.3,185.0,66.4,189.3,41.0,1],[689.5,167.5,45.4,168.6,20.4,1],[696.8,154.6,25.5,167.5,1.8,1],[704.0,167.5,32.4,167.5,20.8,0],[711.2,173.2,30.4,175.2,13.3,1],[718.5,166.6,19.3,175.2,3.0,0],[725.7,162.2,18.0,173.3,5.1,1],[733.0,139.1,37.3,144.1,29.0,1],[740.2,143.5,26.1,144.0,12.6,0],[747.5,144.4,20.3,156.7,6.6,0],[754.7,151.4,15.8,163.4,2.8,0],[762.0,142.3,32.7,150.4,15.4,1],[769.2,148.3,18.3,150.5,11.4,0],[776.5,161.0,13.3,161.9,5.9,0],[783.7,148.3,34.6,165.0,3.0,1],[791.0,154.6,15.7,157.1,8.3,1],[798.2,119.1,38.0,125.5,31.3,1],[805.4,104.0,29.6,125.2,1,1],[812.7,108.6,39.1,116.1,9.5,1],[819.9,97.5,26.9,111.1,4.7,1],[827.2,104.7,14.2,110.9,3.3,0],[834.4,95.0,20.4,99.8,14.5,1],[841.7,99.8,6.4,99.9,1,0],[848.9,95.6,12.4,100.6,2.2,0],[856.2,99.3,12.5,103.3,8.1,0],[863.4,108.1,9.7,111.5,3.4,0],[870.7,104.0,10.9,105.8,8.8,1],[877.9,103.0,9.8,105.8,6.8,0],[885.2,110.7,8.6,112.6,4.6,0],[892.4,105.6,13.2,106.8,10.7,1],[899.7,94.9,14.5,97.5,9.0,1],[906.9,86.6,13.7,91.8,5.4,1],[914.1,86.9,10.1,91.6,1.0,0],[921.4,86.7,13.1,88.4,4.2,1],[928.6,82.8,7.6,84.2,4.2,1],[935.9,69.4,19.3,78.5,5.9,1],[943.1,75.3,10.3,76.5,2.1,1],[950.4,33.0,44.8,40.0,37.1,1],[957.6,28.8,13.6,35.0,5.0,1],[964.9,27.7,9.9,32.0,2.8,1],[972.1,25.5,7.8,32.0,1,0],[979.4,15.7,17.6,24.3,8.0,1],[986.6,17.3,8.3,20.0,4.1,1],[993.9,5.6,14.5,13.3,6.8,1]];
+    var SMALL=[[2.0,257.5,11.2,258.4,10.3,1],[12.5,259.3,11.1,262.7,6.8,0],[24.4,260.1,13.7,267.0,1,1],[34.8,264.4,22.2,265.2,12.0,0],[45.2,259.3,17.9,261.8,12.9,1],[56.2,257.5,25.7,263.5,9.4,0],[67.3,271.2,23.1,279.8,1,1],[77.9,278.9,12.9,282.4,6.8,0],[88.6,289.2,16.3,290.1,4.2,0],[99.8,290.1,19.6,293.5,1,1],[110.4,256.7,35.9,267.0,25.6,1],[121.2,226.7,42.0,231.9,36.8,1],[132.2,129.2,106.1,143.7,88.2,1],[142.9,117.2,31.7,141.2,3.4,0],[153.8,140.3,22.3,142.9,1,0],[164.9,118.9,38.5,130.9,18.0,1],[175.5,107.0,27.3,124.1,3.4,1],[187.5,121.5,24.0,123.2,6.0,0],[197.3,79.6,55.6,105.2,29.1,1],[208.1,89.0,27.4,97.5,8.6,1],[219.0,83.9,87.2,97.5,67.6,0],[229.9,166.8,47.1,168.6,37.6,0],[240.8,173.7,35.1,185.7,17.9,1],[251.8,166.0,25.7,184.8,1,0],[262.8,180.5,21.4,182.2,6.0,1],[273.3,136.0,51.4,142.0,42.8,1],[284.2,124.9,37.7,142.0,2.6,1],[295.3,108.7,35.0,113.8,24.8,1],[305.9,104.4,27.4,118.1,7.7,0],[316.9,71.9,53.0,80.4,43.7,1],[327.8,58.2,35.1,58.2,22.2,1],[338.6,59.9,28.2,63.3,14.6,0],[349.5,65.0,19.7,65.9,9.4,1],[360.7,55.6,25.7,57.3,14.6,1],[371.4,10.3,45.3,22.2,32.6,1],[382.0,18.8,22.3,24.8,1.7,0],[392.9,29.1,18.0,29.1,6.0,0],[403.8,10.3,23.1,29.9,2.6,1],[414.9,10.3,21.4,27.4,1.7,1],[425.5,24.8,22.3,27.4,16.2,0],[436.5,35.9,23.1,46.2,5.1,0],[447.3,44.5,29.9,51.3,3.5,0],[458.2,44.5,21.4,57.3,1.7,0],[469.0,53.9,15.4,57.3,2.6,0],[479.9,32.5,32.5,42.8,16.2,1],[490.8,28.2,18.0,42.8,1.7,0]];
+    var full = this.state.mode === 'full', self = this;
+    var cut = function (arr, bw, lim) {
+      return arr.filter(function (a) { return full || a[0] <= lim; }).map(function (a) {
+        return { x: a[0], wx: Math.round((a[0] + bw / 2) * 10) / 10, wt: a[1], wh: a[2], bt: a[3], bh: a[4], col: a[5] ? '#1D4E89' : '#A34A12' };
+      });
+    };
+    var on = 'white-space: nowrap; padding: 8px 14px; min-height: 40px; font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; background: #16181B; color: #FFFFFF; border: 1px solid #16181B;';
+    var off = 'white-space: nowrap; padding: 8px 14px; min-height: 40px; font: inherit; font-size: 14px; cursor: pointer; background: #FFFFFF; color: #16181B; border: 1px solid #BDB8AC;';
+    return {
+      big: cut(BIG, 5, 95),
+      small: cut(SMALL, 7, 330),
+      fullShow: full ? '' : 'display: none',
+      fullBlock: full ? 'display: flex; flex-direction: column; gap: 12px' : 'display: none',
+      pitBlock: full ? 'display: none' : 'display: block',
+      pitCover: full ? 'display: none' : 'position: absolute; left: 100px; top: 0; width: 900px; height: 400px; background: #EFECE4; display: flex; align-items: center; justify-content: center',
+      pitCoverSmall: full ? 'display: none' : 'position: absolute; left: 334px; top: 0; width: 166px; height: 320px; background: #EFECE4',
+      modeNote: full ? 'Everything, including what happened after entry.' : 'Only what was known at 7:10 PM. Later candles and the result are hidden.',
+      fullStyle: (full ? on : off) + ' border-radius: 8px 0 0 8px;',
+      pitStyle: (full ? off : on) + ' border-radius: 0 8px 8px 0; margin-left: -1px;',
+      setFull: function () { self.setState({ mode: 'full' }); },
+      setPit: function () { self.setState({ mode: 'pit' }); }
+    };
+  }
+}
+</script>
+</body>
+</html>

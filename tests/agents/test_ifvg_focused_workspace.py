@@ -134,6 +134,42 @@ def _workspace_app():
     ifvg_workspace.render_workspace(st, roots=ifvg_workspace._TEST_ROOTS)
 
 
+#: the redesign's left rail (My studies · Trade review · New study) replaced the top radio
+RAIL_KEYS = ("ifvg_lab_v1_rail_My_studies", "ifvg_lab_v1_rail_Trade_review",
+             "ifvg_lab_v1_rail_New_study")
+
+
+def _static_clickable(monkeypatch):
+    """AppTest mocks the component registry, so the redesign's clickable HTML is drawn static.
+
+    Its links only navigate (never save or launch); the buttons under test are
+    ordinary Streamlit widgets.
+    """
+
+    import ifvg_lab_ui
+
+    def clickable(markup, *, key, st_module=None):
+        import streamlit as st
+
+        (st_module or st).html(str(markup))
+        return None
+
+    monkeypatch.setattr(ifvg_lab_ui, "clickable", clickable)
+
+
+def _open_other_study_types(at):
+    """New study opens the funded comparison setup; the earlier chooser is one click away.
+
+    Contract with the New funded comparison page: its "Other study types" button
+    (key ``ifvg_lab_v1_other_types``) opens the earlier study-type chooser. While
+    that page is still the placeholder, New study shows the chooser directly.
+    """
+
+    if any(button.key == "ifvg_lab_v1_other_types" for button in at.button):
+        at.button(key="ifvg_lab_v1_other_types").click().run()
+    return at
+
+
 def test_open_switch_and_configure_do_not_launch_or_render_developer(monkeypatch, roots):
     import ifvg_lab_tab
     import ifvg_study_wizard
@@ -143,6 +179,7 @@ def test_open_switch_and_configure_do_not_launch_or_render_developer(monkeypatch
 
     monkeypatch.setattr(ifvg_workspace, "_TEST_ROOTS", roots, raising=False)
     monkeypatch.setattr(workspace_mode, "DEVELOPER_MODE", False)
+    _static_clickable(monkeypatch)
 
     def forbidden(*args, **kwargs):
         pytest.fail("Hidden technical renderer or launch handler executed")
@@ -152,9 +189,11 @@ def test_open_switch_and_configure_do_not_launch_or_render_developer(monkeypatch
     monkeypatch.setattr(ifvg_study_wizard, "_spawn_search_job", forbidden)
     at = AppTest.from_function(_workspace_app, default_timeout=60).run()
     assert not at.exception
-    assert at.radio[0].options == ["My studies", "Trade review"]
+    assert {button.key for button in at.button} >= set(RAIL_KEYS)
     assert not at.code and not at.json
     at.button(key="ifvg_workspace_new").click().run()
+    assert not at.exception
+    _open_other_study_types(at)
     assert not at.exception
     next(button for button in at.button if button.label == "Configure study").click().run()
     assert not at.exception
@@ -188,6 +227,8 @@ def test_normal_draft_management_is_reachable_from_my_studies(monkeypatch, roots
     draft.display_name = "Manage this study"
     save_draft(roots["draft_root"], draft)
     at = AppTest.from_function(_workspace_app, default_timeout=60).run()
+    assert not at.exception
+    at.button(key="ifvg_lab_v1_library_tab_drafts").click().run()  # My studies · Drafts
     assert not at.exception
     at.button(key=f"ifvg_details_{draft.draft_id}").click().run()
     assert not at.exception

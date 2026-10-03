@@ -131,6 +131,9 @@ def test_actual_ifsm_page_save_reopen_edit_and_import(monkeypatch, tmp_path):
     app.run()
     assert not app.exception
     app.button(key="ifvg_workspace_new").click().run()
+    # the redesign's New study opens the funded comparison setup; the earlier
+    # study-type chooser is one click away under "Other study types"
+    app.button(key="ifvg_lab_v1_other_types").click().run()
     next(widget for widget in app.radio
          if widget.label == "What would you like to research?").set_value("Evaluate").run()
     next(button for button in app.button if button.label == "Configure study").click().run()

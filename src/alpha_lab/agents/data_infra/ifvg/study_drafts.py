@@ -516,7 +516,11 @@ def proposed_draft_name(
     goal_label: str, *, baseline_profile_name: str | None, day: str
 ) -> str:
     """Owner Q2's default proposal ``<goal> — <baseline short name> — <date>``
-    (the baseline part is omitted while no baseline is selected)."""
+    (the baseline part is omitted while no baseline is selected).
+
+    The date is written in words (``September 4, 2026``), as the owner asked on
+    September 24, 2026; a day that isn't an ISO date is kept as given.
+    """
 
     parts = [str(goal_label).strip()]
     if baseline_profile_name:
@@ -526,5 +530,17 @@ def proposed_draft_name(
                 short = short[len(prefix) :]
                 break
         parts.append(short.replace("_", " "))
-    parts.append(str(day))
+    parts.append(date_in_words(day))
     return " — ".join(parts)
+
+
+def date_in_words(day: object) -> str:
+    """``2026-09-24`` (or a date) → ``September 24, 2026``; anything else unchanged."""
+
+    from datetime import date as _date
+
+    try:
+        value = day if isinstance(day, _date) else _date.fromisoformat(str(day)[:10])
+    except ValueError:
+        return str(day)
+    return f"{value:%B} {value.day}, {value.year}"

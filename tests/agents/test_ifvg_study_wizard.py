@@ -1156,7 +1156,8 @@ def test_session_only_draft_writes_no_file_until_save_or_valid_next(
     assert "Implementation Verification" in _tables(at)  # the annotation lives in the session
     name = next(w for w in at.text_input if w.key == f"{wizard._W}name")
     assert "Single Configuration" in name.value  # the proposed default name (goal — date)
-    assert "2026-" in name.value
+    # the date is written in words (fix F9 of the redesign review), never as an ISO date
+    assert name.value.endswith(", 2026") and "2026-" not in name.value
     _button(at, "Save Draft").click().run()
     assert not at.exception
     stored = load_draft(roots["drafts"], draft_id)

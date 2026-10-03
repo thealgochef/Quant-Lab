@@ -8,7 +8,9 @@ renders the tab entry-point with a stubbed engine and is skipped when
 
 from __future__ import annotations
 
+import re
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -412,6 +414,18 @@ def test_tab_smoke_apptest(monkeypatch) -> None:
         ),
     )
 
+    import ifvg_lab_ui
+
+    def _static_clickable(markup, *, key, st_module=None):
+        # AppTest mocks the component registry; the redesign's clickable HTML
+        # (navigation links only) is drawn static here.
+        import streamlit as st
+
+        (st_module or st).html(str(markup))
+        return None
+
+    monkeypatch.setattr(ifvg_lab_ui, "clickable", _static_clickable)
+
     def _app() -> None:
         # AppTest re-executes this function's SOURCE in a fresh namespace, so
         # import the (already monkeypatched, process-shared) module inside.
@@ -423,9 +437,15 @@ def test_tab_smoke_apptest(monkeypatch) -> None:
     at.run()
     assert not at.exception
     assert not at.tabs
-    assert at.radio[0].options == ["My studies", "Trade review"]
+    rail = ("ifvg_lab_v1_rail_My_studies", "ifvg_lab_v1_rail_Trade_review",
+            "ifvg_lab_v1_rail_New_study")
+    assert {button.key for button in at.button} >= set(rail)  # the left rail, not a radio
     assert not at.code and not at.json
-    at.radio[0].set_value("Trade review").run()
+    # Trade review opens on funded trades; the verified-context reviewer (the
+    # earlier Trade review, whose failed-preparation message is checked below)
+    # is its "Verified context" source.
+    at.session_state["ifvg_lab_v1_review_source_value"] = "Verified context"
+    at.button(key="ifvg_lab_v1_rail_Trade_review").click().run()
     assert not at.exception
     assert any("No prepared trade evidence" in item.value for item in at.info)
     assert not at.code and not at.json
@@ -734,3 +754,120 @@ def test_sealed_ledger_count_is_global(tmp_path) -> None:
     )
     # Two looks across two DIFFERENT configs -> global count 2.
     assert sealed_ledger_count(tmp_path) == 2
+
+
+# ── two-theme palette: colors resolve when a figure is built, never at import ─
+
+
+_COLOR_LITERAL = re.compile(r"#[0-9A-Fa-f]{6}\b|rgba?\(")
+
+
+@contextmanager
+def _dark_palette():
+    """The palette resolver says dark inside the block; the default (light) comes back after."""
+    from alpha_lab.agents.data_infra.ifvg.presentation.lab import theme
+
+    theme.set_theme_resolver(lambda: "dark")
+    try:
+        yield theme.DARK_COLORS
+    finally:
+        theme.set_theme_resolver(None)
+
+
+def test_funded_inline_styles_carry_no_color_literal() -> None:
+    import ifvg_lab_funded as funded
+
+    source = (_SCRIPTS / "ifvg_lab_funded.py").read_text(encoding="utf-8")
+    assert not _COLOR_LITERAL.search(source)
+    cards = str(funded._window_cards(SimpleNamespace(calendar=[]), None, "Take Profit Trader"))
+    gates = str(funded._gate_card(SimpleNamespace(gates=[])))
+    assert not _COLOR_LITERAL.search(cards)
+    assert not _COLOR_LITERAL.search(gates)
+    assert 'style="color:var(--lab-blue)">Selection window' in cards
+    assert 'style="color:var(--lab-orange)">Unseen window' in cards
+    assert ("border:1px solid var(--lab-disabled-border);background:var(--lab-disabled-bg);"
+            "color:var(--lab-disabled-text)") in cards
+    assert "color:var(--lab-body)" in gates
+    assert "Not in export" in gates
+
+
+def test_level_style_takes_the_palette_gray_and_keeps_session_colors() -> None:
+    from alpha_lab.agents.data_infra.ifvg.presentation.lab import theme
+
+    assert charts.level_style("pdh") == {"color": theme.COLORS["muted"], "dash": "solid"}
+    assert charts.level_style("prev_ny_low") == {"color": theme.COLORS["muted"], "dash": "dot"}
+    assert charts.level_style("not a level") == {"color": theme.COLORS["muted"], "dash": "dot"}
+    assert charts.level_style("asia_high") == {"color": "#2E9990", "dash": "dash"}
+    with _dark_palette() as dark:
+        assert charts.level_style("pdh")["color"] == dark["muted"]
+        assert charts.level_style("asia_high")["color"] == "#2E9990"  # semantic, unchanged
+    assert charts.level_style("pdh")["color"] == theme.COLORS["muted"]  # resolver restored
+
+
+def test_result_figures_take_the_dark_ground_when_the_palette_says_dark() -> None:
+    from alpha_lab.agents.data_infra.ifvg.presentation.lab import theme
+
+    section = {"calibration": [{"mean_p": 0.4, "actual": 0.5, "n": 3}]}
+    light = charts.build_calibration_figure(section)
+    assert light.layout.plot_bgcolor == theme.COLORS["chart_ground"]
+    assert light.layout.font.color == theme.COLORS["body"]
+    assert light.layout.xaxis.gridcolor == theme.COLORS["grid"]
+    assert light.data[0].line.color == theme.COLORS["muted"]  # the "perfect" diagonal
+    with _dark_palette() as dark:
+        fig = charts.build_calibration_figure(section)
+        assert fig.layout.paper_bgcolor == "rgba(0,0,0,0)"
+        assert fig.layout.plot_bgcolor == dark["chart_ground"]
+        assert fig.layout.font.color == dark["body"]
+        assert fig.layout.xaxis.gridcolor == dark["grid"]
+        assert fig.layout.yaxis.gridcolor == dark["grid"]
+        assert fig.data[0].line.color == dark["muted"]
+        assert fig.data[1].line.color == "#4C78A8"  # the model series keeps its own color
+        hist = charts.build_r_histogram_figure({"bins": [-1, 0, 1], "counts": [1, 2, 3]})
+        assert hist.layout.plot_bgcolor == dark["chart_ground"]
+        equity = charts.build_equity_figure(
+            {"equity": {"usd": {"equity": [0.0, 1.0], "timestamps": [0, 1]}}})
+        assert equity.layout.yaxis2.gridcolor == dark["grid"]  # both subplot rows
+        bins = pd.DataFrame({"mean_probability": [0.25, 0.75], "observed_rate": [0.0, 1.0],
+                             "count": [1, 1]})
+        assert charts.build_reliability_figure(bins).data[0].line.color == dark["muted"]
+        coverage = charts.build_coverage_figure([{"threshold": 0.5, "coverage_count": 1,
+                                                  "coverage_fraction": 0.5, "net_r_sum": 1.0}])
+        assert coverage.layout.xaxis2.gridcolor == dark["grid"]
+
+
+def test_replay_figure_grounds_and_neutral_lines_follow_the_palette() -> None:
+    from alpha_lab.agents.data_infra.ifvg.presentation.lab import theme
+
+    t0, t1 = _ts("2026-01-13 04:30"), _ts("2026-01-13 04:41")
+    minute = pd.Timedelta(minutes=1)
+    bars = pd.DataFrame({
+        "timeframe_ticks": [60, 60], "open_ts_utc": [t0, t1],
+        "close_ts_utc": [t0 + minute, t1 + minute], "open_ticks": [398, 402],
+        "high_ticks": [404, 406], "low_ticks": [396, 400], "close_ticks": [402, 404],
+    })
+    overlays = charts.trade_overlays(_entry_capture(long=True))
+
+    def build():
+        return charts.build_replay_figure(day="2026-01-13", bars=bars, levels=pd.DataFrame(),
+                                          zones=pd.DataFrame(), overlays=overlays, markers=[])
+
+    with _dark_palette() as dark:
+        fig = build()
+    assert fig.layout.plot_bgcolor == dark["chart_ground"]
+    assert fig.layout.font.color == dark["body"]
+    assert fig.layout.xaxis.gridcolor == dark["grid"]
+    by_name = {trace.name: trace for trace in fig.data}
+    assert by_name["MFE"].line.color == dark["muted"]
+    assert by_name["dropped candidates"].marker.color == dark["muted"]
+    assert by_name["entries"].marker.color == "#2CA02C"  # the good/bad pair stays
+    assert by_name["SL"].line.color == "#D62728"
+    band_note = next(a for a in fig.layout.annotations if "(engine)" in (a.text or ""))
+    assert band_note.font.color == dark["muted"]
+    outcome = next(a for a in fig.layout.annotations if a.bgcolor)
+    assert outcome.bgcolor == theme.rgba("panel", 0.75, "dark")
+    light = build()
+    assert light.layout.plot_bgcolor == theme.COLORS["chart_ground"]
+    light_outcome = next(a for a in light.layout.annotations if a.bgcolor)
+    assert light_outcome.bgcolor == "rgba(255,255,255,0.75)"
+    assert light_outcome.text == outcome.text  # colors only: the same words in both themes
+    assert len(light.data) == len(fig.data)

@@ -1264,7 +1264,7 @@ def main() -> None:
         page_title="Alpha Signal Research Lab",
         page_icon="📊",
         layout="wide",
-        initial_sidebar_state="auto",
+        initial_sidebar_state="expanded",  # the IFVG Lab's left rail is its navigation
     )
 
     from alpha_lab.agents.data_infra.ifvg.presentation.workspace_mode import DEVELOPER_MODE
@@ -1279,12 +1279,19 @@ def main() -> None:
     ]
     if DEVELOPER_MODE:
         pages.append(st.Page(_developer_workspace, title="Developer", url_path="developer"))
+    _OTHER_PAGES[:] = pages[1:]
     st.navigation(pages).run()
 
 
+#: the pages other than the IFVG Lab; the IFVG Lab's left rail links to them
+_OTHER_PAGES: list = []
+
+
 def _ifvg_workspace() -> None:
+    from ifvg_lab_ui import set_other_pages
     from ifvg_workspace import render_workspace
 
+    set_other_pages(_OTHER_PAGES)
     render_workspace(st)
 
 

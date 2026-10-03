@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Funded results overview</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;family=Newsreader:opsz,wght@6..72,500;6..72,600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:'IBM Plex Sans',system-ui,sans-serif;color:#16181B;background:#F4F2EC}
+a{color:#1D4E89}a:hover{color:#143A67}
+</style>
+</helmet>
+<div style="width: 1440px; height: 1900px; display: flex; background: #F4F2EC; font-family: 'IBM Plex Sans', system-ui, sans-serif; color: #16181B">
+<nav aria-label="Main" style="width: 232px; flex-shrink: 0; background: #16181B; color: #E9E6DE; display: flex; flex-direction: column; gap: 32px; padding: 32px 20px; box-sizing: border-box">
+<div style="font-family: 'Newsreader', Georgia, serif; font-size: 28px; font-weight: 600">IFVG Lab</div>
+<div style="display: flex; flex-direction: column; gap: 4px">
+<a href="Library.dc.html" style="display: block; padding: 12px 14px; border-radius: 8px; background: #2B2E33; color: #FFFFFF; text-decoration: none; font-size: 15px; font-weight: 500">My studies</a>
+<a href="TradeReview.dc.html" style="display: block; padding: 12px 14px; border-radius: 8px; color: #E9E6DE; text-decoration: none; font-size: 15px">Trade review</a>
+<a href="Configure.dc.html" style="display: block; padding: 12px 14px; border-radius: 8px; color: #E9E6DE; text-decoration: none; font-size: 15px">New study</a>
+</div>
+<div style="margin-top: auto; font-size: 13px; line-height: 1.5; color: #B3AFA6">All times Chicago, 12-hour</div>
+</nav>
+<main style="flex-grow: 1; padding: 40px 48px; box-sizing: border-box; display: flex; flex-direction: column; gap: 22px">
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="font-size: 14px; color: #54585E"><a href="Library.dc.html">My studies</a> / Funded comparisons</div>
+<h1 style="margin: 0; font-family: 'Newsreader', Georgia, serif; font-size: 40px; font-weight: 600; letter-spacing: -0.3px">Funded variation study</h1>
+<div style="font-size: 16px; color: #3C4046">Which configuration earned the most cash after every account cost?</div>
+<div style="font-size: 14px; color: #54585E">January 12, 2026, 5:00 PM – June 10, 2026, 4:00 PM · 64 configurations · TakeProfitTrader and MyFundedFutures, compared separately · one live account at a time, lost accounts replaced at the firm's price</div>
+</div>
+<details style="background: #FFFFFF; border: 1px solid #DAD6CC; border-radius: 10px; font-size: 14px">
+<summary style="display: flex; align-items: center; gap: 12px; padding: 12px 16px; cursor: pointer; list-style: none">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1D4E89" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"></path></svg>
+<span style="flex-grow: 1; color: #2A2D31">Verified · 515,388 of 515,438 position minutes on recorded trades · Money reconciles for all 128 results · Micro fills priced from E-mini trades · 2 reporting corrections · Approved September 23, 2026</span>
+<span style="padding: 6px 12px; border: 1px solid #BDB8AC; border-radius: 8px; color: #16181B">Details</span>
+</summary>
+</details>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px">
+<div style="background: #FFFFFF; border: 1px solid #DAD6CC; border-radius: 12px; padding: 20px 24px; display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; justify-content: space-between; align-items: baseline">
+<div style="font-size: 13px; font-weight: 600; letter-spacing: 0.6px; text-transform: uppercase; color: #1D4E89">Selection window</div>
+<div style="font-size: 13px; color: #54585E">Used to pick configurations</div>
+</div>
+<div style="font-size: 15px; color: #3C4046">January 13 – June 10, 2026 · 107 trading days</div>
+<div style="display: flex; gap: 32px; align-items: baseline">
+<div style="display: flex; flex-direction: column; gap: 2px"><div style="font-size: 13px; color: #54585E">Leader net cash, {{firmName}}</div><div style="font-family: 'IBM Plex Mono', monospace; font-size: 30px; font-weight: 500">{{leaderNet}}</div></div>
+<div style="display: flex; flex-direction: column; gap: 2px"><div style="font-size: 13px; color: #54585E">Payouts</div><div style="font-family: 'IBM Plex Mono', monospace; font-size: 20px">{{leaderPayouts}}</div></div>
+<div style="display: flex; flex-direction: column; gap: 2px"><div style="font-size: 13px; color: #54585E">Accounts used</div><div style="font-family: 'IBM Plex Mono', monospace; font-size: 20px">{{leaderAccounts}}</div></div>
+</div>
+</div>
+<div style="background: #FBFAF7; border: 1px dashed #A9A498; border-radius: 12px; padding: 20px 24px; display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; justify-content: space-between; align-items: baseline">
+<div style="font-size: 13px; font-weight: 600; letter-spacing: 0.6px; text-transform: uppercase; color: #A34A12">Unseen window</div>
+<div style="font-size: 13px; color: #54585E">Never used for selection</div>
+</div>
+<div style="font-size: 15px; color: #3C4046">June 11, 2026 onward · protected</div>
+<div style="font-size: 15px; color: #2A2D31; line-height: 1.5">Not yet run. The same columns fill in here once a confirmation run is approved.</div>
+<div><button type="button" style="padding: 10px 16px; min-height: 44px; border: 1px solid #16181B; background: #16181B; color: #FFFFFF; border-radius: 8px; font: inherit; font-size: 14px; font-weight: 500; cursor: pointer">Plan a confirmation run</button></div>
+</div>
+</div>
+<div style="display: flex; justify-content: space-between; align-items: center; margin-top: 4px">
+<h2 style="margin: 0; font-family: 'Newsreader', Georgia, serif; font-size: 26px; font-weight: 600">All configurations, ranked by net cash</h2>
+<div role="group" aria-label="Firm" style="display: flex">
+<button type="button" onClick="{{setTpt}}" style="{{tptStyle}}">TakeProfitTrader</button>
+<button type="button" onClick="{{setMffu}}" style="{{mffuStyle}}">MyFundedFutures</button>
+</div>
+</div>
+<div style="font-size: 14px; color: #54585E; margin-top: -12px">The firm switch drives this table and every detail view. Firms are never added together.</div>
+<div style="background: #FFFFFF; border: 1px solid #DAD6CC; border-radius: 12px; overflow: hidden">
+<div style="display: grid; grid-template-columns: 44px 330px 110px 72px 80px 90px 72px 64px 100px 62px 68px; padding: 0 12px; background: #EFECE4; border-bottom: 1px solid #DAD6CC; font-size: 12px; font-weight: 600">
+<div style="padding: 8px 4px 4px"></div><div style="padding: 8px 8px 4px"></div>
+<div style="grid-column: span 4; padding: 8px 8px 4px; text-align: center; color: #1D4E89; border-bottom: 2px solid #1D4E89">Funded accounts (cash)</div>
+<div style="grid-column: span 2; padding: 8px 8px 4px; text-align: center; color: #3C4046; border-bottom: 2px solid #8A857A; margin-left: 12px">Strategy, no accounts</div>
+<div style="grid-column: span 3; padding: 8px 8px 4px; text-align: center; color: #3C4046; border-bottom: 2px solid #8A857A; margin-left: 12px">Funded path risk</div>
+</div>
+<div style="display: grid; grid-template-columns: 44px 330px 110px 72px 80px 90px 72px 64px 100px 62px 68px; padding: 10px 12px; background: #EFECE4; border-bottom: 1px solid #DAD6CC; font-size: 12px; font-weight: 600; color: #3C4046; line-height: 1.3">
+<div style="padding: 0 4px">Rank</div><div style="padding: 0 8px">Configuration</div>
+<div style="padding: 0 8px; text-align: right">Net cash</div><div style="padding: 0 8px; text-align: right">Payouts</div><div style="padding: 0 8px; text-align: right">Accounts used</div><div style="padding: 0 8px; text-align: right">Cash per $1 of accounts</div>
+<div style="padding: 0 8px; text-align: right">Net R</div><div style="padding: 0 8px; text-align: right">Win rate</div>
+<div style="padding: 0 8px; text-align: right">Worst drawdown</div><div style="padding: 0 8px; text-align: right">Sharpe</div><div style="padding: 0 8px; text-align: right">Sortino</div>
+</div>
+<sc-for list="{{rows}}" as="r" hint-placeholder-count="8">
+<div style="display: grid; grid-template-columns: 44px 330px 110px 72px 80px 90px 72px 64px 100px 62px 68px; padding: 12px 12px; border-bottom: 1px solid #E8E4DA; align-items: center; font-size: 14px; background: {{r.bg}}">
+<div style="padding: 0 4px; font-family: 'IBM Plex Mono', monospace; color: #3C4046">{{r.rank}}</div>
+<div style="padding: 0 8px; display: flex; flex-direction: column; gap: 2px"><a href="Detail.dc.html" style="color: #16181B; font-weight: 500; text-decoration: none">{{r.line1}}</a><div style="font-size: 13px; color: #54585E">{{r.line2}}</div></div>
+<div style="padding: 0 8px; text-align: right; font-family: 'IBM Plex Mono', monospace; font-weight: 500">{{r.net}}</div>
+<div style="padding: 0 8px; text-align: right; font-family: 'IBM Plex Mono', monospace">{{r.payouts}}</div>
+<div style="padding: 0 8px; text-align: right; font-family: 'IBM Plex Mono', monospace">{{r.accts}}</div>
+<div style="padding: 0 8px; text-align: right; font-family: 'IBM Plex Mono', monospace">{{r.perDollar}}</div>
+<div style="padding: 0 8px; text-align: right; font-family: 'IBM Plex Mono', monospace">{{r.netR}}</div>
+<div style="padding: 0 8px; text-align: right; font-family: 'IBM Plex Mono', monospace">{{r.win}}</div>
+<div style="padding: 0 8px; text-align: right; font-family: 'IBM Plex Mono', monospace">{{r.dd}}</div>
+<div style="padding: 0 8px; text-align: right; font-family: 'IBM Plex Mono', monospace">{{r.sharpe}}</div>
+<div style="padding: 0 8px; text-align: right; font-family: 'IBM Plex Mono', monospace">{{r.sortino}}</div>
+</div>
+</sc-for>
+<div style="display: flex; justify-content: space-between; align-items: center; padding: 14px 24px; font-size: 14px; color: #3C4046">
+<div>Showing 8 of 64 · Sharpe and Sortino use every trading day, including days with no trade</div>
+<a href="#" style="font-weight: 500">Show all 64</a>
+</div>
+</div>
+<h2 style="margin: 6px 0 0; font-family: 'Newsreader', Georgia, serif; font-size: 26px; font-weight: 600">Checks on the leader</h2>
+<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px">
+<div style="background: #FFFFFF; border: 1px solid #DAD6CC; border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column; gap: 8px">
+<div style="font-size: 13px; font-weight: 600; color: #3C4046">Drop the largest payout</div>
+<div style="display: flex; align-items: center; gap: 8px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1D4E89" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"></path></svg><span style="font-size: 16px; font-weight: 600; color: #1D4E89">Pass</span></div>
+<div style="font-size: 14px; line-height: 1.5; color: #2A2D31">Still rank 1 at both firms with its biggest payout removed.</div>
+</div>
+<div style="background: #FFFFFF; border: 1px solid #DAD6CC; border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column; gap: 8px">
+<div style="font-size: 13px; font-weight: 600; color: #3C4046">Result per trade, 95% range</div>
+<div style="font-family: 'IBM Plex Mono', monospace; font-size: 18px">$95 to $601</div>
+<div style="font-size: 14px; line-height: 1.5; color: #2A2D31">Resampled from its own trades. The whole range sits above zero.</div>
+</div>
+<div style="background: #FFFFFF; border: 1px solid #DAD6CC; border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column; gap: 8px">
+<div style="font-size: 13px; font-weight: 600; color: #3C4046">Adjusted for 64 configurations tested</div>
+<div style="font-family: 'IBM Plex Mono', monospace; font-size: 18px">0.81</div>
+<div style="font-size: 14px; line-height: 1.5; color: #2A2D31">Deflated Sharpe: about an 81% chance the leader's edge isn't just the best of 64 draws.</div>
+</div>
+<div style="background: #FFFFFF; border: 1px solid #DAD6CC; border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column; gap: 8px">
+<div style="font-size: 13px; font-weight: 600; color: #3C4046">Quality gates</div>
+<div style="font-family: 'IBM Plex Mono', monospace; font-size: 18px">6 of 7 pass</div>
+<div style="font-size: 14px; line-height: 1.5; color: #2A2D31">Fails time under water: 40 days. Limit awaiting your decision.</div>
+</div>
+</div>
+<a href="Detail.dc.html" style="align-self: flex-start; display: flex; align-items: center; gap: 10px; padding: 12px 16px; min-height: 44px; box-sizing: border-box; background: #FFFFFF; border: 1px solid #DAD6CC; border-radius: 10px; text-decoration: none; color: #16181B; font-size: 15px">
+<span style="padding: 2px 10px; border-radius: 999px; background: #F8E9DD; color: #6E300B; font-size: 13px; font-weight: 600">4 findings</span>
+<span>Open the leader's full detail</span>
+</a>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1900}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { firm: 'tpt' }; }
+  renderVals() {
+    var tpt = [
+      ['1','All open-market hours · Long only · Half at 1R','1R · 1-hour + 4-hour gaps · 1- and 3-minute parents','$30,781.88','13','6','$50.30','73.45','58.4%','$3,661','4.01','18.82'],
+      ['2','All open-market hours · Long and short · Half at 1R','1R · 1-hour + 4-hour gaps · 1-minute, no 3-minute parents','$27,512.99','14','8','$33.70','86.23','60.2%','$6,268','3.51','13.85'],
+      ['3','All open-market hours · Long and short · Half at 1R','1R · 1-hour + 4-hour gaps · 1- and 3-minute parents','$27,328.98','14','11','$24.40','54.29','53.9%','$7,379','2.98','9.79'],
+      ['4','Original three windows · Long only · Half at 1R','1R · 1-hour + 4-hour gaps · 1- and 3-minute parents','$26,811.87','13','5','$52.60','65.61','61.6%','$2,659','4.00','16.69'],
+      ['5','All open-market hours · Long only · Half at 1R','1R · 1-hour + 4-hour gaps · 1-minute, no 3-minute parents','$26,032.80','12','5','$51.00','72.90','60.3%','$3,951','3.75','17.78'],
+      ['6','All open-market hours · Long only · Half at 1R','1R · 1-hour gaps only · 1- and 3-minute parents','$26,020.35','12','7','$36.40','66.49','56.9%','$6,139','3.33','14.30'],
+      ['7','All open-market hours · Long only · Half at 1R','1R · 1-hour gaps only · 1-minute, no 3-minute parents','$25,257.25','12','6','$41.30','70.28','58.4%','$4,651','3.49','18.43'],
+      ['8','All open-market hours · Long and short · Half at 1R','1R · 1-hour gaps only · 1- and 3-minute parents','$25,192.35','12','14','$17.60','51.67','50.6%','$10,731','2.44','7.70']
+    ];
+    var mffu = [
+      ['1','All open-market hours · Long only · Half at 1R','1R · 1-hour + 4-hour gaps · 1- and 3-minute parents','$34,818.11','13','4','$69.60','73.45','58.4%','$3,461','4.05','19.84'],
+      ['2','All open-market hours · Long only · Half at 1R','1R · 1-hour + 4-hour gaps · 1-minute, no 3-minute parents','$31,695.89','13','4','$63.40','72.90','60.3%','$3,842','4.02','19.89'],
+      ['3','All open-market hours · Long and short · Half at 1R','1R · 1-hour + 4-hour gaps · 1-minute, no 3-minute parents','$30,912.10','14','6','$41.20','86.23','60.2%','$7,566','3.33','12.20'],
+      ['4','Original three windows · Long only · Half at 1R','1R · 1-hour + 4-hour gaps · 1- and 3-minute parents','$30,252.38','12','4','$60.50','65.61','61.6%','$3,059','3.96','16.38'],
+      ['5','All open-market hours · Long and short · Half at 1R','1R · 1-hour + 4-hour gaps · 1- and 3-minute parents','$29,850.63','13','10','$23.90','54.29','53.9%','$10,768','2.53','7.50'],
+      ['6','All open-market hours · Long only · Half at 1R','1R · 1-hour gaps only · 1- and 3-minute parents','$29,451.14','12','5','$47.10','66.49','56.9%','$6,230','3.33','14.53'],
+      ['7','All open-market hours · Long and short · Half at 1R','1R · 1-hour gaps only · 1- and 3-minute parents','$29,077.14','12','9','$25.80','51.67','50.6%','$10,246','2.70','8.55'],
+      ['8','All open-market hours · Long only · Half at 1R','1R · 1-hour gaps only · 1-minute, no 3-minute parents','$28,886.15','12','4','$57.80','70.28','58.4%','$4,970','3.61','18.51']
+    ];
+    var isT = this.state.firm === 'tpt';
+    var src = isT ? tpt : mffu;
+    var rows = src.map(function (a, i) {
+      return { rank: a[0], line1: a[1], line2: a[2], net: a[3], payouts: a[4], accts: a[5], perDollar: a[6], netR: a[7], win: a[8], dd: a[9], sharpe: a[10], sortino: a[11], bg: i === 0 ? '#F3F6FA' : '#FFFFFF' };
+    });
+    var on = 'padding: 10px 18px; min-height: 44px; font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; background: #16181B; color: #FFFFFF; border: 1px solid #16181B;';
+    var off = 'padding: 10px 18px; min-height: 44px; font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; background: #FFFFFF; color: #16181B; border: 1px solid #BDB8AC;';
+    var self = this;
+    return {
+      rows: rows,
+      firmName: isT ? 'TakeProfitTrader' : 'MyFundedFutures',
+      leaderNet: src[0][3], leaderPayouts: src[0][4], leaderAccounts: src[0][5],
+      tptStyle: (isT ? on : off) + ' border-radius: 8px 0 0 8px;',
+      mffuStyle: (isT ? off : on) + ' border-radius: 0 8px 8px 0; margin-left: -1px;',
+      setTpt: function () { self.setState({ firm: 'tpt' }); },
+      setMffu: function () { self.setState({ firm: 'mffu' }); }
+    };
+  }
+}
+</script>
+</body>
+</html>

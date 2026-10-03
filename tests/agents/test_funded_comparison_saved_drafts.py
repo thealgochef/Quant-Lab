@@ -130,11 +130,13 @@ def _digest(path: Path) -> str:
 
 
 def _open(draft_id: str) -> AppTest:
-    at = AppTest.from_function(_app, default_timeout=240).run()
-    buttons = [b for b in at.button if b.label == "Continue"
-               and b.key == f"ifvg_open_draft_{draft_id}"]
-    (buttons[0] if buttons else next(b for b in at.button if b.label == "Continue")
-     ).click().run()
+    """The saved draft on the earlier configurator, as My studies' "Continue" opens it."""
+
+    at = AppTest.from_function(_app, default_timeout=240)
+    at.session_state["ifvg_workspace_destination"] = "New study"
+    at.session_state["ifvg_workspace_screen"] = "new"
+    at.session_state["ifvg_study_v1_draft_id"] = draft_id
+    at.run()
     assert not at.exception, at.exception
     return at
 

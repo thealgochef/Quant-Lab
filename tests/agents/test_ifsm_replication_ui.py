@@ -369,7 +369,9 @@ def test_ordinary_new_evaluate_study_config_edits_survive_save_and_reopen(monkey
     monkeypatch.setattr(wizard, "_freeze_and_launch", forbidden)
     app = apptest.AppTest.from_function(_focused_app, default_timeout=120).run()
     assert not app.exception
-    app.button(key="ifvg_workspace_new").click().run()
+    # New study (left rail) opens the funded setup; "Other study types" the earlier chooser
+    app.button(key="ifvg_lab_v1_rail_New_study").click().run()
+    app.button(key="ifvg_lab_v1_other_types").click().run()
     assert not app.exception
     _assert_no_replication_picker(app)
     study_type = next(widget for widget in app.radio

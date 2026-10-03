@@ -1,0 +1,173 @@
+{
+ "label": "final",
+ "created_local": "2026-09-25 07:05:34 PM Central Daylight Time",
+ "head_commit": "1b9d4077ffc4f68fab51c2ba9333f135e7308fd4",
+ "pre_task_tree": "ca30aafca8eb42ab6111804e81dff47a9a8bf3b6",
+ "delivered_source_tree": "76bb3b0c514b0d1fba2fcfec17beb1694943b6c7",
+ "pre_task_source_equals_delivered_source": true,
+ "tree": "41d2288af68bea7810c584579af3786028f3914d",
+ "source_only_identity": {
+  "src": "0022d2235e98a58ddd2ffdcba75e89946feccfe8",
+  "scripts": "cc474e70f9e20abcc745962c22665db2cb7bc6b0",
+  "tests": "057161bcccf68e954bb5a1ae8e8c20c77f793b99",
+  "pyproject.toml": "9c0121cf9da558c31d48cb05788dc340fd44269e"
+ },
+ "source_only_identity_note": "git object ids of the src, scripts and tests subtrees and of pyproject.toml; unchanged by later documentation edits",
+ "tree_note": "git tree ids of HEAD plus every uncommitted, non-ignored file, built in a temporary index; before = the delivered closeout's source (76bb3b0c), whose src/scripts/tests equal the pre-task tree's",
+ "changed_files": [
+  [
+   "M",
+   "AGENTS.md"
+  ],
+  [
+   "M",
+   "ARCHITECTURE.md"
+  ],
+  [
+   "M",
+   "docs/ML_TRAINING_WORKBENCH.md"
+  ],
+  [
+   "M",
+   "docs/ifvg-dashboard-redesign/CALCULATIONS.md"
+  ],
+  [
+   "M",
+   "docs/ifvg-dashboard-redesign/DECISION_RULES.md"
+  ],
+  [
+   "M",
+   "docs/ifvg-dashboard-redesign/SCREENS.md"
+  ],
+  [
+   "M",
+   "docs/ifvg-dashboard-redesign/TASKS.md"
+  ],
+  [
+   "M",
+   "docs/ifvg-dashboard-redesign/handoff/DECISIONS_LOG.md"
+  ],
+  [
+   "M",
+   "docs/ifvg-dashboard-redesign/handoff/REDESIGN_REPORT.md"
+  ],
+  [
+   "M",
+   "docs/ifvg-redesign-fixes/TASKS.md"
+  ],
+  [
+   "A",
+   "docs/ifvg-redesign-fixes/followup-1/CALCULATION_DEFINITIONS.md"
+  ],
+  [
+   "A",
+   "docs/ifvg-redesign-fixes/followup-1/DEMONSTRATION.md"
+  ],
+  [
+   "M",
+   "docs/ifvg-redesign-fixes/handoff/FIX_REPORT.md"
+  ],
+  [
+   "M",
+   "scripts/ifvg_lab_detail_risk.py"
+  ],
+  [
+   "M",
+   "scripts/ifvg_lab_trade_review.py"
+  ],
+  [
+   "M",
+   "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/firm_race.py"
+  ],
+  [
+   "M",
+   "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/market.py"
+  ],
+  [
+   "M",
+   "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/review_chart.py"
+  ],
+  [
+   "M",
+   "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/review_panels.py"
+  ],
+  [
+   "M",
+   "tests/agents/ifvg_lab/test_detail_risk.py"
+  ],
+  [
+   "M",
+   "tests/agents/ifvg_lab/test_firm_race.py"
+  ],
+  [
+   "A",
+   "tests/agents/ifvg_lab/test_setup_event_timing.py"
+  ],
+  [
+   "M",
+   "tests/agents/ifvg_lab/test_trade_review.py"
+  ]
+ ],
+ "changed_source_and_test_files": {
+  "scripts/ifvg_lab_detail_risk.py": {
+   "change": "M",
+   "before_blob": "ad92eced8c9ce8726e79e83c855751e1bb58136b",
+   "after_blob": "2680a925821863c933be491d1b1b0fa31ddb0d45"
+  },
+  "scripts/ifvg_lab_trade_review.py": {
+   "change": "M",
+   "before_blob": "e0abdeb24350da49d8475b0a997339f2ee7fd9c4",
+   "after_blob": "d56039d4c475576ac2a1b019edbab62eafe97a37"
+  },
+  "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/firm_race.py": {
+   "change": "M",
+   "before_blob": "f2cbe07f8c50731d1e3c6adb4f36dbd6a0466bd1",
+   "after_blob": "e1c812c1522fe8580d0660aefb3e55eff3f25746"
+  },
+  "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/market.py": {
+   "change": "M",
+   "before_blob": "7f3077e2656343bd033a2a177e24b1ee1a043d31",
+   "after_blob": "814551e0a04074d08f1dccffeb4fbc1b7c43c304"
+  },
+  "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/review_chart.py": {
+   "change": "M",
+   "before_blob": "d20214207094f44897fde192e4df8986a0c95f08",
+   "after_blob": "c45a894f07c26de7baf06d59163b11dd2925027e"
+  },
+  "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/review_panels.py": {
+   "change": "M",
+   "before_blob": "da133375ec1bc9e3ecaca1a9d1b49c25718c09ae",
+   "after_blob": "a8b5536e4b9c5f89cd462f17076b6268e0667ed7"
+  },
+  "tests/agents/ifvg_lab/test_detail_risk.py": {
+   "change": "M",
+   "before_blob": "e8dc2541c4d39659a2494aa85fc394a69360a2cd",
+   "after_blob": "5091216250c73a80113261e67840b13c0673be19"
+  },
+  "tests/agents/ifvg_lab/test_firm_race.py": {
+   "change": "M",
+   "before_blob": "a0ef8a576e4609e7836ebae466ea76288dc3749c",
+   "after_blob": "3944127b630bd06a3b65d1e3afc979e90c965d38"
+  },
+  "tests/agents/ifvg_lab/test_setup_event_timing.py": {
+   "change": "A",
+   "before_blob": null,
+   "after_blob": "d738df945046c21f8277106b555a9d9daf95b38a"
+  },
+  "tests/agents/ifvg_lab/test_trade_review.py": {
+   "change": "M",
+   "before_blob": "e584ac024f592eed03ee4b4ec14b574536000a65",
+   "after_blob": "6ed8a6c3645f538859b1d478b6e6ace8dd58bc87"
+  }
+ },
+ "diff_all_files": {
+  "file": "followup_final.diff",
+  "bytes": 133234,
+  "sha256": "fb75c7426fc2b5543c457767afe28c9a49631d057e0da681b0c4fdabf75f7d79"
+ },
+ "diff_source_and_tests": {
+  "file": "followup_code_final.diff",
+  "bytes": 52465,
+  "sha256": "38c090a9837c0bc18572b2c483d20822597a44871f3e8abd4a67767e85ed61d0"
+ }
+}

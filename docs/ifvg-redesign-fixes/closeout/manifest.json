@@ -1,0 +1,121 @@
+{
+ "kind": "ifvg_analytical_corrections_closeout",
+ "created_local": "2026-09-25 02:16:59 PM Central Daylight Time",
+ "file_count_convention": "payloads lists every file in this folder except manifest.json itself; the ZIP holds payloads + manifest.json",
+ "payload_count": 22,
+ "archive_file_count_including_manifest": 23,
+ "source_tree": "76bb3b0c514b0d1fba2fcfec17beb1694943b6c7",
+ "pre_task_tree": "811f4b3889a53467a58b5c100f8a0075d65ec4b9",
+ "payloads": [
+  {
+   "path": "CALCULATION_DEFINITIONS.md",
+   "bytes": 34866,
+   "sha256": "086282c5c2b947011404f80830965985596118c35030aabaa494dbf3bc7335ea"
+  },
+  {
+   "path": "FIX_REPORT.md",
+   "bytes": 22094,
+   "sha256": "e084702479d320063b42aaad53782e2384625763291bf9bb45ae8394031b816f"
+  },
+  {
+   "path": "REVIEW_FINDINGS.md",
+   "bytes": 21059,
+   "sha256": "cbe047b94a1fb81c486b99c28211ea7b3562fb2aa783a2c7d446713da6dd972a"
+  },
+  {
+   "path": "SCREEN_EVIDENCE.md",
+   "bytes": 6398,
+   "sha256": "777badd57e2aa45a69ff992d4d7849e31de44b14e0a378bd8f01e3c7868e8fc6"
+  },
+  {
+   "path": "preservation_and_access_checks.json",
+   "bytes": 8407,
+   "sha256": "e585f60bf24f546099fb674cbea097c2589208f9866a5daabd75267aa80b372b"
+  },
+  {
+   "path": "race_evidence/definition.json",
+   "bytes": 12161,
+   "sha256": "f654acb6a78bb80118fc5e58db0b32185c54e6874fbb7b1456b038d32b32eaba"
+  },
+  {
+   "path": "race_evidence/outcomes.csv",
+   "bytes": 261808,
+   "sha256": "ea97124d0823c3358961b7f577f025a936d8272623988d1ce79e0144afb3c323"
+  },
+  {
+   "path": "regression_evidence.json",
+   "bytes": 203984,
+   "sha256": "9b65686eeae1a5ba2957144d3ba670a68dec8c1c45fe9313bc7d9f2e4db0b829"
+  },
+  {
+   "path": "review_and_provenance_checks.json",
+   "bytes": 26406,
+   "sha256": "64546fd082b515735d7cea753c0fcb254ca7c2272e60521c0bac431a30f37cfb"
+  },
+  {
+   "path": "screenshots/S01_summary_findings_before_ledger_run.png",
+   "bytes": 211528,
+   "sha256": "a5abed8560ea3ff8ad656d523904e981a8dca3ff0acdfc321cd17592b9e10d57"
+  },
+  {
+   "path": "screenshots/S02_risk_fixed_boundary_diagnostic.png",
+   "bytes": 167610,
+   "sha256": "16ffcde45f4c546aea61f7b8690e23f6a8b534434bfcfcfe8c4dc278e4b9772a"
+  },
+  {
+   "path": "screenshots/S03_risk_closed_profit_drawdown_and_percentile.png",
+   "bytes": 167279,
+   "sha256": "2c375b8441f989c2132fe000abd1ff6cf632c65aac6dcc493786cf817afff7ab"
+  },
+  {
+   "path": "screenshots/S04_market_retrospective.png",
+   "bytes": 242702,
+   "sha256": "9d1c79a26d4f079427cf06dd7a039a381141771fa9d91ef21e0ab9e8bcf2786e"
+  },
+  {
+   "path": "screenshots/S05_market_known_at_entry.png",
+   "bytes": 243392,
+   "sha256": "97e3f355bf04b24a59e8d97fa7652d2b1eab37445fe4a2e362b43ad0911f90fd"
+  },
+  {
+   "path": "screenshots/S06_review_january_point_in_time.png",
+   "bytes": 284221,
+   "sha256": "d85c7d09388e8f13264f599359ea70213be18e3b6b731f55c64ff4e4aeb90ddd"
+  },
+  {
+   "path": "screenshots/S07_review_april_point_in_time.png",
+   "bytes": 278599,
+   "sha256": "39bc5f12b735a72cd01370e0e297ace3d8e9a3bc03bec05f93e1bb9ba86265a8"
+  },
+  {
+   "path": "screenshots/S08_review_april_full_history_minute_link.png",
+   "bytes": 348097,
+   "sha256": "0a10b7e69586a1e6287e69883135a0e6293d18e486085bd1fede7b096419b606"
+  },
+  {
+   "path": "screenshots/S09_risk_after_conditional_run.png",
+   "bytes": 242655,
+   "sha256": "96747a80be3244d83cdaeb4c13f9bc2aa95df6f4d2109c1eaeec6550514f53b8"
+  },
+  {
+   "path": "screenshots/S10_summary_findings_after_ledger_run.png",
+   "bytes": 97145,
+   "sha256": "ab4e4644683a60f2935ad50d56c54df3372cfb89ad044c527e0a391a5fd51f91"
+  },
+  {
+   "path": "screenshots/S11a_review_form_seeded_mixed_judgment.png",
+   "bytes": 75419,
+   "sha256": "2ee6617b5055372797a123384651677a912cd55011577c657ff754a7c3a11008"
+  },
+  {
+   "path": "screenshots/S11b_review_form_after_notes_only_save.png",
+   "bytes": 85934,
+   "sha256": "2bfd616a359dd876d473ff39263892df6e67765fa4c4ba85089c127165aa1b70"
+  },
+  {
+   "path": "validation_summary.json",
+   "bytes": 32021,
+   "sha256": "a1adb73a59e5d2a377fbe34a932898df17639077cd89e11174db1dbb2099e6ac"
+  }
+ ]
+}

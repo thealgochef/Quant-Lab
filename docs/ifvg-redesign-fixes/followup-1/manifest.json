@@ -1,0 +1,60 @@
+{
+ "kind": "ifvg_setup_timing_followup",
+ "created_local": "2026-09-25 07:35:13 PM Central Daylight Time",
+ "file_count_convention": "payloads lists every file in this folder except manifest.json itself; the ZIP holds payloads + manifest.json",
+ "payload_count": 10,
+ "source_tree": "41d2288af68bea7810c584579af3786028f3914d",
+ "delivered_source_tree": "76bb3b0c514b0d1fba2fcfec17beb1694943b6c7",
+ "payloads": [
+  {
+   "path": "CALCULATION_DEFINITIONS.md",
+   "bytes": 40926,
+   "sha256": "951a0452ba5d4690f5cffbe0dd75929fefc2d035480b9c4c427445283821b139"
+  },
+  {
+   "path": "DEMONSTRATION.md",
+   "bytes": 9351,
+   "sha256": "400a629b644fa49914cda5f395551094b25ac3ba901feadb88a8fad65d9daec8"
+  },
+  {
+   "path": "FOLLOWUP_REPORT.md",
+   "bytes": 26879,
+   "sha256": "9a0503897c6ec3ef2a84b16b6202fab65d309217e95b691457e4bdce7e487560"
+  },
+  {
+   "path": "prefix_reproduction.json",
+   "bytes": 8320,
+   "sha256": "f7553d97b274be592dce824bca63a2147090b89b895190124a2467b43af9cbff"
+  },
+  {
+   "path": "screenshots/R07_review_april_point_in_time_corrected.png",
+   "bytes": 287618,
+   "sha256": "0723cb82ad0a777f7e56f22958b52b2d71603ff74b1338a9b4b6487f9cf743c2"
+  },
+  {
+   "path": "screenshots/R08_review_april_full_history_corrected.png",
+   "bytes": 356935,
+   "sha256": "2f0b2c6ebd89ce26fe25b95ba15486bd07ac315e104224162f157428fee1238f"
+  },
+  {
+   "path": "screenshots/R12a_review_member_boundary_2_20_am_before_completion.png",
+   "bytes": 247379,
+   "sha256": "0988e0e1bcb0d80d9d6f0d1654109b9c704e42cf39b5e871d6252df9aa607f03"
+  },
+  {
+   "path": "screenshots/R12b_review_member_boundary_2_21_am_at_completion.png",
+   "bytes": 253272,
+   "sha256": "060d13cfcbe602053762894e940fb4044a6e606c46466350e20711a93487ce06"
+  },
+  {
+   "path": "source_identity.json",
+   "bytes": 5101,
+   "sha256": "2a2defdaedd63c4578c6af2a03bf2a0f28cc7c491bf8c8ca58900cadccf253c8"
+  },
+  {
+   "path": "validation_summary.json",
+   "bytes": 32927,
+   "sha256": "7e36346d401faf60ab4f4f414c12129cbafd7f8af8b6eef492d4efa109087d0f"
+  }
+ ]
+}

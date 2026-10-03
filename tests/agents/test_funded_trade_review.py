@@ -266,3 +266,23 @@ def test_the_results_account_opens_in_review_and_back_restores_it(screen):
                                               "account_number": 2}})
     assert at.selectbox(key=f"{prefix}_S3_D80|myfundedfutures_account").value == "all"
 
+
+
+def _app_strategy_only():
+    import ifvg_search_review
+    import streamlit as st
+
+    ifvg_search_review.render_trade_review(st, ifvg_search_review._TEST_ROOTS,
+                                           source="Study executions", include_funded=False)
+
+
+def test_the_redesigned_page_can_show_strategy_trades_without_funded_ones(screen):
+    """Additive options for the redesigned Trade review (its own Funded trades source)."""
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_function(_app_strategy_only, default_timeout=60).run()
+    assert not at.exception, at.exception
+    assert not [r for r in at.radio if r.label == "Review source"]  # the page has its own switch
+    assert "No saved searches are available for review." in _text(at)
+    assert not [w for w in at.selectbox if w.key == "ifvg_search_review_search"]

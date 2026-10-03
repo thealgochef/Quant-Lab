@@ -132,6 +132,9 @@ def test_actual_ifsm_screen_save_reopen_edit_and_import(monkeypatch, tmp_path):
     app = apptest.AppTest.from_file(str(ROOT / "scripts/ifsm_research_ui.py"), default_timeout=120)
     app.run()
     app.button(key="ifvg_workspace_new").click().run()
+    # the redesign's New study opens the funded comparison setup; the earlier
+    # study-type chooser is one click away under "Other study types"
+    app.button(key="ifvg_lab_v1_other_types").click().run()
     next(w for w in app.radio if w.label == "What would you like to research?").set_value(
         "Evaluate"
     ).run()

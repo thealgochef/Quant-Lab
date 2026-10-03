@@ -334,25 +334,64 @@ def render_comparison_configuration(st, draft, roots) -> None:
         st.error("The plan could not be prepared from these settings.")
         return
     _approve_and_run(st, draft, envelope, roots,
-                     _plan_summary_text(configurations, firm_keys, updated))
+                     _plan_summary_text(configurations, firm_keys, updated), source=source)
 
 
-def _approve_and_run(st, draft, envelope, roots, scope: str) -> None:
+def redesign_problems(roots, draft, source) -> list[str]:
+    """Why the New funded comparison page refuses approval of this SAVED draft ([] if nothing).
+
+    That page saves settings no plan can carry yet (dates, gap rules, withdrawal
+    triggers, pass/fail checks, the legacy baseline) under their own key, which this
+    page doesn't show. While any of them blocks approval there, approval and launch
+    are refused here too, with the same sentences. A draft without that key: ``[]``,
+    exactly as before. A check that fails refuses (never allows).
+    """
+
+    from alpha_lab.agents.data_infra.ifvg.presentation.lab import funded_setup as setup
+
+    if not setup.has_redesign_settings(draft):
+        return []
+    try:
+        _baseline, named_problem = setup.named_baseline()
+        blockers = setup.saved_draft_blockers(
+            draft, source, repo_root=roots.get("repo_root") or Path.cwd(),
+            named_problem=named_problem)
+    except Exception:
+        return [setup.UNREADABLE_TEXT]
+    return [b.text for b in blockers]
+
+
+def _saved_copy(roots, draft):
+    """The draft as saved on disk (this page saves every edit); the page's copy if unreadable."""
+
+    try:
+        return load_draft(Path(roots["draft_root"]), draft.draft_id)
+    except Exception:
+        return draft
+
+
+def _approve_and_run(st, draft, envelope, roots, scope: str, *, source) -> None:
     store = Path(roots["store_root"])
     plan_id = envelope.funded_comparison_plan_id
+    blocked = redesign_problems(roots, _saved_copy(roots, draft), source)
     state = read_state(comparison_state_root(roots), plan_id)
     already = bool(state and state.get("status") in ("Running", "Completed"))
     if already:
         st.info(f"This exact plan is already {state['status'].lower()}; its saved result is "
                 "shown under My studies and is never recomputed.")
+    if blocked:
+        st.warning("Approval and running are off until these are settled — the reasons "
+                   "Review and approve shows for this draft:\n\n"
+                   + "\n".join("- " + text.replace("$", "\\$") for text in blocked))
     approval = find_approval(store, plan_id)
     if approval is None:
         st.info("Running this on historical data needs your approval of this exact plan. "
                 "Changing any setting creates a different plan that needs its own approval.")
         agree = st.checkbox(
             "I approve running this exact comparison on the saved historical period "
-            "(no new dates, no live trading)", key=_KEY + "agree")
-        if st.button("Record my approval", disabled=not agree, key=_KEY + "approve"):
+            "(no new dates, no live trading)", key=_KEY + "agree", disabled=bool(blocked))
+        if st.button("Record my approval", disabled=not agree or bool(blocked),
+                     key=_KEY + "approve") and not blocked:
             save_plan(store, envelope)
             record_owner_approval(
                 store, plan_id, approved_on=date.today().isoformat(), channel="study_screen",
@@ -363,7 +402,8 @@ def _approve_and_run(st, draft, envelope, roots, scope: str) -> None:
     else:
         st.success(f"Approved on {_long_date(approval.payload.approved_on)}.")
     if st.button("Run funded comparison", type="primary",
-                 disabled=approval is None or already, key=_KEY + "run"):
+                 disabled=approval is None or already or bool(blocked),
+                 key=_KEY + "run") and not blocked:
         _freeze_and_launch(st, draft, envelope, roots)
 
 
@@ -473,30 +513,40 @@ def _render_variations(st, draft, roots, source, settings: dict[str, Any]) -> No
     with st.expander(f"The {len(plan.variants)} configurations"):
         for variant in plan.variants:
             st.write("- " + variant.display_name.replace(" | ", "; "))
-    _approve_and_run(st, draft, envelope, roots, scope)
+    _approve_and_run(st, draft, envelope, roots, scope, source=source)
 
 
-def _render_saved_read_only(st, check, roots) -> None:
-    """A saved draft this application cannot represent: shown as saved, never changed."""
+def _render_saved_read_only(st, check, roots, *, lead: str | None = None,
+                            words=None) -> None:
+    """A saved draft this application cannot represent: shown as saved, never changed.
 
-    count = check.configuration_count
-    if count is None:
-        lead = "This study's configurations cannot be counted in this application"
-    elif check.count_is_exact:
-        lead = f"This study contains {count} configuration{'s' if count != 1 else ''}"
-    else:
-        lead = f"This study describes up to {count} configurations"
-    need = (f"requires {HALF_EXIT_REQUIREMENT}" if check.needs_half_exit_engine
-            else "cannot be edited in this application")
-    st.warning(f"{lead} and {need}. Your saved settings have not been changed. It is shown "
+    The redesigned setup page passes its own first sentence (``lead``, with the
+    draft's shared configuration count) and a display wording for the engine
+    problems (``words``); the earlier configurator shows them as before.
+    """
+
+    words = words or (lambda text: text)
+    if lead is None:
+        count = check.configuration_count
+        if count is None:
+            lead = "This study's configurations cannot be counted in this application"
+        elif check.count_is_exact:
+            lead = f"This study contains {count} configuration{'s' if count != 1 else ''}"
+        else:
+            lead = f"This study describes up to {count} configurations"
+        need = (f"requires {HALF_EXIT_REQUIREMENT}" if check.needs_half_exit_engine
+                else "cannot be edited in this application")
+        lead = f"{lead} and {need}."
+    st.warning(f"{lead} Your saved settings have not been changed. It is shown "
                "here for reading only: editing, approval and running are unavailable in this "
                "application.")
     for problem in check.problems:
-        st.write("- " + problem)
+        st.write("- " + words(problem))
     st.subheader("Saved settings")
     import pandas as pd
 
-    st.table(pd.DataFrame(check.saved_rows, columns=["Setting", "Saved value"])
+    st.table(pd.DataFrame([(name, words(value)) for name, value in check.saved_rows],
+                          columns=["Setting", "Saved value"])
              .set_index("Setting"))
     store = Path(roots["store_root"])
     checkout = None
@@ -517,10 +567,10 @@ def _render_saved_read_only(st, check, roots) -> None:
         if is_v2(plan) and checkout is None:
             checkout = find_core_checkout(plan.core_source)
     if check.needs_half_exit_engine:
-        where = str(checkout) if checkout else "<the research Strategy-Core checkout>"
+        where = str(checkout) if checkout else words("<the research Strategy-Core checkout>")
         st.info("To edit, approve or run this study, start the application with the research "
                 f"engine: `python scripts/run_ifsm_research_ui.py --research-core {where}`. "
-                "The shared pinned engine is not changed.")
+                + words("The shared pinned engine is not changed."))
     st.caption("To change the settings on purpose, clone the study (My studies → Details and "
                "actions → Study actions → Clone study) and edit the copy where its settings are "
                "available; a changed copy is a different plan that needs its own approval.")
@@ -532,7 +582,9 @@ def dispatch_problem(roots, draft_id: str, envelope) -> str | None:
     The launch re-reads the draft saved on disk, checks it against this
     application's engine, rebuilds the plan from those saved settings and
     requires the very plan being launched. A stale page, a stale approval or a
-    draft this application cannot represent therefore never reaches the worker.
+    draft this application cannot represent therefore never reaches the worker,
+    and neither does a draft whose New funded comparison settings still block
+    approval (``redesign_problems``).
     """
 
     try:
@@ -550,6 +602,10 @@ def dispatch_problem(roots, draft_id: str, envelope) -> str | None:
         return ("The saved draft does not name a completed strategy study available here. "
                 "Choose the study again so it is saved, review the plan and approve it. "
                 "Nothing was launched.")
+    blocked = redesign_problems(roots, disk, source)
+    if blocked:
+        return ("This saved draft can't be launched until these are settled: "
+                + " ".join(blocked) + " Nothing was launched.")
     try:
         rebuilt, _skipped, _unavailable = rebuild_saved_plan(source, settings, selections)
     except Exception as error:

@@ -1,0 +1,529 @@
+{
+ "changes_after_the_source_freeze": {
+  "tree_when_collected": "49ddcc1dc3f5c1b19dd3e262ca882a4f04b57799",
+  "files": [
+   [
+    "M",
+    "docs/ifvg-dashboard-redesign/handoff/DECISIONS_LOG.md"
+   ],
+   [
+    "A",
+    "docs/ifvg-redesign-fixes/CLOSEOUT_REVIEW_RESPONSE.md"
+   ],
+   [
+    "M",
+    "docs/ifvg-redesign-fixes/TASKS.md"
+   ],
+   [
+    "M",
+    "docs/ifvg-redesign-fixes/followup-1/DEMONSTRATION.md"
+   ],
+   [
+    "A",
+    "docs/ifvg-redesign-fixes/followup-1/FOLLOWUP_REPORT.md"
+   ]
+  ],
+  "only_documents": true,
+  "note": "taken after removing this package's own generated files (the JSON summaries, manifest and both ZIPs) and before writing them again"
+ },
+ "source": {
+  "head_commit": "1b9d4077ffc4f68fab51c2ba9333f135e7308fd4",
+  "pre_task_tree": "ca30aafca8eb42ab6111804e81dff47a9a8bf3b6",
+  "delivered_source_tree": "76bb3b0c514b0d1fba2fcfec17beb1694943b6c7",
+  "final_tree": "41d2288af68bea7810c584579af3786028f3914d",
+  "tree_note": "git tree ids of HEAD plus every uncommitted, non-ignored file, built in a temporary index; before = the delivered closeout's source (76bb3b0c), whose src/scripts/tests equal the pre-task tree's",
+  "changed_files": [
+   [
+    "M",
+    "AGENTS.md"
+   ],
+   [
+    "M",
+    "ARCHITECTURE.md"
+   ],
+   [
+    "M",
+    "docs/ML_TRAINING_WORKBENCH.md"
+   ],
+   [
+    "M",
+    "docs/ifvg-dashboard-redesign/CALCULATIONS.md"
+   ],
+   [
+    "M",
+    "docs/ifvg-dashboard-redesign/DECISION_RULES.md"
+   ],
+   [
+    "M",
+    "docs/ifvg-dashboard-redesign/SCREENS.md"
+   ],
+   [
+    "M",
+    "docs/ifvg-dashboard-redesign/TASKS.md"
+   ],
+   [
+    "M",
+    "docs/ifvg-dashboard-redesign/handoff/DECISIONS_LOG.md"
+   ],
+   [
+    "M",
+    "docs/ifvg-dashboard-redesign/handoff/REDESIGN_REPORT.md"
+   ],
+   [
+    "M",
+    "docs/ifvg-redesign-fixes/TASKS.md"
+   ],
+   [
+    "A",
+    "docs/ifvg-redesign-fixes/followup-1/CALCULATION_DEFINITIONS.md"
+   ],
+   [
+    "A",
+    "docs/ifvg-redesign-fixes/followup-1/DEMONSTRATION.md"
+   ],
+   [
+    "M",
+    "docs/ifvg-redesign-fixes/handoff/FIX_REPORT.md"
+   ],
+   [
+    "M",
+    "scripts/ifvg_lab_detail_risk.py"
+   ],
+   [
+    "M",
+    "scripts/ifvg_lab_trade_review.py"
+   ],
+   [
+    "M",
+    "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/firm_race.py"
+   ],
+   [
+    "M",
+    "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/market.py"
+   ],
+   [
+    "M",
+    "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/review_chart.py"
+   ],
+   [
+    "M",
+    "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/review_panels.py"
+   ],
+   [
+    "M",
+    "tests/agents/ifvg_lab/test_detail_risk.py"
+   ],
+   [
+    "M",
+    "tests/agents/ifvg_lab/test_firm_race.py"
+   ],
+   [
+    "A",
+    "tests/agents/ifvg_lab/test_setup_event_timing.py"
+   ],
+   [
+    "M",
+    "tests/agents/ifvg_lab/test_trade_review.py"
+   ]
+  ],
+  "changed_source_and_test_files": {
+   "scripts/ifvg_lab_detail_risk.py": {
+    "change": "M",
+    "before_blob": "ad92eced8c9ce8726e79e83c855751e1bb58136b",
+    "after_blob": "2680a925821863c933be491d1b1b0fa31ddb0d45"
+   },
+   "scripts/ifvg_lab_trade_review.py": {
+    "change": "M",
+    "before_blob": "e0abdeb24350da49d8475b0a997339f2ee7fd9c4",
+    "after_blob": "d56039d4c475576ac2a1b019edbab62eafe97a37"
+   },
+   "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/firm_race.py": {
+    "change": "M",
+    "before_blob": "f2cbe07f8c50731d1e3c6adb4f36dbd6a0466bd1",
+    "after_blob": "e1c812c1522fe8580d0660aefb3e55eff3f25746"
+   },
+   "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/market.py": {
+    "change": "M",
+    "before_blob": "7f3077e2656343bd033a2a177e24b1ee1a043d31",
+    "after_blob": "814551e0a04074d08f1dccffeb4fbc1b7c43c304"
+   },
+   "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/review_chart.py": {
+    "change": "M",
+    "before_blob": "d20214207094f44897fde192e4df8986a0c95f08",
+    "after_blob": "c45a894f07c26de7baf06d59163b11dd2925027e"
+   },
+   "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/review_panels.py": {
+    "change": "M",
+    "before_blob": "da133375ec1bc9e3ecaca1a9d1b49c25718c09ae",
+    "after_blob": "a8b5536e4b9c5f89cd462f17076b6268e0667ed7"
+   },
+   "tests/agents/ifvg_lab/test_detail_risk.py": {
+    "change": "M",
+    "before_blob": "e8dc2541c4d39659a2494aa85fc394a69360a2cd",
+    "after_blob": "5091216250c73a80113261e67840b13c0673be19"
+   },
+   "tests/agents/ifvg_lab/test_firm_race.py": {
+    "change": "M",
+    "before_blob": "a0ef8a576e4609e7836ebae466ea76288dc3749c",
+    "after_blob": "3944127b630bd06a3b65d1e3afc979e90c965d38"
+   },
+   "tests/agents/ifvg_lab/test_setup_event_timing.py": {
+    "change": "A",
+    "before_blob": null,
+    "after_blob": "d738df945046c21f8277106b555a9d9daf95b38a"
+   },
+   "tests/agents/ifvg_lab/test_trade_review.py": {
+    "change": "M",
+    "before_blob": "e584ac024f592eed03ee4b4ec14b574536000a65",
+    "after_blob": "6ed8a6c3645f538859b1d478b6e6ace8dd58bc87"
+   }
+  },
+  "diff_source_and_tests_sha256": "38c090a9837c0bc18572b2c483d20822597a44871f3e8abd4a67767e85ed61d0",
+  "diff_all_files_sha256": "fb75c7426fc2b5543c457767afe28c9a49631d057e0da681b0c4fdabf75f7d79"
+ },
+ "rules_followed": "AGENTS.md: focused tests for the affected behaviour and its dependencies plus lint (python -m ruff check src tests scripts); the full regression suite is not run by default for a presentation change and testing is not broadened once the relevant checks pass. The full suite was NOT run for this follow-up. The closeout's full-suite result (3,959 passed, 5 failed, 4 skipped on tree 76bb3b0c) belongs to that tree and does not cover this change.",
+ "focused": {
+  "runner": "scripts/run_focused.sh (internal)",
+  "started_utc": "2026-09-26T00:08:44Z",
+  "finished_utc": "2026-09-26T00:11:32Z",
+  "tree_at_start": "814dfe4e55485135721df1a91fbefd8845e5f046",
+  "tree_at_end": "814dfe4e55485135721df1a91fbefd8845e5f046",
+  "source_only_identity_at_start": {
+   "src": "0022d2235e98a58ddd2ffdcba75e89946feccfe8",
+   "scripts": "cc474e70f9e20abcc745962c22665db2cb7bc6b0",
+   "tests": "057161bcccf68e954bb5a1ae8e8c20c77f793b99",
+   "pyproject.toml": "9c0121cf9da558c31d48cb05788dc340fd44269e"
+  },
+  "source_only_identity_at_end": {
+   "src": "0022d2235e98a58ddd2ffdcba75e89946feccfe8",
+   "scripts": "cc474e70f9e20abcc745962c22665db2cb7bc6b0",
+   "tests": "057161bcccf68e954bb5a1ae8e8c20c77f793b99",
+   "pyproject.toml": "9c0121cf9da558c31d48cb05788dc340fd44269e"
+  },
+  "source_only_identity_equals_the_final_source": true,
+  "parity_test_passed": true,
+  "steps": [
+   {
+    "step": "[1] ruff check src tests scripts",
+    "result": [
+     "All checks passed!"
+    ],
+    "exit_code": 0,
+    "failed": [],
+    "skipped": []
+   },
+   {
+    "step": "[2] the new regression file",
+    "result": [
+     "23 passed in 5.07s"
+    ],
+    "exit_code": 0,
+    "failed": [],
+    "skipped": []
+   },
+   {
+    "step": "[3] the directly affected test files",
+    "result": [
+     "230 passed in 42.24s"
+    ],
+    "exit_code": 0,
+    "failed": [],
+    "skipped": []
+   },
+   {
+    "step": "[4] every Lab test plus the neighbouring funded and Lab-tab tests",
+    "result": [
+     "503 passed, 3 skipped in 103.78s (0:01:43)"
+    ],
+    "exit_code": 0,
+    "failed": [],
+    "skipped": [
+     "tests\\agents\\ifvg_lab\\test_ac_approval_paths.py:956: needs the half-exit engine: on the pinned engine the half-exit study is read-only and can't be approved",
+     "tests\\agents\\ifvg_lab\\test_new_funded.py:731: needs the research engine with the half exit",
+     "tests\\agents\\test_funded_comparison_saved_drafts.py:173: needs the research engine with the half exit"
+    ]
+   },
+   {
+    "step": "[5] the three half-exit-engine tests the default environment skips (half-exit research checkout first on PYTHONPATH)",
+    "result": [
+     "3 passed in 2.77s"
+    ],
+    "exit_code": 0,
+    "failed": [],
+    "skipped": []
+   },
+   {
+    "step": "[6] the all-128-pair historical-order parity test, verbose (PASSED, not SKIPPED)",
+    "result": [
+     "1 passed in 3.48s"
+    ],
+    "exit_code": 0,
+    "failed": [],
+    "skipped": []
+   }
+  ]
+ },
+ "mutation_probes": {
+  "tree": "41d2288af68bea7810c584579af3786028f3914d",
+  "results": {
+   "unmutated": {
+    "exit": 0,
+    "result": "23 passed in 4.93s"
+   },
+   "a_both_events_known_at_the_candle_open": {
+    "file": "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/review_panels.py",
+    "caught": true,
+    "result": "21 failed, 2 passed in 1.13s"
+   },
+   "c_close_through_known_at_its_open_in_the_steps_only": {
+    "file": "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/review_panels.py",
+    "caught": true,
+    "result": "15 failed, 8 passed in 1.55s"
+   },
+   "d_missing_close_falls_back_to_the_open": {
+    "file": "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/review_panels.py",
+    "caught": true,
+    "result": "5 failed, 18 passed in 5.40s"
+   },
+   "e2_chart_shows_the_close_through_from_its_open": {
+    "file": "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/review_chart.py",
+    "caught": true,
+    "result": "8 failed, 15 passed in 1.49s"
+   },
+   "f_related_records_offer_setup_moments": {
+    "file": "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/review_panels.py",
+    "caught": true,
+    "result": "2 failed, 21 passed in 5.79s"
+   },
+   "j_events_only_with_a_recorded_close": {
+    "file": "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/review_panels.py",
+    "caught": true,
+    "result": "4 failed, 19 passed in 5.40s"
+   },
+   "r_no_not_recorded_suffix": {
+    "file": "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/review_panels.py",
+    "caught": true,
+    "result": "4 failed, 19 passed in 5.44s"
+   },
+   "o2_card_without_the_times_note": {
+    "file": "scripts/ifvg_lab_trade_review.py",
+    "caught": true,
+    "result": "1 failed, 22 passed in 5.50s"
+   },
+   "s_key_names_the_candle_by_its_close": {
+    "file": "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/review_panels.py",
+    "caught": true,
+    "result": "1 failed, 22 passed in 5.47s"
+   },
+   "t_tap_dropped_when_its_candle_was_not_recorded": {
+    "file": "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/review_panels.py",
+    "caught": true,
+    "result": "1 failed, 22 passed in 5.46s"
+   },
+   "u_chart_needs_the_open_for_its_number": {
+    "file": "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/review_chart.py",
+    "caught": true,
+    "result": "1 failed, 22 passed in 5.41s"
+   },
+   "v_moments_label_the_candle_by_its_close": {
+    "file": "src/alpha_lab/agents/data_infra/ifvg/presentation/lab/review_panels.py",
+    "caught": true,
+    "result": "4 failed, 19 passed in 5.57s"
+   }
+  }
+ },
+ "demonstration_counts": {
+  "before": {
+   "member_configurations": 2,
+   "funded_trades": 374,
+   "own_records": 374,
+   "boundary_trades": 84,
+   "boundary_by_firm": {
+    "TakeProfitTrader": 41,
+    "MyFundedFutures": 43
+   },
+   "boundary_moment_offered": 84,
+   "boundary_text_shows_the_close_through": 84,
+   "boundary_key_shows_the_close_through": 0
+  },
+  "after": {
+   "member_configurations": 2,
+   "funded_trades": 374,
+   "own_records": 374,
+   "boundary_trades": 84,
+   "boundary_by_firm": {
+    "TakeProfitTrader": 41,
+    "MyFundedFutures": 43
+   },
+   "boundary_moment_offered": 84,
+   "boundary_text_shows_the_close_through": 0,
+   "boundary_key_shows_the_close_through": 0
+  }
+ },
+ "preservation": {
+  "before": {
+   "label": "pre",
+   "created_local": "2026-09-25 06:10:38 PM Central Daylight Time",
+   "files": 22619,
+   "inventory_digest": "80f477e0ed5c7358c0f86f3cb05933b505b8065dc7ec9af707b54351c35440e8"
+  },
+  "after": {
+   "label": "post",
+   "created_local": "2026-09-25 07:11:57 PM Central Daylight Time",
+   "files": 22619,
+   "inventory_digest": "80f477e0ed5c7358c0f86f3cb05933b505b8065dc7ec9af707b54351c35440e8"
+  },
+  "roots": [
+   "data/ifsm_ui_replication",
+   "data/ifvg_study_drafts",
+   "data/ifvg_search_jobs",
+   "data/ifvg_pipeline_jobs",
+   "data/ifvg_preparation_jobs",
+   "data/ifvg_visual_review",
+   "data/ifvg_profiles.json",
+   "data/ifvg_datasets/search/v1",
+   "data/ifvg_datasets/search_test/v1",
+   "data/ifvg_experiments",
+   "reports/funded_comparison",
+   "reports/funded_payout",
+   "data/ifvg_datasets/context_views",
+   "data/ifvg_datasets/replay_chart",
+   "data/ifvg_datasets/replay_chart_catalog_v1.json",
+   "data/ifvg_datasets/context_pair_catalog_v1.json",
+   "research/core",
+   "pyproject.toml"
+  ],
+  "files_per_root_before": {
+   "data/ifsm_ui_replication": 41,
+   "data/ifvg_datasets/context_pair_catalog_v1.json": 1,
+   "data/ifvg_datasets/context_views": 4,
+   "data/ifvg_datasets/replay_chart": 32,
+   "data/ifvg_datasets/replay_chart_catalog_v1.json": 1,
+   "data/ifvg_datasets/search/v1": 22128,
+   "data/ifvg_experiments": 101,
+   "data/ifvg_pipeline_jobs": 61,
+   "data/ifvg_preparation_jobs": 6,
+   "data/ifvg_profiles.json": 1,
+   "data/ifvg_search_jobs": 12,
+   "data/ifvg_study_drafts": 33,
+   "data/ifvg_visual_review": 1,
+   "pyproject.toml": 1,
+   "reports/funded_comparison": 165,
+   "reports/funded_payout": 27,
+   "research/core": 4
+  },
+  "changed": [],
+  "added": [],
+  "removed": [],
+  "identical": true,
+  "meaning": "byte-identical saved study, draft, approval, review, export and payout records before and after this follow-up (SHA-256 per file); shows no writes, not the absence of reads"
+ },
+ "access": "# Access notes: setup-timing follow-up (September 25, 2026, Chicago)\n\nThis record is declared, not audited. File hashes show that nothing was written; they can't\nshow that nothing was read.\n\n## Read on purpose\n\n- **The saved funded result.** Read through its reader (`open_funded_study`) from\n  `data/ifsm_ui_replication/search/v1/funded_comparison_results/5fa65149\u2026/`. Used by the\n  demonstration and by the focused tests' reference cases.\n- **The verified strategy package**\n  (`archived-reports/ifvg_daily_close_sessions_20260918/final_extracted_4e5ce379c54731dd`).\n  - The final demonstration runs read only MANIFEST.json, run_context.json, configs.json and\n    data/trades.csv (the setup records, hash-checked against the manifest), through\n    `load_setup_record_source`.\n  - The first post-fix demonstration run (about 6:31 PM) resolved the package through\n    `market.study_package_root`, which calls `open_verified_package`. That call SHA-256-hashes\n    every required file, so the full bytes of shared/market_bars.parquet were read for the\n    hash; nothing was parsed or kept. It also parses data/calendar.csv and\n    shared/trading_schedule.csv, reads the first line of RESULTS.md, and reads the external\n    verification receipt. The internal script's first docstring said \"no bars\", which was\n    wrong for that run (review finding F4). The script now names the package root explicitly\n    for both runs.\n- **The focused tests.** Their reference cases read the same saved result, the package and its\n  stored one-minute bars (the file ends at the June 10, 2026, 4:00 PM close), exactly as in the\n  closeout's runs.\n- **The delivered closeout** (`docs/ifvg-redesign-fixes/closeout/`, both ZIPs). Read only, to\n  copy the definitions and to verify their hashes.\n\n## Not read\n\n- Raw market data under `data/databento`: no file was opened by this session's commands.\n- Anything dated June 11, 2026 or later.\n\n## Disclosure from the independent review\n\nOne read-only reviewer (scope lens) ran a recursive `grep` from the repository root early in its\nreview and stopped it after about 2 minutes. It may have opened files under `data/` for pattern\nmatching. Its output was discarded, and nothing from `data/` was displayed or written (review\nfinding F8). Every other search in the review was limited to docs/, scripts/, src/, tests/ and\nthe top-level Markdown files.\n\n## Later additions\n\n- **Completeness critic.** The final read-only critic (about 7:17 to 7:31 PM) ran one\n  `python -c` import inside the internal isolated extraction without PYTHONDONTWRITEBYTECODE.\n  That wrote six `__pycache__` folders under `isolated/pre_fix_76bb3b0c/src/alpha_lab/\u2026`,\n  which it deleted at once. The extraction's files are unchanged; only those folders'\n  modification times moved.\n- **Screen captures (7:32 PM).** The isolated application ran on the redesign's isolated\n  store copy and read that copy's saved result, package and stored bars, as in the closeout's\n  captures. Nothing was saved. The isolated review ledger's SHA-256 is still `e861127e\u2026`.\n- **Record completeness count.** It read the saved funded result and, through\n  `load_setup_record_source`, the package's MANIFEST.json, run_context.json, configs.json and\n  data/trades.csv only.\n\n## Written\n\n- **Repository files.** Those listed in `evidence/source_identity_final.json` (eleven existing\n  documents, five source files, one docstring-only source change, four test files), the owner's\n  input saved as `docs/ifvg-redesign-fixes/CLOSEOUT_REVIEW_RESPONSE.md`, and the follow-up\n  package (`docs/ifvg-redesign-fixes/followup-1/` and its two ZIPs).\n- **This internal folder**, including the isolated extraction of tree 76bb3b0c under\n  `isolated/` (src, scripts, tests and pyproject.toml only; no data).\n- **Scratch copies** for the mutation probes, in the system temporary folder, deleted after\n  each run.\n- **Git objects.** `git write-tree` with temporary index files (the `baseline/*.index` files)\n  added loose tree objects to `.git/objects`. The real index, the working tree and HEAD\n  (1b9d407) are unchanged, and nothing was committed.\n",
+ "full_suite": {
+  "ran": false
+ },
+ "prefix_reproduction": "prefix_reproduction.json",
+ "not_run": [
+  "No financial study, funded run, approval or launch (not requested).",
+  "The full test suite (AGENTS.md: focused checks for a presentation change).",
+  "The Risk tab's new sentence was not re-captured (quoted in FOLLOWUP_REPORT.md section 3); the closeout's S02, S03 and S09 show the old sentence and S06-S08 the superseded setup text, kept unchanged as the delivered record. The changed Trade review screen was re-captured (screenshots/, FOLLOWUP_REPORT.md section 4.6).",
+  "The optional pinned IFSM checkout test (not on this computer)."
+ ],
+ "record_completeness": {
+  "configurations": 64,
+  "funded_trades": 13923,
+  "with_a_record": 9770,
+  "own": 374,
+  "related": 9396,
+  "without_a_record": 4153,
+  "missing": {},
+  "every_linked_record_complete": true
+ },
+ "screen_captures": {
+  "app": "run_ifsm_research_ui via scripts/iso_apps.py (internal) on the redesign's isolated store copy, 127.0.0.1:8661, light theme, final source",
+  "tool": "scripts/capture.py (internal; headless Chrome, a 'choose' action picks the point-in-time moment)",
+  "plan": [
+   {
+    "id": "R07_review_april_point_in_time_corrected",
+    "url": "http://127.0.0.1:8661/?view=review&app=ifsm&result=5fa65149843484b143b64701a20aa063fb1e2da34708db8b4d6a2a2acbf4d09b&firm=takeprofittrader&config=S1-T1-H14-P1-L-SO&account=6&trade=380&mode=point",
+    "wait": 25
+   },
+   {
+    "id": "R08_review_april_full_history_corrected",
+    "url": "http://127.0.0.1:8661/?view=review&app=ifsm&result=5fa65149843484b143b64701a20aa063fb1e2da34708db8b4d6a2a2acbf4d09b&firm=takeprofittrader&config=S1-T1-H14-P1-L-SO&account=6&trade=380",
+    "wait": 25
+   },
+   {
+    "id": "R12a_review_member_boundary_2_20_am_before_completion",
+    "url": "http://127.0.0.1:8661/?view=review&app=ifsm&result=5fa65149843484b143b64701a20aa063fb1e2da34708db8b4d6a2a2acbf4d09b&firm=myfundedfutures&config=S0_D80_W1_P1&account=1&trade=16&mode=point",
+    "wait": 25,
+    "actions": [
+     {
+      "choose": {
+       "label": "Moment",
+       "text": "2:20 AM \u00b7 the opposing gap has formed"
+      },
+      "after": 8
+     }
+    ]
+   },
+   {
+    "id": "R12b_review_member_boundary_2_21_am_at_completion",
+    "url": "http://127.0.0.1:8661/?view=review&app=ifsm&result=5fa65149843484b143b64701a20aa063fb1e2da34708db8b4d6a2a2acbf4d09b&firm=myfundedfutures&config=S0_D80_W1_P1&account=1&trade=16&mode=point",
+    "wait": 25,
+    "actions": [
+     {
+      "choose": {
+       "label": "Moment",
+       "text": "2:21 AM \u00b7 the 2:20 AM candle has closed through the opposing gap"
+      },
+      "after": 8
+     }
+    ]
+   }
+  ],
+  "isolated_review_ledger_sha256_after": "e861127e085749a16b65e2af000c454cd65d2d8d4500e0b7eb2e663b3ca59661"
+ },
+ "test_sequence": "# Setup-timing follow-up: test and change sequence (lead log, September 25, 2026, Chicago times)\n\n- 6:08 PM: owner's closeout review response received (one narrow correctness follow-up: completed-candle timing in point-in-time setup narration; two wording edits; completion evidence). Running processes checked: only the owner's own dashboard (scripts/dashboard.py, started 5:02 PM); no job, suite or writer running.\n- 6:09 PM: pre-task source recorded: tree ca30aafca8eb42ab6111804e81dff47a9a8bf3b6 (HEAD 1b9d407 + uncommitted work; its source and test files equal the closeout's final tree 76bb3b0c, only docs differ). Five read-only readers started mapping the timing code, consumers, tests, wording and evidence tooling.\n- 6:10 PM: saved-record hashes before any change: 22,619 files.\n- 6:17 PM: readers returned (5 of 5). Root cause confirmed by reading code and the installed Strategy-Core: setup_steps alone dated and filtered the tap and the close-through by bar_open; setup_key, moments and the setup chart already used bar_close; the engine records both events at the candle's close (availability_ts_utc) and saves no earlier observation. The defect already existed in the pre-task tree 811f4b3 (reader check).\n- ~6:20 PM: new regression file tests/agents/ifvg_lab/test_setup_event_timing.py written first (public API only). On the uncorrected working source: 16 failed, 1 passed (the April-anchors retention check), every failure an AssertionError; only the defect-related fields differed (checked case by case).\n- ~6:22 PM: fix in review_panels.py (SetupEvent / setup_events; setup_steps, setup_key, moments read one availability instant; candle named by its opening minute; STEP_TIMES_NOTE) and the note on the \"How the setup formed\" card (scripts/ifvg_lab_trade_review.py). First run: 1 failure from str.capitalize() lowercasing \"PM\" (fixed with a first-letter capital); then 17 passed. Ruff clean.\n- ~6:24 PM: tests/agents/ifvg_lab: 430 passed, 1 failed, 2 skipped: test_trade_review.py::test_reference_trade_review_values pinned the mock's opening-minute times (5:18 PM, 7:05 PM). Checked the saved record's own closes (tap 5:19 PM, close-through 7:06 PM Chicago) and updated the expectation to them, with asserts on bar_close; test_trade_review.py 34 passed.\n- ~6:25 PM: item 2a: ifvg_lab_detail_risk.validation_text names the compared fields (five summary figures; each trade's net result and account-loss flag) and what is not compared; a mismatch shows money in dollars. firm_race docstrings and one test docstring made precise. Two data-free tests added to test_detail_risk.py. test_detail_risk + test_firm_race + test_ac_risk: 68 passed. Ruff clean.\n- ~6:26 PM: item 2b and documents: followup-1/CALCULATION_DEFINITIONS.md (maintained copy; closeout copy untouched); DECISIONS_LOG AC12 marked, AC14\u2013AC17 added; notices in handoff/FIX_REPORT.md and REDESIGN_REPORT.md; TASKS.md F6 evidence narrowed and follow-up table added; pointers in AGENTS.md, ARCHITECTURE.md, ML_TRAINING_WORKBENCH.md, CALCULATIONS.md, DECISION_RULES.md.\n- 6:28 PM: isolated pre-fix reproduction (scripts/reproduce_prefix.sh): git archive of tree 76bb3b0c (src, scripts, tests, pyproject.toml) + only the new regression file; review_panels.py and ifvg_lab_trade_review.py imported from the extraction (blobs equal the tree; no SetupEvent). Result: 16 failed, 1 passed; all 16 AssertionError, no other error type (test_receipts/prefix_isolated_76bb3b0c.log).\n- 6:30\u20136:32 PM: demonstration (scripts/demonstrate.py) on the isolated pre-fix copy and on the working tree: synthetic boundary and the saved study (2 member configurations, 374 funded trades, all own records; 84 boundary trades: 41 TakeProfitTrader, 43 MyFundedFutures). The post-fix run resolved the package through market.study_package_root (hash-read of every required package file; see logs/access_notes.md). DEMONSTRATION.md written.\n- ~6:33 PM: lint clean; tests/agents/ifvg_lab + 5 neighbour files: 495 passed, 3 skipped (the three half-exit-engine tests). Review tree frozen: 0299c6445f2999685a4e6443efa452219bcec017.\n- 6:33\u20136:52 PM: independent read-only review (workflow: timing, tests, wording, scope; each lens's findings checked by an adversarial verifier). No Material finding; 33 findings (Minor and Note), 26 confirmed and 7 partly confirmed. Reviewers' mutation probes on scratch copies caught 16 of 21 mutations; the survivors were the chart's shading, the missing-completion form in full history, the card's times note and the key's wording.\n- ~6:55\u20137:03 PM: fixes for the review: review_chart.setup_figure reads the close-through from review_panels.setup_events (key and chart agree when the open or the close is missing); setup_events keeps the tap listed with its higher-timeframe gap when the tap candle's times are missing; historical-order wording names the number of trades, shows the compared saved values, reads correctly for one trade, and says so when the replay produced a different count (Validation.replayed_trades); test_setup_event_timing.py strengthened (chart band and number at every instant, full-history form of a missing close, a tap without candle times, no higher-timeframe gap, a close-through without its opening minute, the card's times note, the key's wording, related-record cases at 7:05:59.999999999 PM and 7:06 PM): 23 passed; test_detail_risk.py wording tests: 29 passed. Own mutation probes (scripts/mutation_probes.py) on a scratch copy: 12 of 12 caught, including the four that survived the reviewers' probes. Documents: definitions header change list complete, \u00a714 names the count and the focused run, \u00a716 edge cases precise, \u00a717 rows; DECISIONS_LOG P5.3 marked and AC14/AC16 precise; ARCHITECTURE historical-order and chart lines; REDESIGN_REPORT, redesign TASKS P5b, CALCULATIONS notice (setup timing listed; one parenthetical), SCREENS pointer, market.py docstring pointer, ML_TRAINING_WORKBENCH list; TASKS F6 status \"Qualified/relabelled, verified\". Demonstration script now opens only the setup-record loader and counts all 84 boundary trades before and after.\n- 7:03 PM: lint clean; tests/agents/ifvg_lab + 5 neighbour files: 503 passed, 3 skipped. Source frozen (identity \"final\"): tree 3e26b049\u2026.\n- 7:04 PM: isolated pre-fix reproduction with the strengthened file: 22 failed, 1 passed, but one failure (the record without its higher-timeframe gap) was a StopIteration from next(), not an assertion. That test now asserts the tap step's presence first; 23 passed on the working tree; ruff clean.\n- 7:05 PM: source frozen again: tree 41d2288af68bea7810c584579af3786028f3914d; source-only identity src 0022d223\u2026, scripts cc474e70\u2026, tests 057161bc\u2026, pyproject.toml 9c0121cf\u2026 (23 files changed against the pre-task tree ca30aafc; 10 of them source or test). No stray control characters in any changed file (checked after a shell heredoc turned a regex's \b into a backspace in an internal script, fixed there).\n- 7:05 PM: isolated pre-fix reproduction (receipt test_receipts/prefix_isolated_76bb3b0c.log): review_panels.py, review_chart.py, ifvg_lab_trade_review.py and test_ac_trade_review.py imported from the extraction, blobs equal to tree 76bb3b0c, no SetupEvent. 22 failed, 1 passed (the April-anchors retention check); all 22 are assertion failures (21 \"AssertionError\" lines and one bare \"assert 0 == 1\"), no other error type.\n- 7:06\u20137:07 PM: demonstration rerun on both sources, with the package named explicitly (setup-record loader only): same counts; on the 84 boundary trades the delivered text showed the close-through at the offered minute on 84 and the key on 0; after the fix, 0 and 0. DEMONSTRATION.md rewritten.\n- 7:08 PM: mutation probes on tree 41d2288a (scratch copies): 12 of 12 mutations caught; the unmutated copy 23 passed (evidence/mutation_probes.json).\n- 7:08\u20137:11 PM: focused checks on the final source (test_receipts/focused.log): ruff clean; the new file 23 passed; the directly affected files 230 passed; tests/agents/ifvg_lab + 5 neighbour files 503 passed, 3 skipped (the three half-exit-engine tests); those three passed in the half-exit research environment; test_every_saved_configuration_replays_exactly PASSED. Source-only identity equal at start and end, and equal to the frozen identity. The full suite was not run (AGENTS.md; see FOLLOWUP_REPORT.md).\n- 7:12 PM: preservation: the 22,619 saved-record files hashed again; 0 changed, added or removed against the 6:10 PM snapshot.\n- 7:13 PM onward: owner's input saved verbatim (docs/ifvg-redesign-fixes/CLOSEOUT_REVIEW_RESPONSE.md); FOLLOWUP_REPORT.md written; TASKS.md follow-up rows filled; package assembled by scripts/assemble_followup.py (validation_summary.json, source_identity.json, prefix_reproduction.json, manifest.json; followup-1.zip and followup-1_source_review.zip verified by extraction; the delivered closeout's manifest and ZIP hashes re-verified first). No source or test file changed after the 7:05 PM freeze (the assembler lists the later changes; documents only).\n- 7:15\u20137:16 PM: package assembled; the assembler's own summary had three bookkeeping errors (a key-name mismatch in the source-only comparison, an empty boundary-assertion excerpt, and its after-freeze list taken after the source-review ZIP was written). All three fixed; reassembled at 7:16 PM: source-only identity equal, only documents changed after the freeze, both ZIPs verified by extraction, and the standalone before/after replay as expected.\n- ~7:17\u20137:31 PM: final read-only completeness critic plus verifier: 5 findings (G1 Minor, confirmed: \"pre-task\" named two trees; G2 Minor, partly: the delivered S06\u2013S08 show superseded setup text; G3 Note, confirmed: the complete-records claim was uncounted; G4 Note, partly: the source-review README named the wrong tree for the focused run; G5 Note: the critic's own bytecode write in the isolated copy, removed).\n- 7:31\u20137:33 PM: isolated application started on port 8661 (final source, the redesign's isolated store copy, light theme); four Trade review captures at 7:32 PM (R07, R08, R12a at 2:20 AM, R12b at 2:21 AM), each checked against its page text; application stopped; isolated review ledger still e861127e\u2026.\n- 7:33 PM: record completeness (scripts/record_completeness.py; setup-record loader only): 64 configurations, 13,923 funded trades, 9,770 with a linked record (374 own, 9,396 related), none missing a candle time or gap confirmation; 4,153 without a record.\n- 7:34 PM onward: critic fixes applied (report \u00a71, \u00a72, \u00a74.1, \u00a74.4, the new \u00a74.6 and \u00a75; AC14; the source-review README; not_run; access notes); package reassembled. No source or test file changed after the 7:05 PM freeze.\n",
+ "created_local": "2026-09-25 07:35:13 PM Central Daylight Time",
+ "source_review_attachment": {
+  "file": "followup-1_source_review.zip",
+  "bytes": 254577,
+  "sha256": "a0d9c2e45139a522dc7cc582cc13391559a70f01f11255c3f71926fbccfbb50c",
+  "payloads": 33,
+  "verified_by_extraction": true,
+  "standalone_boundary_replay": {
+   "after": {
+    "imported_from_attachment_only": true,
+    "has_setup_event": true,
+    "moment_7_05_pm_offered": true,
+    "7:05 PM": {
+     "text_has_close_through": false,
+     "key_has_close_through": false
+    },
+    "7:06 PM": {
+     "text_has_close_through": true,
+     "key_has_close_through": true
+    }
+   },
+   "before": {
+    "imported_from_attachment_only": true,
+    "has_setup_event": false,
+    "moment_7_05_pm_offered": true,
+    "7:05 PM": {
+     "text_has_close_through": true,
+     "key_has_close_through": false
+    },
+    "7:06 PM": {
+     "text_has_close_through": true,
+     "key_has_close_through": true
+    }
+   }
+  }
+ },
+ "delivered_closeout_unchanged": {
+  "closeout.zip": "f35ffb1fa442e6198fb69978a5b24a27f2ec0a7393577e975d1d1608cfbcb1df",
+  "closeout_source_review.zip": "10717c2141ec567bf44cc8b982b34b765b61bda6ac57ba39a41818063b6bcde8",
+  "closeout_manifest_payloads_verified": 22
+ }
+}

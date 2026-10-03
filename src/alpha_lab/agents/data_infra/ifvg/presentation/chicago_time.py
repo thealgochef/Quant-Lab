@@ -99,7 +99,9 @@ def chicago_walls(values: Any, *, naive: Naive = "reject") -> pd.Series:
     """Vectorized :func:`chicago_wall` for a column of instants (order kept)."""
 
     series = pd.Series(values)
-    stamps = pd.to_datetime(series, utc=False)
+    # "…:00Z" and "…:07.305287043Z" can share a column: parse each as ISO 8601
+    stamps = (pd.to_datetime(series, utc=False, format="ISO8601")
+              if series.dtype == object else pd.to_datetime(series, utc=False))
     if getattr(stamps.dt, "tz", None) is None:
         if naive != "utc":
             raise ValueError("times without a zone; name their source convention")
