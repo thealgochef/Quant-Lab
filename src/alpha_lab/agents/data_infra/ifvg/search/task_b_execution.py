@@ -398,7 +398,8 @@ def _funded(context, contexts, artifact_policy):
         outputs.append({
             "configuration": config.name, "display_name": config.name,
             "axes": dict(config.axis_value_ids), "settings_plain": describe_section(section),
-            "section_config_hash": cfg.profile_hash, "exit_policy": section.exit_policy,
+            "section_config_hash": cfg.profile_hash,
+            "exit_policy": getattr(section, "exit_policy", "fixed_target_v1"),
             "sizing": {"instrument": "mini", "instrument_label": INSTRUMENTS["mini"].label,
                        "quantity": 1, "tick_value_cents": 500, "cost_per_contract_mills": 5140},
             "strategy_trades_no_account": reference.strategy_trades,

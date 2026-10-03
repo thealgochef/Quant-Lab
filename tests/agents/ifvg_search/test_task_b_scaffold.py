@@ -331,3 +331,235 @@ def test_logical_deadline_matches_core_clock_reference_and_live_funded_pairs(day
         ]
         assert all(trade["exit_kind"] == "scheduled_close" for trade in run.ledger.trades)
         assert run.ledger.finished and run.ledger.position is None
+
+
+def test_s12_constructs_verified_funded_output_with_pinned_core_without_exit_policy(
+    tmp_path, monkeypatch,
+):
+    from types import SimpleNamespace
+
+    import pandas as pd
+
+    from alpha_lab.agents.data_infra.ifvg import day_artifacts, prepared_store
+    from alpha_lab.agents.data_infra.ifvg.config import IfvgCaptureConfig
+    from alpha_lab.agents.data_infra.ifvg.contracts import RecordTable
+    from alpha_lab.agents.data_infra.ifvg.search import saved_strategy_result, task_b_execution
+    from alpha_lab.agents.data_infra.ifvg.search.store import (
+        load_sidecar_bytes,
+        load_verified_envelope,
+    )
+    from alpha_lab.propsim.funded import print_minutes
+    from tests.agents.ifvg_search.conftest import make_resolved_trades_frame
+
+    fields = task_fields(tmp_path)
+    charter = SearchCharterEnvelope.from_payload(SearchCharterPayload(
+        **fields, owner_authorization=_example_charter_payload().owner_authorization,
+    ))
+    dates = tuple(charter.payload.date_policy.replay_dates)
+    children, specs, contexts = [], [], {}
+    for ordinal, configuration in enumerate(charter.payload.explicit_configurations):
+        resolved = resolve_profile_config({
+            "profile_name": charter.payload.baseline_profile_name,
+            "section_overrides": resolve_axis_overrides(dict(configuration.axis_value_ids)),
+        })
+        assert not hasattr(resolved.section, "exit_policy")
+        cfg = IfvgCaptureConfig(section=resolved.section, data_dir=tmp_path / "raw")
+        key = resolved.section_config_hash
+        children.append({"ordinal": ordinal, "core_replay_id": f"{ordinal:064x}",
+                         "state": "completed"})
+        specs.append(SimpleNamespace(ordinal=ordinal, resolved_section_config_hash=key))
+        contexts[key] = (resolved, cfg, None, None)
+    context = SimpleNamespace(charter=charter, children=children, specs=specs,
+                              store_root=tmp_path / "synthetic_store")
+
+    class Policy:
+        registrations = (SimpleNamespace(source_dates=dates),)
+
+        def __init__(self):
+            self.dates = dates
+
+        def assert_zero_forbidden_access(self):
+            return None
+
+    class Provider:
+        def register_day_artifacts(self, artifacts, tick_size):
+            assert tick_size == 0.25
+
+        def snapshot(self, ts_utc):
+            return None
+
+    loaded_days = []
+
+    def synthetic_day(day, cfg, *, access_policy):
+        assert day in access_policy.dates
+        loaded_days.append((cfg.profile_hash, day))
+        return SimpleNamespace(bars=(), level_timeline=None)
+
+    # Only source/authority seams are synthetic. The pinned Core lifecycle,
+    # account engine, current ledgers, canonical validator and S12 serializer run.
+    empty_trades = make_resolved_trades_frame(("2025-06-16",)).head(0)
+    empty_trades["is_warmup"] = pd.Series(index=empty_trades.index, dtype=bool)
+    monkeypatch.setattr(prepared_store, "load_registered_day_artifacts", synthetic_day)
+    monkeypatch.setattr(day_artifacts, "levels_for_from_frame", lambda frame: lambda ts: [])
+    monkeypatch.setattr(task_b_execution, "_provider", lambda cfg, scope: Provider())
+    monkeypatch.setattr(task_b_execution, "validate_task_b_request", lambda *a, **kw: None)
+    monkeypatch.setattr(saved_strategy_result, "load_saved_strategy_result", lambda root, core_id:
+                        SimpleNamespace(tables={RecordTable.EXECUTED_TRADE: empty_trades}))
+    monkeypatch.setattr(print_minutes, "load_print_day", lambda *a, **kw:
+                        pytest.fail("synthetic zero-trade test opened source prints"))
+
+    output_ids, _ = task_b_execution._funded(context, contexts, Policy)
+    assert len(output_ids) == 1
+    envelope = load_verified_envelope(
+        context.store_root, "task_b_artifacts", output_ids[0],
+        task_b_execution.TaskBArtifactEnvelope,
+    )
+    assert envelope.payload.kind == "funded_accounts"
+    assert envelope.task_b_artifact_id == output_ids[0]
+    assert envelope.payload.search_id == charter.search_id
+    assert envelope.payload.core_replay_ids == tuple(row["core_replay_id"] for row in children)
+    outputs = json.loads(load_sidecar_bytes(
+        context.store_root, "task_b_artifacts", output_ids[0], "funded_runs.json",
+    ))
+    result = json.loads(load_sidecar_bytes(
+        context.store_root, "task_b_artifacts", output_ids[0], "comparison_result.json",
+    ))
+    assert len(outputs) == 13
+    assert {row["exit_policy"] for row in outputs} == {"fixed_target_v1"}
+    assert all(row["reference"]["equivalent"] for row in outputs)
+    assert len(result["summaries_cents"]) == 26
+    assert result["validation"]["passed"] is True
+    assert all(summary["status"] == "Completed" for summary in result["summaries_cents"].values())
+    assert json.loads(load_sidecar_bytes(
+        context.store_root, "task_b_artifacts", output_ids[0], "print_source_receipts.json",
+    )) == []
+    # Exercise the actual index/envelope/sidecar reload and reuse path. No print
+    # sources were needed; the synthetic receipt metadata names only this fixture.
+    monkeypatch.setattr(prepared_store, "load_prepared_store", lambda path: SimpleNamespace(
+        source_dates=dates, definition={"raw_data_dir": str(tmp_path / "raw"), "symbol": "NQ"},
+    ))
+    reloaded_envelope, sidecars = task_b_execution._load(context, "funded_accounts")
+    assert reloaded_envelope == envelope
+    assert json.loads(sidecars["funded_runs.json"]) == outputs
+    assert json.loads(sidecars["comparison_result.json"]) == result
+    loads_before_reuse = list(loaded_days)
+    reused_ids, explanation = task_b_execution._funded(context, contexts, Policy)
+    assert reused_ids == output_ids
+    assert explanation == "Verified funded account results reused"
+    assert loaded_days == loads_before_reuse
+
+
+@pytest.mark.parametrize("task_b", [True, False], ids=["task_b", "ordinary"])
+def test_completed_capture_lifetime_preserves_verified_evidence(tmp_path, task_b):
+    """Exercise private stage lifecycle; this synthetic test authorizes no run."""
+    import weakref
+    from dataclasses import replace
+
+    import pandas as pd
+
+    from alpha_lab.agents.data_infra.ifvg.search import pipeline
+    from alpha_lab.agents.data_infra.ifvg.search.executed_trade_table import (
+        load_executed_trade_table,
+    )
+    from alpha_lab.agents.data_infra.ifvg.search.lineage import (
+        LineageUniquenessEnvelope,
+        deserialize_native_lineage_map,
+    )
+    from alpha_lab.agents.data_infra.ifvg.search.store import (
+        load_sidecar_bytes,
+        load_verified_envelope,
+        save_or_reuse_envelope,
+    )
+    from tests.agents.ifvg_search.pipeline_fixture import build_pipeline_fixture
+
+    fixture = build_pipeline_fixture(tmp_path)
+    charter = fixture["charter"]
+    if task_b:
+        charter = SearchCharterEnvelope.from_payload(SearchCharterPayload(
+            **task_fields(tmp_path),
+            owner_authorization=_example_charter_payload().owner_authorization,
+        ))
+    base_runner = fixture["wiring"].child_runner
+    references = {}
+    audits = []
+
+    class CapturedResult:
+        def __init__(self, source):
+            self.tables = source.tables
+            self.gross_trade_stream_hash = source.gross_trade_stream_hash
+            self.capture = object()
+            self.audit_capture = object()
+            self.day_funnels = {"2026-01-13": {"executed": 1}}
+
+    def run_child(*, spec, core_replay_id):
+        # This detects the loop's local `result` retaining the previous capture,
+        # even if tables_by_child has already been cleared.
+        assert all((reference() is None) == task_b for reference in references.values())
+        result = CapturedResult(base_runner(spec=spec, core_replay_id=core_replay_id))
+        for frame in result.tables.values():
+            frame["exit_ticks"] = frame["target_ticks"].where(
+                frame["resolution"].eq("target"), frame["stop_ticks"],
+            )
+            frame["scheduled_exit_deadline_ts_utc"] = pd.NaT
+            frame["scheduled_exit_schedule_id"] = None
+        references[core_replay_id] = weakref.ref(result)
+        envelope = fixture["wiring"].identity_resolver(spec)
+        # Model the runner's immutable publication before returning. The audit
+        # callback below reloads this synthetic companion through the real store.
+        save_or_reuse_envelope(
+            fixture["store_root"], "core_replays", envelope,
+            extra_files={"test_companion.json": json.dumps({
+                "core_replay_id": core_replay_id, "published": True,
+            }).encode("utf-8")},
+        )
+        return result
+
+    def audit_child(row, result):
+        core_id = row["core_replay_id"]
+        if task_b:
+            assert result is None
+        else:
+            assert result is references[core_id]()
+        companion = json.loads(load_sidecar_bytes(
+            fixture["store_root"], "core_replays", core_id, "test_companion.json",
+        ))
+        assert companion == {"core_replay_id": core_id, "published": True}
+        audits.append(core_id)
+        return (canonical_contract_sha256(companion),)
+
+    context = pipeline._RunContext(
+        semantic=fixture["semantic"], charter=charter,
+        wiring=replace(fixture["wiring"], child_runner=run_child, audit_builder=audit_child),
+        store_root=fixture["store_root"], state_root=fixture["state_root"],
+        state=pipeline._initial_state(fixture["semantic"]), synthetic=True,
+    )
+    pipeline._stage_s01_prepare(context)
+    replay_ids, _ = pipeline._stage_s02_replays(context)
+    assert {row["state"] for row in context.children} == {"completed"}, [
+        (row["ordinal"], row["explanation"]) for row in context.children
+    ]
+    assert len(replay_ids) == (13 if task_b else 4)
+    assert all((reference() is None) == task_b for reference in references.values())
+    assert set(context.tables_by_child) == (set() if task_b else set(replay_ids))
+    for core_id in replay_ids:
+        evidence = context.executed_trades_by_child[core_id]
+        stored = load_executed_trade_table(context.store_root, evidence.executed_trade_table_id)
+        pd.testing.assert_frame_equal(stored.frame, evidence.frame)
+        evaluation = pipeline._child_evaluation_envelope(core_id, charter.payload.cost_policy)
+        loaded_metrics = pipeline._load_child_evaluation(
+            context.store_root, evaluation.costed_evaluation_id,
+        )
+        assert loaded_metrics is not None
+        assert loaded_metrics.model_dump(mode="json") == context.metrics_by_child[
+            core_id
+        ].model_dump(mode="json")
+        lineage = deserialize_native_lineage_map(context.lineage_sidecars[core_id])
+        report = LineageUniquenessEnvelope.from_payload(lineage.uniqueness_report)
+        assert load_verified_envelope(
+            context.store_root, "lineage_reports", report.lineage_report_id,
+            LineageUniquenessEnvelope,
+        ) == report
+        assert f"lineage_map_{core_id}.json" in context.stage_sidecars
+        assert f"day_funnels_{core_id}.json" in context.stage_sidecars
+    pipeline._stage_s03_audit(context)
+    assert set(audits) == set(replay_ids)

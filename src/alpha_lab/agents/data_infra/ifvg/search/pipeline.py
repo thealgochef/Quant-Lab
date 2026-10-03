@@ -1630,6 +1630,8 @@ def _stage_s02_replays(context: _RunContext) -> tuple[tuple[str, ...], str]:
             row["explanation"] = "Executed trades and costed metrics recorded"
             _record_children(context)
             _checkpoint(context)
+            context.tables_by_child.pop(core_replay_id, None)
+            del result
             continue
         report = evaluate_strategy_gates(
             metrics, charter_payload.objective_policy.feasibility_gates

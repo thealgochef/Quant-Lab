@@ -147,6 +147,9 @@ inputs, resolves profiles, captures sequential strategy and FSM audit evidence,
 runs the current independent account-driven funded ledger, writes factual
 tables and verifies saved evidence. Feature construction, model labels, folds,
 fitting, predictions, bootstrap and interpretation are not in that stage plan.
+After immutable child publication, costed evaluation and lineage persistence,
+Task B releases completed in-memory captures before replaying the next child.
+Its later audit, funded and reporting stages use verified saved readers.
 
 The funded adapter assigns an existing closure and its mandatory deadline to
 the canonical logical interval from the preceding 18:00 ET boundary to the
@@ -155,6 +158,10 @@ does not replace the normal deadline on the prior civil date. The adapter
 requires exactly one close/deadline per evaluated logical day. Timed account
 day-end/release events follow the existing selected evaluation-calendar
 convention; processing-completion timers continue across calendar gaps.
+Funded output metadata follows the existing comparison adapter: pinned sections
+without `exit_policy` use the established `fixed_target_v1` fallback.
+The existing immutable store vocabulary includes `task_b_artifacts` for its
+funded-account and reconciled-table output envelopes.
 
 `menthorq_study_reporting.py` keeps funded cash at configuration/firm scope.
 By-session/regime/slot and cell tables carry points only; the NY comparison

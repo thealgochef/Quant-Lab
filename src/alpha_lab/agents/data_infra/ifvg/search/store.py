@@ -125,6 +125,8 @@ SEARCH_STORE_NAMES: tuple[str, ...] = (
     "funded_comparison_plans",
     "funded_comparison_approvals",
     "funded_comparison_results",
+    # Task B — exact funded account and reconciled table output envelopes only
+    "task_b_artifacts",
     # HARDENING-BACKEND §6.2 / §6.3 — the R1 baseline gate report and the
     # release-specific bounded control-flow report (verification-only)
     "r1_baseline_gate_reports",
