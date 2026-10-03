@@ -16,6 +16,7 @@ _NEUTRAL = {
     "regime_gate_policy": "off",
     "regime_unknown_policy": "allow",
     "nearest_support_gex1_block": False,
+    "nearest_support_universe": "all_19",
 }
 
 
@@ -80,6 +81,21 @@ def test_nearest_support_rule_preserves_ties_strict_below_and_unknown_pass():
     assert "level equal to entry is excluded" in details
     assert "no lower level or unavailable context passes this gate" in details
     assert "unknown regime inside the window blocks" not in details
+
+
+def test_studied_universe_is_classified_and_describes_the_exact_eight_levels():
+    description = describe_strategy(_section(
+        menthorq_context_version="menthorq_eod_v1", nearest_support_gex1_block=True,
+        nearest_support_universe="studied_8",
+    ))
+    assert description.status == "available"
+    assert not description.issues
+    details = " ".join(description.detail_bullets)
+    assert (
+        "Nearest-level values use Call Resistance, Put Support, HVL, 1D Min, "
+        "1D Max, GEX 1, GEX 2 and GEX 3."
+    ) in details
+    assert "GEX 1 is among the levels tied" in details
 
 
 def test_shorts_enabled_description_skips_both_configured_level_gates():

@@ -2,8 +2,8 @@
 
 CSV parsing is cached by immutable source bytes and the fixed availability policy.
 Each run receives its own provider, including its replay-local prior-cash-close map.
-No source-selected contract is exposed by the current day-artifact seam, so the
-snapshot's instrument and roll fields remain null rather than inferring a roll.
+Source-selected instruments are read from mutable preparation catalogs. Roll
+flags compare only the preceding registered logical day with actual bars.
 """
 
 from __future__ import annotations
@@ -158,10 +158,13 @@ class MenthorqLevels:
     schema_version = SCHEMA_VERSION
     formula_version = FORMULA_VERSION
 
-    def __init__(self, parsed: _ParsedSources, source_file_sha256: Mapping[str, str]):
+    def __init__(self, parsed: _ParsedSources, source_file_sha256: Mapping[str, str], *,
+                 preparation_catalog_paths: tuple[Path, ...] = ()):
         self._parsed = parsed
         self.source_file_sha256 = MappingProxyType(dict(source_file_sha256))
         self._cash_closes: dict[date, float | None] = {}
+        self._selected_instruments: dict[date, int | None] = {}
+        self.preparation_catalog_paths = preparation_catalog_paths
 
     def snapshot(self, ts_utc: datetime) -> MenthorqLevelSnapshot:
         if ts_utc.tzinfo is None or ts_utc.utcoffset() is None:
@@ -187,19 +190,33 @@ class MenthorqLevels:
             total_net_gex=regime.total_net_gex if regime else None,
             gex_percentile_1y=regime.gex_percentile_1y if regime else None,
             implied_move_points=row.implied_move_points if row else None,
-            selected_instrument_id=None,
-            roll_flag=None,
+            selected_instrument_id=self._selected_instruments.get(day),
+            roll_flag=self.roll_flag_for(day),
             context_available=reason is None,
             unavailable_reason=reason,
         )
 
-    def register_day_artifacts(self, artifacts: DayArtifacts, tick_size: float) -> None:
+    def register_day_artifacts(self, artifacts: DayArtifacts, tick_size: float, *,
+                               preparation_catalog_paths: tuple[Path, ...] = ()) -> None:
         """Record completed 1m bars only; never scan an unrequested source date."""
         from .day_artifacts import cash_close_points_from_artifacts
 
         day = date.fromisoformat(artifacts.date_str)
         if any(bar.trading_day == day for bar in artifacts.bars):
             self._cash_closes[day] = cash_close_points_from_artifacts(artifacts, tick_size)
+            from .preparation_catalog import read_preparation_instrument
+
+            self._selected_instruments[day] = read_preparation_instrument(
+                artifacts.date_str, preparation_catalog_paths or self.preparation_catalog_paths
+            )
+
+    def roll_flag_for(self, day: date) -> bool | None:
+        prior_days = [prior for prior in self._selected_instruments if prior < day]
+        if not prior_days:
+            return None
+        current = self._selected_instruments.get(day)
+        previous = self._selected_instruments[max(prior_days)]
+        return None if current is None or previous is None else current != previous
 
     def prior_cash_close_for(
         self, ts_utc: datetime, *, session_scheme: SessionScheme = RESEARCH_SESSION_SCHEME
@@ -226,6 +243,7 @@ class MenthorqLevels:
 def load_menthorq_levels(
     levels_path: Path | str = DEFAULT_LEVELS_PATH,
     regime_path: Path | str = DEFAULT_REGIME_PATH,
+    *, preparation_catalog_paths: tuple[Path, ...] = (),
 ) -> MenthorqLevels:
     """Read each source once; reuse parsing only for identical bytes and policy."""
     levels_payload = Path(levels_path).read_bytes()
@@ -240,7 +258,7 @@ def load_menthorq_levels(
     return MenthorqLevels(parsed, {
         DEFAULT_LEVELS_PATH.name: levels_hash,
         DEFAULT_REGIME_PATH.name: regime_hash,
-    })
+    }, preparation_catalog_paths=preparation_catalog_paths)
 
 
 def menthorq_provider_for_section(

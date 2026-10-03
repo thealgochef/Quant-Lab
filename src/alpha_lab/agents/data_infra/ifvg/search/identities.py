@@ -618,7 +618,8 @@ def name_free_section_hash(section: IfvgSmcSection) -> str:
     # (the only behavior of earlier Core builds) stays out, as in ifvg_profile_hash
     if payload.get("exit_policy") == "fixed_target_v1":
         payload.pop("exit_policy")
-    # A1's neutral fields must not rename a historical generated profile.
+    # Neutral level defaults, including B0.2's all_19 universe, must not
+    # rename a historical generated profile.
     # Active values remain load-bearing, using the Core's named default map.
     for key, default in MENTHORQ_NEUTRAL_PROFILE_FIELDS.items():
         if payload.get(key) == default:
@@ -695,6 +696,9 @@ QL_REPLAY_SOURCE_SCOPE: tuple[str, ...] = (
     "src/alpha_lab/agents/data_infra/ifvg/development_access.py",
     "src/alpha_lab/agents/data_infra/ifvg/entry_dataset.py",
     "src/alpha_lab/agents/data_infra/ifvg/profiles.py",
+    "src/alpha_lab/agents/data_infra/ifvg/prepared_store.py",
+    "src/alpha_lab/agents/data_infra/ifvg/preparation_catalog.py",
+    "src/alpha_lab/agents/data_infra/ifvg/menthorq_levels.py",
     "src/alpha_lab/agents/data_infra/ifvg/fsm_audit_preparation.py",
     "src/alpha_lab/agents/data_infra/ifvg/selection_audit.py",
     "src/alpha_lab/agents/data_infra/ifvg/gap_validity_evidence.py",

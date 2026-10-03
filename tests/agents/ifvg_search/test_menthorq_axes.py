@@ -1,10 +1,15 @@
 """A1 registry names and atomic entry-schedule payloads."""
 
+import pytest
+
+from alpha_lab.agents.data_infra.ifvg.profiles import resolve_profile_config
 from alpha_lab.agents.data_infra.ifvg.search.axis_registry import (
     AXIS_VALUE_REGISTRY_V1,
     SEARCH_AXIS_REGISTRY_V1,
     CompositeAxisValue,
+    resolve_axis_overrides,
 )
+from alpha_lab.agents.data_infra.ifvg.study_presentation import axis_group_for
 
 
 def test_menthorq_values_and_slot_presets_follow_existing_registry_contract():
@@ -15,6 +20,7 @@ def test_menthorq_values_and_slot_presets_follow_existing_registry_contract():
         },
         "regime_unknown_policy": {"allow": "allow", "block": "block"},
         "nearest_support_gex1_block": {"false": False, "true": True},
+        "nearest_support_universe": {"all_19": "all_19", "studied_8": "studied_8"},
     }
     for key, values in expected.items():
         assert len(SEARCH_AXIS_REGISTRY_V1[key].registered_values) == len(values)
@@ -39,3 +45,22 @@ def test_menthorq_values_and_slot_presets_follow_existing_registry_contract():
             "entry_schedule_timezone": "America/Chicago",
             "entry_schedule_windows": (window,),
         }
+
+
+def test_nearest_support_universe_is_context_dependent_and_uses_existing_risk_group():
+    key = "nearest_support_universe"
+    spec = SEARCH_AXIS_REGISTRY_V1[key]
+    assert spec.dependencies == ("menthorq_context_version",)
+    assert spec.baseline_value_id == f"{key}.all_19"
+    assert spec.requires_full_sequential_replay
+    assert not spec.changes_capture_artifacts
+    assert axis_group_for(key) == "Risk Admissibility"
+    overrides = resolve_axis_overrides({key: f"{key}.studied_8"})
+    with pytest.raises(ValueError, match="menthorq_gate_requires_eod_context"):
+        resolve_profile_config({"section_overrides": overrides})
+    overrides.update(resolve_axis_overrides({
+        "menthorq_context_version": "menthorq_context_version.eod_v1",
+    }))
+    resolved = resolve_profile_config({"section_overrides": overrides})
+    assert resolved.section.nearest_support_universe == "studied_8"
+    assert resolved.effective_config[key] == "studied_8"

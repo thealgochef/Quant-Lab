@@ -1303,8 +1303,8 @@ def _owner_decision_evidence(
             found.setdefault(str(key), (artifact_id, envelope.evidence_ref()))
     if charter_intent_sha256 is not None:
         from .search.strategy_approval import (  # noqa: PLC0415
-            DECISION_KEYS,
             STORE,
+            decision_keys_for_intent,
             load_strategy_approval,
         )
 
@@ -1318,7 +1318,8 @@ def _owner_decision_evidence(
                 and approval.payload.requirement_set_id == requirement_set_id
                 and approval.payload.store_namespace_id == namespace_id
             ):
-                for key in DECISION_KEYS:
+                approved_intent = json.loads(approval.payload.approved_charter_json)
+                for key in decision_keys_for_intent(approved_intent):
                     found[key] = (artifact_id, approval.evidence_ref())
                 break
     return found

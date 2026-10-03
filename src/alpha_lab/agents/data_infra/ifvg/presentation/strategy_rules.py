@@ -48,7 +48,7 @@ _RULE_FIELDS = {
     "max_executed_trades_per_day", "doc_sessions", "session_scheme",
     "htf_registry_max_age_days", "ltf_registry_max_live",
     "menthorq_context_version", "regime_gate_policy", "regime_unknown_policy",
-    "nearest_support_gex1_block",
+    "nearest_support_gex1_block", "nearest_support_universe",
 }
 _CAPABILITY_FIELDS = {
     "runnable", "execution_enabled", "non_runnable_reason", "entry_family",
@@ -77,6 +77,7 @@ _LEGACY_OPTIONAL_DEFAULTS = {
     "regime_gate_policy": "off",
     "regime_unknown_policy": "allow",
     "nearest_support_gex1_block": False,
+    "nearest_support_universe": "all_19",
 }
 _CLASSIFIED_FIELDS = (
     _RULE_FIELDS | _CAPABILITY_FIELDS | _MEASUREMENT_FIELDS | _INERT_FIELDS
@@ -247,7 +248,7 @@ def _sessions(section: IfvgSmcSection) -> str:
 
 
 def _menthorq_rule(section: IfvgSmcSection) -> str:
-    """Explain the A1 controls together; absent neutral settings stay invisible."""
+    """Explain level controls together; absent neutral settings stay invisible."""
     if getattr(section, "menthorq_context_version", None) is None:
         return ""
     context = (
@@ -255,6 +256,11 @@ def _menthorq_rule(section: IfvgSmcSection) -> str:
         "6:00 AM to 5:00 PM America/Chicago, with the end time excluded. "
         "Outside those hours, both level entry gates are skipped. "
     )
+    if getattr(section, "nearest_support_universe", "all_19") == "studied_8":
+        context += (
+            "Nearest-level values use Call Resistance, Put Support, HVL, 1D Min, "
+            "1D Max, GEX 1, GEX 2 and GEX 3. "
+        )
     if section.enable_shorts:
         return context + "Both level entry gates are also skipped while selling is enabled."
     regime_policy = getattr(section, "regime_gate_policy", "off")

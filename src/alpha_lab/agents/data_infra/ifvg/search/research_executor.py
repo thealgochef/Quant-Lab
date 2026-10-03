@@ -42,6 +42,10 @@ from .strategy_metrics import compute_strategy_metrics
 
 def pipeline_real_research_entry(charter, semantic, *, store_root):
     """Validate exact authority before constructing lazy heavy adapters."""
+    if charter.payload.task_b_execution is not None:
+        from .task_b_execution import pipeline_task_b_entry  # noqa: PLC0415
+
+        return pipeline_task_b_entry(charter, semantic, store_root=store_root)
     root = Path(store_root)
     refs = charter.payload.owner_authorization.decision_refs
     matching = [ref for ref in refs.values() if ref.decision_id == RESEARCH_DECISION_ID]

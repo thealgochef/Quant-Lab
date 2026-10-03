@@ -1,8 +1,9 @@
 """Explicit, immutable owner approval of one exact strategy-search request.
 
 Approval is local owner evidence, not cryptographic authentication or proof of
-successful verification. It grants no prop/model/regime authority. The shared
-axis registry remains pending; only a matching charter gets a ratified view.
+successful verification. Ordinary approvals grant strategy authority. Task B's
+exact owner scope also binds the two existing funded account plans; model and
+regime authority are separate. Only a matching charter gets a ratified registry.
 """
 
 from __future__ import annotations
@@ -35,6 +36,13 @@ DECISION_KEYS = (
 )
 
 
+def decision_keys_for_intent(payload) -> tuple[str, ...]:
+    from .task_b import TASK_B_FUNDED_DECISION_KEY  # noqa: PLC0415
+
+    values = payload.model_dump(mode="json") if hasattr(payload, "model_dump") else payload
+    return DECISION_KEYS + ((TASK_B_FUNDED_DECISION_KEY,) if values.get("task_b_execution") else ())
+
+
 def charter_intent(payload) -> dict:
     values = payload.model_dump(mode="json") if hasattr(payload, "model_dump") else dict(payload)
     values.pop("owner_authorization", None)
@@ -42,6 +50,16 @@ def charter_intent(payload) -> dict:
     # pure wizard mapping and a validated charter to the same semantic shape.
     if "axes" in values:
         values["axes"] = dict(values["axes"])
+    for key in ("explicit_configurations", "task_b_execution"):
+        if not values.get(key):
+            values.pop(key, None)
+    if "date_policy" in values:
+        policy = values["date_policy"]
+        if isinstance(policy, dict):
+            policy = dict(policy)
+        if isinstance(policy, dict) and not policy.get("warmup_policy_id"):
+            policy.pop("warmup_policy_id", None)
+        values["date_policy"] = policy
     # Normalize nested contracts as well as already serialized content.
     from pydantic import TypeAdapter  # noqa: PLC0415
 
@@ -69,10 +87,18 @@ class StrategySearchApprovalPayload(FrozenContract):
     def _validate_scope(self):
         content = json.loads(self.approved_charter_json)
         from ..development_access import PERMITTED_DEVELOPMENT_DATES  # noqa: PLC0415
+        from .task_b import validate_task_b_request  # noqa: PLC0415
+
+        validate_task_b_request(content)
+        task_b = bool(content.get("task_b_execution"))
+        permitted = (
+            set(content["task_b_execution"]["artifact_provenance_dates"])
+            if task_b else set(PERMITTED_DEVELOPMENT_DATES)
+        )
 
         if (
             tuple(sorted(set(self.artifact_provenance_dates))) != self.artifact_provenance_dates
-            or not set(self.artifact_provenance_dates) <= set(PERMITTED_DEVELOPMENT_DATES)
+            or not set(self.artifact_provenance_dates) <= permitted
             or not set(content.get("date_policy", {}).get("replay_dates", ()))
             <= set(self.artifact_provenance_dates)
         ):
@@ -89,6 +115,7 @@ class StrategySearchApprovalPayload(FrozenContract):
         count = 1
         for values in dict(content["axes"]).values():
             count *= len(values)
+        count = len(content.get("explicit_configurations", ())) or count
         if content["search_mode"] == "single_configuration" and count != 1:
             raise ValueError("single-configuration approval requires exactly one configuration")
         for key in (
@@ -103,6 +130,19 @@ class StrategySearchApprovalPayload(FrozenContract):
             "development_explicit_dates_before_path_v2"
         ):
             raise ValueError("strategy approval requires the development date policy")
+        if task_b:
+            from .task_b import task_b_requirement_set  # noqa: PLC0415
+
+            if self.requirement_set_id != task_b_requirement_set(content).requirement_set_id:
+                raise ValueError(
+                    "Task B approval must cover its actual funded account computation path"
+                )
+            evidence = content["task_b_execution"]["owner_evidence"]
+            required = {f"{ref['label']}:{ref['sha256']}" for ref in evidence}
+            if self.author != "Luis" or not required <= set(self.reviewed_evidence_refs):
+                raise ValueError(
+                    "Task B approval must cite Luis's exact TASK_B and decisions20/21 evidence"
+                )
         approved = datetime.fromisoformat(self.approved_at.replace("Z", "+00:00"))
         effective = datetime.fromisoformat(self.effective_from.replace("Z", "+00:00"))
         if approved.tzinfo is None or effective.tzinfo is None or effective < approved:
@@ -171,7 +211,7 @@ def ratified_registry_for_charter(payload, root, registry, *, as_of_utc=None):
         relevant[0].decision_artifact_id,
         as_of_utc=as_of_utc,
     )
-    if any(refs.get(key) != approval.evidence_ref() for key in DECISION_KEYS):
+    if any(refs.get(key) != approval.evidence_ref() for key in decision_keys_for_intent(payload)):
         raise PermissionError("strategy approval must cover every required decision exactly")
     if bundle.requirement_set_id != approval.payload.requirement_set_id:
         raise PermissionError("strategy approval names a different requirement set")

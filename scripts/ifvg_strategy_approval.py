@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from itertools import product
 from pathlib import Path
 
 import ifvg_study_wizard as w
@@ -24,11 +23,14 @@ from alpha_lab.agents.data_infra.ifvg.study_providers import owner_authorization
 
 
 def _configuration_rows(intent):
-    axes = dict(intent["axes"])
+    from alpha_lab.agents.data_infra.ifvg.search.task_b import explicit_configuration_rows
+
     rows = []
-    for index, combination in enumerate(product(*axes.values()), start=1):
+    for index, (name, selected) in enumerate(explicit_configuration_rows(intent), start=1):
         row = {"Configuration": index}
-        for axis, value_id in zip(axes, combination, strict=True):
+        if name:
+            row["Name"] = name
+        for axis, value_id in selected.items():
             value = AXIS_VALUE_REGISTRY_V1[value_id]
             payload = getattr(value, "payload", None)
             if not hasattr(value, "payload"):

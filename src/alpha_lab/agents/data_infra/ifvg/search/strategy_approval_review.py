@@ -11,7 +11,6 @@ import re
 import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
-from itertools import product
 from pathlib import Path
 
 import pyarrow.parquet as pq
@@ -44,12 +43,12 @@ from .owner_decisions import verify_complete_owner_authority_chain
 from .runtime_source import research_preparation_approval, strategy_core_repository_root
 from .store_namespace import require_store_namespace
 from .strategy_approval import (
-    DECISION_KEYS,
     STORE,
     StrategySearchApprovalEnvelope,
     StrategySearchApprovalPayload,
     charter_intent,
     charter_intent_hash,
+    decision_keys_for_intent,
     load_strategy_approval,
     persist_strategy_approval,
 )
@@ -109,6 +108,14 @@ def _typed_intent(fields):
 
 
 def _validate_request(intent, requirement_set):
+    from .task_b import (  # noqa: PLC0415
+        explicit_configuration_rows,
+        task_b_funded_dimensions,
+        validate_task_b_request,
+    )
+
+    validate_task_b_request(intent, verify_files=True)
+    task_b = intent.get("task_b_execution")
     if (
         intent["search_mode"] not in {"fsm_config_search", "single_configuration"}
         or not intent["axes"]
@@ -125,8 +132,15 @@ def _validate_request(intent, requirement_set):
     if intent["date_policy"]["access_policy_id"] != "development_explicit_dates_before_path_v2":
         raise ValueError("Choose the permitted development dates for this strategy approval.")
     dates = tuple(intent["date_policy"]["replay_dates"])
-    DevelopmentReplayPolicy(dates)  # validates warmup/cutoff before any cache path
-    if dates and dates[0] < "2026-01-01":
+    if task_b:
+        from ..prepared_store import PreparedStoreReplayPolicy  # noqa: PLC0415
+
+        PreparedStoreReplayPolicy(
+            dates, registry_paths=tuple(Path(p) for p in task_b["prepared_store_registry_paths"])
+        )
+    else:
+        DevelopmentReplayPolicy(dates)  # validates warmup/cutoff before any cache path
+    if not task_b and dates and dates[0] < "2026-01-01":
         # repair R8: the extended research window is permitted, but prepared study
         # inputs exist only from January 1, 2026; preparing earlier days is a
         # separate authorization (it must not overwrite the 2026 inputs)
@@ -143,7 +157,8 @@ def _validate_request(intent, requirement_set):
         raise ValueError(day_threshold.problem)
     expected = derive_authorization_requirements(
         "full_authorized_development",
-        tuple(f"strategy_profile.{axis}" for axis in sorted(intent["axes"])),
+        tuple(f"strategy_profile.{axis}" for axis in sorted(intent["axes"]))
+        + task_b_funded_dimensions(intent),
         ComputationPath(
             full_strategy_replay=True,
             feature_materialization=False,
@@ -151,7 +166,7 @@ def _validate_request(intent, requirement_set):
             model_refit=False,
             model_gated_sequential_replay=False,
             cost_recomputation=True,
-            prop_resimulation=False,
+            prop_resimulation=bool(task_b),
             bootstrap_resimulation=False,
             reuse_trade_stream_hash=False,
         ),
@@ -160,8 +175,8 @@ def _validate_request(intent, requirement_set):
     )
     if requirement_set != expected or {
         r.decision_key for r in requirement_set.payload.requirements
-    } != set(DECISION_KEYS):
-        raise ValueError("The required approval scope does not match this strategy-only plan.")
+    } != set(decision_keys_for_intent(intent)):
+        raise ValueError("The required approval scope does not match this exact plan.")
     if intent["locked_invariants_registry_sha256"] != registry_sha256():
         raise ValueError("The available settings changed. Refresh and review this study again.")
     baseline_name = intent["baseline_profile_name"]
@@ -184,6 +199,7 @@ def _validate_request(intent, requirement_set):
         if not values or len(set(values)) != len(values):
             raise ValueError("Each searched setting needs distinct registered values.")
         count *= len(values)
+    count = len(intent.get("explicit_configurations", ())) or count
     minimum = 1 if intent["search_mode"] == "single_configuration" else 2
     maximum = 1 if intent["search_mode"] == "single_configuration" else intent["max_child_count"]
     if count < minimum or count > min(maximum, intent["max_child_count"]):
@@ -192,8 +208,7 @@ def _validate_request(intent, requirement_set):
             "single_configuration requires exactly one configuration."
         )
     configurations, configs = [], {}
-    for combo in product(*(intent["axes"][axis] for axis in axes)):
-        selected = dict(zip(axes, combo, strict=True))
+    for configuration_name, selected in explicit_configuration_rows(intent):
         # This inspects availability; it does not ratify any value or authorize a run.
         assert_axes_authorized(selected, require_ratified=False)
         overrides = resolve_axis_overrides(selected)
@@ -210,7 +225,12 @@ def _validate_request(intent, requirement_set):
             raise ValueError(
                 "A selected combination changes locked settings: " + ", ".join(violations)
             )
-        cfg = IfvgCaptureConfig(section=section)
+        cfg = IfvgCaptureConfig(
+            section=section,
+            **({"prepared_store_registry_paths": tuple(
+                Path(p) for p in task_b["prepared_store_registry_paths"]
+            )} if task_b else {}),
+        )
         configs[cfg.artifacts_tag()] = cfg
         configurations.append(
             {
@@ -218,11 +238,12 @@ def _validate_request(intent, requirement_set):
                 "section_overrides": overrides,
                 "resolved_section_config_hash": ifvg_profile_hash(section),
                 "comparison_role": "baseline"
-                if all(
+                if configuration_name == "baseline" or all(
                     SEARCH_AXIS_REGISTRY_V1[axis].baseline_value_id == value
                     for axis, value in selected.items()
                 )
                 else "challenger",
+                **({"configuration_name": configuration_name} if configuration_name else {}),
             }
         )
     _check_source_commits(intent)
@@ -251,6 +272,14 @@ def _provenance_candidates(store_root, dates, preparation_approval=None):
 
 
 def _cache_review(store_root, configs, dates, preparation_approval=None):
+    if configs and getattr(configs[0], "prepared_store_registry_paths", ()):
+        from ..prepared_store import PreparedStoreReplayPolicy  # noqa: PLC0415
+
+        policy = PreparedStoreReplayPolicy(
+            dates, registry_paths=configs[0].prepared_store_registry_paths
+        )
+        provenance, stamps = policy.verify_registered_metadata(configs[0])
+        return provenance, len(dates), stamps
     candidates = _provenance_candidates(store_root, dates, preparation_approval)
     policy = DevelopmentReplayPolicy(dates)
     provenance = None
@@ -389,6 +418,9 @@ def record_strategy_approval(
             reviewed_evidence_refs=(
                 f"strategy-plan:{current.intent_sha256}",
                 f"prepared-cache-metadata:{current.evidence_sha256}",
+            ) + tuple(
+                f"{ref['label']}:{ref['sha256']}"
+                for ref in (current.intent.get("task_b_execution") or {}).get("owner_evidence", ())
             ),
             approval_statement=approval_statement.strip(),
         )

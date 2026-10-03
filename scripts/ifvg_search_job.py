@@ -123,6 +123,40 @@ def _worker(args) -> int:
             "(the R5 pipeline registers the real executors; synthetic runs "
             "pass --runner-entry-key or a registered --runner-entry)"
         )
+    if charter.payload.task_b_execution is not None:
+        from alpha_lab.agents.data_infra.ifvg.search.pipeline import (  # noqa: PLC0415
+            PipelineSemanticIdentity,
+            StageStatus,
+            WorkerPolicy,
+            run_pipeline,
+        )
+        from alpha_lab.agents.data_infra.ifvg.search.runner_registry import (  # noqa: PLC0415
+            REGISTERED_RUNNER_ENTRIES,
+        )
+        from alpha_lab.agents.data_infra.ifvg.search.task_b_execution import (  # noqa: PLC0415
+            task_b_semantic,
+        )
+
+        if entry != REGISTERED_RUNNER_ENTRIES["pipeline_real_research_v1"]:
+            raise SystemExit("Task B workers require the registered real research pipeline entry")
+        derived = task_b_semantic(charter)
+        semantic = load_verified_envelope(
+            store_root, "pipeline_specs", derived.pipeline_semantic_id, PipelineSemanticIdentity
+        )
+        if semantic != derived:
+            raise SystemExit("Task B saved pipeline plan differs from the frozen charter")
+        wiring = _resolve_runner_entry(entry)(charter, semantic, store_root=store_root)
+        result = run_pipeline(
+            semantic, charter, store_root=store_root, state_root=state_root, wiring=wiring,
+            worker_policy=WorkerPolicy(
+                max_workers=1, max_tasks_per_child=1, memory_budget_bytes=2 << 30
+            ),
+        )
+        print(json.dumps({"search_id": charter.search_id,
+                          "pipeline_semantic_id": result.pipeline_semantic_id,
+                          "stage_statuses": result.stage_statuses}, sort_keys=True))
+        completed = {StageStatus.COMPLETED.value, StageStatus.REUSED.value}
+        return 0 if set(result.stage_statuses.values()) <= completed else 1
     # DEV-R5-10 closure (safety F4): the worker's --store-root is passed to
     # the factory explicitly, matching the pipeline shim's contract — the
     # real search entry no longer defaults to the canonical namespace.

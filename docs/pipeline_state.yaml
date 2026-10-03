@@ -16,14 +16,26 @@ ifsm_menthorq_a1:
   archival_context_and_ml_allowlisting: "deferred to Task A2"
   authorization_scope: "direct scratch parity and two smoke configurations only; no charter or activation"
 
+ifsm_menthorq_task_b:
+  neutral_field: nearest_support_universe=all_19
+  active_universe: studied_8 requires menthorq_eod_v1
+  instrument_receipts: preparation-job catalog.json; no immutable table or seed changes
+  roll_rule: preceding registered logical day with bars; null if either contract missing
+  roll_exclusion: none, decision 21 supersedes decision 7 for Task B
+  study_configurations: 13, includes ny_only under decision 20
+  cash_policy: own account-driven full replay; no entry-group allocation
+  subgroup_metrics: points only
+  monthly_cash: cash-event month, separate from entry-month points
+  implementation_status: B0 verified; B1 and B2 in progress
+
 strategy_core_pairing:
   repository: "https://github.com/thealgochef/Strategy-Core"
-  ordinary_dependency_commit: "b062bfcf5a5209440a4b4c9d7c0ca2263f9f4cc2"
-  ifsm_research_commit: "b062bfcf5a5209440a4b4c9d7c0ca2263f9f4cc2"
-  ifsm_research_source_identity: "afa16bed5733f6d41f090bc8b8e09215464cf9a009ec1c1bc7236973b76ead01"
+  ordinary_dependency_commit: "709487bc85ef82a259297c4ad6f3f198f4cabbcd"
+  ifsm_research_commit: "709487bc85ef82a259297c4ad6f3f198f4cabbcd"
+  ifsm_research_source_identity: "30ffab98b2766da326a3712d2639e962e1b72241b9c3327fdb41faa95f5ec57b"
   current_source_manifest: "research/core/current.json"
   history: "a4e3303 and 38825ed retained for historical reproduction; original research manifest.json and bundle unchanged"
-  version_policy: "Task A1 October 3 re-pin of the owner-authorized September 22 pairing; Core feature/menthorq-level-context published; package versions remain 0.1.0; Trade-Lab unchanged"
+  version_policy: "Task B October 3 follow-up to the owner-authorized pairing; Core feature/menthorq-level-study published; package versions remain 0.1.0; Trade-Lab unchanged"
   source_checkout_policy: "Installed package and IFSM share the same verified external Core source and provenance; no older sibling launcher fallback"
   checkpoint_policy: "Preserve historical identities; rebuild incompatible state from authorized history before a new replay"
   historical_notes: "Dated research isolation notes below describe their original runs, not the current installed-pin policy"
@@ -41,7 +53,7 @@ application_workspaces:
   ifsm_replication:
     launcher: "python scripts/run_ifsm_research_ui.py"
     url: "http://localhost:8502"
-    source: "verified Core b062bfcf5a5209440a4b4c9d7c0ca2263f9f4cc2; same commit as the ordinary installed package"
+    source: "verified Core 709487bc85ef82a259297c4ad6f3f198f4cabbcd; same commit as the ordinary installed package"
     source_preflight: "exact Core scoped hash and all 13 recorded effective configurations"
     output_root: "data/ifsm_ui_replication"
     ui_entry: "My studies / New study / Evaluate / Configuration"

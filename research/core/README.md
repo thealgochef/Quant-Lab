@@ -3,19 +3,21 @@
 ## One Core pin for Quant-Lab (2026-10-03)
 
 Ordinary Quant-Lab and the IFSM research screen use the same exact Strategy-Core
-commit: `b062bfcf5a5209440a4b4c9d7c0ca2263f9f4cc2`. Task A1 authorizes this re-pin
-from `7c7111e398c083cf8e966e2e0c5aac8a41cc12c0`. `pyproject.toml` pins the installed dependency and
+commit: `709487bc85ef82a259297c4ad6f3f198f4cabbcd`. Task B authorizes this follow-up
+from Task A1 `b062bfcf5a5209440a4b4c9d7c0ca2263f9f4cc2`.
+`pyproject.toml` pins the installed dependency and
 `current.json` records that same commit and its verified source identity.
 The current identity is
-`afa16bed5733f6d41f090bc8b8e09215464cf9a009ec1c1bc7236973b76ead01`, using Git's
+`30ffab98b2766da326a3712d2639e962e1b72241b9c3327fdb41faa95f5ec57b`, using Git's
 canonical LF source bytes consistently on Windows and Linux.
 Package metadata remains `0.1.0`; the exact commit and source bytes establish
 the version pairing.
 
-This commit is published on Strategy-Core branch `feature/menthorq-level-context`.
-It adds the optional runtime MenthorQ snapshot and entry gates described in
-[Task A1's contract](../../docs/IFSM_MENTHORQ_LEVEL_CONTEXT.md). The default-off
-10-date replay preserves all eight v2 table bytes and the historical profile hash;
+This commit is published on Strategy-Core branch `feature/menthorq-level-study`.
+It retains the optional runtime MenthorQ snapshot and entry gates and adds
+Task B nearest-support universe selection. The original context is described in
+[Task A1's contract](../../docs/IFSM_MENTHORQ_LEVEL_CONTEXT.md). A1's historical default-off
+10-date replay preserved all eight v2 table bytes and the historical profile hash;
 context content matches after the documented source identity exclusions. New work in either screen can use its gap invalidation choices,
 daily-close policy and corrected Chicago schedules. Older configurations retain
 their original missing-policy defaults. Execution corrections and newer state
@@ -27,7 +29,7 @@ From Quant-Lab:
 
 ```powershell
 python -m pip install -e ".[dev]"
-python -m pip install --force-reinstall --no-deps "strategy-core @ git+https://github.com/thealgochef/Strategy-Core.git@b062bfcf5a5209440a4b4c9d7c0ca2263f9f4cc2"
+python -m pip install --force-reinstall --no-deps "strategy-core @ git+https://github.com/thealgochef/Strategy-Core.git@709487bc85ef82a259297c4ad6f3f198f4cabbcd"
 python scripts/prepare_ifsm_research_core.py
 python scripts/run_ifsm_research_ui.py --check
 python scripts/run_ifsm_research_ui.py

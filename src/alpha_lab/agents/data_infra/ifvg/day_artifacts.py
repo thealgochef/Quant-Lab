@@ -207,6 +207,15 @@ def build_day_artifacts(
             access_policy.record_file_open(source_day)
     warnings = tuple(w.message for w in source.pending_warnings)
 
+    if cfg.preparation_catalog_paths:
+        from .preparation_catalog import record_preparation_instrument
+
+        record_preparation_instrument(
+            date_str, data_dir=cfg.data_dir, symbol=cfg.symbol,
+            catalog_path=cfg.preparation_catalog_paths[0],
+            access_policy=access_policy, source=source,
+        )
+
     level_state = StrategyLevelState(
         tick_size=cfg.tick_size,
         scheme=cfg.session_scheme,

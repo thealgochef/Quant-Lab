@@ -17,6 +17,7 @@ minute-candle approximation. No data is fetched and nothing is written.
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -80,10 +81,14 @@ def _day_file(root: Path, utc_day: date) -> Path | None:
     return None
 
 
-def load_print_day(root: Path, utc_day: date) -> PrintDay | None:
+def load_print_day(
+    root: Path, utc_day: date, *, source_file_observer: Callable[[Path], None] | None = None,
+) -> PrintDay | None:
     path = _day_file(root, utc_day)
     if path is None:
         return None
+    if source_file_observer is not None:
+        source_file_observer(path)
     parquet = pq.ParquetFile(path)
     names = set(parquet.schema_arrow.names)
     columns = [c for c in ("ts_event", "action", "price", "instrument_id", "symbol",
@@ -96,6 +101,8 @@ def load_print_day(root: Path, utc_day: date) -> PrintDay | None:
     counts = pc.value_counts(table["instrument_id"])
     ranked = [(c.as_py(), v.as_py()) for v, c in zip(counts.field("values"),
                                                     counts.field("counts"), strict=True)]
+    if source_file_observer is not None:
+        source_file_observer(path)
     if not ranked:
         return None
     instrument = max(ranked)[1]  # dominant by trade count, ties -> larger id

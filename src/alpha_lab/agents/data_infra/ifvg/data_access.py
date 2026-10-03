@@ -232,7 +232,14 @@ def require_fixed_exploration_allowlist(
             for day in policy.allowlist
         )
     )
-    if not fixed_repair and not trusted_development and not trusted_verification:
+    # Task B authorizes one separately registered pre-2026 preparation segment.
+    # Its policy verifies the exact date/root/authorization receipt before any
+    # source access; the existing development and sealed-date guards retain
+    # their original definitions.
+    from .prepared_store import is_registered_prepared_policy
+
+    trusted_registered_store = is_registered_prepared_policy(policy)
+    if not any((fixed_repair, trusted_development, trusted_verification, trusted_registered_store)):
         raise PermissionError(
             "IFVG v2 repair replay requires the exact fixed exploration allowlist"
         )

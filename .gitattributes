@@ -14,3 +14,5 @@ docs/ifvg-dashboard-repairs/evidence/** -text
 # Task A1 vendor fixtures and copied evidence retain their original bytes.
 tests/agents/data_infra/ifvg/fixtures/menthorq_a1/** -text whitespace=cr-at-eol
 handoff/task_a1/** -text whitespace=cr-at-eol,-blank-at-eol,-blank-at-eof
+# Task B copied test receipts and tables preserve their recorded bytes.
+handoff/task_b/** -text whitespace=cr-at-eol,-blank-at-eol,-blank-at-eof

@@ -225,6 +225,14 @@ def derive_authorization_requirements(
     prop_path = computation_path is not None and (
         computation_path.prop_resimulation or computation_path.bootstrap_resimulation
     )
+    funded_dimensions = tuple(dim for dim in dimensions if dim.startswith("funded_account."))
+    if prop_path and funded_dimensions:
+        requirements.append(_requirement(
+            "funded:exact_account_plan",
+            "the exact existing owner-defined funded account profiles, purchase costs, "
+            "withdrawals, processing clock and ordered-price replay require owner authorization",
+            dimensions=funded_dimensions, scope=("full_authorized_development",),
+        ))
     prop_dimensions = tuple(
         dim
         for dim in dimensions

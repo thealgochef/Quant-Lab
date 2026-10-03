@@ -40,6 +40,7 @@ from .identities import (
     ImmutableMap,
     register_identity_pair,
 )
+from .task_b import TASK_B_WARMUP_POLICY, ExplicitConfiguration, TaskBExecutionScope
 
 __all__ = [
     "OBJECTIVE_DIRECTIONS",
@@ -197,6 +198,9 @@ class DatePolicy(FrozenContract):
         "development_explicit_dates_before_path_v2",
         "verification_fixed_allowlist_max5_v1",
     ]
+    warmup_policy_id: Literal["ifsm_task_b_ten_weekdays_v1"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def _dates_are_lawful(self):
@@ -232,6 +236,13 @@ class DatePolicy(FrozenContract):
                 raise ValueError(
                     "the verification allowlist admits at most five real trading days"
                 )
+        elif self.warmup_policy_id == TASK_B_WARMUP_POLICY:
+            from .task_b import TASK_B_WARMUP_DATES  # noqa: PLC0415
+
+            if self.warmup_dates != TASK_B_WARMUP_DATES or ordered[:10] != TASK_B_WARMUP_DATES:
+                raise ValueError("Task B requires its exact ten-weekday warmup prefix")
+            if len(ordered) <= 10 or ordered[10] != "2025-06-16":
+                raise ValueError("Task B evidence begins June 16, 2025")
         elif len(ordered) > WARMUP_STORE_DAYS and (
             ordered[WARMUP_STORE_DAYS] < FROZEN_EVIDENCE_FIRST_DAY
         ):
@@ -310,6 +321,12 @@ class SearchCharterPayload(FrozenContract):
     quant_lab_commit: str
     source_artifact_ids: tuple[str, ...]
     owner_authorization: OwnerAuthorizationBundle | SyntheticAuthorizationMarker
+    explicit_configurations: tuple[ExplicitConfiguration, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
+    task_b_execution: TaskBExecutionScope | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class SearchCharterEnvelope(EnvelopeBase):
@@ -398,7 +415,10 @@ def validate_charter(
             except PermissionError as error:
                 raise CharterValidationError(str(error)) from error
 
-    child_count = _enumerated_child_count(payload.axes)
+    from .task_b import validate_task_b_request  # noqa: PLC0415
+
+    validate_task_b_request(payload)
+    child_count = len(payload.explicit_configurations) or _enumerated_child_count(payload.axes)
     if child_count > payload.max_child_count:
         raise CharterValidationError(
             "enumerated child count exceeds the charter's max_child_count"
@@ -451,8 +471,9 @@ def validate_charter(
         "day_block_bootstrap",
         "stress",
     }
-    runs_prop = bool(payload.authorized_firm_contract_ids) and bool(
-        prop_modes & set(payload.simulation_protocol.modes)
+    runs_prop = payload.task_b_execution is not None or (
+        bool(payload.authorized_firm_contract_ids)
+        and bool(prop_modes & set(payload.simulation_protocol.modes))
     )
     computation_path = ComputationPath(
         full_strategy_replay=any(
@@ -504,6 +525,10 @@ def validate_charter(
     dimensions = tuple(
         f"strategy_profile.{axis}" for axis in sorted(payload.axes)
     ) + tuple(f"prop_contract.{firm}" for firm in payload.authorized_firm_contract_ids)
+    if payload.task_b_execution is not None:
+        from .task_b import task_b_funded_dimensions  # noqa: PLC0415
+
+        dimensions += task_b_funded_dimensions(payload)
     requirement_set = derive_authorization_requirements(
         run_scope,
         dimensions,

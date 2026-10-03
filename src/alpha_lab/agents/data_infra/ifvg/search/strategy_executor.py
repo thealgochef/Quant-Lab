@@ -54,7 +54,20 @@ def search_strategy_development_entry(charter_envelope, *, store_root) -> dict:
     approval = load_strategy_approval(root, approval_ref.decision_artifact_id)
     dates = tuple(payload.date_policy.replay_dates)
     # This validates the ten-date warmup and the cutoff before any source path.
-    DevelopmentReplayPolicy(dates)
+    task_scope = payload.task_b_execution
+    if task_scope:
+        from ..prepared_store import PreparedStoreReplayPolicy, load_prepared_store  # noqa: PLC0415
+        from .task_b import validate_task_b_request  # noqa: PLC0415
+
+        validate_task_b_request(payload, verify_files=True)
+        registry_paths = tuple(Path(p) for p in task_scope.prepared_store_registry_paths)
+        PreparedStoreReplayPolicy(dates, registry_paths=registry_paths)
+        catalogs = tuple(Path(load_prepared_store(p).definition["catalog_path"])
+                         for p in registry_paths)
+    else:
+        registry_paths = ()
+        catalogs = ()
+        DevelopmentReplayPolicy(dates)
     core_root = strategy_core_repository_root(REPO_ROOT)
     contexts = {}
     # Trust is reusable only inside this worker, for identical authorized files.
@@ -62,6 +75,8 @@ def search_strategy_development_entry(charter_envelope, *, store_root) -> dict:
     verified_inputs = {}
 
     def artifact_policy():
+        if task_scope:
+            return PreparedStoreReplayPolicy(dates, registry_paths=registry_paths)
         # Cache provenance can name a wider writing allowlist. All actual I/O
         # remains confined to the approved replay dates by the inner policy.
         return ArtifactProvenanceReadAdapter(
@@ -95,6 +110,8 @@ def search_strategy_development_entry(charter_envelope, *, store_root) -> dict:
         return (cfg.identity_lane, cfg.artifacts_tag(), tuple(paths)), tuple(refs)
 
     def identity_resolver(spec):
+        if task_scope:
+            validate_task_b_request(payload, verify_files=True)
         key = spec.resolved_section_config_hash
         if key in contexts:
             return contexts[key][3]
@@ -111,7 +128,10 @@ def search_strategy_development_entry(charter_envelope, *, store_root) -> dict:
             section_config_hash=key,
             effective_config=section.model_dump(mode="json"),
         )
-        cfg = IfvgCaptureConfig(section=section)
+        cfg = IfvgCaptureConfig(
+            section=section, prepared_store_registry_paths=registry_paths,
+            preparation_catalog_paths=catalogs,
+        )
         if cfg.profile_hash != key:
             raise PermissionError("child profile differs from its enumerated identity")
         policy = artifact_policy()
@@ -122,10 +142,15 @@ def search_strategy_development_entry(charter_envelope, *, store_root) -> dict:
         else:
             previous = None
             for day in dates:
-                expected = _chained_seeds(previous) or DaySeeds(None, None, None, None)
-                previous = load_day_artifacts(
-                    day, cfg, expected_seeds=expected, access_policy=policy
-                )
+                if task_scope:
+                    from ..prepared_store import load_registered_day_artifacts  # noqa: PLC0415
+
+                    previous = load_registered_day_artifacts(day, cfg, access_policy=policy)
+                else:
+                    expected = _chained_seeds(previous) or DaySeeds(None, None, None, None)
+                    previous = load_day_artifacts(
+                        day, cfg, expected_seeds=expected, access_policy=policy
+                    )
                 if previous is None:
                     raise PermissionError(f"trusted day artifacts are unavailable for {day}")
             # A file replaced during the first trust/seed pass cannot establish
@@ -135,17 +160,28 @@ def search_strategy_development_entry(charter_envelope, *, store_root) -> dict:
             policy.assert_zero_forbidden_access()
             verified_inputs[input_key] = day_refs
         date_id = canonical_contract_sha256(dates)
+        bundle_refs = day_refs
+        if task_scope:
+            original_source_hash = canonical_contract_sha256({
+                "menthorq_source_file_sha256": dict(task_scope.menthorq_source_file_sha256),
+                "preparation_catalog_sha256": dict(task_scope.preparation_catalog_sha256),
+            })
+            bundle_refs += (ReplayDayArtifactRef(
+                trading_day=dates[0], artifact_kind="other_required_input",
+                artifact_id="task_b_original_runtime_sources_v1",
+                manifest_payload_sha256=original_source_hash, content_sha256=original_source_hash,
+            ),)
         bundle = build_replay_input_bundle(
             authorized_date_set_id=date_id,
             source_partitions=(),
-            day_artifacts=day_refs,
+            day_artifacts=bundle_refs,
             source_contract_id="databento_nq_v1",
             source_schema_era_id="cached_day_artifacts_v2",
             access_authorization=ReplayAccessAuthorizationRef(
                 access_policy_id=payload.date_policy.access_policy_id,
                 authorized_date_set_id=date_id,
                 expected_source_inventory_hash=canonical_contract_sha256(
-                    [ref.model_dump(mode="json") for ref in day_refs]
+                    [ref.model_dump(mode="json") for ref in bundle_refs]
                 ),
             ),
         )
@@ -195,13 +231,17 @@ def search_strategy_development_entry(charter_envelope, *, store_root) -> dict:
             dual_drive=True,
         )
         # Input mutation during replay must never publish under an old identity.
-        policy = DevelopmentReplayPolicy(dates)
+        policy = artifact_policy()
         for ref in bundle.payload.ordered_day_artifacts:
+            if ref.artifact_kind not in {"bars", "levels"}:
+                continue
             factory = cfg.bars_path if ref.artifact_kind == "bars" else cfg.levels_path
             path = policy.resolve_source_path(ref.trading_day, factory)
             policy.record_file_open(ref.trading_day)
             if file_sha256(path) != ref.content_sha256:
                 raise PermissionError("day artifact changed during replay")
+        if task_scope:
+            validate_task_b_request(payload, verify_files=True)
         report = build_child_companions(
             result=result,
             core=core,
@@ -234,9 +274,16 @@ def search_strategy_development_entry(charter_envelope, *, store_root) -> dict:
             extra_files={
                 "artifact_reference.json": json.dumps(
                     report["core_replay_artifact_reference"], sort_keys=True
-                ).encode()
+                ).encode(),
+                **({"task_b_companions.json": json.dumps(report, sort_keys=True).encode()}
+                   if task_scope else {}),
             },
         )
         return result
 
-    return {"identity_resolver": identity_resolver, "child_runner": child_runner}
+    return {
+        "identity_resolver": identity_resolver,
+        "child_runner": child_runner,
+        **({"task_b_contexts": contexts, "task_b_artifact_policy": artifact_policy}
+           if task_scope else {}),
+    }

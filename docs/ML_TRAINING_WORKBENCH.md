@@ -3,7 +3,7 @@
 Updated: 2026-10-03.
 
 Ordinary Quant-Lab and the IFSM launcher use the same current Core,
-`b062bfcf5a5209440a4b4c9d7c0ca2263f9f4cc2`, after Task A1's October 3 re-pin of the September 22 pairing.
+`709487bc85ef82a259297c4ad6f3f198f4cabbcd`, after Task B's October 3 follow-up to the September 22 pairing.
 Install the pinned dependency and prepare its verified source checkout using
 [the current setup steps](../research/core/README.md). Restart existing study
 screens after upgrading. This supersedes the installed-pin policy in dated
@@ -984,7 +984,10 @@ calendar rule changed and no saved record was written.
 
 IFSM's registered fixed settings include optional MenthorQ EOD context,
 independent regime/unknown/support gates, and five atomic Chicago entry-window
-presets. They use the final entry's causal snapshot; blocked candidates remain
+presets. Task B adds the `all_19`/`studied_8` nearest-support universe; the
+nondefault choice requires EOD context and enters the profile hash. All five
+neutral defaults retain historical profile identity. They use the final entry's
+causal snapshot; blocked candidates remain
 visible. Outside 06:00–17:00 Chicago both context gates are not applicable.
 Direct reports retain unknown session/regime/slot groups and exclude warmup
 using the existing candidate-entry cohort. Context-enabled review folders can
@@ -995,3 +998,7 @@ See [IFSM MenthorQ level context](IFSM_MENTHORQ_LEVEL_CONTEXT.md).
 
 The configuration screen places context availability under Session Policy and
 the three gate controls under Risk Admissibility, using its existing groups.
+The nearest-support universe uses that same Risk Admissibility group. Roll
+flags come from preparation catalog contracts, not calendar inference. Task B
+decisions 20–21 retain roll days, separate funded cash from entry-group points,
+and add the baseline `ny_only` configuration to the thirteen-row fixed study.

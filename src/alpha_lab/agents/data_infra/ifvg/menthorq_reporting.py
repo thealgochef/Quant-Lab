@@ -77,12 +77,14 @@ def record_context(records: pd.DataFrame, *, provider, section, tick_size: float
         derived = derive_menthorq_values(
             snapshot, price, ts, bar_open_points=bar_open,
             prior_cash_close_points=provider.prior_cash_close_for(ts),
+            nearest_support_universe=section.nearest_support_universe,
         )
         gates = evaluate_menthorq_entry_gates(
             snapshot, price, ts,
             regime_gate_policy=section.regime_gate_policy,
             regime_unknown_policy=section.regime_unknown_policy,
             nearest_support_gex1_block=section.nearest_support_gex1_block,
+            nearest_support_universe=section.nearest_support_universe,
             enable_shorts=section.enable_shorts,
         )
         row = {
@@ -90,6 +92,7 @@ def record_context(records: pd.DataFrame, *, provider, section, tick_size: float
             "availability_ts_utc": ts.isoformat(),
             "entry_price_points": price, "tick_size": tick_size,
             **_dataclass_values(snapshot), **_dataclass_values(derived),
+            "nearest_support_universe": section.nearest_support_universe,
             "regime_gate_blocked": gates.regime_gate_blocked,
             "nearest_support_gate_blocked": gates.nearest_support_gate_blocked,
             "gate_status": gates.gate_status,
@@ -100,12 +103,16 @@ def record_context(records: pd.DataFrame, *, provider, section, tick_size: float
             session = record.get("envelope_entry_session")
             row["entry_session"] = "unknown" if session is None or pd.isna(session) else session
         rows.append(row)
+    derived_columns = [field.name for field in fields(MenthorqDerivedValues)]
+    derived_columns.insert(
+        derived_columns.index("nearest_support_is_gex1") + 1, "nearest_support_universe",
+    )
     columns = ["candidate_id", "availability_ts_utc", "entry_price_points", "tick_size",
                *[field.name for field in fields(MenthorqLevelSnapshot)],
-               *[field.name for field in fields(MenthorqDerivedValues)],
+               *derived_columns,
                "regime_gate_blocked", "nearest_support_gate_blocked", "gate_status",
                "entry_session"]
-    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=columns)
+    return pd.DataFrame(rows, columns=columns)
 
 
 def _links(frame: pd.DataFrame, key: str) -> dict:

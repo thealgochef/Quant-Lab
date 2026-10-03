@@ -149,7 +149,11 @@ def capture_single_date(
 ) -> CaptureDayResult:
     provider = menthorq_provider_for_section(cfg.section, menthorq_provider)
     if provider is not None:
-        provider.register_day_artifacts(artifacts, cfg.tick_size)
+        provider.register_day_artifacts(
+            artifacts, cfg.tick_size,
+            **({"preparation_catalog_paths": cfg.preparation_catalog_paths}
+               if cfg.preparation_catalog_paths else {}),
+        )
     bars_by_tf: dict[int, list] = {}
     for bar in artifacts.bars:
         bars_by_tf.setdefault(bar.timeframe_ticks, []).append(bar)
@@ -202,7 +206,11 @@ def capture_single_date_with_context(
 
     provider = menthorq_provider_for_section(cfg.section, menthorq_provider)
     if provider is not None:
-        provider.register_day_artifacts(artifacts, cfg.tick_size)
+        provider.register_day_artifacts(
+            artifacts, cfg.tick_size,
+            **({"preparation_catalog_paths": cfg.preparation_catalog_paths}
+               if cfg.preparation_catalog_paths else {}),
+        )
     bars_by_tf: dict[int, list] = {}
     for bar in artifacts.bars:
         bars_by_tf.setdefault(bar.timeframe_ticks, []).append(bar)

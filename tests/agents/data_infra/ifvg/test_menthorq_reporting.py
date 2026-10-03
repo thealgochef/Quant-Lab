@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pandas as pd
 import pytest
+from strategy_core.strategies.ifvg_smc.menthorq_levels import LEVEL_COLUMN_NAMES
 
 from alpha_lab.agents.data_infra.ifvg.contracts import RecordTable
 from alpha_lab.agents.data_infra.ifvg.menthorq_levels import load_menthorq_levels
@@ -20,6 +21,7 @@ from alpha_lab.agents.data_infra.ifvg.menthorq_reporting import (
     write_context_export,
 )
 from alpha_lab.agents.data_infra.ifvg.profiles import resolve_profile_config
+from tests.agents.data_infra.ifvg.test_menthorq_levels import _sources
 from tests.agents.test_ifvg_v2_reporting_manifest import _tables
 
 
@@ -64,6 +66,9 @@ def test_export_has_every_candidate_exact_lookup_values_and_no_outcomes(tmp_path
     assert metadata["archival"] is False
     assert metadata["source_file_sha256"] == dict(provider.source_file_sha256)
     exported = pd.read_csv(path, comment="#")
+    columns = exported.columns.tolist()
+    assert columns[columns.index("nearest_support_is_gex1") + 1] == "nearest_support_universe"
+    assert exported["nearest_support_universe"].eq("all_19").all()
     expected = record_context(candidates, provider=provider, section=section, tick_size=0.25)
     assert len(exported) == len(candidates)
     assert exported["candidate_id"].tolist() == candidates["candidate_id"].tolist()
@@ -75,6 +80,44 @@ def test_export_has_every_candidate_exact_lookup_values_and_no_outcomes(tmp_path
         tables[RecordTable.ELIGIBLE_DECISION]["decision_id"].tolist()
     )
     assert not {"label", "resolution", "mae_ticks", "mfe_ticks", "realized_ticks"} & set(exported)
+
+
+@pytest.mark.parametrize("universe,below,above,blocked", [
+    ("all_19", 99.0, 100.5, False),
+    ("studied_8", 98.0, 101.0, True),
+])
+def test_export_forwards_universe_to_nearest_values_and_gate(
+    tmp_path, universe, below, above, blocked,
+):
+    tables, _, _ = _inputs()
+    levels = dict.fromkeys(LEVEL_COLUMN_NAMES, "0")
+    levels.update({
+        "HVL": "90", "1D Min": "90", "1D Max": "110", "GEX 1": "98",
+        "GEX 4": "99", "Call Resistance": "101", "GEX 5": "100.5",
+    })
+    provider = load_menthorq_levels(*_sources(tmp_path, level_changes=levels))
+    section = resolve_profile_config({"section_overrides": {
+        "menthorq_context_version": "menthorq_eod_v1",
+        "nearest_support_gex1_block": True, "nearest_support_universe": universe,
+    }}).section
+    candidates = tables[RecordTable.ENTRY_CANDIDATE].iloc[[0]].copy()
+    candidates["entry_ticks"] = 400
+    path = write_context_export(
+        tmp_path / "context_export.csv", candidates,
+        tables[RecordTable.ELIGIBLE_DECISION].iloc[:0],
+        tables[RecordTable.EXECUTED_TRADE].iloc[:0], provider=provider, section=section,
+        tick_size=.25, run_identity={"profile_hash": "test"},
+    )
+    exported = pd.read_csv(path, comment="#")
+    row = exported.iloc[0]
+    assert row["nearest_support_universe"] == universe
+    assert row["nearest_below_points"] == below
+    assert row["nearest_above_points"] == above
+    assert bool(row["nearest_support_is_gex1"]) is blocked
+    assert bool(row["nearest_support_gate_blocked"]) is blocked
+    empty = record_context(candidates.iloc[:0], provider=provider, section=section, tick_size=.25)
+    columns = empty.columns.tolist()
+    assert columns[columns.index("nearest_support_is_gex1") + 1] == "nearest_support_universe"
 
 
 def test_all_grouped_tables_reconcile_counts_points_and_exact_cash_cents():

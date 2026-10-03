@@ -11,7 +11,8 @@ Strategy-Core trace transient, and returns typed append-only tables.
   silently (the ``prev_full_hl`` lesson generalized);
 * artifacts are chain-verified too: each day's artifact must have been built
   with the PRIOR day's outputs as seeds (day H/L + NY H/L); a mismatch
-  rebuilds the artifact in place;
+  rebuilds an unregistered artifact in place. Registered store segments retain
+  their verified original artifact seed lineage and are always read-only;
 * the first ``cfg.warmup_days`` chain days are flagged ``is_warmup`` and every
   row carries ``days_of_htf_history`` (training filters are a choice, not a
   rebuild — census: the 4H registry stabilizes days 8-10).
@@ -382,6 +383,25 @@ def _chained_seeds(prev: DayArtifacts | None) -> DaySeeds | None:
     )
 
 
+def _load_replay_artifacts(
+    date_str: str,
+    cfg: IfvgCaptureConfig,
+    *,
+    expected_seeds: DaySeeds,
+    access_policy: ExplorationDataPolicy,
+) -> DayArtifacts | None:
+    if cfg.prepared_store_registry_paths:
+        from .prepared_store import load_registered_day_artifacts
+
+        # Each segment retains its original writing allowlist and artifact
+        # seed lineage. Reducer/context state still continues across all
+        # replay dates; a registered cache failure never triggers a rebuild.
+        return load_registered_day_artifacts(date_str, cfg, access_policy=access_policy)
+    return load_day_artifacts(
+        date_str, cfg, expected_seeds=expected_seeds, access_policy=access_policy
+    )
+
+
 def build_ifvg_capture(
     dates: list[str],
     cfg: IfvgCaptureConfig,
@@ -521,7 +541,7 @@ def build_ifvg_v2_capture(
 
     for chain_index, date_str in enumerate(chain_dates):
         expected_seeds = _chained_seeds(previous_artifacts) or first_expected
-        artifacts = load_day_artifacts(
+        artifacts = _load_replay_artifacts(
             date_str,
             cfg,
             expected_seeds=expected_seeds,
@@ -1009,7 +1029,7 @@ def build_ifvg_fsm_audit_v1(
 
     for chain_index, date_str in enumerate(chain_dates):
         expected_seeds = _chained_seeds(previous_artifacts) or cold
-        artifacts = load_day_artifacts(
+        artifacts = _load_replay_artifacts(
             date_str, cfg, expected_seeds=expected_seeds, access_policy=policy
         )
         if artifacts is None:
@@ -1335,7 +1355,11 @@ def _timed_preloaded_replay(
     for index, day in enumerate(dates):
         artifacts = artifacts_by_day[day]
         if menthorq_provider is not None:
-            menthorq_provider.register_day_artifacts(artifacts, cfg.core.tick_size)
+            menthorq_provider.register_day_artifacts(
+                artifacts, cfg.core.tick_size,
+                **({"preparation_catalog_paths": cfg.core.preparation_catalog_paths}
+                   if cfg.core.preparation_catalog_paths else {}),
+            )
         bars_by_tf: dict[int, list] = {}
         for bar in artifacts.bars:
             bars_by_tf.setdefault(bar.timeframe_ticks, []).append(bar)
@@ -1519,7 +1543,7 @@ def build_ifvg_v3_capture(
     for chain_index, date_str in enumerate(chain_dates):
         expected_seeds = _chained_seeds(previous_artifacts) or cold
         source_load_started_ns = perf_counter_ns()
-        artifacts = load_day_artifacts(
+        artifacts = _load_replay_artifacts(
             date_str,
             core_cfg,
             expected_seeds=expected_seeds,

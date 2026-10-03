@@ -738,6 +738,11 @@ class PipelineWiring:
     child_specs_source: Callable[[], tuple[Any, ...]] | None = None
     research_preparation: Any = None
     research_authorization_check: Callable[[], None] | None = None
+    #: Exact Task B account replay and factual report seams, without fitting,
+    #: generic prop gates, frontier ranking or insight interpretation.
+    funded_account_builder: Callable[..., tuple[tuple[str, ...], str]] | None = None
+    study_report_builder: Callable[..., tuple[tuple[str, ...], str]] | None = None
+    study_report_verifier: Callable[..., dict[str, str]] | None = None
 
 
 @dataclass
@@ -930,6 +935,7 @@ def _ensure_specs(context: _RunContext) -> tuple[Any, ...]:
         context.specs = enumerate_children(
             context.charter,
             identity_resolver=lambda spec_child: _resolve_core_id(context, spec_child)[0],
+            store_root=context.store_root,
         )
     return context.specs
 
@@ -1036,9 +1042,26 @@ def _stage_s00_validate(context: _RunContext) -> tuple[tuple[str, ...], str]:
         )
     problems.extend(_regime.regime_wiring_problems(spec, wiring))
     prop_planned = QuantLabPipelineStage.S12_RUN_PROP_HISTORICAL_REPLAYS in planned
-    if prop_planned and not wiring.firm_specs:
+    task_b = charter.payload.task_b_execution is not None
+    if task_b:
+        from .task_b_execution import task_b_semantic  # noqa: PLC0415
+
+        if context.semantic != task_b_semantic(charter):
+            problems.append("Task B requires its exact no-fit pipeline stage plan")
+        if any(seam is None for seam in (
+            wiring.funded_account_builder, wiring.study_report_builder,
+            wiring.study_report_verifier, wiring.research_authorization_check,
+        )):
+            problems.append("Task B requires its account, report, and authorization seams")
+        else:
+            wiring.research_authorization_check()
+    elif any(seam is not None for seam in (
+        wiring.funded_account_builder, wiring.study_report_builder, wiring.study_report_verifier
+    )):
+        problems.append("Task B pipeline seams require exact Task B authority")
+    if prop_planned and not task_b and not wiring.firm_specs:
         problems.append("12_run_prop_historical_replays planned but no firm specs wired")
-    if prop_planned:
+    if prop_planned and not task_b:
         expected_policy_ids = tuple(
             sorted(
                 firm_spec.policy_set_envelope().account_policy_set_id
@@ -1603,6 +1626,11 @@ def _stage_s02_replays(context: _RunContext) -> tuple[tuple[str, ...], str]:
             _record_children(context)
             continue
         context.metrics_by_child[core_replay_id] = metrics
+        if charter_payload.task_b_execution is not None:
+            row["explanation"] = "Executed trades and costed metrics recorded"
+            _record_children(context)
+            _checkpoint(context)
+            continue
         report = evaluate_strategy_gates(
             metrics, charter_payload.objective_policy.feasibility_gates
         )
@@ -2532,6 +2560,8 @@ def _persist_policy_set_envelopes(context: _RunContext) -> tuple[str, ...]:
 
 
 def _stage_s12_prop_historical(context: _RunContext) -> tuple[tuple[str, ...], str]:
+    if context.wiring.funded_account_builder is not None:
+        return context.wiring.funded_account_builder(context)
     modes = _historical_modes(context.charter.payload.simulation_protocol)
     if not modes:
         return (), "no historical prop modes in the simulation protocol"
@@ -2578,6 +2608,8 @@ def _stage_s13_bootstrap_stress(context: _RunContext) -> tuple[tuple[str, ...], 
 
 
 def _stage_s14_frontier_insights(context: _RunContext) -> tuple[tuple[str, ...], str]:
+    if context.wiring.study_report_builder is not None:
+        return context.wiring.study_report_builder(context)
     charter_payload = context.charter.payload
     prop_planned = (
         QuantLabPipelineStage.S12_RUN_PROP_HISTORICAL_REPLAYS
@@ -2843,6 +2875,8 @@ def _stage_s15_verify_publish(context: _RunContext) -> tuple[tuple[str, ...], st
     # R6.1-FIX §3.8: every reload failure is RECORDED by store/id with its
     # sanitized reason (the gate derives from the record; nothing is swallowed)
     reload_failures: dict[str, str] = {}
+    if context.wiring.study_report_verifier is not None:
+        reload_failures.update(context.wiring.study_report_verifier(context))
     if context.frontier_id is not None:
         try:
             load_verified_envelope(
@@ -2873,6 +2907,10 @@ def _stage_s15_verify_publish(context: _RunContext) -> tuple[tuple[str, ...], st
     verifier_link = bool(chart_entry["in_plan"]) and bool(
         chart_entry["output_artifact_ids"]
     )
+    if context.wiring.study_report_verifier is not None:
+        report_entry = stages[QuantLabPipelineStage.S14_BUILD_FRONTIER_AND_INSIGHTS.value]
+        verifier_link = bool(report_entry["output_artifact_ids"]) and not reload_failures
+        terminal_children = terminal_children and len(completed_children) == 13
     gates = evaluate_control_flow_gates(
         {
             "replay_completed": replay_entry["status"]

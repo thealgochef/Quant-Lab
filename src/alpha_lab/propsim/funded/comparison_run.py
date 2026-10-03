@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Callable
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -47,12 +49,16 @@ def pair_id_for(configuration: str, firm_key: str) -> str:
 
 
 class PrintStats:
-    def __init__(self, data_root: Path | None) -> None:
+    def __init__(self, data_root: Path | None, *,
+                 authorize_source_day: Callable[[date], None] | None = None,
+                 source_file_observer: Callable[[Path], None] | None = None) -> None:
         self.data_root = data_root
         self.files: dict[str, dict] = {}
         self.missing: set[str] = set()
         self.minutes_checked = 0
         self.minutes_matched = 0
+        self.authorize_source_day = authorize_source_day
+        self.source_file_observer = source_file_observer
 
     def factory(self, day: DayInput):
         holder: dict[str, Any] = {}
@@ -65,7 +71,13 @@ class PrintStats:
                     bars = day.bars_by_tf.get(60, [])
                     first = bar_window_ns(bars[0])[0]
                     last = bar_window_ns(bars[-1])[1]
-                    prints = DayPrints(first, last, data_root=self.data_root)
+                    prints = DayPrints(
+                        first, last, data_root=self.data_root,
+                        **({"authorize_source_day": self.authorize_source_day}
+                           if self.authorize_source_day is not None else {}),
+                        **({"source_file_observer": self.source_file_observer}
+                           if self.source_file_observer is not None else {}),
+                    )
                     for item in prints.files:
                         self.files[item["file"]] = item
                     self.missing.update(prints.missing)

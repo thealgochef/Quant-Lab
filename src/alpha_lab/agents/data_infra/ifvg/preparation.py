@@ -356,6 +356,7 @@ def prepare_ifvg_development_pair(
     section_overrides: dict | None = None,
     context_config: ContextFeatureConfig | None = None,
     report_root: Path | None = None,
+    preparation_catalog_path: Path | None = None,
 ) -> PreparedIfvgPair:
     """Prepare the full permitted chain; never discover protected date paths.
 
@@ -385,6 +386,10 @@ def prepare_ifvg_development_pair(
         section=resolved.section,
         session_scheme=base_cfg.session_scheme,
         data_dir=root / "data" / "databento",
+        preparation_catalog_paths=(Path(
+            preparation_catalog_path or
+            (root / PREPARATION_JOB_ROOT / profile_name / "catalog.json")
+        ),),
     )
     discovery = DevelopmentDataAccess()
     source_files = _discover_sources(
@@ -777,6 +782,7 @@ def prepare_ifvg_development_pair_persisted(
                 progress_fn=persisted_progress,
                 section_overrides=section_overrides,
                 context_config=context_config,
+                preparation_catalog_path=profile_root / "catalog.json",
                 **({"report_root": report_root} if report_root is not None else
                    {"report_root": profile_root / "reports"}
                    if (section_overrides or {}).get("menthorq_context_version") is not None

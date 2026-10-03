@@ -132,6 +132,13 @@ class IfvgCaptureConfig:
     session_scheme: SessionScheme = field(default=IFVG_DOC_SESSION_SCHEME)
     # ``legacy_v1`` can locate old files but cannot enter any v2 writer.
     identity_lane: str = "v2"
+    # Mutable preparation receipts, outside all replay/seed identities.
+    preparation_catalog_paths: tuple[Path, ...] = ()
+    # Storage routing is provenance, outside both identity tags. Raw market
+    # reads continue to use data_dir; registered cache segments keep their
+    # original writing allowlists and seed lineage.
+    artifact_cache_dir: Path | None = None
+    prepared_store_registry_paths: tuple[Path, ...] = ()
 
     def __post_init__(self) -> None:
         if self.identity_lane not in {"v2", "legacy_v1"}:
@@ -185,10 +192,18 @@ class IfvgCaptureConfig:
         return Path(self.data_dir) / self.symbol / date_str
 
     def bars_path(self, date_str: str) -> Path:
-        return self.day_dir(date_str) / f"ifvg_tbars_{self.artifacts_tag()}.parquet"
+        return self.artifact_day_dir(date_str) / f"ifvg_tbars_{self.artifacts_tag()}.parquet"
 
     def levels_path(self, date_str: str) -> Path:
-        return self.day_dir(date_str) / f"ifvg_levels_{self.artifacts_tag()}.parquet"
+        return self.artifact_day_dir(date_str) / f"ifvg_levels_{self.artifacts_tag()}.parquet"
+
+    def artifact_day_dir(self, date_str: str) -> Path:
+        if self.prepared_store_registry_paths:
+            from .prepared_store import prepared_artifact_day_dir
+
+            return prepared_artifact_day_dir(date_str, self)
+        root = self.artifact_cache_dir if self.artifact_cache_dir is not None else self.data_dir
+        return Path(root) / self.symbol / date_str
 
     def capture_path(self, date_str: str) -> Path:
         return self.day_dir(date_str) / f"ifvg_capture_{self.capture_tag()}.parquet"

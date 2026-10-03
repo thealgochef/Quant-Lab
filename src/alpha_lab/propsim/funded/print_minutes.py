@@ -14,6 +14,7 @@ fetched and nothing is written.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, date, datetime
 from pathlib import Path
 
@@ -35,13 +36,21 @@ def bar_window_ns(bar) -> tuple[int, int]:
 class DayPrints:
     """Prints of the UTC day files spanning one strategy trading day."""
 
-    def __init__(self, first_ns: int, last_ns: int, *, data_root: Path = DATA_ROOT) -> None:
+    def __init__(self, first_ns: int, last_ns: int, *, data_root: Path = DATA_ROOT,
+                 authorize_source_day: Callable[[date], None] | None = None,
+                 source_file_observer: Callable[[Path], None] | None = None) -> None:
         self.days: list[PrintDay] = []
         self.missing: list[str] = []
         cursor = datetime.fromtimestamp(first_ns // 1_000_000_000, tz=UTC).date()
         last = datetime.fromtimestamp(last_ns // 1_000_000_000, tz=UTC).date()
         while cursor <= last:
-            loaded = load_print_day(data_root, cursor)
+            if authorize_source_day is not None:
+                authorize_source_day(cursor)
+            loaded = load_print_day(
+                data_root, cursor,
+                **({"source_file_observer": source_file_observer}
+                   if source_file_observer is not None else {}),
+            )
             if loaded is None:
                 self.missing.append(cursor.isoformat())
             else:

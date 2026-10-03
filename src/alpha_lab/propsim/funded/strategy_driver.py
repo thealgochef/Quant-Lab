@@ -72,7 +72,7 @@ class StepOutcome:
 
 
 class CoreStrategyDriver:
-    def __init__(self, section: Any, *, tick_size: float) -> None:
+    def __init__(self, section: Any, *, tick_size: float, menthorq_provider: Any = None) -> None:
         self.section = section
         self.tick_size = tick_size
         self.seed = None
@@ -80,10 +80,23 @@ class CoreStrategyDriver:
         self._gate: str | None = None
         self.forced_flat = 0
         self.discarded_setups = 0
+        self.menthorq_provider = menthorq_provider
 
     # ── day lifecycle ─────────────────────────────────────────────────────
     def begin_day(self, bars_by_tf: dict[int, list], levels_for) -> list:
         from strategy_core.strategies.ifvg_smc.replay import DayOrchestrator
+
+        if self.menthorq_provider is not None:
+            from strategy_core.strategies.ifvg_smc.replay import IfvgLevelInputs
+
+            original_levels_for = levels_for
+
+            def levels_for(ts_utc):
+                value = original_levels_for(ts_utc)
+                levels = value.levels if isinstance(value, IfvgLevelInputs) else value
+                return IfvgLevelInputs(
+                    levels=levels, menthorq=self.menthorq_provider.snapshot(ts_utc)
+                )
 
         orch = DayOrchestrator(section=self.section, seed=self.seed,
                                tick_size=self.tick_size, levels_for=levels_for)

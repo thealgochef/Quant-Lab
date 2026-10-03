@@ -26,7 +26,6 @@ from collections.abc import Callable, Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from itertools import product
 from math import prod
 from pathlib import Path
 from typing import Any, ClassVar, Literal
@@ -234,6 +233,7 @@ class ChildSpec:
     resolved_section_config_hash: str
     capability: GeneratedProfileCapability | None
     section_overrides: Mapping[str, Any]
+    configuration_name: str | None = None
 
 
 @dataclass
@@ -394,17 +394,16 @@ def enumerate_children(
         from .strategy_approval import ratified_registry_for_charter  # noqa: PLC0415
 
         axis_registry = ratified_registry_for_charter(payload, store_root, axis_registry)
-    axes = sorted(payload.axes.items())
-    axis_keys = [axis for axis, _values in axes]
-    value_lists = [values for _axis, values in axes]
+    from .task_b import explicit_configuration_rows, validate_task_b_request  # noqa: PLC0415
+
+    validate_task_b_request(payload)
     baseline_resolved = resolve_profile_config(
         {"profile_name": payload.baseline_profile_name}
     )
     specs: list[ChildSpec] = []
     seen_identities: set[str] = set()
     ordinal = 0
-    for combo in product(*value_lists) if value_lists else [()]:
-        axis_value_ids = dict(zip(axis_keys, combo, strict=True))
+    for configuration_name, axis_value_ids in explicit_configuration_rows(payload):
         for axis_key, value_id in axis_value_ids.items():
             assert_axes_authorized(
                 {axis_key: value_id},
@@ -449,13 +448,16 @@ def enumerate_children(
         spec = ChildSpec(
             ordinal=ordinal,
             axis_value_ids=dict(axis_value_ids),
-            comparison_role="baseline" if is_baseline else "challenger",
+            comparison_role=(
+                "baseline" if is_baseline or configuration_name == "baseline" else "challenger"
+            ),
             canonical_profile_id=(
                 payload.baseline_profile_name if is_baseline else canonical_profile_id_for(section)
             ),
             resolved_section_config_hash=section_hash,
             capability=capability,
             section_overrides=dict(overrides),
+            configuration_name=configuration_name,
         )
         core_id = identity_resolver(spec)
         if core_id in seen_identities:
@@ -692,7 +694,9 @@ def run_search(
     thresholds: ResolvedStrategyGateThresholds = payload.objective_policy.feasibility_gates
     sentinel = _state_dir(state_root, search_id) / _CANCEL_SENTINEL
     resolved_identities: dict[str, tuple[str, object | None]] = {}
-    planned_configurations = prod(len(values) for values in payload.axes.values())
+    planned_configurations = len(payload.explicit_configurations) or prod(
+        len(values) for values in payload.axes.values()
+    )
 
     class _PreparationCancelledError(Exception):
         pass

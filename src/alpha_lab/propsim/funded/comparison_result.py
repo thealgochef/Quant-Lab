@@ -203,7 +203,8 @@ def _pair_summary(pair: dict, firm: FundedFirmProfile, configuration: dict,
 def build_comparison_result(*, context: dict[str, Any], outputs: list[dict[str, Any]],
                             failures: list[dict[str, Any]], profiles: tuple[FundedFirmProfile, ...],
                             trading_days: tuple[TradingDay, ...], start_ns: int, cutoff_ns: int,
-                            settings: dict[str, Any]) -> dict[str, Any]:
+                            settings: dict[str, Any], rank_results: bool = True,
+                            resume_check_requested: bool = True) -> dict[str, Any]:
     tables: dict[str, list[dict[str, Any]]] = {name: [] for name in COMPARISON_TABLES}
     summaries: dict[str, dict[str, Any]] = {}
     months = month_keys(start_ns, cutoff_ns)
@@ -232,7 +233,11 @@ def build_comparison_result(*, context: dict[str, Any], outputs: list[dict[str, 
             "no_account_replay_equals_saved_study": output["reference"]["equivalent"],
             "saved_study_trades": output["reference"]["saved_study_trades"],
             "no_account_replay_trades": output["reference"]["replayed_trades"],
-            "resumed_run_identical": all(v["identical"] for v in output["resumed"].values()),
+            "resumed_run_identical": (
+                all(v["identical"] for v in output["resumed"].values())
+                if resume_check_requested else None
+            ),
+            **({"resume_check_requested": False} if not resume_check_requested else {}),
             "position_minutes_checked": output["prints"]["minutes_checked"],
             "position_minutes_rebuilt_exactly_from_prints":
                 output["prints"]["minutes_rebuilt_exactly"],
@@ -355,7 +360,7 @@ def build_comparison_result(*, context: dict[str, Any], outputs: list[dict[str, 
                 "status": "Not completed", "reason": failure["reason"],
             }
 
-    for profile in profiles:
+    for profile in profiles if rank_results else ():
         completed = sorted(
             (s for s in summaries.values()
              if s["firm_key"] == profile.firm_key and s["status"] == "Completed"),
@@ -531,7 +536,8 @@ def _dollars(summary: dict[str, Any]) -> dict[str, Any]:
 
 
 def validate_comparison(result: dict[str, Any], outputs: list[dict[str, Any]],
-                        profiles: tuple[FundedFirmProfile, ...], cutoff_ns: int
+                        profiles: tuple[FundedFirmProfile, ...], cutoff_ns: int,
+                        require_resume_check: bool = True,
                         ) -> dict[str, Any]:
     """Independent reconciliation and single-account rule checks (compact)."""
 
@@ -542,8 +548,9 @@ def validate_comparison(result: dict[str, Any], outputs: list[dict[str, Any]],
     for output in outputs:
         config_checks = {
             "no_account_replay_equals_saved_study": output["reference"]["equivalent"],
-            "resumed_run_identical": bool(output["resumed"]) and all(
-                v["identical"] for v in output["resumed"].values()),
+            **({"resumed_run_identical": bool(output["resumed"]) and all(
+                v["identical"] for v in output["resumed"].values()
+            )} if require_resume_check else {}),
         }
         for firm_key, pair in output["pairs"].items():
             profile = by_key[firm_key]
@@ -628,8 +635,9 @@ def validate_comparison(result: dict[str, Any], outputs: list[dict[str, Any]],
             config_checks[firm_key] = pair_checks
             ok = ok and all(pair_checks.values())
         checks[output["configuration"]] = config_checks
-        ok = ok and config_checks["no_account_replay_equals_saved_study"] and config_checks[
-            "resumed_run_identical"]
+        ok = ok and config_checks["no_account_replay_equals_saved_study"] and (
+            config_checks["resumed_run_identical"] if require_resume_check else True
+        )
     expected = {f"{o['configuration']}|{p.firm_key}" for o in outputs for p in profiles}
     checks["one_result_per_configuration_and_firm"] = seen_pairs == expected
     ok = ok and seen_pairs == expected

@@ -131,7 +131,8 @@ def resolve_profile_config(raw_ui_config: dict | None = None) -> ResolvedProfile
             ),
         }
     effective = section.model_dump(mode="json")
-    # Optional A1 defaults preserve the historical effective-section shape.
+    # The shared neutral map includes B0.2's all_19 universe default and
+    # preserves the historical effective-section shape.
     # The typed section still exposes every field to validation and the axes;
     # an enabled context or gate override remains explicit in this projection.
     for key, default in MENTHORQ_NEUTRAL_PROFILE_FIELDS.items():

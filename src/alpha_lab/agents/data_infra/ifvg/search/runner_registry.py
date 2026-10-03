@@ -210,4 +210,9 @@ def pipeline_entry_key_for_charter(charter_envelope) -> str | None:
         for ref in getattr(authorization, "decision_refs", {}).values()
     ):
         return "pipeline_real_research_v1"
+    if charter_envelope.payload.task_b_execution is not None and any(
+        ref.decision_id == "strategy_search_approval_v1"
+        for ref in getattr(authorization, "decision_refs", {}).values()
+    ):
+        return "pipeline_real_research_v1"
     return None

@@ -1026,6 +1026,7 @@ if "menthorq_context_version" in _B:
          ("positive_only", "negative_only")),
         ("regime_unknown_policy", "Unknown regime handling", _STR, ("block",)),
         ("nearest_support_gex1_block", "Block nearest GEX 1 support", _BOOL, (True,)),
+        ("nearest_support_universe", "Nearest-support level universe", _STR, ("studied_8",)),
     ):
         _register_axis(
             _key, label=_label,

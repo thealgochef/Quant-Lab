@@ -5,7 +5,9 @@ Updated: 2026-10-03.
 IFSM Task A1 (October 3): runtime EOD lookup in
 `ifvg/menthorq_levels.py`, pure Core snapshot/entry gates, and
 `ifvg/menthorq_reporting.py`. Contract and limits:
-`docs/IFSM_MENTHORQ_LEVEL_CONTEXT.md`. Keep the four neutral defaults excluded
+`docs/IFSM_MENTHORQ_LEVEL_CONTEXT.md`. Task B adds `nearest_support_universe`
+(`all_19` default; `studied_8` requires EOD context) and source-selected contract
+receipts in preparation-job catalogs. Keep the five neutral defaults excluded
 from historical profile hashes; use decision 12's outside-hours bypass.
 `context_export.csv` is review-only, never a manifest/ML input. Do not start
 Task A2's context record family or allowlisting. Current Core source/pin is
@@ -22,7 +24,7 @@ where superseded. Preserve all prior study identities and sources.
 - Strategy-Core v3 cross-repo matrix: `../Strategy-Core/V3_COMPATIBILITY_MATRIX.md`.
 - Current Core pairing: `research/core/README.md`. The owner authorized upgrading
   ordinary Quant-Lab and IFSM to the same current Core on September 22:
-  `b062bfcf5a5209440a4b4c9d7c0ca2263f9f4cc2` after Task A1's October 3 re-pin, pinned in `pyproject.toml` and
+  `709487bc85ef82a259297c4ad6f3f198f4cabbcd` after Task B's October 3 follow-up, pinned in `pyproject.toml` and
   `research/core/current.json`. Prepare its verified external source checkout
   for provenance; the installed package must match that exact source. Historical
   `a4e3303`/`38825ed` studies keep their original identities and source archives.

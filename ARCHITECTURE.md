@@ -8,12 +8,18 @@ window presets. The provider and report adapters are
 `src/alpha_lab/agents/data_infra/ifvg/menthorq_levels.py` and
 `menthorq_reporting.py`. Capture retains its provider for direct report reuse;
 the `context_export.csv` is review-only and outside immutable manifests and
-ML feature schemas. Four neutral field exclusions preserve the default profile
+ML feature schemas. Five neutral field exclusions preserve the default profile
 identity. Source-bound v3 parity uses decision 13's documented exclusions.
+Task B's `nearest_support_universe` selects `all_19` or the exact `studied_8`
+universe for nearest values and the GEX 1 gate. Mutable preparation catalogs
+record Core's source-selected contract without changing any bar/seed/table.
+Lookup compares the preceding logical day with actual bars for its roll flag;
+absent contract evidence remains null. Task B decision 21 retains all roll days
+in metrics. Its decision 20 keeps funded cash separate from entry-group points.
 See [IFSM_MENTHORQ_LEVEL_CONTEXT.md](docs/IFSM_MENTHORQ_LEVEL_CONTEXT.md).
 
 The ordinary dependency and IFSM launcher now use the same Strategy-Core commit,
-`b062bfcf5a5209440a4b4c9d7c0ca2263f9f4cc2`, following Task A1's October 3 re-pin of the September 22
+`709487bc85ef82a259297c4ad6f3f198f4cabbcd`, following Task B's October 3 follow-up to the September 22
 upgrade request. [research/core/README.md](research/core/README.md) documents
 installation and source verification. `research/core/current.json` records the
 current source identity; package version `0.1.0` alone does not establish source
