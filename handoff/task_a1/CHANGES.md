@@ -23,8 +23,10 @@ Verification receipts and limits are in the companion handoff files.
   source tree hash:
   `5a53ebeb40c5b5b45ce8d0311be050a23087d08b3803dc27b1df557fb9630559`.
   Only the mandated Core Git pin changes; package version remains 0.1.0 and
-  no other dependency changes. Final repository heads/statuses are recorded
-  at the end of `run_log.txt`. Neither feature branch is merged to main.
+  no other dependency changes. Quant-Lab's implementation commit is
+  `f4ee8454651abafd97f0b3a1714e41465cf44049`, published to origin's feature branch.
+  Final repository heads/statuses are recorded at the end of `run_log.txt`.
+  Neither feature branch is merged to main.
 
 ## Quant-Lab files
 
@@ -259,11 +261,56 @@ dependency update is included.
 - Ten-date parity passes under decision 13. Both required smoke configurations
   completed over the recorded first 30 dates. The single all-on capacity gate
   passes with unchanged limits. The exact re-pinned Core `--check` passes.
-- The one permitted full run recorded 3,973 passed / 51 failed / 7 skipped.
+- The first full run recorded 3,973 passed / 51 failed / 7 skipped.
   Forty-six failures and three extra skips traced to the three compatibility
-  issues described above. Their source fixes and new units are complete, but a
-  second full run has not been authorized or executed. The original full receipt
-  is preserved; A1's full-suite completion condition remains unverified.
+  issues described above. Its original `test_run.log` is preserved unchanged.
+- On October 3 the owner granted an exception to section 6 for exactly one
+  additional full run, with no other code changes. The same command,
+  `python -B -m pytest -q -p no:cacheprovider`, ran from Quant-Lab on the committed
+  implementation snapshot. It started at 11:35:05 Chicago and finished at
+  12:11:21; pytest reported 2,173.35 seconds. `test_run_2.log`, alongside the first
+  receipt, records **4,029 passed / 16 failed / 4 skipped**. The pending-exception
+  wording in `questions.md` item 8 describes the earlier state and is superseded
+  by this authorization and result. Other handoff files are preserved as the
+  owner requested.
+- All 54 new Quant-Lab tests pass in the second full run; the existing verbose
+  Core receipt proves 30 new Core cases pass. The requested total of 84 new
+  passing tests is satisfied. The expected Quant-Lab acceptance count is
+  `3,986 + 54 = 4,040`, plus the separately verified 30 Core cases gives 4,070.
+  The second full run is short by 11 Quant-Lab passes and has 11 failures beyond
+  the documented five. **Acceptance is not met; A1 is not reported done.**
+
+## Remaining approval-table regression — recorded, not changed
+
+All 11 additional failures are in
+`tests/agents/test_ifvg_strategy_approval_ui.py`:
+
+1. `test_review_requires_explicit_name_and_confirmation_without_writing`
+2. `test_saving_exact_approval_enables_run_without_launch`
+3. `test_single_configuration_approval_renders_and_saves_only_one_child`
+4. `test_ready_legacy_owner_decisions_still_require_exact_study_approval`
+5. `test_saved_approval_does_not_unlock_a_changed_study`
+6. `test_missing_prepared_data_blocks_run_with_a_specific_explanation`
+7. `test_changed_exact_settings_require_new_unchecked_confirmation[axes]`
+8. `test_changed_exact_settings_require_new_unchecked_confirmation[dates]`
+9. `test_changed_exact_settings_require_new_unchecked_confirmation[seed]`
+10. `test_changed_reviewed_metadata_requires_new_confirmation`
+11. `test_approval_failure_explains_the_actionable_reason`
+
+The saved traces raise `KeyError: menthorq_context_version` in
+`scripts/ifvg_strategy_approval.py:87`. Its baseline table indexes
+`baseline.effective_config[axis]` for every displayed registry axis. Historical
+effective settings correctly omit neutral A1 fields; the typed section retains
+them. This approval-table consumer was missed when applying that compatibility
+projection. The closest existing pattern is the registry's typed JSON section
+projection: use `baseline.section.model_dump(mode="json")[axis]` for the table
+value. This is a concrete proposed fix, **not applied**, because the owner's
+second-run instruction explicitly says "No other changes." No source, test,
+dependency, capacity, guard or first-run receipt is changed in this closeout.
+
+The only versioned closeout changes are this `CHANGES.md` and `test_run_2.log`.
+The required local command receipt is refreshed. The owner's existing untracked
+`handoff.zip` is preserved and is not committed or rewritten.
 
 The five known full-suite failures remain untouched:
 
