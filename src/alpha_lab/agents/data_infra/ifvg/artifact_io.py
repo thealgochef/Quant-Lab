@@ -37,6 +37,7 @@ from .contracts import (
     validate_table_identity,
 )
 from .manifest import canonical_sha256, file_sha256
+from .profiles import saved_section_matches_profile_hash
 
 __all__ = [
     "ArtifactVerificationError",
@@ -268,10 +269,11 @@ def load_verified_v2_configuration(
         raise ArtifactVerificationError("saved effective configuration is unreadable") from error
     if not isinstance(section, dict):
         raise ArtifactVerificationError("saved effective section is not an object")
-    # Hash the SAVED mapping, never fill absent fields from today's model defaults.
-    section_hash = canonical_sha256(section)
-    if section_hash != identity.get("resolved_profile_hash") or (
-        expected_profile_hash is not None and section_hash != expected_profile_hash
+    # Verify the SAVED mapping with its established neutral projection; never
+    # fill absent fields from today's model defaults or rewrite old identities.
+    if not saved_section_matches_profile_hash(section, identity.get("resolved_profile_hash")) or (
+        expected_profile_hash is not None
+        and not saved_section_matches_profile_hash(section, expected_profile_hash)
     ):
         raise ArtifactVerificationError("saved effective section identity mismatch")
     return section

@@ -128,6 +128,12 @@ its original preparation chain and cache bytes; joining stores does not claim
 that those bars/levels were rebuilt from 2025 history. Runtime strategy/context
 state continues across the selected replay dates.
 
+Saved section verification accepts the original exact mapping hash or the
+established Core neutral behavior projection of present saved keys. It never
+fills current defaults, rewrites historical records, or ignores active values.
+The saved configuration reader and spec-bound strategy-result loader use the
+same verifier; returned section dictionaries retain their original fields.
+
 `search/task_b.py` binds the exact thirteen owner-specified configurations,
 registered input receipts, existing cost/funded profiles, and decisions 20/21.
 The approved scope also binds the two original EOD/regime source hashes and the

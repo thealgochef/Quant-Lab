@@ -9,7 +9,12 @@ from types import SimpleNamespace
 
 import pandas as pd
 import pytest
+from strategy_core.strategies.ifvg_smc.section import (
+    MENTHORQ_NEUTRAL_PROFILE_FIELDS,
+    ifvg_profile_hash,
+)
 
+from alpha_lab.agents.data_infra.ifvg.artifact_io import load_verified_v2_configuration
 from alpha_lab.agents.data_infra.ifvg.contracts import RecordTable
 from alpha_lab.agents.data_infra.ifvg.dataset import table_content_hash
 from alpha_lab.agents.data_infra.ifvg.manifest import canonical_sha256
@@ -32,12 +37,15 @@ def _bytes(value):
     return json.dumps(value, sort_keys=True).encode()
 
 
-def _fixture(root, *, fault=None, empty=False, generated_profile_alias=False):
-    section = resolve_profile_config().effective_config
+def _fixture(
+    root, *, fault=None, empty=False, generated_profile_alias=False,
+    section=None, section_hash=None,
+):
+    section = dict(resolve_profile_config().effective_config if section is None else section)
     canonical_profile_id = section["profile_name"]
     if generated_profile_alias:
         section["profile_name"] = "ifvg_search_profile_5ce78b888ea9214b"
-    section_hash = canonical_sha256(section)
+    section_hash = canonical_sha256(section) if section_hash is None else section_hash
     core = CoreStrategyReplayIdentity.from_payload(
         _example_core_replay_payload().model_copy(
             update={
@@ -260,3 +268,129 @@ def test_baseline_core_profile_identity_may_differ_from_generated_section_alias(
     spec.canonical_profile_id = section["profile_name"]
     with pytest.raises(PermissionError, match="canonical profile"):
         make_saved_strategy_result_loader(tmp_path)(spec=spec, core_replay_id=core.core_replay_id)
+
+
+def _load_both_readers_and_spec(root, core, trade_path):
+    loaded = load_saved_strategy_result(root, core.core_replay_id)
+    spec = SimpleNamespace(
+        resolved_section_config_hash=core.payload.resolved_section_config_hash,
+        canonical_profile_id=core.payload.canonical_profile_id,
+    )
+    bound = make_saved_strategy_result_loader(root)(spec=spec, core_replay_id=core.core_replay_id)
+    config = load_verified_v2_configuration(
+        root / "v2_datasets", trade_path.parent.parent.name,
+        expected_manifest_hash=loaded.artifact_reference.manifest_payload_sha256,
+        expected_profile_hash=core.payload.resolved_section_config_hash,
+    )
+    assert bound.effective_section == loaded.effective_section == config
+    return loaded
+
+
+@pytest.mark.parametrize("omit_neutral", [False, True])
+@pytest.mark.parametrize("holding_policy", ["legacy_unrestricted_v1", "scheduled_daily_close_v1"])
+def test_full_or_omitted_neutral_sections_match_real_core_hash_without_mutation(
+    tmp_path, omit_neutral, holding_policy,
+):
+    resolved = resolve_profile_config({
+        "section_overrides": {"holding_policy": holding_policy},
+    })
+    section = resolved.section.model_dump(mode="json")
+    assert all(section[key] == value for key, value in MENTHORQ_NEUTRAL_PROFILE_FIELDS.items())
+    if omit_neutral:
+        for key in MENTHORQ_NEUTRAL_PROFILE_FIELDS:
+            section.pop(key)
+    section_hash = ifvg_profile_hash(resolved.section)
+    assert canonical_sha256(section) != section_hash
+    core, stored_section, _, trade_path = _fixture(
+        tmp_path, section=section, section_hash=section_hash,
+    )
+    before = _inventory(tmp_path)
+    loaded = _load_both_readers_and_spec(tmp_path, core, trade_path)
+    assert loaded.effective_section == stored_section == section
+    assert _inventory(tmp_path) == before
+
+
+@pytest.mark.parametrize("omit_neutral", [False, True])
+@pytest.mark.parametrize("active_overrides", [
+    {"menthorq_context_version": "menthorq_eod_v1"},
+    {"menthorq_context_version": "menthorq_eod_v1", "regime_gate_policy": "positive_only"},
+    {"menthorq_context_version": "menthorq_eod_v1", "regime_unknown_policy": "block"},
+    {"menthorq_context_version": "menthorq_eod_v1", "nearest_support_gex1_block": True},
+    {"menthorq_context_version": "menthorq_eod_v1", "nearest_support_universe": "studied_8"},
+])
+def test_active_context_and_each_nondefault_gate_remain_identity_bound(
+    tmp_path, omit_neutral, active_overrides,
+):
+    resolved = resolve_profile_config({
+        "section_overrides": {
+            "holding_policy": "scheduled_daily_close_v1", **active_overrides,
+        },
+    })
+    section = resolved.section.model_dump(mode="json")
+    if omit_neutral:
+        for key, default in MENTHORQ_NEUTRAL_PROFILE_FIELDS.items():
+            if section[key] == default:
+                section.pop(key)
+    section_hash = ifvg_profile_hash(resolved.section)
+    core, _, _, trade_path = _fixture(tmp_path, section=section, section_hash=section_hash)
+    before = _inventory(tmp_path)
+    loaded = _load_both_readers_and_spec(tmp_path, core, trade_path)
+    assert loaded.effective_section == section
+    assert all(loaded.effective_section[key] == value for key, value in active_overrides.items())
+    assert _inventory(tmp_path) == before
+    baseline = resolve_profile_config({
+        "section_overrides": {"holding_policy": "scheduled_daily_close_v1"},
+    })
+    wrong_spec = SimpleNamespace(
+        resolved_section_config_hash=baseline.section_config_hash,
+        canonical_profile_id=core.payload.canonical_profile_id,
+    )
+    with pytest.raises(PermissionError, match="requested child section"):
+        make_saved_strategy_result_loader(tmp_path)(
+            spec=wrong_spec, core_replay_id=core.core_replay_id,
+        )
+
+
+def test_historical_mapping_retains_absent_current_fields_and_exact_published_hash(tmp_path):
+    historical = {"profile_name": "preserved_profile", "tp_r_multiple": 1.0,
+                  "historical_source_rule": "preserved"}
+    core, _, _, trade_path = _fixture(tmp_path, section=historical)
+    before = _inventory(tmp_path)
+    loaded = _load_both_readers_and_spec(tmp_path, core, trade_path)
+    assert loaded.effective_section == historical
+    assert core.payload.resolved_section_config_hash == canonical_sha256(historical)
+    assert _inventory(tmp_path) == before
+
+
+@pytest.mark.parametrize("tamper", [
+    {"menthorq_context_version": None},
+    {"regime_gate_policy": "negative_only"},
+    {"regime_unknown_policy": "block"},
+    {"nearest_support_gex1_block": False},
+    {"nearest_support_universe": "all_19"},
+    {"tp_r_multiple": 2.0},
+    {"historical_source_rule": "unexpected"},
+])
+def test_manifest_consistent_section_tamper_cannot_replace_core_behavior_identity(tmp_path, tamper):
+    resolved = resolve_profile_config({"section_overrides": {
+        "holding_policy": "scheduled_daily_close_v1",
+        "menthorq_context_version": "menthorq_eod_v1",
+        "regime_gate_policy": "positive_only",
+        "nearest_support_gex1_block": True,
+        "nearest_support_universe": "studied_8",
+    }})
+    # Fixture binds the altered config's bytes in its manifest, leaving the
+    # original Core/profile/trade identity intact. Content hashing alone passes.
+    section = {**resolved.section.model_dump(mode="json"), **tamper}
+    core, _, _, trade_path = _fixture(
+        tmp_path, section=section, section_hash=ifvg_profile_hash(resolved.section),
+    )
+    with pytest.raises(ValueError, match="effective section identity mismatch"):
+        load_saved_strategy_result(tmp_path, core.core_replay_id)
+    with pytest.raises(ValueError, match="effective section identity mismatch"):
+        load_verified_v2_configuration(
+            tmp_path / "v2_datasets", trade_path.parent.parent.name,
+            expected_manifest_hash=json.loads(
+                (trade_path.parent / "manifest.json").read_text(encoding="utf-8"),
+            )["manifest_payload_sha256"],
+        )

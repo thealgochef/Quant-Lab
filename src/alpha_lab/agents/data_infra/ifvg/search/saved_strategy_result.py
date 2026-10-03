@@ -21,6 +21,7 @@ from ..artifact_io import (
 from ..contracts import RecordTable, validate_primary_keys, validate_table_identity
 from ..dataset import table_content_hash
 from ..manifest import canonical_sha256, file_sha256
+from ..profiles import saved_section_matches_profile_hash
 from .identities import CoreReplayArtifactReference, CoreStrategyReplayIdentity
 from .store import load_sidecar_bytes, load_verified_envelope
 
@@ -31,7 +32,9 @@ def make_saved_strategy_result_loader(store_root: Path):
 
     def result_loader(*, spec, core_replay_id):
         result = load_saved_strategy_result(root, core_replay_id)
-        if canonical_sha256(result.effective_section) != spec.resolved_section_config_hash:
+        if not saved_section_matches_profile_hash(
+            result.effective_section, spec.resolved_section_config_hash
+        ):
             raise PermissionError("saved result differs from the requested child section")
         if result.canonical_profile_id != spec.canonical_profile_id:
             raise PermissionError("saved result differs from the requested canonical profile")
@@ -119,7 +122,7 @@ def load_saved_strategy_result(store_root: Path, core_replay_id: str) -> SavedSt
     section = report("effective_config.json").get("section")
     if (
         not isinstance(section, dict)
-        or canonical_sha256(section) != identity["resolved_profile_hash"]
+        or not saved_section_matches_profile_hash(section, identity["resolved_profile_hash"])
     ):
         raise ArtifactVerificationError("saved result effective section identity mismatch")
     if report("invariant_audit.json").get("passed") is not True:

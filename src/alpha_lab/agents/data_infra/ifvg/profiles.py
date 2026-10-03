@@ -22,6 +22,7 @@ __all__ = [
     "PROFILE_BUILDERS",
     "ResolvedProfileConfig",
     "resolve_profile_config",
+    "saved_section_matches_profile_hash",
 ]
 
 PROFILE_BUILDERS = {
@@ -62,6 +63,36 @@ def _hash(payload: object) -> str:
         default=str,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def saved_section_matches_profile_hash(section: dict, expected_hash: str) -> bool:
+    """Verify a preserved mapping without adding today's section defaults.
+
+    Earlier saved records used the exact mapping hash. Full current sections
+    use Core's established neutral behavior projection instead. Both checks
+    retain every saved non-neutral field, including unknown historical fields;
+    neither changes the mapping, its published identity, or artifact bytes.
+    """
+    if _hash(section) == expected_hash:
+        return True
+    behavior = dict(section)
+    if behavior.get("opposing_min_gap_ticks") is None:
+        behavior.pop("opposing_min_gap_ticks", None)
+    if behavior.get("holding_policy") == "legacy_unrestricted_v1":
+        for key in (
+            "holding_policy", "daily_close_timezone", "daily_close_time",
+            "daily_close_buffer_minutes",
+        ):
+            behavior.pop(key, None)
+    if behavior.get("entry_schedule_policy") == "legacy_doc_sessions_v1":
+        for key in (
+            "entry_schedule_policy", "entry_schedule_timezone", "entry_schedule_windows",
+        ):
+            behavior.pop(key, None)
+    for key, default in MENTHORQ_NEUTRAL_PROFILE_FIELDS.items():
+        if behavior.get(key) == default:
+            behavior.pop(key, None)
+    return _hash(behavior) == expected_hash
 
 
 @dataclass(frozen=True)
