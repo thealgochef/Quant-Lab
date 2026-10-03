@@ -881,6 +881,7 @@ def run_ifvg_v2_evaluation(
     tick_size: float = 0.25,
     cost_points: float = NQ_COST_POINTS_ROUND_TURN,
     old_artifact_mutations: int = 0,
+    menthorq_provider=None,
 ) -> dict:
     """Build reconciled v2 reports without search, modeling, or filtering.
 
@@ -925,12 +926,25 @@ def run_ifvg_v2_evaluation(
             "optimization_actions": 0,
         },
     )
-    return {
+    reports = {
         "candidate_report": candidate_report,
         "decision_report": decision_report,
         "executed_trade_report": trade_report,
         "invariant_audit": invariant_audit,
     }
+    if menthorq_provider is not None:
+        from .menthorq_reporting import build_menthorq_reports  # noqa: PLC0415
+
+        grouped = build_menthorq_reports(
+            tables, provider=menthorq_provider, section=resolved_profile.section,
+            tick_size=tick_size, cost_points=cost_points,
+        )
+        candidate_report["by_session_regime_slot"] = grouped["record_counts"]["entry_candidate"]
+        decision_report["by_session_regime_slot"] = grouped["record_counts"]["eligible_decision"]
+        trade_report["by_session_regime_slot"] = grouped["executed_trade_groups"]
+        trade_report["pooling_policy"] = grouped["pooling_policy"]
+        reports["menthorq_report"] = grouped
+    return reports
 
 
 def run_ifvg_experiment(

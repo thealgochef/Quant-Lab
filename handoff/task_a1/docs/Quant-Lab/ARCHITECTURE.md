@@ -1,0 +1,2011 @@
+# Architecture — Quant-Lab
+
+Updated: 2026-10-03.
+
+IFSM Task A1 adds optional runtime MenthorQ EOD context through the existing
+Core level callback, with final-entry regime/support gates and Chicago entry
+window presets. The provider and report adapters are
+`src/alpha_lab/agents/data_infra/ifvg/menthorq_levels.py` and
+`menthorq_reporting.py`. Capture retains its provider for direct report reuse;
+the `context_export.csv` is review-only and outside immutable manifests and
+ML feature schemas. Four neutral field exclusions preserve the default profile
+identity. Source-bound v3 parity uses decision 13's documented exclusions.
+See [IFSM_MENTHORQ_LEVEL_CONTEXT.md](docs/IFSM_MENTHORQ_LEVEL_CONTEXT.md).
+
+The ordinary dependency and IFSM launcher now use the same Strategy-Core commit,
+`b062bfcf5a5209440a4b4c9d7c0ca2263f9f4cc2`, following Task A1's October 3 re-pin of the September 22
+upgrade request. [research/core/README.md](research/core/README.md) documents
+installation and source verification. `research/core/current.json` records the
+current source identity; package version `0.1.0` alone does not establish source
+compatibility. Older study identities, source archives and approval records
+remain immutable. An incompatible checkpoint requires fresh state rebuilt from
+the authorized history. Dated notes below retain the original research isolation;
+this guidance supersedes their old installed-pin policy. Trade-Lab is unchanged.
+
+The offline IFVG geometry extension (`B0_GEOMETRY_CORE_ATR14_V1`) composes repaired
+B0 with three fixed, source-verified geometry ratios. It does not change
+Strategy-Core or runtime strategy semantics. Its denominator reuses Core's ATR14
+convention: the trailing arithmetic mean of 14 true ranges on completed TIME
+one-minute bars, tick prices, with source history carried across days and sessions.
+`features/geometry_core_atr14.py` uses the exact Core scale and persists immutable
+`geometry_feature_artifacts`; `search/research_geometry.py` runs paired B0 and
+geometry ladders through the registered research worker, preserving the same
+candidate labels, fold assignments, costs, model parameters and seeds. Each arm
+persists inputs before fitting and verifies model schemas and predictions after
+reload. See `docs/IFVG_GEOMETRY_CORE_ATR14_RESEARCH.md` for definitions and limits.
+
+Quant-Lab is the research/training workbench for NQ/ES futures ML models. Its current production-aligned path is the **dashboard-utility** workflow, which is now single-sourced to **Strategy-Core v3** for the decision semantics that must match runtime execution.
+
+> Current compatibility state: Quant-Lab emits `strategy_core_engine_v3` contracts and builds dashboard-utility datasets through Strategy-Core. Trade-Lab is **not yet v3-compatible**; see `../Strategy-Core/V3_COMPATIBILITY_MATRIX.md`.
+
+---
+
+## Canonical read order
+
+1. `docs/README.md` — docs inventory and stale/historical classification.
+2. `ARCHITECTURE.md` — this current architecture summary.
+3. `docs/ML_TRAINING_WORKBENCH.md` — Streamlit workflow details.
+4. `docs/pipeline_state.yaml` — machine-readable current-state summary.
+5. `../Strategy-Core/README.md` and `../Strategy-Core/V3_COMPATIBILITY_MATRIX.md` — shared engine and cross-repo contract truth.
+6. `scripts/ml_training_tab.py` — orchestration of build/train/save.
+7. `src/alpha_lab/agents/data_infra/ml/dashboard_utility_builder.py`, `engine_decision.py`, and `strategy_contract.py` — v3 utility path.
+
+Older historical reports and scaffold prompt documents were pruned from the working tree. Reconstruct current state from the canonical docs above plus current code/tests; use Git history only for audit context.
+
+---
+
+## Workflows
+
+### Application workspaces and IFVG research presentation
+
+The IFSM replication UI (`scripts/run_ifsm_research_ui.py`, port 8502)
+uses current Quant-Lab presentation and the verified external source checkout of
+the same Core commit as the ordinary installed package. Its studies, drafts,
+jobs and context listings use `data/ifsm_ui_replication/`. Registered fixed values
+are editable within the existing Evaluate One Configuration step. The thirteen
+verified September 9 configurations remain a documentation/evidence catalog;
+there is no home-screen replication card or preset picker.
+Search grids retain their existing enumeration;
+fixed configurations enumerate one child. Approval and execution resolve Core
+provenance from the actual imported checkout, with source parity required between
+an installed package and its prepared source checkout. The IFSM launcher does
+not fall back to an older sibling checkout. Separate cache-preparation evidence supplies
+only creation metadata, never new read or replay authority. See
+`docs/IFSM_UI_REPLICATION.md`.
+
+`scripts/dashboard.py` uses Streamlit `st.navigation` / `st.Page` for **IFVG Lab**
+(default), **ML Training**, **Dashboard Compatibility**, and **Strategy Analysis**.
+Only the selected page executes. Strategy Analysis owns the former shared pipeline
+sidebar; those controls do not appear around IFVG or the other workspaces.
+
+IFVG opens `scripts/ifvg_workspace.py`: **My studies** combines saved drafts,
+search and pipeline progress, results, and history. **Trade review** is its other
+destination. The `ifvg_research_*` modules provide guided configuration, concise
+results, context-model research, progress/recovery, and chart-centered review.
+Presentation view models in `ifvg/presentation/workspace.py` join records by their
+existing exact identities. Names are display annotations; they never replace an
+identity in a scientific join. Corrupt progress stays unavailable and cannot hide
+other saved studies. Verification scope derives from the frozen charter; ambiguous
+legacy records remain explicitly unresolved.
+
+IFVG **Study Configuration → Session Policy → Enabled entry sessions** offers
+the registered default sessions, each standard session individually, and
+**Legacy morning - 6:00 AM to 9:30 AM Chicago time (historical)** (originally
+labeled "NY from 7am to 10:30am (Eastern Time)"). The custom registered value
+`enabled_entry_sessions.ny_0700_1030` composes
+`enabled_entry_sessions=["ny_0700_1030"]` with
+`doc_sessions={"ny_0700_1030": ["07:00", "10:30"]}` in that child's effective
+strategy configuration. Strategy-Core's existing entry-confirmation gate accepts
+07:00 inclusive through 10:30 exclusive in DST-aware `America/New_York`, including
+the gap between the standard London and New York sessions. Open positions retain
+their configured exit rules. Market-data `session_scheme`, day artifacts and
+Core defaults are unchanged. Search selections remain separate configurations
+with the registered baseline included automatically; their exact saved plans
+still require the existing approval before execution.
+
+`QUANT_LAB_DEVELOPER_MODE=1` must be set before startup to register the **Developer**
+page. The flag is captured once by `presentation/workspace_mode.py`; there is no
+UI or query-parameter override. Technical rendering is additionally scoped to that
+page, so normal IFVG screens remain concise even in a Developer-enabled process.
+The retained UI-1–UI-3 diagnostic screens, Verification Center, raw data reports,
+identities, commands, and audit help live there. This is a presentation boundary,
+not an execution authorization. Existing backend authorization checks still apply.
+
+Page selection does not launch workers. Only explicit Run/Resume handlers use the
+existing runner seams, and cancellation uses their safe-boundary requests. Running
+study progress refreshes every five seconds while that detail view is selected;
+completion is read from persisted state. Feature/model research has its own exact
+source preflight, authorization and worker path described below; unresolved data,
+authority or stage dependencies block that path before launch.
+
+Replay returns a `ReplaySelection` distinguishing candidate, setup, empty, and
+unavailable evidence. The parent never opens a second inspector or substitutes a
+candidate for an unresolved setup/link. Chart presentation copies remove technical
+hover metadata while retaining prices and point-in-time gating. Research table/CSV
+alternatives omit identity columns. Reviewer judgment is saved only by **Save Review**.
+Filtered-out selections receive an explicit valid widget value so the browser label
+and provider evidence agree. Save Review updates one status placeholder immediately.
+Replay charts retain a readable light theme independent of the app's dark theme.
+
+The original presentation redesign preserved scientific schemas and execution
+policies. The separate research workflow below adds immutable research artifacts
+and a scoped authorization. This section supersedes older IFVG tab and disclosure
+descriptions below. Earlier desktop browser flows were reviewed;
+mobile acceptance was removed by the user. Live execution lifecycle acceptance
+remains limited by existing prerequisites. See the
+[desktop flow report](reports/ifvg_browser_acceptance/20260907/DESKTOP_FLOW_REPORT.md).
+
+### Exact-source IFVG feature and model research (2026-09-08)
+
+**New study → More study types → Feature and model study** opens
+`scripts/ifvg_research_pipeline.py`. It selects exact saved `core_replay_id`
+children, displays each child's inherited target R and round-trip cost, and freezes
+an evaluation window within the common saved evaluation dates. Each subject has
+its own pipeline context and result cells. The default population is all
+candidates in that window after excluding stamped warmup rows; executed trades
+remain a separate scoped table. Children with different targets or costs are not
+pooled into one model population.
+
+`search/research_runs.py` exposes metadata listing, preflight, freeze, launch and
+group readers. `research_subject.py` binds the exact saved replay, v2 dataset,
+effective configuration sections and their recorded hashes. A named profile or a
+display label does not replace the generated child's saved configuration. The
+preflight reports source/context reuse or preparation, input dependencies,
+supported model work, exact subjects and planned stages. Viewing the form or
+preflight does not capture data or fit models.
+
+An explicit reviewer statement authorizes a new immutable plan. The
+`research_approvals` record binds that plan to the store namespace and current
+authority witness; historical strategy-search approvals grant no research scope.
+`research_groups` and `research_subjects` retain the frozen group and subjects.
+`scripts/ifvg_research_job.py` runs the authorized cells sequentially through the
+registered `pipeline_real_research_v1` runner. Group status lives separately under
+the pipeline state root at `groups/<group_id>/group_state.json`. Resume rechecks
+the saved authority and dependencies; stop requests use safe stage boundaries.
+The research preset includes S00–S10, S14 and S15. It grants no model-gated replay,
+prop simulation, live execution or feature promotion.
+
+`research_data.py` prepares or verifies immutable `research_context_companions`
+for the exact effective configuration, including forward bars and neutrality
+evidence. Existing v2/v3 artifacts remain unchanged. Saved forward evidence drives
+configured-R research labels with inherited transaction costs; historical version
+1 captured labels retain their own policy. Each selected subject's outcome horizon
+ends at 17:00 America/New_York on its final evaluation date, capped by the protected
+data boundary; preflight exposes that exact UTC cutoff. `research_cohorts`, `research_labels`,
+scope-bearing `executed_trade_tables`, fold schedules and fold sets record the
+candidate population, excluded warmup/window rows, labels and logical calendar.
+Executed trades join the exact included candidate IDs and must resolve before
+the study cutoff; the Core trade's original resolution-day field is preserved.
+Cutoff-censored and unresolved execution IDs remain explicit cohort exclusions.
+Real research purging starts at the first logical test day's boundary (18:00 ET
+on the preceding civil day), including an empty first test day. Source preflight
+also verifies the loaded Strategy-Core package against the intended checkout.
+
+Saved replay reuse now carries a `research_core_compatibility` proof. It reconstructs
+the recorded clean package identity at the pinned revision, compares committed
+runtime files (including build/dependency configuration), verifies the current
+checkout and loaded package, and binds the current interpreter/dependency inventory.
+Only explicitly classified documentation/ignore changes may differ. The historical
+environment and dirty files outside the recorded package scope were not recorded;
+the proof does not claim to reconstruct them. New schema-2 context companions bind
+the proof and must reproduce every accepted Core table exactly. Original replay,
+subject and schema-1 companion identities remain unchanged.
+
+New KMeans protocols use `median_impute_fold_empty_neutral_v2`. A feature entirely
+missing in training is unavailable for that whole fold, even if evaluation later
+contains values. Its numeric coordinate and missing indicator remain neutral after
+scaling. Saved preprocessing records the input/output schema, empty-column list,
+imputation and scaling decisions. Existing v1 protocols retain their historical
+semantics and identities; the new default receives a distinct protocol/fit identity.
+An entirely empty training feature matrix cannot be fitted.
+
+B0 projection version `ifvg_b0_selected_stage_projection_v2` joins verified FSM
+audit emissions for the exact selected parent, lock, opposing gap and inversion.
+It checks Core geometry formulas, original emission order, completed-bar ordinals,
+parent-window clocks and decision-time availability. New construction refuses
+unmapped advertised fields. Entry-FVG values remain structurally null for retests.
+The projection evidence and source hashes enter new view identities; S06 saves
+`b0_projection_evidence.json` and checks the scoped bundle against that evidence.
+The field contract is in [IFVG_B0_PROJECTION_REPAIR.md](docs/IFVG_B0_PROJECTION_REPAIR.md).
+
+Each new fitted supervised research fold saves `feature_schema.json`
+(`supervised_model_feature_schema_v1`), with the ordered raw and transformed names,
+types and dimensions. Fold reports distinguish training-empty inputs from source
+mapping status. Logistic portable manifests are schema 2; schema-1 artifacts stay
+readable. The frozen logistic imputer and CatBoost native-NaN numerical protocols
+are unchanged. Save/reload rejects schema drift and reproduces saved probabilities.
+Historical partial-B0 acceptance remains immutable. The authorized comparison is
+exploratory evidence on the same already-inspected period, with unchanged floors.
+It completed on the same 37 OOS candidates: prevalence Brier 0.241401, logistic
+0.375901, CatBoost 0.521333. Both fitted rungs worsened from the original partial
+projection; the repair establishes source/schema correctness, not positive lift.
+
+`search/research_readiness.py` derives actual eligibility from real labels and the
+existing fold engine before fitting: unavailable outcomes, setup-boundary removals,
+purging, embargo and final class counts reconcile per partition. The logical
+calendar does not depend on which dates emit candidates. Panel adequacy is assessed
+separately; additional market bars do not add labeled candidate outcomes.
+
+Research chart artifacts and their discovery catalog live under the selected
+search store at `research_replay_charts/` and `research_replay_chart_catalog.json`.
+They bind both v2/v3 identities and manifest hashes, the verified forward source,
+research subject/calendar and outcome cutoff. Candidate ranges exclude warmup and
+out-of-window candidates and carry geometry spans; configured outcome annotations
+come separately from verified `research_labels`. The context-bar panel filters
+rows, validity evidence and partial-bar counts to the same research calendar.
+
+Supported supervised bases are B0 core, B1 core plus structure and B4 core plus
+structure/liquidity. Controlled MBP-1 comparisons use B0→B2 or B1→B3 with identical
+candidate/label/fold evidence. `research_mbp1.py` supplies the local source compiler
+and evidence adapter. Coverage remains unknown where source completeness is not
+evidenced; the feature lane remains offline research. The real MBP reader holds
+one day at a time and verifies its physical hashes on every reload, rather than
+retaining all study-day event frames. Archived vendor condition documents now
+reach coverage as checksum-bound negative evidence; a positive local receipt
+cannot silently clear a degraded/pending/missing vendor condition. The bounded
+[one-day conversion audit](docs/MBP_ONE_DAY_CONVERSION_AUDIT.md) proves exact
+DBN/parquet scalar and retained-order equivalence for February 23's associated
+physical files only. Source completeness and general snapshot recovery remain
+unknown; no completeness receipt was created. The default regime request
+uses completed numeric 5-minute bars, KMeans K=3 and descriptive reporting, fitted
+within each training fold. Candidate entry-decision observations are also
+available, using numeric members of the selected bundle and the unchanged
+registered 150-observation training-fold floor. A linked feature-only follow-up requires the exact
+saved regime decision, owner authorization and assessment. It requests B0 as the
+supervised base; the existing private activation builds the B7 challenger. The
+precursor's grain, stage, numeric inputs, clipping, bootstrap budget, algorithm
+and cluster count remain frozen in the follow-up. Combined
+MBP/regime and cohort-model variants are outside this preset.
+
+The MBP form can preview and explicitly import a reviewed completeness receipt.
+The compiler verifies its exact subject/window, physical partition hash, source
+declaration and owner review before saving it; preview saves nothing. A receipt
+is evidence about coverage, not permission to launch a study. In **Market regimes**,
+**Review regime feature eligibility** reads the selected saved assessment,
+protocol inputs, requested/applied bootstrap refits, sample floors and gates.
+Only a ready review exposes **Approve regime feature use**. That separate owner
+decision binds the reviewed evidence and creates the linked feature-only request;
+the follow-up still requires its own research plan authorization before fitting.
+Insufficient regime evidence cannot be approved through this control.
+
+`ml/research_evidence.py` commits `research_model_inputs` before fitting, including
+candidate features, labels, fold assignments and definitions. Completed
+`research_model_runs` retain every model arm/rung's OOS predictions, models,
+preprocessing and prediction inputs. Reload verifies file membership and hashes
+before model loading and reproduces recorded probabilities without fitting.
+The real-research opt-in `ml/regime_execution_cache.py` persists completed S09a
+executions in `research_regime_executions`, reusing their KMeans fits, bootstrap
+assessment and OOS assignment evidence. This is whole-execution reuse: an
+incomplete S09a attempt still recomputes on retry.
+S15 checks the durable research evidence. Missing/zero-fold evidence remains
+insufficient; a successful artifact check does not establish predictive skill.
+
+The group view shows status and reasons per subject/cell, including incomplete
+runs. Execution status is separate from evaluable/insufficient research evidence;
+the latter uses the verified S09 report when present and labels operational-only
+advisories. Evaluable evidence does not imply positive model lift.
+While S02 captures context, the selected cell refreshes its completed/total day
+counter and current trading date every five seconds. It distinguishes verified
+Core/context reuse from a new context replay.
+**Trades and cohorts** exposes verified labels, scoped executions and exact
+saved execution chart links. **Research chart** opens the selected cell's exact
+custom-store chart with configured-target label overlays. **Artifacts** exposes persisted model input tables
+even after a fit fails. **Order flow** and **Market regimes** reuse the existing
+coverage, comparison and regime panels with references from the selected cell.
+Descriptive regime reports retain all scoped executed trades and record their
+strategy-selection gate flags, including failed gates. The original frontier
+promotion requirements, including the 30-trade floor, remain unchanged.
+This implementation and its focused tests do not establish acceptance of a real
+research run; no study launch is implied by these documentation updates.
+
+### IFVG search evaluation correction (2026-09-08)
+
+Search strategy metrics exclude rows stamped `is_warmup` before all statistics,
+bootstrap intervals and gates. Raw replay and FSM audit tables retain the full
+chain. Drawdown includes the initial zero-equity peak. New costed evaluations bind
+`metrics_policy_id=post_warmup_zero_peak_v2` as well as replay and cost policy;
+legacy evaluations remain readable but are not reused as corrected evidence.
+`scripts/audit_ifvg_search.py` verifies saved evidence and can publish new scoped
+reports, retaining originals and backing up the operational state before advancing
+its frontier pointer. This is an explicit re-evaluation, never a page-load action.
+
+Results show uncertainty even when exclusion of zero is not a required gate, and
+show every failed criterion. A saved search child opens directly in Trade review
+using its exact core replay, v2 manifest and original input-bar hashes. The existing
+append-only review ledger records those references without inventing a v3 pair or
+a separately prepared chart identity. Original generic reports describe the full
+replay; corrected costed-evaluation reports describe post-warmup research.
+Strategy-Core execution semantics are unchanged.
+
+### 1. Extrema Rebound/Crossing mode — research only
+
+Purpose: binary classifier over tick-level extrema.
+
+Pipeline:
+
+```text
+local Databento parquet
+  -> ExtremaDatasetBuilder
+  -> extrema detection
+  -> rebound/crossing labels
+  -> PL/MS feature extraction
+  -> walk-forward CatBoost binary evaluation
+  -> final refit model bundle
+```
+
+Key modules:
+
+- `src/alpha_lab/agents/data_infra/ml/dataset_builder.py`
+- `src/alpha_lab/agents/data_infra/ml/extrema_detection.py`
+- `src/alpha_lab/agents/data_infra/ml/labeling.py`
+- `src/alpha_lab/agents/data_infra/ml/features_microstructure.py`
+- `src/alpha_lab/agents/data_infra/ml/features_momentum.py`
+
+Runtime caveat: `src/alpha_lab/agents/signal_eng/detectors/tier3/ml_extrema_classifier.py` is explicitly experimental and has a known train/serve domain mismatch.
+
+### 2. Dashboard Utility mode — production-aligned research path
+
+Purpose: 3-class level-touch classifier whose semantics are intended to be reproducible by Trade-Lab once Trade-Lab is repointed to Strategy-Core v3.
+
+Pipeline:
+
+```text
+local Databento parquet
+  -> TickStore / DuckDB bar + tick queries
+  -> dashboard_utility_builder.py
+  -> Strategy-Core v3 decision layer
+       build_zones
+       detect_touches with available_from guard
+       resolve_honest_outcome
+       v3 feature formulas
+  -> walk-forward CatBoost MultiClass evaluation
+  -> final refit model bundle
+  -> strategy.json emitted from Strategy-Core constants
+```
+
+Key modules:
+
+- `src/alpha_lab/agents/data_infra/ml/dashboard_utility_builder.py` — self-contained date loop, bars, levels, cache writes.
+- `src/alpha_lab/agents/data_infra/ml/engine_decision.py` — adapter from Quant-Lab dataframes/tick queries to Strategy-Core neutral types.
+- `src/alpha_lab/agents/data_infra/ml/strategy_contract.py` — emits `strategy.json` from Strategy-Core constants/version stamps.
+- `src/alpha_lab/agents/data_infra/ml/config.py` — config models and dataset cache hash; hash includes Strategy-Core engine version and price/label semantics.
+- `src/alpha_lab/agents/data_infra/tick_store.py` — local DuckDB-backed parquet query layer.
+- `scripts/run_dashboard_session_experiment.py` — CLI entrypoint for repeatable session-scope experiments.
+
+Session-scope experiments are explicit research config. The default is to train/evaluate on `asia`, `london`, and `ny`, while production-gate diagnostics remain NY-only. Presets such as `ny_only`, `asia_only`, `london_only`, `asia_london_only`, and `all_sessions_all_gates` apply after dataset generation so caches stay reusable while fold training, OOS metrics, final refit, and gate reporting stay auditable.
+
+### 2b. Prop-firm evaluation walker (`alpha_lab.propsim`) — model-selection consumer
+
+Purpose: pass-probability for prop-firm evaluations (TopStep 50K is preset one) from per-trade equity paths — the PROP-SIM window's barrier-options walker. Pure simulation core (no Strategy-Core dependency): `models.py` (TradePath/Ruleset/WalkResult), `presets.py` (registry; presets are data), `engine.py` (the EOD-ratcheted trailing floor with real-time breach, soft/hard daily-loss limit, consistency rule; breach modes `realized_only` and `unrealized_adverse_first` are both always computed), `bootstrap.py` (seeded day-level block bootstrap Monte Carlo), `loaders.py` (Trade-Lab executions+journal join / journal-outcomes evidence mode / bundle `oos_predictions.parquet`), `report.py` + CLI `python -m alpha_lab.propsim`. OOS parquets predating PROP-SIM P1 (no `max_mfe_pts`/`max_mae_pts`) degrade the unrealized mode to realized-only with a stated reason (D-038).
+
+### 2c. IFVG v2 correctness replay — executable simulation, not ML
+
+Purpose: reproduce the source-defined fresh-continuation IFVG profile through
+one sequential Strategy-Core reducer and preserve the distinction between a
+counterfactual trigger and an execution.
+
+```text
+allowlisted local market data
+  -> logical-close 1m/3m/5m/10m/15m/30m/1H/4H bars
+  -> Strategy-Core IFVG v2 reducer
+  -> setup_lifecycle_event
+  -> entry_candidate
+  -> eligible_decision
+  -> executed_trade
+  -> candidate_label (separate counterfactual research stream)
+  -> immutable content-addressed exploration dataset
+```
+
+The active offline profile is
+`ifvg_v2_doc_default_fresh_static_1r`. It is long-enabled, short-disabled,
+fresh-continuation-only, static 1R, and uses
+`next_1m_bar_stop_first_v1`. Pure-retest and ICT-clean profiles are declared
+but non-runnable until their unresolved semantics are ratified. The legacy v1
+wide stream remains candidate-only and cannot enter v2 performance functions.
+
+Correctness boundaries:
+
+- The exact January exploration allowlist is authorized before any path,
+  metadata, or file access. Exposed validation (`2026-05-01..2026-06-10`),
+  June 11, and sealed dates beginning June 12 are outside the repair lane.
+- A candidate never carries executable P&L. Only validated, resolved
+  `executed_trade` rows enter win rate, expectancy, PF, drawdown, equity, or
+  realized-P&L reports. Dataset-exhausted open trades remain unresolved.
+- Geometry is immutable and keyed by candidate/decision/trade identity; v2
+  code has no `setup_id` keep-last fallback.
+- Execution caps are reducer controls. `max_candidates_per_day` is an
+  evaluator-only view limit and changes only the evaluation hash.
+- The named HTF anchor is `trading_day_18et_elapsed_v1`; Q-40 remains open,
+  so this repair tests and stamps the as-built anchor without changing it.
+- Search, threshold sweeps, CatBoost, feature selection, exposed validation,
+  sealed evaluation, and live Trade-Lab routing are not part of this replay.
+
+Entrypoint:
+
+```text
+python scripts/run_ifvg_repair_verification.py
+```
+
+Outputs are immutable under
+`data/ifvg_datasets/v2/<dataset-id>/exploration/`. The dataset identity includes
+the record/capture/dataset/report schema versions, three repository
+HEAD/status/source-tree hashes, authoritative strategy blob, resolved section
+and evaluation hashes, exact allowlist, and permitted source-file hashes.
+
+### 2d. IFVG context v3 — measurement-only companion capture
+
+The separate context path runs the same Strategy-Core IFVG replay once, proves
+the v2 emissions against the accepted immutable v2 dataset, and normalizes only
+new structure, displacement, equal-level, validity, and exact-link records. It
+does not widen or duplicate v2 tables and does not call training or evaluation.
+
+The fixed January 2026 allowlist is authorized before any filesystem operation;
+the first ten dates through January 12 are warmup and January 13-30 are evidence.
+Validity, coverage, reconciliation, capacity, identity, and performance are the
+only reports. See
+[`docs/IFVG_CONTEXT_CAPTURE_V3.md`](docs/IFVG_CONTEXT_CAPTURE_V3.md) for table,
+identity, immutable-save, and future M0-M3 handoff contracts.
+
+### 3. Retained legacy compatibility/export path
+
+The older `src/alpha_lab/experiment/`, `scripts/experiment_tab.py`, and `scripts/train_dashboard_model.py` path is retained as historical/compatibility tooling. It is **not** the canonical Strategy-Core v3 bundle path.
+
+Legacy artifact:
+
+```text
+data/models/dashboard_3feature_v1.cbm
+```
+
+Do not treat that legacy 3-feature artifact as v3-compatible unless its accompanying `strategy.json` validates against `strategy_core_engine_v3` and the bundle files/checksums are verified.
+
+---
+
+## Strategy-Core v3 semantics used by dashboard-utility mode
+
+| Area | Current behavior |
+|---|---|
+| Engine stamp | `strategy_core_engine_v3` |
+| Contract stamp | `trade_lab_contract_v1` |
+| Bars | Trade-price tick bars on 0.25 grid; default touch bar `147t`. |
+| Sessions | ET-native: 18:00 trading-day boundary; `asia` 19:00→02:45, `london` 03:00→08:00, `ny` 09:00→17:00; gaps classify as `none`. |
+| Levels | `PDH/PDL` = full prior trading-day high/low over `[18:00, 18:00)` ET. Session levels: Asia high/low and London high/low. |
+| Availability guard | Enforced. A level cannot be touched before the session that defines it has closed. Merged-zone availability is the max constituent availability. |
+| Touches | Merged zones within 3.0 points; representative = mean; first bar whose `[low, high]` intersects the zone representative; first touch per zone/day. |
+| Features | `int_time_beyond_level`, `int_time_within_2pts`, `int_absorption_ratio` from trade prints; live runtime approach subset is `app_large_trade_vol_pct`, `app_avg_trade_size`, `app_max_spread`. |
+| Labels | `tradeable_reversal=0`, `trap_reversal=1`, `aggressive_blowthrough=2`; MAE-first same-bar priority; TP 15, SL 30, trap MFE min 5 by default. |
+| Honest entry | Decision can fire only after the post-touch feature window: `touch_close + 5m`. Label/outcome entry is the realistic trade price at that decision instant, not the level price at touch time. |
+| Cutoffs | Drop new decisions at/after 16:40 ET; forward label cutoff is 17:00 ET. |
+| Inference gate | Default contract gate is `tradeable_reversal`, `eligible_session="ny"`, `confidence_gate=0.70`. |
+
+---
+
+## Data and generated outputs
+
+Local data layout:
+
+```text
+data/databento/{symbol}/{YYYY-MM-DD}/mbp10.parquet
+data/databento/{symbol}/{YYYY-MM-DD}/mbp1.parquet
+data/databento/{symbol}/{YYYY-MM-DD}/trades.parquet
+```
+
+Per-date training caches:
+
+```text
+ml_features_{config_hash}.parquet   # extrema mode
+ml_utility_{config_hash}.parquet    # dashboard-utility mode
+```
+
+Saved Streamlit model bundle:
+
+```text
+models/{model_name}/model.cbm
+models/{model_name}/metadata.json
+models/{model_name}/evaluation.json
+models/{model_name}/strategy.json
+models/{model_name}/oos_predictions.parquet  # when OOS rows are available
+```
+
+Saved `evaluation.json` and `metadata.json` include `session_experiment` and `session_filter`; emitted `strategy.json` includes `research_session_experiment` but still advertises `supported_by_runtime=false` until Trade-Lab v3 parity is proven.
+
+Generated/local outputs, not source-of-truth docs/code:
+
+- `models/`
+- `catboost_info/`
+- `data/ifvg_datasets/v2/`
+- IFVG v2 per-day bar/level caches under allowlisted `data/databento/` dates
+- `*.cbm`
+- cached parquet/csv files under `data/`
+- scratch chart HTML files
+- local imported Databento data
+
+`.gitignore` also covers all local IFVG dataset/experiment stores, saved profiles,
+job state, drafts, visual-review ledgers, search outputs and generated report/test
+workspaces. Keep prior studies, approvals and audit artifacts on disk; ignored
+does not mean disposable or backed up. Reusable fixtures live under `tests/`.
+Curated archives and governing plan documents remain versioned. The retained
+plan/evidence package disables Git line-ending conversion to preserve its
+checksum-bound original bytes; generated bundles, transcripts and screenshots
+remain local. Local agent permission settings are excluded from version control.
+
+The roadmap item "identify canonical data/model bundle location and verify file presence/checksums" is deliberately deferred until AlgoChef's local data zip is available.
+
+---
+
+## Verification expectations
+
+- For code changes, run focused tests and update relevant docs in the same change.
+- For IFVG v2, run Strategy-Core plus Quant-Lab IFVG contract/reconciliation
+  tests and require a zero-violation invariant audit before saving a dataset.
+- For dashboard-utility semantics, run Strategy-Core tests and Quant-Lab contract/no-drift tests before claiming v3 alignment.
+- For any model/backtest claim, report date range, data source, fees/slippage assumptions, trade count, return/expectancy, drawdown, and limitations.
+- Do not claim Trade-Lab runtime readiness until Trade-Lab is repointed to Strategy-Core v3 and end-to-end parity is proven.
+
+---
+
+## 2d. IFVG robust FSM configuration search & prop realization lane (`ifvg_prop_robust_config_search_v1`)
+
+Additive research lane beside the frozen M0-M3 context-experiment lane; zero
+Strategy-Core changes in v1. R1 (contracts/identities/access/stores) is
+implemented; its acceptance is BLOCKED pending the owner's verification-fixture
+authorization (`VerificationAuthorizationRef`, owner decisions 21/R-5).
+
+```text
+src/alpha_lab/agents/data_infra/ifvg/search/    identities · axis_registry · authorization ·
+                                                charter · failure · store · catalog ·
+                                                verification · child_replay
+src/alpha_lab/agents/data_infra/ifvg/study/     dimension_contracts · cohort · study_cell ·
+                                                computation_path · delta_outputs · comparison_contracts
+src/alpha_lab/agents/data_infra/ifvg/features/  feature_blocks · feature_bundles · mbp1_source_contract
+```
+
+Load-bearing seams (D-039, D-040, D-042, D-043):
+
+- **Decomposed replay identity**: `CoreStrategyReplayIdentity` hashes only
+  replay-defining facts (content-addressed `ReplayInputBundle` with exact
+  physical source partitions + day-artifact manifests, scoped QL/SC source
+  identities, resolved section hash, canonical profile id, seed identity,
+  resolver). Study membership, cost, audit/chart schema, and runtime access
+  audits never enter it — one replay is reusable across studies.
+- **Canonical child naming**: generated children are
+  `ifvg_search_profile_<name-free-hash16>` (study-independent record IDs);
+  baselines keep registered names; `GeneratedProfileCapability` gates children
+  (the fixed `PROFILE_CAPABILITY_REGISTRY` gates baselines only).
+- **Typed axis registry**: every `IfvgSmcSection` field except `profile_name`
+  is classified (locked invariants / thesis / approved axes / blocked incl.
+  the inert `break_even_enabled`/`legacy_candidate_row_limit` traps and
+  `parent_full_fill_invalidation` = `blocked_pending_owner_policy_review`);
+  values are individually ratifiable; no raw `section_overrides` surface.
+- **Two-path verification**: the ONLY real-data verification is one baseline
+  ≤5-trading-day vertical slice under `VerificationReplayPolicy` (third
+  trusted class in `require_fixed_exploration_allowlist`) with nonresearch
+  control-flow gates; everything multi-child is synthetic. One canonical
+  allowlist program-wide (marker-enforced); the real slice cannot construct a
+  source path without the owner's `VerificationAuthorizationRef`.
+- **Immutable stores + concurrency-safe catalog**: envelope stores under
+  `data/ifvg_datasets/search/v1/` (test namespace `search_test/v1/`) on the
+  manifest protocol (refuse-if-exists, tmp + `os.replace`, reload-assert);
+  the mutable catalog is a lock-guarded append-only `catalog_events.jsonl`
+  plus a deterministic rebuildable index (display annotations only).
+- **Study cells / comparisons**: 16 hashed semantic dimensions, annotations
+  never hashed; comparisons fail closed to `config_diff_only`; computation
+  paths derived from the fail-closed dimension registry.
+- **MBP-1 boundary**: MBP-1 is the maximum order-flow depth for every new
+  contract (deep-book identifier guard everywhere); the single opaque
+  provenance literal `legacy_verified_replay_source` is unqueryable by the
+  feature layer. Order-flow activation is the R5B versioned registry event
+  and remains research-only offline (owner decision R-6).
+
+R2 additions (multi-child search, lineage, deltas, verifier integration):
+
+- **Parent orchestrator** (`search/orchestrator.py`): deterministic
+  enumeration over registered axis values deduped on the resolved replay
+  identity (within and across studies), `GeneratedProfileCapability` enforced
+  BEFORE any replay, O_EXCL per-search lock with checkpoint heartbeats +
+  stale-orphan break (resume-after-kill), atomic `search_state.json`
+  checkpoints per child transition, `cancel.requested` honored between
+  input-verification configurations, completed children and finalization stages,
+  with store-identity verified reuse. Metrics publish before the completed
+  checkpoint, and full replay tables are released before the next child.
+  `search/saved_strategy_result.py` recovers missing legacy metrics from one
+  verified execution table at a time; unavailable evidence fails closed.
+  Launch shim `scripts/ifvg_search_job.py` preserves existing replay identities
+  on resume and records the separate orchestration runtime source manifest via
+  `search/job_runtime.py`. Historical strategy replay identities are not rewritten
+  for control-flow-only repairs. See `docs/IFVG_STUDY_PAUSE_RECOVERY.md`.
+- **Profile-independent lineage** (`search/lineage.py`): setup → candidate →
+  decision → trade lineage payloads derived from source-stable evidence
+  (deterministic SC fvg ids + cursors); native→lineage one-to-one enforced
+  with persisted `LineageCollisionRecord`s; collisions or incomplete keys
+  disable the population (never deduped or fuzz-matched).
+- **Exact deltas** (`study/population_delta.py` · `funnel_delta.py`): every
+  population delta declares its `match_basis` (`native_id_exact` same-profile,
+  `profile_independent_lineage_exact` cross-profile, else `not_comparable`
+  with a reason); funnel deltas run over the union counter vocabulary with
+  typed conversions and terminal-reason deltas.
+- **Gates / frontier / robustness / insights** (`search/gates.py` ·
+  `strategy_metrics.py` · `frontier.py` · `robustness.py` · `insights.py`):
+  all eleven charter thresholds evaluated with human explanations (incl. the
+  bootstrap-CI-excludes-zero gate over the trading-day cluster bootstrap);
+  deterministic O(n²) dominance with a persisted lexicographic tie-break trace
+  selecting a `Development Exploratory Representative`; ±1-step neighbor
+  degradation + plateau widths + knife-edge warnings; seven fixed insight
+  categories with exact `EvidenceRef`s, match-basis-aware suppression, and a
+  structural forbidden-wording refusal.
+- **Declared contrasts** (`study/contrasts.py`): charter-declared only
+  (post-hoc refused), fully-crossed paired main effects with the seed-7
+  pair bootstrap CI, observational wording enforced by type.
+- **Companion wiring (DEV-R1-6 closed)**: `build_child_fsm_audit` +
+  `publish_child_fsm_audit` (`fsm_audit_preparation.py`) assemble the
+  per-child audit companion from the audit-enabled drive's retained trace and
+  channel rows, gated by the per-child `ChildAuditNeutralityReport` and the
+  exact funnel⇔audit reconciliation — parity-EXEMPT by design (the accepted
+  doc-default parity gate is untouched and remains doc-default-only);
+  `build_slice_companions` (`search/child_replay.py`) closes the vertical
+  slice's audit/publication/verifier-link gates (v2 tables via the existing
+  heavyweight saver; neutrality + audit companions into the immutable search
+  stores; exact drill-target resolution proven, vacuous-zero-targets recorded
+  honestly).
+- **Exact-setup drill-through**: `resolve_selection` gains the `setup_id`
+  exact-ID kind (unique-candidate resolution; zero/multi-candidate setups
+  refuse toward setup mode — never a policy pick); `queue_jump("setup_id", …)`
+  routes into the setup verifier's own exact resolver before the mode radio
+  instantiates.
+
+R3 additions (prop lifecycle — fidelity contracts first, then the synthetic
+account engine; `alpha_lab.propsim` lifecycle modules, additive beside the
+untouched evaluation-only walker):
+
+- **Trade-path fidelity** (`propsim/trade_path.py`): typed path evidence and
+  bundles with payload/envelope identities; a 1m bar's
+  `observed_intrabar_order` can only be `"unknown"`; assumed intrabar paths
+  are registered SCENARIO policies (`bar_adverse_extreme_first_v1` /
+  `bar_favorable_extreme_first_v1` — two identities and, on order-sensitive
+  trades, two different results); rule support is capability-based
+  (`PropRulePathRequirement`: required path capabilities + accepted fidelity
+  classes, never enum ordering) and fails closed via `PathCapabilityReport`.
+- **Typed calendars** (`propsim/calendar.py`): `DayCountBasis`/`DurationRule`
+  under a `SimulatedClockPolicy`; a basis the active clock cannot represent
+  (calendar-month recurring fee under day-block bootstrap without a synthetic
+  calendar) fails closed with `UnsupportedCalendarRuleError`.
+- **Firm contracts + contract evidence** (`propsim/firm_contracts.py` ·
+  `contract_evidence.py`): permitted rules/thresholds/observation policies +
+  the rule→capability matrix; adverse/favorable ordering never inside
+  `PhaseRules` (scenario policies only); source documents → per-field
+  evidence → compilation → owner review → supersession on a one-way status
+  ladder where synthetic evidence can NEVER reach `first_party_verified`.
+- **Account walk** (`propsim/account.py`): full lifecycle (evaluation →
+  funded → payouts/fees/replacement) as ONE strictly ordered
+  `PropAccountEventEnvelope` stream (`prop_account_event_order_v1`, global
+  `event_ordinal`, exact source trade/decision/candidate/setup/path links);
+  the evaluation-only walker (`engine.py`) stays untouched, compatibility
+  proven by the one-contract `AccountWalk`≡`EvaluationWalk` parity fixture.
+- **Risk sizing + withdrawal behavior** (`propsim/risk.py` ·
+  `withdrawal.py`): every sizing family with typed skip reasons (never
+  silently forced to one contract); trader withdrawal choices are a separate
+  identity from the firm contract and both enter every simulation identity.
+- **Adapters + stream hash** (`propsim/adapters.py`): v2 executed-trade →
+  account-trade tick→point/cost mapping plus the stable ORDER-SENSITIVE
+  gross stream hash pinning the exact resolved trade sequence.
+- **Portfolio / stress / simulation identities** (`propsim/portfolio.py` ·
+  `stress.py` · `simulation.py`): copied accounts replay ONE common
+  correlated market path per draw (no per-account resampling path exists);
+  nine seeded deterministic stress scenarios ride the simulation identity;
+  account/portfolio simulation identities carry every result-changing policy
+  (constructor-surface audit: no result-changing constructor-only kwarg);
+  duplicate bootstrap index sequences are legal with a unique
+  `path_instance_id` + stored `sampled_index_sequence_hash` per draw.
+- **Prop metrics + search wiring** (`propsim/prop_metrics.py` ·
+  `search/gates.py` · `search/orchestrator.py`): lower-tail-first
+  `PayoutReliabilityVector`; `evaluate_prop_gates` fail-closed rows (None
+  thresholds are explicit not-required passes; missing observations fail);
+  the orchestrator `prop_simulator` seam applies the conservative ALL-legs
+  feasibility rule, merges each prop objective into the frontier as the
+  WORST value across the child's simulations, defers prop-owned pareto
+  objectives past the strategy stage only when a simulator is wired, and
+  records explicit skip notes otherwise.
+
+R4 additions (trader workspace UI — the guided study surface over R1–R3;
+`FRONTEND_UX_CONTRACT.md` is the normative authority):
+
+- **Workspace routing** (`scripts/ifvg_study_tab.py` + the Experiments
+  delegation in `ifvg_lab_tab.py`): a session-state-backed horizontal radio
+  (`New Study | Active Runs | Results | History | Context Research`,
+  namespace `ifvg_study_v1_*`); only the selected route executes; the
+  M0–M3 Context Research panel delegates verbatim; the store a draft
+  freezes into derives from its run purpose (UI-1 — the R4 namespace
+  selector is gone; the store's verified `store_namespace_id` is displayed
+  read-only and a local path never defines authority).
+- **Presentation contracts** (`ifvg/study_status.py` ·
+  `ifvg/study_presentation.py`): CS §13 status/scope/empty-state registries
+  with the exact required copy (`Development Exploratory Representative`,
+  the verification badge, the no-pass sentence, `Not run — strategy gate
+  failed`); pure wizard validators; funnel/stage derivations pinned by
+  contract test to the orchestrator's exact explanation sentinels;
+  baseline-diff display names; work estimates as operational annotations.
+- **Drafts** (`ifvg/study_drafts.py`, `data/ifvg_study_drafts/`): the one
+  deliberately mutable authoring surface — atomic JSON, autosave on Next,
+  exact-step restore, deep-copy Clone as New Search; `mark_frozen` is the
+  single permitted final write and every later mutation/discard refuses.
+- **UI providers** (`ifvg/study_providers.py`): exact-ID manifest-verified
+  loads only; run enumeration from the mutable job root + catalog event
+  log (immutable store roots are never listed; the orchestrator records
+  the frontier envelope id as a state-file phase note as the locator);
+  `prepare_cross_profile_deltas` is the ONLY cross-profile delta
+  constructor and persists BOTH lineage-uniqueness reports first.
+- **Wizard** (`scripts/ifvg_study_wizard.py`): five modes × eight steps;
+  registered axis cards grouped by market meaning with NO widget for
+  locked/blocked/measured axes and no raw override editor anywhere;
+  computation-path chips; truthful synthetic contract cards; per-firm
+  account/risk/withdrawal/replacement policy sets under one universal
+  strategy profile; three ordered benchmark gate groups
+  (`proposed_protocol_default` stamps); read-only verification allowlist +
+  the exact typed full-scope confirmation; freeze → `validate_charter` →
+  immutable charter save → detached launch ONLY in the button handler via
+  the registry-gated job shim.
+- **Monitor** (`scripts/ifvg_active_runs_tab.py`): `st.fragment(5s)` over a
+  plain AppTest-callable body + manual Refresh; phase checklist; five
+  keyboard funnel buttons (the Plotly funnel accompanies, never replaces);
+  the exact child table with skipped-stage reasons; sanitized detail;
+  confirmed safe-cancel sentinel; CLI escape hatch on missing status.
+- **Results/History/Compare** (`scripts/ifvg_results_tab.py` ·
+  `ifvg_results_compare.py` · `ifvg_results_charts.py`): overview cards +
+  exact no-pass copy; frontier with an always-present selectbox twin;
+  heatmap glyph classes (◼ ▲ ✕ · ⊘) + table twin; firm matrix / survival
+  (step+dash) / payout distributions (P10-first); indexed explorer with
+  identity-first columns; dimension-diff ribbon with `match_basis` and
+  four panels (membership claims disabled for non-comparable pairs, never
+  fuzzed); seven deterministic insight categories with exact
+  `EvidenceRef` actions; the account timeline in `event_ordinal` order
+  with FUX marker shapes and exact-id drill-down; all figures budgeted
+  with honest `OmissionReport`s.
+- **Execution gating** (`ifvg/search/runner_registry.py` + the shim): the
+  job shim's `--runner-entry` is registry-gated — the UI passes registered
+  KEYS only, raw strings are refused before any import, and the only
+  registered entry before the R5 executors is the synthetic fixture
+  wiring, so a real charter's launch renders capability-blocked; `resume`
+  re-enters the idempotent worker. Declared two-axis interaction
+  contrasts now evaluate on balanced grids (`study/contrasts.py`,
+  difference-of-differences, seed-7 bootstrap; refusals retained).
+
+R5 additions (pipeline runner + MBP-1 contract readiness + supervised model
+ladder; capability-scoped operator availability per V3 P1-5):
+
+- **Pipeline contracts + runner** (`ifvg/search/pipeline.py`): the CS §7
+  split — `PipelineSemanticSpecPayload` (research-bearing fields only;
+  canonical-order 16-stage plans with dependency closure) hashes to
+  `pipeline_semantic_id`; `ExecutionAttemptIdentity` (workers/host/
+  timestamps/retry reason) is deliberately NOT an identity envelope. The
+  runner composes the study-lane primitives (`enumerate_children`, the
+  reuse/neutrality/publication semantics, the costed-evaluation cache, the
+  extracted `merge_prop_vectors` — ONE implementation of ALL-legs
+  feasibility + worst-firm merge — and `build_frontier`); every stage
+  executor is idempotent and store-reusing, and a stage whose
+  freshly-minted `PipelineStageResultEnvelope` id equals the prior
+  attempt's is marked REUSED (reuse proven by identity). S11 terminal-
+  blocks with the exact registered reason; S15 persists the immutable
+  `PipelineResultEnvelope` with `prepared_not_published` operational
+  state; publication is verify-then-activate and verification scope can
+  never activate a research catalog entry.
+- **Carried-seam closures**: S02 persists per-child lineage evidence
+  (uniqueness reports + serialized key projections as stage sidecars) and
+  S14 builds + persists deterministic insight panels
+  (`InsightPanelEnvelope`, `insights` store) and baseline↔challenger
+  `ComparisonResultEnvelope`s (`search_results` store) that the UI now
+  consumes (DEV-R4-7/DEV-R4-16); S12/S13 run the additively extended
+  `alpha_lab.propsim.search_bridge` (scenario/bootstrap/stress mode
+  bridging, DEV-R3-11) and persist real `AccountPolicySetEnvelope`s +
+  `AccountSimulationEnvelope`s with the trader-UI sidecars (DEV-R4-17).
+- **Supervised ML lane** (`ifvg/ml/`): the registry-gated ladder
+  (`model_protocols` · `logistic_model` · `supervised_ladder`) runs the
+  prevalence reference + fold-local logistic + the existing CatBoost
+  protocol on IDENTICAL rows/folds (identical `oos_row_id` sets asserted
+  before any delta; `paired_cell_delta_report` under the fixed 10k/seed-7
+  day-block bootstrap); every preprocessing statistic is fold-fitted;
+  fitted artifacts persist portably (manifest-relative refs + checksums,
+  relocation-proof). `calibration_policies` / `decision_policies` are
+  registry pairs with distinct logical keys and resolved envelope ids;
+  only the diagnostic baselines are executable, every execution-affecting
+  decision policy requires an owner-ratified `RejectedCandidatePolicy`,
+  and `ProhibitedSelectionError` refuses enumeration outside a ratified
+  charter. Core `drift_monitoring` exports report builders only.
+- **Bundle feature views** (`ifvg/features/bundle_feature_view.py`):
+  available-blocks-only views over the immutable candidate view; through
+  R5, `IFVG_ORDER_FLOW_MBP1_V1` stayed `planned` and every bundle carrying
+  it refused (no baseline-vs-MBP-1 study was constructible before the R5B
+  activation below); a bundle maps onto the tier-frozen supervised ladder
+  only when its resolved feature set equals a frozen tier exactly.
+- **Real executors + pipeline shim** (`ifvg/search/executors.py` ·
+  `runner_registry.py` · `scripts/ifvg_pipeline_job.py`): the registry now
+  names the real baseline-verification search/pipeline executors — their
+  factories fail closed at CONSTRUCTION without the owner's persisted
+  `VerificationRunEnvelope` (registration unblocks the launch surface,
+  never the data). Exact owner-approved strategy-only development searches
+  now dispatch through `search_strategy_development_v1`
+  (`search/strategy_approval.py`, `search/strategy_executor.py`); other
+  full-development workflows remain separate authorized actions. Saving
+  approval does not execute work. The
+  detached pipeline shim mirrors the search shim (registry-gated worker,
+  atomic status, safe-boundary cancel, `publish-gates`/`activate` CLI).
+  The strategy executor uses existing trusted day artifacts, independently
+  resolves each approved configuration and retains the fixed warmup,
+  sequential replay, neutrality gates and immutable publications. See
+  `docs/IFVG_STRATEGY_SEARCH_APPROVAL.md` for the exact authorization boundary.
+- **Full Pipeline Run surface** (`scripts/ifvg_pipeline_tab.py`, session
+  namespace `ifvg_pipeline_v1_*`): the complete §30 workflow — Configure
+  (capability-scoped stage plans; planned/blocked feature + model entries
+  visible-disabled), Preview (exact counts/estimates/reuse/new-artifact
+  disclosure), Launch (one scanned `_spawn_pipeline_job` seam; the exact
+  §15 typed full-scope confirmation), Monitor (all 16 stages glyph+word
+  incl. `not required`; `pipeline_semantic_id` + execution-attempt
+  history; the supervised-ladder panel with planned rungs and the exact
+  S11 blocked reason), Resume/Retry (operational clone; research-bearing
+  change = new semantic id), Publish (gates checklist first; activation
+  refused for verification scope).
+
+R5B additions (offline MBP-1 feature activation — research-only, owner
+ruling R-6; the versioned registry event of revision P1-5):
+
+- **Activation as the published registry** (`ifvg/features/feature_blocks.py`):
+  `FEATURE_BLOCK_REGISTRY` IS `with_activated_block` applied to the exported
+  R5-era planned state (`PRE_ACTIVATION_*`) — `IFVG_ORDER_FLOW_MBP1_V1` at
+  `block_version=2`, status available, its first
+  `resolved_feature_block_id` minted from the real Arrow schema hashes, the
+  frozen 9-window registry, `ifvg_order_flow_mbp1_formula_v1`, and
+  `mbp1_feature_materializer_v1`; the block-registry hash changed and every
+  ORDER_FLOW bundle (B2/B3) gained a new resolved id, while B1/B4 kept
+  theirs and regime/execution-liquidity bundles keep refusing. The
+  research-only boundary rides the DEFINITION
+  (`expected_computation_path="offline_research_feature_materialization_v1"`,
+  `can_affect_execution=False`): no live model feature, execution gate, or
+  Trade-Lab serving use without a later Strategy-Core formula/parity
+  contract and a separately approved sequential model-gated replay.
+- **Exact schemas + immutable evidence** (`mbp1_arrow_schemas.py` ·
+  `mbp1_source_artifact.py`): four pinned Arrow schemas with canonical
+  field/type hashes (raw Databento mbp-1 retaining `ts_recv` — the
+  materializer decodes it directly, no Strategy-Core change; the normalized
+  working schema with the deterministic `source_ordinal` final tie-break;
+  the 76-metric feature table with per-window validity/missing-reason
+  evidence; the stage-window evidence table). The content-addressed
+  `Mbp1SourceArtifact` freezes per-partition hashes, first/last order keys,
+  sequence-gap intervals (vendor sequence resets are NOT gaps), and
+  gap-adjusted day coverage; synthetic fixtures persist canonical event
+  bytes as manifest-hashed sidecars, real artifacts reference partitions by
+  hash; real reads run authorize-before-path through the verification
+  policy family and `legacy_verified_replay_source` provenance is refused
+  outright (guards re-run at R5B).
+- **Point-in-time stage windows** (`mbp1_stage_windows.py` ·
+  `mbp1_feature_materializer.py`): the candidate row's own five anchors
+  (`tap/lock/armed/inversion/entry_ts_utc`) become `COMPLETED_BAR_BOUNDARY`
+  cutoffs (`completed_bar_boundary_exclusive_v1`); admission runs on the
+  complete `(ts_event, ts_recv, sequence, source_ordinal)` key —
+  `PRE_TRIGGER_EXCLUSIVE` `<` / `POST_TRIGGER_INCLUSIVE` `<=` on exact
+  keys, strict `ts_event <` for timestamp-only evidence with EVERY
+  same-timestamp event excluded and the window typed
+  `same_timestamp_order_unavailable` when any tie exists; a missing lower
+  anchor refuses rather than widening; no `+inf` bound exists anywhere
+  (source-scanned). The offline materializer preserves every candidate row
+  under the deterministic typed-missing precedence (no partition → coverage
+  → outside coverage → same-ts ambiguity → sequence gap → roll boundary →
+  minimum events); formula-edge NaNs stay VALID; batch/repeat runs are
+  byte-identical; the feature artifact's recipe identity (source artifact ×
+  resolved block × anchor hash × cutoff policy × schema hashes) is separate
+  from the post-materialization table hashes on the envelope.
+- **Exact joins + bound views** (`mbp1_feature_join.py` ·
+  `bundle_feature_view.py`): one-to-one on `candidate_id` only (duplicates
+  refuse; no nearest-time or row-order fallback exists — source-scanned);
+  MBP-1-bearing bundle views REQUIRE the materialized frame AND its
+  artifact id, and the view payload pins `mbp1_feature_artifact_id`, so the
+  same view+bundle over different evidence can never share one identity.
+- **Controlled Baseline vs Baseline+MBP-1 study**
+  (`ml/controlled_feature_study.py` + the bundle-parametrized ladder in
+  `ml/supervised_ladder.py`, DECISIONS_TAKEN #41 arrival): the challenger
+  runs against its OWN base bundle on identical rows/labels/folds —
+  prevalence + logistic rungs (the CatBoost fold runner is tier-locked in
+  the frozen M0–M3 lane and refuses with that exact reason); cross-arm row
+  identity plus a numerically identical prevalence reference are asserted
+  before the paired Brier delta (fixed 10k/seed-7 day-block bootstrap); the
+  persisted study pins every input identity and carries the permanent
+  `research_only_offline` stamp. Pipeline wiring: S00 refuses MBP-1 plans
+  without the `mbp1_evidence_source` seam (order-flow evidence is never
+  fabricated), S05 materializes + immutably persists the
+  source/feature/coverage artifacts and joins them into the bundle view,
+  S09 runs + persists the controlled study (readiness blocks CatBoost×MBP-1
+  plans before launch), and the new `mbp1_source_artifacts` /
+  `mbp1_feature_artifacts` / `mbp1_coverage_reports` /
+  `controlled_feature_studies` stores follow the manifest protocol.
+- **Dashboard** (`scripts/ifvg_mbp1_panels.py` + the pipeline surface): the
+  MBP-1 Order Flow panel (availability with pre/post-activation registry
+  hashes, the frozen window registry, exact-ID coverage/missingness
+  evidence, per-candidate stage-window drill-down, and the Baseline vs
+  Baseline+MBP-1 comparison) under the persistent `research_only_offline`
+  badge; Configure restricts MBP-1-bearing bundles to the logistic
+  protocol. The search job shim now passes the worker's `--store-root` to
+  runner-entry factories (DEV-R5-10 closure). The five-day REAL
+  control-flow verification of the materializer remains blocked on the
+  owner's `VerificationAuthorizationRef`, exactly like every real half
+  since R1.
+
+R6 additions (V1 KMeans regime lane — protocol/fit/capability/promotion
+split per V3 P1-3; the GMM/minibatch/spectral/Nyström implementations are
+the post-V1 regime-expansion release):
+
+- **Regime contracts** (`ifvg/ml/regime_contracts.py`): the four-way split —
+  `RegimeProtocolPayload` (algorithm key ≠ resolved id; the registry's
+  pinned parameters hashed into the identity; the P1-B panel grain in the
+  ACTUAL schema: `CONTEXT_BAR_PANEL` requires interval/source/as-of
+  fields, `CANDIDATE_STAGE_ROW`/`DECISION_ROW` refuse them; a 64-hex
+  bundle reference; pinned seed 7; `fit_scope="per_training_fold"`),
+  role-free `RegimeFitPayload` (verified non-empty source artifact ids +
+  the training-feature-matrix hash — different feature values are a
+  different fit identity), `RegimeCapabilityAssessment`
+  (coverage/occupancy/stability over EXACT fit + fold identities with the
+  applied gate values), and `RegimePromotionDecision` — the contract
+  itself enforces one ladder step at a time, a chained
+  `previous_decision_ref`, an ISO-8601 decision time, a 64-hex owner
+  ratification reference from `FEATURE_ELIGIBLE` onward, and the ROLE
+  ladder (execution-side roles are unrepresentable in V1 with the exact
+  S11 reason); it never touches a numerical identity, and
+  `persist_regime_promotion` re-checks the ladder against the referenced
+  assessment's own `gates_passed` (a FEATURE_ELIGIBLE decision over a
+  failing or absent assessment is unpersistable). `assert_no_regime_leakage`
+  refuses every outcome/label/payout column and — from the feature-block
+  registries, by default — every feature available only after the
+  protocol's observation stage; every input must belong to the referenced
+  bundle; every scientific default (KMeans baseline, k=3, the
+  occupancy/rows/AMI gates, the sample-adequacy minimums, the grain
+  baseline) is stamped `proposed_protocol_default` in
+  `REGIME_PROPOSED_DEFAULTS`.
+- **Algorithm registry** (`regime_algorithms.py`): `kmeans_v1` is the ONE
+  implemented V1 algorithm (pinned k-means++ / n_init 10 / lloyd / seed 7);
+  `minibatch_kmeans_v1`, `gaussian_mixture_v1`,
+  `spectral_clustering_train_only_v1` (train-fold-only affinity,
+  observation/memory caps, forced `BLOCKED_NO_OOS_ASSIGNMENT`, the
+  mandatory training-only warning text), `nystrom_kmeans_v1`, and the
+  surrogate-assignment entry are registered PLANNED with fail-closed
+  refusals carrying the exact status/reason (P1-C) — no spectral or
+  Nyström fit is callable anywhere in V1, and every planned protocol
+  POLICY (`inner_train_only_selection`, PCA, kernels, non-centroid OOS
+  policies) is refused by `assert_protocol_executable` before any
+  preprocessing or fit.
+- **Fold-local service** (`regime_preprocessing.py` · `regime_service.py` ·
+  `regime_alignment.py` · `regime_diagnostics.py`): the fixed per-fold
+  pipeline (median imputer + indicators → optional train-fitted p01/p99
+  winsorizer → standard scaler) whose fit API accepts a FOLD and slices
+  internally (no row-subset parameter; all-missing training rows never
+  enter a fit; duplicated observation keys refuse); per valid fold the
+  pinned KMeans fits on training rows and assigns train+test rows
+  deterministically (distances to every centroid, margin d2−d1, the
+  observation's as-of timestamp); rows are PRESERVED with typed reasons
+  (`source_feature_missing`/`fold_invalid`/`coverage_gap`); Hungarian
+  alignment is reporting-only over NOMINAL, geometry-ranked canonical ids
+  in the scaled input-feature space with the exact ascending-local-id
+  tie-break (prediction-hash invariance test-proven); the stability report
+  carries seeded bootstrap aligned-AMI, per-cluster agreement, the
+  OUT-OF-SAMPLE timeline's temporal persistence and transition matrix
+  (ordered by observation timestamp within each fold), fold-to-fold
+  recurrence, centroid separation, and descriptive-only silhouette; the
+  sample-adequacy gate (≥150 candidate-stage/decision-row, ≥300 panel
+  training rows per fold) and the occupancy/rows gates block PROMOTION —
+  k is never shrunk. The panel→candidate assignment consults only
+  out-of-sample assignments of the last COMPLETED bar at or before each
+  candidate's as-of instant (lowest fold wins; 5m/15m tested end to end);
+  earlier candidates and bars without an OOS assignment are typed
+  `coverage_gap`.
+- **Persistence** (`regime_store.py` + four new store names on the
+  manifest protocol): dual-format fitted artifacts (canonical JSON
+  parameter payload hashed as `fitted_parameter_payload_hash` + joblib)
+  bound to their own assignment frame and verified from the exact bytes
+  BEFORE publication (reload → re-transform `np.allclose` → re-predict
+  equals the persisted labels), then re-verified through the store;
+  manifest-relative references only and relocation-proof reload (P1-4);
+  the shared `load_sidecar_bytes` verifies the manifest hash, whitelists
+  the sidecar name, and hashes the returned bytes; assessments and
+  promotion decisions persist as content-addressed envelopes — a
+  promotion provably changes no fit identity.
+- **Regime Lane UI** (`scripts/ifvg_regime_panels.py`, mounted as a
+  pipeline-surface expander beside the MBP-1 panel): the algorithm
+  registry with planned entries visible-disabled and the mandatory
+  spectral warning; the proposal-stamp table; the exact-ID model card
+  (grain identity incl. panel fields, input bundle, fixed-k stamp,
+  OOS/alignment policies, coverage + per-fold coverage, fit identities,
+  nominal-id occupancy, stability with per-cluster agreement and centroid
+  profiles, the transition matrix, and the insufficient-sample blocked
+  state), the exact-fit-id assignment / stratification / OOS-timeline
+  view, and the promotion role/status view — read-only (no promote,
+  launch, rank, or retrain control exists; the UI never unpickles).
+  Stratified RESULT views (metrics by regime) are the ML §5.5 comparison
+  classes and land with their studies. `IFVG_REGIME_CONTEXT_V1` remains a
+  planned feature block and S11 remains blocked: no regime output can
+  reach a predictive bundle or execution surface in V1.
+
+R5B.1 correction (MBP-1 source-coverage policy v2 — owner planning decision
+Q1, 2026-08-28; plan-review correction 4; final closure #2/#7):
+
+- **The R5B rule "positive raw venue sequence jump > 1 = source gap" is
+  WITHDRAWN and unrepresentable** (`Mbp1SourceContract.gap_semantics` is the
+  Literal `mbp1_source_coverage_declared_evidence_v2`;
+  `sequence_jump_semantics = sequence_jump_diagnostic_only_v2`). Databento's
+  `sequence` is the venue's original channel sequence and `mbp-1` emits only
+  top-of-book-changing events, so symbol-level continuity is never implied:
+  raw sequence jumps / resets and `ts_recv` spacing are DIAGNOSTICS
+  (`Mbp1SequenceJumpDiagnostics`, `Mbp1TsRecvGapDiagnostics`) — never an
+  interval, never a missing reason, never a reduced coverage.
+- **Evidence-based coverage** (`ifvg/features/mbp1_coverage_evidence.py`):
+  every claim carries an explicit `Mbp1EvidenceScope` (dataset / publisher /
+  channel / instrument partition, physical partition key, UTC date, the
+  VERIFIED expected partition span). Accepted evidence kinds: a
+  partition-scope declared gap manifest (`Mbp1PartitionGapManifest`), the
+  vendor `F_MAYBE_BAD_BOOK` flag (DBN bit 4 — a CHANNEL-gap warning), and
+  the dataset-condition record. Positive completeness exists ONLY through
+  `compile_mbp1_partition_gap_manifest` over a verified
+  `Mbp1CompletenessCompilationReport` (source inventory + owner review) —
+  never a bare boolean. Dataset conditions map to
+  `vendor_no_known_dataset_issue` / `vendor_dataset_degraded` /
+  `vendor_dataset_pending` / `vendor_dataset_missing` /
+  `vendor_condition_unavailable`; they can downgrade a scope, never prove
+  a partition complete.
+- **`F_MAYBE_BAD_BOOK` semantics**: the uncertainty starts at a
+  manifest-declared start, else the last TRUSTED in-scope event (no
+  bad-book / bad-`ts_recv` flag), else the partition's expected start —
+  never automatically the detection row; it closes ONLY at a documented
+  recovery boundary (manifest-declared end, documented vendor recovery
+  event, documented snapshot recovery, owner-approved boundary) and
+  otherwise runs to the partition end (`open_uncertainty_to_partition_end`,
+  fail closed) — the next unflagged row never closes it. The interval is
+  channel-scoped only behind a VERIFIED publisher/channel map; otherwise it
+  expands conservatively to the publisher/physical partition and is never
+  narrowed to the flagged instrument.
+- **Coverage calculation (D12)**: per physical partition, denominator =
+  `intersection([partition_expected_start_ts, partition_expected_end_ts],
+  authorized_session_span)` (18:00 ET previous day → 17:00 ET, DST-aware);
+  intervals are unioned, merged once, and clipped to that span; `coverage =
+  1 − union_gap_ns / physical_expected_span_ns`; physical partition spans
+  are half-open and must be pairwise disjoint after clipping (overlaps
+  refuse); multiple UTC partitions of one trading day are measured
+  separately and duration-weighted (the weakest partition status wins);
+  head/tail gaps count only when declared; an empty span is unknown; an
+  in-session event outside every declared span refuses the build; session
+  sub-spans no partition covers are uncovered intervals whose windows type
+  `coverage_evidence_unavailable`. A positive completeness claim must name
+  the partition content it certifies (report `verified_partition_refs` ∩
+  partition content hashes), and a provenance label without a manifest is
+  unrepresentable. `completeness_status ∈ {evidenced_complete,
+  declared_gaps, completeness_unknown}`; a partition without
+  partition-scope evidence — or under a downgrading dataset condition — is
+  `completeness_unknown` and every window of that day is typed
+  `coverage_evidence_unavailable`. A window intersecting a merged verified
+  interval is typed `declared_source_gap` (never widened, never imputed).
+- **Real read seam**: `read_mbp1_partition_frame` clips the UTC-date file to
+  the trading day's authorized session span and to `DEVELOPMENT_CUTOFF_UTC`
+  BEFORE normalization or hashing (the protected 18:00 ET tail of the last
+  exposed day is structurally excluded); the clipped counts and the raw
+  file's sha256 ride the partition row. The previous UTC file's evening
+  portion is not composed in R5B.1 (recorded deviation).
+- **Re-minted identities**: the normalized event schema retains
+  `publisher_id` + `flags` (new schema hash → new source artifact ids);
+  `IFVG_ORDER_FLOW_MBP1_V1` is RE-RESOLVED as a second versioned event
+  (`with_reresolved_block`: block v3, `ifvg_order_flow_mbp1_formula_v2` /
+  `mbp1_feature_materializer_v2`, new resolved block id, new registry hash,
+  new B2/B3 bundle ids; the R5B activation payload keeps the historical v1
+  versions and the R5B state stays exported as `PRE_R5B1_*`); feature
+  artifacts, coverage reports (`coverage_policy_id`), and controlled-study
+  ids all move. Synthetic coverage evidence (`provenance =
+  synthetic_fixture`) is lawful only under the synthetic marker — the
+  pipeline's S05 and the real source builder refuse it.
+- **Bounded real-data diagnostic** (`ifvg/features/mbp1_coverage_diagnostic.py`,
+  `scripts/ifvg_mbp1_coverage_diagnostic.py`): characterizes per-partition
+  row/flag counts, sequence-jump and `ts_recv`-gap distributions, the
+  clipped-row counts, and — only through store-verified partition manifests
+  supplied by `--evidence-json` — the open-interval facts, which manifests /
+  reports / condition records were loaded, and the policy-v2 completeness
+  status (an evidence-less partition reports `open_uncertainty_to_partition_end
+  = None`, never a misleading `False`); writes an immutable
+  `Mbp1CoverageDiagnosticReport` into the verification namespace; runs only
+  under the R1 real-slice gate — a `VerificationReplayPolicy` over exactly
+  the requested days, a persisted verified `VerificationRunEnvelope` +
+  `VerificationAuthorizationRef` binding the allowlist hash and a verified
+  coverage-matrix artifact, the one canonical program allowlist, and a
+  store root ending in `search_test/v1` (fail-before-path — the real run is
+  an owner action); never infers completeness from sequence continuity.
+  Real MBP-1 research and R5B acceptance stay blocked until policy v2
+  passes on the real fixture.
+
+R6.1 additions (the regime-lane correction release — owner audit of R6,
+planning decisions Q1–Q4, plan-review corrections 1–7, final contract-closure
+rulings 1–8; `QL-FSM-PROP-SEARCH-DASHBOARD/implementation-progress/R6.1-CORRECTION-PLAN-DOCS-FINAL/`):
+
+- **Context-bar panel materializer + block** (`ifvg/features/context_bar_panel_{contract,materializer}.py`,
+  `arrow_tables.py`): the seven registered `cbp_*` features (owner Q3) are
+  materialized ONLY from a `VerifiedReplayChartArtifact` (bars re-read and
+  rehashed against the manifest; the in-memory frame is never trusted) at the
+  two owner-registered intervals (300 s, 900 s) over COMPLETED bars; N = 12
+  prior same-trading-day bars, `MINIMUM_SOURCE_BARS = 13`, `STD_DDOF = 0`;
+  every one of the 13 source bars must satisfy `observed_1m_count ==
+  expected_1m_count` or ALL seven features are null with
+  `source_bar_incomplete` and a manifest-listed validity sidecar names the
+  offending bars; windows never cross 18:00 ET; the session OF A BAR is the
+  session in force at the bar's final instant (`session_of_bar_final_instant_v1`).
+  `IFVG_CONTEXT_BAR_PANEL_V1` is registered as a versioned event
+  (`with_registered_block`; AVAILABLE, family `context_bar_panel`, stage
+  `HTF_TAP`, `research_only_offline`, `offline_panel_materialization_v1`,
+  `row_id` join, categorical `cbp_session_state`); bundle
+  `BP0_CONTEXT_BAR_PANEL` (no base; a candidate view refuses it); the R5B.1
+  state stays exported as `PRE_R6_1_*`; `feature_block_registry_hash()`
+  moves. Protocol tightening: `panel_source_artifact_id` is a 64-hex verified
+  artifact id, only registered intervals/as-of policies, and grain/bundle-key
+  coherence (`assert_grain_bundle_coherent`: every input-bundle block joins on
+  `row_id` for the panel grain and on `candidate_id` otherwise).
+- **Fold schedules and fold-set artifacts** (`ifvg/fold_schedules.py`,
+  `ifvg/ml/fold_set_artifact.py`): `FoldScheduleEnvelope.fold_schedule_id`
+  hashes the grain-agnostic 40/5/5/2 windows over the authorized days;
+  every fold set (candidate or panel) is a persisted artifact carrying the
+  schedule id + its own row-population `fold_set_id` (the ONE legacy hash,
+  now delegated to by the ladder and the controlled study); cross-grain
+  studies require equal `fold_schedule_id` and per-fold windows, never equal
+  `fold_set_id`; the label-free `build_candidate_folds_from_schedule` and the
+  panel-native `build_context_bar_panel_folds` (embargo 2 days, purge by bar
+  span, stamped floor 300) exist beside the unchanged labeled builder.
+- **Two regime-assignment artifacts, two uses (D7)**: the DESCRIPTIVE
+  `RegimeOosAssignmentArtifact` (`ifvg/ml/regime_oos_assignment.py`; candidate
+  grain = the single OOS fold; panel grain = the normative PIT rule — same
+  trading day, last completed bar `<=` as-of, `cbp_valid`, elapsed ≤ one
+  interval, compatible partition; typed `panel_warmup` /
+  `no_completed_panel_bar` / `panel_gap` / `panel_stale` / `coverage_gap`;
+  never carried across 18:00 ET) feeds stratification only; the
+  `RegimeFoldFeatureArtifact` (`ifvg/ml/regime_fold_features.py`; fit k → fold
+  k only; fit-local `ctx_regime_<p12>_local_{distance_i,assigned_distance,
+  margin,id}` — the local id is a model feature only under
+  `hard_id_encoding = fit_local_categorical_v1`, default `none`; canonical
+  alignment reporting-only) is the ONLY supervised feature source — the leakage test proves later folds cannot alter an
+  earlier fold's bytes.
+- **Verified observation seam + executor** (`ifvg/ml/regime_observation_source.py`,
+  `regime_executor.py`): every regime input is a verified-loaded artifact
+  (`bundle_feature_views` / `context_bar_panels` stores); `source_artifact_ids`
+  come from the loaded envelope, never a caller string; `execute_regime_protocol`
+  persists protocol → loads the fold set → loads observations → runs →
+  persists fits by VERIFIED REUSE BY REPRODUCTION (an existing fit must
+  reproduce this fit's transform and labels from its verified bytes; joblib
+  bytes are never rewritten) → assessment → the descriptive OOS artifact.
+  The panel-grain candidate as-of instants come from a verified-loaded
+  bundle view (`candidate_as_of_source: RegimeObservationSourceRef`; a
+  tuple / bare string / panel-kind ref is "not evidence") and
+  `candidate_as_of_source_ref` is the LOADED envelope line
+  (`bundle_feature_view:<id>`, pattern-checked).
+  `run_regime_protocol` executes under `threadpool_limits(1)` so assignment
+  tables are byte-reproducible (an execution-environment control, not a
+  protocol field; fit ids unchanged — the R6 golden fit id holds;
+  `threadpoolctl` is imported lazily with an explicit failure message).
+- **Pipeline integration (D1/D4/D14)**: `PipelineSemanticSpecPayload.regime_study`
+  (`ifvg/ml/regime_study.py::RegimeStudyRequest`; every semantic id moves)
+  freezes algorithm, grain, bundle, inputs, k, winsorization, bootstrap
+  budget, the requested comparison classes and — for `feature_only` /
+  `cohort_model` only — the EXACT `regime_promotion_decision_id`,
+  `owner_decision_artifact_id`, and `required_capability_assessment_id`;
+  descriptive requests must omit them. Stages (`ifvg/search/pipeline_regime.py`):
+  S04 records the chart ids (one replay chart per child); S05 persists every
+  bundle view + frame and the regime observation (the panel materialized
+  from `PipelineWiring.context_bar_source` for the chart selected by the
+  declared policy `panel_chart_lowest_core_replay_id_v1`; the returned
+  artifact must carry the requested id and the run's pair or S05 fails
+  closed; the sidecar records the LOADED chart id) + the protocol (a
+  model-bearing run verifies it against the frozen decision); S06 the input
+  coverage + stamped floors; S08 the schedule derived ONCE from the
+  candidate view's observed trading days (charter allowlist ∩ observed;
+  `days_without_labels` typed) + fold-set artifact(s) built from those same
+  days + the per-fold adequacy preview; S09a the executor (a
+  model-bearing run refuses any assessment other than the frozen one); S09b
+  the fold-local features and S09c the controlled regime study / cohort model
+  (`ifvg/ml/regime_supervised_stage.py`) only for model-bearing requests — every
+  fit of the run happens in S09; S10 derives the deterministic decisions
+  (DESCRIPTIVE_ONLY or a typed BLOCKED state, then STRATIFICATION_READY iff
+  coverage gates passed AND an OOS assignment exists AND descriptive classes
+  were requested; `decided_at` = the evidence as-of instant, never the wall
+  clock) or re-verifies the frozen authority; S14 builds the stratified
+  reports from persisted artifacts only (the panel PIT assigner loads the
+  OOS assignment → protocol → panel frame → every fit's assignment sidecar
+  by exact id; the executed-trade tables are S02's this-run tables — no
+  persisted trade artifact exists) and performs ZERO fitting (test-enforced
+  on the descriptive, supervised-candidate and supervised-panel runs); the
+  modeled classes are recorded under `delivered_by` (verified S09c ids),
+  never as refusals; S15 reloads every regime artifact. A reused child whose
+  executed-trade tables a stratified report needs is re-derived and its
+  tables are adopted ONLY when they reproduce the persisted costed
+  evaluation of THIS cost policy (otherwise "reproduction unverifiable":
+  reused, no gates evaluated, no evaluation published, out of the
+  stratified reports); S12/S13 record the exact persisted
+  account-simulation ids in an attempt-invariant sidecar. Readiness
+  verified-loads a model-bearing request's frozen authority from the store
+  before any path — the tab's Preview and Launch handler do the same with
+  the store root and run scope BEFORE any charter / spec envelope or spawn.
+- **Verified owner-decision evidence (D5)** (`ifvg/search/owner_decisions.py`,
+  store `owner_decisions`): the artifact binds the EXACT protocol and
+  assessment and states decisions **25/28/29/30** (algorithm key + the exact
+  pinned KMeans parameter snapshot/hash; grain / interval / stage; k;
+  occupancy / rows / sample floors and the stability minimum) — every value
+  re-verified against the registry, protocol, and assessment; supersession is
+  store-owned and hash-chained (`SUPERSESSIONS.jsonl` + `SUPERSESSIONS.head`;
+  the line precedes the replacement's publication; every line backed by a
+  verified replacement; any edited / deleted / reordered / dangling line
+  fails closed; provenance may never weaken); synthetic provenance is lawful
+  in the `synthetic_fixture` run scope only, and that scope is confined to
+  test namespaces (`assert_run_scope_lawful_for_root`, the P0-4 mirror:
+  synthetic-provenance artifacts are refused at persist AND at load in a
+  research root); `persist_regime_promotion` requires the artifact from
+  FEATURE_ELIGIBLE onward (a bare 64-hex reference is not evidence),
+  structurally requires passing coverage gates + an OOS assignment for
+  STRATIFICATION_READY (D6; re-derived from the loaded assessment at the
+  report gate, whose owner branch re-runs the full authorization under the
+  run scope), refuses `MODEL_FEATURE` in V1, and derives `decided_at` from
+  verified artifacts (no flag, no wall clock; the CLI's STRATIFICATION_READY
+  reuses S10's exact decision).
+  Draft proposals (`DRAFT_OWNER_DECISION_PROPOSALS/`) carry placeholders that
+  cannot persist; `scripts/ifvg_regime_promotion.py` is the ratification CLI.
+- **Status-gated block activation (D9)** (`ifvg/ml/regime_block_activation.py`):
+  `IFVG_REGIME_CONTEXT_V1` activates as a pure versioned event bound to the
+  exact frozen FEATURE_ELIGIBLE decision, owner artifact, assessment,
+  protocol, and fold-feature artifact (`as_of_policy =
+  fold_local_fit_partition_assignment_v1`; join keys candidate/fold); the
+  module registries stay PLANNED at import; bundle `B7_CORE_REGIME`.
+- **Stratification classes (§5.5)** (`ifvg/ml/regime_stratified_{contracts,strategy,prop,frontier}.py`,
+  `regime_stratification_{gate,service}.py`, `regime_assignment_sources.py`):
+  `cohort_descriptive` / `stratified_prop` / `stratified_frontier` need
+  STRATIFICATION_READY; `feature_only` / `cohort_model` need FEATURE_ELIGIBLE
+  and are S09c deliverables (`regime_controlled_study.py`,
+  `regime_cohort_model.py`); reports bind the exact decision / assessment /
+  fit ids, the descriptive OOS artifact, and the executed-trade table hash;
+  `RegimeFilterRef` is consumed (one cohort per stratum); thin strata are
+  typed at the stamped 20 trades / 60 training rows; the frontier view is
+  never a selection input; prop events attribute by source trade, then PIT
+  for historical no-trade events, never a synthetic clock
+  (`source_trade_then_pit_v1`), ordered by the D15 `EVENT_TYPE_PRECEDENCE`
+  and dated by the event's own `trading_day`; the `stratified_prop` report
+  carries the bounded report-local `account_event_regime_summary.parquet`
+  (schema v1; one row per simulation × path × regime stratum / typed reason
+  × event type; keyed by the exact regime-assignment evidence; budget
+  `account_event_regime_summary_budget_v1` = 5,000,000 rows / 256 MiB,
+  typed refusal before publication; four envelope extras — never per-event
+  JSON); "nothing here promotes".
+- **Prop-event detail (D15)** (`alpha_lab/propsim/event_detail.py`):
+  `event_detail_persistence_policy_id ∈ {none_v0, account_event_detail_by_path_parquet_v2}`
+  + storage policy / schema version / budgets enter the account- and
+  portfolio-simulation identities and `SimulationProtocol` (default `none_v0`;
+  every simulation/charter/pipeline id moves — pre-acceptance evolution);
+  under v2 literally streaming ZSTD Parquet partitions (one path block at
+  a time through the store's sidecar-producer protocol — `ProducedSidecar` /
+  `SidecarProducer`; memory = one block + a 32-byte-per-row event-id index)
+  by `path_block_id = floor(path_ordinal / 250)`
+  with exact event time / trading day / clock policy / total-order fields;
+  budgets (10,000,000 rows; 2 GiB; block 250) fail BEFORE atomic publication;
+  `none_v0` artifacts are never widened.
+- **Bundle-aware CatBoost rung (D13)** (`ifvg/ml/catboost_bundle_model.py`,
+  `comparison_rows.py`): `ifvg_context_catboost_bundle_v1` (AVAILABLE, kind
+  `nonlinear_challenger_bundle`; frozen-lane parameters by value; native NaN
+  + `MISSING_CATEGORY`; registry ∪ block-declared categoricals) runs on both
+  arms of every controlled comparison; `comparison_row_id = hash{fold_schedule_id,
+  candidate_fold_set_id, fold_index, candidate_id, label_artifact_id}` keys
+  the identical-rows gate and every paired delta (the legacy `oos_row_id`
+  stays for M0–M3 compatibility); the frozen M0–M3 CatBoost lane is byte- and
+  identity-unchanged (golden protocol hash).
+- **Stability / transitions (D10/D11)**: bootstrap on EVERY valid fold
+  (per-fold seeds; fold 0 reproduces R6); the promotion gate
+  `minimum_bootstrap_aligned_ami_mean` (0.5) applies to the protocol-wide
+  minimum fold mean; candidate-event transitions reset on trading day /
+  named session / a stamped 7200 s gap; panel transitions count consecutive
+  completed bars within a trading day.
+- **Evidence hygiene**: the two provider-key tests are hermetic
+  (`monkeypatch.delenv`); the R6.1 browser manifest v2 binds screenshots to
+  the final commit (`verify_browser_manifest.py`); each release folder
+  carries a `git format-patch` source-review patch + sha256; two independent
+  read-only adversarial reviews (contract fidelity; safety/access) — 28
+  findings, every one dispositioned in
+  `R6.1/ADVERSARIAL_REVIEW_RESOLUTION.md`.
+- **Trust boundary (stated in-tree; DEV-R6-8)**: the manifest protocol verifies
+  INTEGRITY, not authenticity — a store root is a trusted local directory;
+  the UI never unpickles; signing / a non-pickle fit serialization remains a
+  post-V1 hardening candidate. `IFVG_REGIME_CONTEXT_V1` reaches a predictive
+  bundle only through the status-gated activation above; S11 stays blocked;
+  no regime output reaches an execution surface in V1.
+
+R6.1-FIX additions (the compact correction of R6.1 after independent review —
+plan `QL-FSM-PROP-SEARCH-DASHBOARD/implementation-progress/R6.1-FIX-HARDENING-READINESS-PLAN/IMPLEMENTATION_PLAN.md`
+revision 3, Phase 1; findings F-01…F-10D):
+
+- **Verified assignment evidence (F-01/F-02/F-05)** (`ifvg/ml/regime_contracts.py`,
+  `regime_store.py`, `regime_oos_assignment.py`, `regime_executor.py`): the per-fit
+  assignment sidecar is serialized under the ENFORCED `FIT_ASSIGNMENT_SCHEMA`
+  (exactly `RegimeAssignmentColumns`; hash `FIT_ASSIGNMENT_SCHEMA_HASH`) and every
+  table satisfies `validate_assignment_rows` (kinds `fit` / `descriptive` /
+  `model_facing`: a valid row carries the complete, self-consistent value set —
+  64-hex fit id, fold, lawful partition, local id in `[0, k)`, `k` finite
+  distances with `assigned_distance == distances[local] == min` and
+  `assignment_margin == d2 − d1 ≥ 0`, the canonical id except on the
+  model-facing kind — an invalid row keeps its linkage key and carries no output
+  and one registered reason; no optional-column fallback survives). `load_regime_fit_assignments` returns
+  `VerifiedFitAssignments` (envelope, artifact, frame, sidecar SHA-256, schema
+  hash) and `persist_regime_fit` reuses an existing fit only when the candidate
+  assignment bytes equal the stored sidecar byte-for-byte. The executor
+  exact-loads every fit it persisted and builds the descriptive OOS artifact
+  from those verified frames only; `RegimeOosAssignmentPayload` binds
+  `regime_fit_assignment_refs` (`FitAssignmentRef` per fit, sorted; the
+  `regime_fit_ids` projection is validated against them), `resolved_cluster_count`,
+  `candidate_as_of_stage` (the anchor the hashed as-of instants came from; an
+  unparseable non-null anchor is a hard error) and a `consulted_assignments_hash`
+  over EVERY consulted value (fit, row, fold,
+  partition, local id, canonical id, distance vector, assigned distance, margin,
+  validity, reason); formula `regime_oos_assignment_v2`. `RegimeAssignmentEvidenceRef`
+  pins `assignment_table_sha256` + `assignment_schema_hash` of the verified artifact.
+- **Fold-feature source identity (F-03)** (`ifvg/ml/regime_fold_features.py`,
+  `regime_supervised_stage.py`): `FoldFitRef` binds `assignments_sidecar_sha256`
+  + `assignment_schema_hash` whenever a fit is present (null together only for an
+  absent fit); `build_regime_fold_features(fit_assignments=…)` consumes
+  `VerifiedFitAssignments` only (an in-memory run frame is refused by type) and
+  S09b passes the executor's verified evidence; the loaders re-check every ref
+  against the store by exact id; `validate_fold_feature_rows` holds on build, load
+  and the ladder seam.
+- **Candidate as-of policy (F-04)**: a candidate whose stage anchor is null is
+  PRESERVED as `candidate_as_of_missing` (registered in
+  `PANEL_ASSIGNMENT_MISSING_REASONS`, hence in the fold-feature vocabulary); an
+  unparseable non-null instant stays a hard error; the as-of source hash
+  represents the null deterministically.
+- **Thin-regime accounting (F-09) + normalized frame (F-10B)**
+  (`ifvg/ml/regime_stratified_strategy.py`, `regime_stratified_contracts.py`,
+  `search/strategy_metrics.py`): the executed trades are validated + normalized
+  ONCE and that projection (`normalized_executed_trades`) drives every join,
+  stratum, computation and the binding `executed_trade_table_sha256`;
+  `RegimeNetRAccounting` (formula `regime_net_r_accounting_v1`, basis
+  `all_valid_assigned_trades_v1`) sums `per_trade_net_r` over EVERY valid assigned
+  trade — thin regimes included — with `abs_net_r_share_by_regime`, signed
+  contribution fractions, `unassigned_net_r`, `assigned_regime_count`,
+  zero-denominator reasons and the `works_only_in_regime` claim (true; FALSE when
+  the assigned side refutes it; null with `incomplete_assignment_accounting` only
+  when unassigned trades prevent a supported claim), every derived value
+  recomputed by the contract's validator; the reportability floor governs
+  interval/reportability metrics only. The stratification service re-verifies
+  each child's frame against its persisted executed-trade table and binds the
+  artifact's projection hash (`executed_trade_table_artifact_sha256`).
+- **Exact label identity (F-08)** (`ifvg/ml/comparison_rows.py`,
+  `controlled_feature_study.py`, S07): `label_artifact_content_id` binds the
+  registered label policy and EVERY consumed label / economic column
+  (`LABEL_CONSUMED_COLUMNS`); S07 mints it; `ControlledFeatureStudyPayload.label_artifact_id`
+  is mandatory with `label_identity_source ∈ {label_artifact, content_hash_unpersisted}`
+  — a helper run without the exact artifact carries the full consumed-column hash
+  and can never be saved, compared as an immutable study, or promoted; every
+  helper path (the ladder, the CatBoost bundle rung, the logistic rung) defaults
+  to that hash and the ladder run is stamped `label_identity_source`.
+- **Immutable executed-trade table (F-06)** (`ifvg/search/executed_trade_table.py`,
+  store `executed_trade_tables`): the EXACT ordered 42-column Arrow projection
+  `EXECUTED_TRADE_TABLE_SCHEMA_V1` (`core_executed_trade_exact_v1`; typed as the v2
+  capture types it) is declared, never inferred; the identity derives from the
+  core replay (`executed_trade_table_id_for`), so S02/S14 exact-load it without a
+  listing; the envelope binds the projection SHA-256, the raw core table hash the
+  neutrality report hashes, row count and byte size. S02 persists it after a fresh
+  completion and after verified reproduction (byte-for-byte against the persisted
+  table — projection bytes AND raw core-table hash; the costed-evaluation
+  reproduction remains the fallback for a child without a table; nothing
+  verifiable → typed `executed_trade_table_unavailable`), exact-loads it back and
+  computes EVERY costed evaluation from the loaded projection inside per-child
+  containment (one identity, one byte content); S14 iterates the charter's child
+  set (never a prior attempt's report record), verified-loads every gated child's
+  table, binds `executed_trade_table_id` into the report body +
+  `source_metric_refs`, and records `children_evidence` / typed `children_skipped`
+  (`child_not_completed_or_reused`, `strategy_gates_not_passed`,
+  `executed_trade_table_unavailable`).
+- **Fail-closed prior-stage sidecars (F-07)** (`ifvg/search/store.py`,
+  `pipeline.py`, `pipeline_regime.py`, `ml/regime_report_stage.py`): the typed
+  probe contract — `probe_sidecar` / `has_sidecar` / `load_optional_sidecar_bytes`
+  / `load_json_sidecar`; `sidecar_not_produced_for_path` is the ONLY optional
+  absence; `store_entry_missing` (the entry directory does not exist),
+  `manifest_missing_for_existing_entry`, `malformed_manifest`,
+  `manifest_hash_mismatch`, `envelope_identity_mismatch`,
+  `sidecar_missing_but_manifest_declares_it`, `sidecar_hash_mismatch`,
+  `malformed_sidecar`, `unexpected_io_error` are typed `SidecarLoadError`s that
+  propagate — raised at the detection point by `load_verified_envelope`,
+  `load_sidecar_bytes` and `has_envelope` (corrupt is never absent). The prop-vector / account-simulation /
+  lineage / regime-report / S09c-record recoveries use it; S15 records
+  `reload_failures` (store/id → sanitized reason) in the state file's publication
+  block and immutably as `PipelineResultPayload.reload_failure_reasons`, and
+  reloads every executed-trade table and stratified report the S14 record names;
+  a halted or cancelled attempt marks every later planned stage PENDING, resets
+  the publication block, and `activate_pipeline_result` re-derives the gates from
+  the latest attempt (no stale terminal status is carried forward).
+- **Production correctness (F-10A/C/D)**: the five pipeline wiring checks raise
+  `PipelineWiringError` (typed, survives `python -O`); the fold-feature builder's
+  two asserts became typed errors; `Mbp1PartitionEvidence` requires FULL scope
+  equality with the gap manifest and a positive completeness claim requires the
+  compilation report's `verified_partition_refs` to EQUAL the complete partition
+  content refs (`partition_content_refs=None` is refused for a positive claim);
+  `FrozenContract.model_copy` refuses a raw string for a scalar enum-typed field
+  and a non-member element in a sequence-of-enum field.
+- **Unchanged (golden-tested)**: `resolved_regime_protocol_id`, the R6 golden
+  `regime_fit_id`, the frozen M0 CatBoost hash, `core_replay_id`,
+  `account_simulation_id`, `feature_block_registry_hash`
+  (`tests/agents/ifvg_search/test_r61_fix_goldens.py`). Re-minted (synthetic only):
+  OOS-assignment, fold-feature, bundle-path ladder / study, stratified-report,
+  controlled-study, label-artifact and pipeline-result identities. Verified reuse:
+  zero replay for non-stratified runs; one verified reproduction per reused child
+  (projection bytes + core-table hash) when stratified reports are requested.
+
+HARDENING-BACKEND additions (Phase 2 backend hardening + Phase 3 / Phase 4 contract
+authoring of `QL-FSM-PROP-SEARCH-DASHBOARD/implementation-progress/`
+`R6.1-FIX-HARDENING-READINESS-PLAN/IMPLEMENTATION_PLAN.md`
+revision 3; findings F-11 F-12 F-13 F-16 F-17 F-18 F-20 F-21 F-22; no owner action taken,
+no real seed replay, no real ≤5-day run):
+
+- **Semantic store namespace (F-11)** (`ifvg/search/store_namespace.py`,
+  `scripts/ifvg_store_namespace.py`): research-versus-test authority is the store's
+  immutable, re-verified `STORE_NAMESPACE.json` envelope (`namespace_class`, a stable
+  `store_instance_id` that is never a path hash, the supersession genesis anchor) — never a
+  pathname; every owner decision, supersession record, authorization bundle, verification
+  and seed-production authorization binds the `store_namespace_id`; an unmarked store has no
+  authority; the one-time explicit `init` migration states the class; the old pathname
+  heuristic survives as a deployment defense-in-depth check only.
+- **Immutable supersession chain + head witnesses (F-12)** (`ifvg/search/supersession_chain.py`;
+  store `owner_decision_supersessions`): one content-addressed record per replacement, a
+  mandatory head (`owner_decisions/SUPERSESSIONS.head`) whose digest commits to the whole chain
+  from the genesis anchor, four-step atomic publication under the lock (an orphan record has no
+  authority; the head only ever names a verified record), idempotent identical replay, refused
+  divergent replay; every real charter / authorization records the current
+  `{store_namespace_id, line_count, head_sha256}` witness and a missing, shorter or different
+  current head is refused (local rollback detection, not cryptographic authenticity).
+- **Liveness-aware owner-decision lock (F-13)** (`ifvg/search/owner_decision_lock.py`): pid,
+  process-start token, random token, host, heartbeat; reclaimed only when the heartbeat timed
+  out AND the holder is demonstrably dead (no such pid / exited / PID reuse); a live holder,
+  another host or a malformed body is never reclaimed; the writer re-verifies its token before
+  publication and a lost lock aborts; release unlinks only its own token.
+- **Capacity (F-17)** (`propsim/event_detail.py`, `propsim/search_bridge.py`,
+  `ifvg/ml/regime_stratified_prop.py`, `scripts/hardening_capacity_benchmark.py`): the
+  event-detail writer streams an iterable of walk pairs (never materialized), keeps no
+  whole-artifact id index (canonical-key argument + an unconditional disk-backed DuckDB
+  distinct check over the written partitions), and the regime-stratified event summary
+  aggregates exactly through DuckDB over intermediate Parquet partitions under an explicit
+  memory limit and attempt-local temp directory with canonical ordering; the
+  `HARDENING_CAPACITY_POLICY_V1` benchmark (native RSS) passed every §4.4 gate at 250k/500k/1M
+  rows (`CAPACITY_BENCHMARKS.md`).
+- **Warning policy (F-18)**: `pyproject.toml` runs the suite under `filterwarnings = error`
+  with ONE exact third-party rule (the scikit-learn 1.7 / SciPy 1.16 L-BFGS-B deprecation);
+  `dataset.concat_schema_aligned` replaces the deprecated concat with explicit dtypes (frozen
+  bytes unchanged; all-null columns never dropped); project-owned warnings = 0.
+- **Sequential execution truth (F-20)** (`ifvg/search/pipeline.py`, `scripts/ifvg_pipeline_job.py`):
+  `SUPPORTED_CHILD_WORKERS = 1`, `execution_mode = sequential_children_v1`; `WorkerPolicy`
+  refuses `max_workers != 1` with the typed reason `unsupported_worker_parallelism_v1` (never
+  coerced), the job shim refuses before job creation, and every attempt receipt persists
+  `effective_workers=1` / `execution_mode`.
+- **Phase 3 contracts (F-16 / F-21 / F-22)** (`ifvg/search/trading_calendar.py`,
+  `verification_window.py`, `seed_production.py`; `scripts/ifvg_verification_window_shortlist.py`,
+  `scripts/ifvg_seed_production.py`; stores `seed_production_authorizations`,
+  `seed_production_runs`): a logical trading day is the Strategy-Core trading-day id whose
+  stream is `[td−1 18:00 ET, td 18:00 ET)` over the physical partitions `(td−1, td)`
+  (`cme_globex_18et_weekday_v1`; physical Sunday partition dates are not trading days); the
+  coverage shortlist was rebuilt from already-authorized evidence on consecutive logical days
+  under the plan's lexicographic ranking (no owner selection, no allowlist registration — the
+  June proposal is INELIGIBLE as stated: no exact verifier target); the separately authorized
+  seed-production lane (`SeedProductionReplayPolicy`, authorization / run contracts that bind
+  the namespace + head witness, profile, store-day chain, source-inventory hash and code
+  identities; permitted outputs = seed snapshot + access audit + run receipt) is proven
+  synthetically; the owner packets are unsigned and their placeholders fail validation.
+- **Phase 4 authoring** (`ifvg/search/bounded_verification.py`,
+  `scripts/ifvg_bounded_verification.py`; stores `r1_baseline_gate_reports`,
+  `bounded_release_control_flow_reports`): the typed §6.1
+  preflight (namespace, witness, real authorization, 1–5 consecutive logical days, physical
+  mapping, program allowlist, seed) before any path; the immutable `R1BaselineGateReport`
+  (both attempts' six gates + the audit-mode digests + the eight "also prove" proofs) and the
+  release-specific `BoundedReleaseControlFlowReport` (eight components typed from the persisted
+  pipeline state — never research evidence); the runner refuses `fail_before_path` without the
+  owner's persisted authorization (proven against the real, run-less verification store).
+- **Unchanged (golden-tested)**: `resolved_regime_protocol_id`, the R6 golden `regime_fit_id`,
+  the frozen M0 CatBoost hash, `core_replay_id`, `account_simulation_id`,
+  `feature_block_registry_hash`, the `B0_CORE` bundle id. Re-minted (synthetic only):
+  owner-decision artifact ids (`store_namespace_id`), verification-run ids and charter ids that
+  carry a real bundle (namespace + witness), execution-attempt receipts.
+
+HARDENING-BACKEND-FIX additions (the compact backend correction of
+`QL-FSM-PROP-SEARCH-DASHBOARD/implementation-progress/HARDENING-BACKEND-FIX/IMPLEMENTATION_PLAN.md`
+— ten corrections, nothing else; no owner action taken, no seed production, no real ≤5-day
+run; `backend_dev_complete_for_ui = true`, acceptance still transitively blocked by R1):
+
+- **Token-safe stale-lock reclamation** (`ifvg/search/file_mutex.py`, `owner_decision_lock.py`):
+  reclamation runs under a private standard-library cross-process mutex (`msvcrt` byte range /
+  `fcntl.flock`; never unlinked; carries no authority); the stale body is re-read and re-evaluated
+  under the mutex and unlinked ONLY when byte-identical to the dead holder observed; a persistent
+  read failure is the typed `lock_read_failed` (never absence); `release()` raises
+  `lock_release_failed` when it cannot verify its own lock; a failed body write removes the partial
+  exclusive file.
+- **Atomic, recoverable namespace initialization** (`ifvg/search/store_namespace.py`): the
+  envelope and the genesis head are published as one pair through temporary files and
+  verified-loaded together under a one-time init mutex; a half-initialized store is recovered only
+  by the identical request (class + explicit instance id, no supersession records) and is otherwise
+  the typed `incomplete_store_namespace_initialization`; conflicting bytes are never overwritten.
+- **Public source-kind boundary** (`ifvg/search/trading_calendar.py`): the public `SourceKind` is
+  exactly `mbp1` / `trades` / `legacy_verified_replay_source`; a historical physical partition
+  resolves to the opaque legacy value through the private physical-file resolver (an internal
+  `PhysicalSourceDescriptor` keeps the truthful file name, era, hash and partition key and implies
+  nothing beyond replay bytes); every inventory, window ref and the seed inventory hash refuse the
+  physical stem.
+- **Exact regime provenance and native validation** (`ifvg/ml/regime_contracts.py`,
+  `regime_oos_assignment.py`, `regime_fold_features.py`, `regime_assignment_sources.py`): the
+  descriptive OOS assignment keeps three-way semantics (valid; invalid with its applicable fit /
+  fold / partition and the fit's typed reason; `no_oos_assignment` only for a candidate with no
+  OOS test row) on the candidate grain, the panel PIT rule, the fold-feature spine and the
+  executed-trade projection; every assignment / fold-feature table is validated natively before
+  any conversion (actual booleans, integral values, no numeric strings / infinity / sentinel
+  identifiers, no `errors="coerce"`); the OOS payload binds the registered schema hash, the saver
+  and the loader decode the Arrow bytes and prove schema / count / uniqueness / row invariants, and
+  the candidate-as-of and assignment sets are exactly equal.
+- **Fail-closed manifests; exact label and executed-trade evidence** (`ifvg/search/store.py`,
+  `ifvg/ml/comparison_rows.py`, the three study runners, `regime_stratification_service.py`): one
+  central manifest-entry validator is shared by every probe / load / reuse path (bare relative file
+  names, lowercase 64-hex digests, non-negative byte counts, no duplicates / reserved names, the
+  envelope entry exactly once; artifacts resolved and compared before opening —
+  `sidecar_path_escape`; `invalid_store_locator` distinguished from absence); duplicate label
+  candidates are refused before hashing; the pipeline's persisting study seams prove the label
+  artifact derives exactly from the registered policy; the persisting stratification service
+  requires every child's exact `executed_trade_table_id`.
+- **Central seed canonicalization** (`ifvg/search/child_replay.py::save_seed_snapshot`): the one
+  seam rebuilds every aware datetime (pytz / zoneinfo / fixed offsets) under the stdlib UTC
+  tzinfo, leaves naive datetimes unchanged and rebuilds containers, so the same instants under any
+  representation mint the same seed hash, snapshot id and sidecar bytes; the seed-production runner
+  delegates to it.
+- **Bounded event-detail partition** (`propsim/event_detail.py`, `propsim/search_bridge.py`,
+  `scripts/hardening_capacity_benchmark.py`): `EVENT_DETAIL_BUDGET_V2` registers
+  `max_rows_per_partition = 50,000` (the benchmark's measured row-group size; no ceiling lowered);
+  the writer flushes at the bound even inside one path, partitions are keyed
+  `(path_block_id, partition_ordinal)` with first / last event keys, rows, bytes, digest and schema
+  hash, a refused build leaves no partition behind, the reader proves the bound and the total
+  order; the V1 budget stays loadable but is refused by the writer; the benchmark's `normal` /
+  `skewed` / `dense` shapes and the resident-batch gate passed at 250k / 500k / 1M rows.
+- **Complete authority-chain proof** (`ifvg/search/owner_decisions.py::verify_complete_owner_authority_chain`):
+  the ONE proof every real authority seam runs (charter freeze / load, pipeline launch, activation,
+  executors, verification run, MBP-1 diagnostic, the seed-production and bounded-verification
+  authorizations, the regime chain loader) — every record verified from the genesis anchor, every
+  superseded and replacement decision verified-loaded, lawful transitions only, and the signed
+  witness equal to the verified current head (`supersession_decision_unverifiable`,
+  `supersession_transition_unlawful`, `supersession_chain_divergent`).
+- **Unchanged (golden-tested)**: the Strategy-Core pin, the fixed M0–M3 lane, the R6.1-FIX goldens
+  (`B0_CORE` bundle id, candidate protocol id, `core_replay_id`, `account_simulation_id`,
+  `feature_block_registry_hash`), R5B formulas, model protocol parameters, KMeans fit identities,
+  prop-firm rule contracts, the S11 blocked reason, `order_flow_depth_policy="mbp1_only_v1"`.
+  Re-minted (synthetic only): inventories / windows / seed authorizations that serialized the
+  physical stem, seeds created from non-UTC representations, simulations under the default (V2)
+  event-detail budget, regime OOS / fold artifacts whose invalid rows previously collapsed.
+
+UI-1 additions (Phase 1 of the owner-approved UI/UX redesign,
+`QL-FSM-PROP-SEARCH-DASHBOARD/implementation-progress/UI-UX-REDESIGN-PLAN/IMPLEMENTATION_PLAN.md`
+revision 2, over the HARDENING-BACKEND-FIX.1 release head; UI-2 … UI-6 follow; acceptance
+still transitively blocked by R1):
+
+- **Presentation package** (`ifvg/presentation/`): `run_purpose` — the presentation-only
+  `RunPurpose` (Implementation Verification → `verification_5d` in the `test` namespace;
+  Development Research / Full Authorized Development → `full_authorized_development` in the
+  `research` namespace; `RunScope` values unchanged), the `EvidenceClass` (a synthetic fixture
+  is confined to Implementation Verification), the mutable non-semantic `RunPurposeAnnotation`
+  (draft field + catalog `purpose` event), `resolve_draft_purpose` (stored → unambiguous legacy
+  derivation → `purpose_unresolved`), `namespace_state_for_store` (the id from the VERIFIED
+  envelope only) and `resolve_purpose` (the freeze verdict); `charter_satisfiability` — the
+  named-rule report refused BEFORE freeze (FSM ≥ 1 challenger; Evaluate exactly one profile;
+  Compare exactly one challenger configuration; a selected prop objective requires a verified
+  contract and is never rewritten; Prop ≥ 1 / Universal ≥ 2 firms; real verification is the
+  exact baseline with verification gates only); `status_vocabulary` — the thirteen `UiStatus`
+  values (glyph + word + color token; PASS only for an evaluated true) with additive adapters.
+- **Validator** (`ifvg/search/charter.py`): the identity-bearing subset fail-closed (FSM ≥ 2
+  profiles, single ≤ 2, Universal ≥ 2 firms; a real charter's prop objective requires a firm
+  contract — never a silent rewrite).
+- **Providers** (`ifvg/study_providers.py`): `resolve_store_namespace`,
+  `artifact_scope_for_charter`, the typed `AuthorizationReadiness` for the
+  `VerificationAuthorizationRef` (namespace + current head through the complete authority-chain
+  proof, profile, allowlist) and for the owner bundle (catalogued verified owner-decision
+  artifacts per required key), bundles assembled only from `ready`, and run listings annotated
+  with each run's own store (exact-id located), namespace class and scope.
+- **UI** (`scripts/ifvg_study_tab.py`, `ifvg_study_wizard.py`, `ifvg_pipeline_tab.py`,
+  `ifvg_results_tab.py`, `ifvg_active_runs_tab.py`, `ifvg_results_charts.py`,
+  `ifvg_lab_tab.py`): the `Start` task cards and the `Verify Implementation` readiness surface;
+  the goal card on every step; the evidence-class choice and typed readiness on Validation; the
+  frozen warmup prefix read-only with field-level logical-day validation; no worker control
+  (`sequential_children_v1 · effective workers 1`); the satisfiability card on Review; the
+  registered executor resolved before any spawn (`runner_unavailable`) and the launch reported
+  only after persisted state exists (`launch_not_started`); gates recorded with the verified
+  namespace id + state digest and activation bound to both; direction-aware heatmap / firm-matrix
+  colorscales; the reconciliation banner derived from evaluated gates; the additive §31 states
+  (`no_runs`, `not_selected`, `artifact_missing` / `artifact_corrupt`, `purpose_unresolved`,
+  `authorization_not_ready`, …); the fifth research question `Evaluate one configuration`.
+- **Unchanged**: Strategy-Core, the fixed M0–M3 lane, every immutable artifact identity, the
+  exact-ID loading rule, S11, MBP-1's `research_only_offline` boundary, the backend contracts.
+
+UI-2 additions (Phase 2 of the UI/UX redesign over the UI-1 release head; UI-3 … UI-6 follow;
+acceptance still transitively blocked by R1):
+
+- **Verification Center** (`scripts/ifvg_verification_center.py`): six state-driven sections —
+  purpose / readiness (every typed state on one sticky card), the logical trading-day fixture
+  (the shortlist re-validated through its contract; logical days and physical partitions as
+  separate tables; the owner's PROVISIONAL window recorded in the mutable center root — the
+  document keeps `owner_selection = NOT PERFORMED`), the seed lane (the unsigned packet prepared
+  in-app; the owner's registration and the seed job as exact external CLI commands whose
+  `--receipt-out` receipts are picked up by exact id; the authorization, the run receipt and the
+  seed snapshot verified through the backend's own loaders), the final authorization (the unsigned
+  packet after a verified seed; the owner's completed reference validated typed, never persisted
+  here), review / run (the exact-baseline charter frozen from the SIGNED reference — its content
+  hash is the 21/R-5 decision artifact, never a run id — the pipeline spec, the registered
+  `VerificationRunEnvelope`, the §6.1 preflight and, only when it passes, the exact bounded-run
+  command) and the monitor of the resolved seed / verification stages only. No spawn seam, no
+  Publish route; nothing signs, produces a seed, launches or registers the program allowlist.
+- **Presentation package**: `flows` — the goal-derived conditional flows (plan §5.4; skipped
+  steps carry a visible reason and contribute nothing; a selected prop objective keeps the
+  contract step and blocks there; the Validation step stays in every research flow; exact restore
+  by the stored step key); `review_vocabulary` — the owner-approved verdict labels over the
+  preserved `ifvg_visual_review_v1` keys plus the additive `not_applicable`; `Unreviewed` is a
+  UI state only.
+- **Drafts** (`study_drafts.py`, schema 2 — additive): session-only until the first Save Draft or
+  the first valid Next, then autosave with a visible chip; archive / restore; permanent delete
+  only for never-frozen archived drafts with the exact typed name; the one-time bulk archive of
+  the empty untitled drafts; duplicate detection; `discard_draft` retired.
+- **Providers** (`study_providers.py`): the shortlist / inventory / center-record / seed-state /
+  signed-reference / run-registration / preflight / monitor read models;
+  `verification_bundle_from_signed_ref` (run-independent).
+- **Seed CLI** (`scripts/ifvg_seed_production.py`): `register-authorization`, `--receipt-out`.
+- **UI**: History (archive / restore / typed delete, bulk archive, read-only purpose / store
+  filters, the run archive flag); the verifier review form (per-case keys, `Unreviewed`,
+  definitions, explicit Save Review, `Unsaved` / `Saved`); the wizard's goal-derived steps and
+  the seven additive §31 states.
+- **Unchanged**: Strategy-Core, the fixed M0–M3 lane, every immutable artifact identity, the
+  exact-ID loading rule, S11, MBP-1's `research_only_offline` boundary, the backend contracts.
+
+UI-3 additions (Phase 3 of the UI/UX redesign over the UI-2 release head; UI-4 … UI-6 follow;
+acceptance still transitively blocked by R1):
+
+- **Presentation package** (`ifvg/presentation/`): `metric_registry` — one `MetricSpec` per
+  displayed technical key (human name, definition, persisted source, unit, directionality from
+  `OBJECTIVE_DIRECTIONS` where registered, and the reference the value is read against — the
+  selected resolved gate, the prevalence-reference Brier, the 0 skill boundary, the 0.5 chance
+  line as a direction only, the calibration targets as a distance only, the stamped
+  sample-adequacy minimums, the persisted report limits, the measured access counters versus
+  the policy-enforced `protected_*` zeros, and intervals that cross zero) with
+  `evaluate_metric` / `evaluate_interval` / `evaluate_gate_flag` — missing or unevaluated
+  evidence is UNAVAILABLE, never PASS; `rollups` — the deterministic FAIL → BLOCKED →
+  INCONCLUSIVE → WARNING → PASS → INFORMATIONAL section roll-ups (one sentence, main reason,
+  inspect-next); `help_registry` — a `HelpEntry` per control id rendered by `help_text`, the
+  glossary of the plan's sixteen terms and the explicit live `HELP_EXEMPTIONS`; `labels` — the
+  human-label registry (profiles, bundles, blocks, objectives, model protocols, regime
+  algorithms, stamps, statuses, roles, classes, tiers, verdicts) and the distinct availability
+  chips; `context_research` and `results_presentation` — the pure reading assemblies of the
+  Context Research and Results screens.
+- **Shared primitives** (`scripts/ifvg_ui_common.py`): `detail_levels` (Summary / Research
+  details / Technical identity & audit over the unchanged persisted vocabulary; `disclosure_level`
+  delegates), `identity_reveal`, `status_chip_line`, `metric_card`, `rollup_card`,
+  `glossary_expander`.
+- **Context Research** (`scripts/ifvg_lab_tab.py`): the decision summary first (Data integrity,
+  Probability skill, Calibration, Stability), the sample-adequacy card, registry metric cards
+  with their references, the named reliability diagonal, coverage and net R on separate axes
+  (`ifvg_lab_charts.build_coverage_figure` over the adapter's threshold rows;
+  `build_reliability_figure`), fold validity chips, intervals, the top-N importance with fold
+  stability, run-compatibility reasons in words, raw JSON only under Technical identity & audit;
+  the adapters expose the reference / calibration / fold / access fields the frozen statistics
+  already persist — `context_reporting.py` and the M0–M3 computation are untouched.
+- **Results** (`scripts/ifvg_results_tab.py`): the Selected configuration block (Strategy
+  quality and Prop feasibility roll-ups; registry metric cards against the charter's resolved
+  gates; the prop vector as the worst firm), registry captions on the metric pickers, the
+  explorer column guide.
+- **Pipeline surface**: the ladder frame keeps AUC numeric with a separate `AUC reason` column;
+  the MBP-1 (`ifvg_mbp1_panels.py`) and regime (`ifvg_regime_panels.py`) panels are summary-first
+  — readiness resolved from the selected run, then Research details, then Advanced diagnostics
+  holding the manual exact-id inputs, registries and stamps.
+- **Help everywhere**: every widget of every UI script carries registry help or is a registered
+  navigation exemption; the source scan (`tests/agents/test_ifvg_help_scans.py`) enforces it.
+- **Unchanged**: Strategy-Core, the fixed M0–M3 lane, every immutable artifact identity, the
+  exact-ID loading rule, S11, MBP-1's `research_only_offline` boundary, the backend contracts.
+
+
+### HTF selection-cap experiment support (2026-09-12)
+
+The registry now offers cap 2 as a pending value requiring exact strategy-search
+approval; cap 1 stays the default. Evaluate One fixed settings expose this cap.
+`search/htf_cap_experiment.py` creates the four fixed-profile drafts for the
+240/90-wait comparison, preventing automatic default expansion. Per-timeframe
+selection ranks both directions before taps and conflict/direction handling.
+The new `selection_audit.py` companion preserves complete per-bar inventory
+observations, pre-cap universes and HTF creations when the imported research
+Core supports them, with strict coverage and tap reconciliation. These source
+files enter replay identity; old artifacts and canonical tables stay immutable.
+
+The task-local Core branch ports only active-selected-HTF physical tracking
+after registry eviction, including schema-3 day seeds, and adds audit-only
+selection observations. The installed/live Core pin is unchanged. Required
+full replay uses the original 117-date bundle, four separately approved fixed
+profiles and source-comparable controls; no other research policies apply.
+
+
+### IFVG no-entry research (2026-09-14)
+
+See `docs/IFVG_NO_ENTRY_DROUGHT.md` and the frozen task artifacts under
+`../Claude-Quant-Lab-Research-Artifacts/archived-reports/ifvg_no_entry_drought_20260914/`. The isolated Core schema-4 day seed
+preserves pending logical-close bars and the last minute decision. This repairs
+seven partial-day deliveries without making bars available early, retains the
+active-selected-HTF repair, and changes source/seed identities. Historical studies
+and installed/live Core pins remain unchanged.
+
+The separately approved research policy `htf_direction_selection_policy` retains
+`mixed_direction_rank_v1` as default and adds `enabled_before_rank_v1`. The latter
+filters disabled directions before HTF admission/ranking, while preserving physical
+tracking, one setup/position and every unrelated setting. Its exact finite matrix
+is B0/D0/B1/D1; there is no second mechanism or combined policy. The root registry
+only exposes this field with a supporting research Core. Saved fixed drafts and
+headless worker enumeration are the supported workflow.
+
+New strategy-search v2 datasets optionally include manifest-bound
+`entry_activity_report.json`: explicit evaluation calendar, actual-entry-day counts,
+all consecutive zero-entry intervals/ties/censoring and adjacent elapsed/flat
+intervals. Stored resolution-day economics and all original charter gates remain
+separate; no activity statistic forces entries or supplies an acceptance threshold.
+Historical datasets remain readable. This is same-sample research, with no fitting,
+new data, June 11/holdout access or live promotion.
+
+## One-hour / four-hour gap choice (September 18, 2026)
+
+The IFSM study launcher uses a process-local verified development Core with a selectable starting one-hour/four-hour gap policy. Missing htf_gap_invalidation_policy retains execution_wick_full_fill_v1; own_timeframe_close_v1 separates physical traversal from policy validity. Policy-bearing seeds reject incompatible resumes. Immutable audit companions add source-bound gap_validity_events.parquet. See docs/IFVG_GAP_INVALIDATION_CHOICE.md.
+
+### IFSM mandatory daily close and Chicago entry windows (2026-09-18)
+
+The process-local IFSM research Core now supports `scheduled_daily_close_v1`,
+timezone-aware entry schedules and schema-6 daily-close state. Historical holding
+and preset identities remain unchanged. New mandatory-close tables use
+`core_executed_trade_priced_exit_v2`, with actual exit price and planned schedule
+identity; partial-R time exits enter the original costs and equity exactly once.
+Supplemental `forced_exit_events` and independent position-interval audits verify
+every planned closure, including weekends. The structural calendar is preserved;
+a separately frozen holding calendar governs deadline/reopening decisions. See
+`docs/IFVG_DAILY_CLOSE_SESSIONS.md` for causal execution, calendar provenance,
+legacy compatibility, the exact 32-profile scope and broker-validation limits.
+
+### Report delivery and working storage (2026-09-22)
+
+`reports/` contains only local, light peer-review deliverables: conclusions,
+effective settings, trade/equity/activity tables, comparisons and relevant charts.
+No report directory is versioned. Reusable exporters belong in source code;
+tests import them there and keep small fixtures under `tests/`.
+
+New ad hoc replay stores, raw traces, preparation diagnostics, test output, source checkouts
+and package staging belong outside this repository, by default under the sibling
+`Claude-Quant-Lab-Research-Artifacts/`. Working-output helpers reject report
+directories. Synthetic tests may use pytest's managed OS temporary directory,
+which preserves the test-only namespace safeguards. The September 22 cleanup preserves unique historical evidence under
+that sibling's `archived-reports/` directory, with original names and immutable
+payloads. Historical report paths in old records describe their original location;
+they do not imply files available in a clean checkout. Verified duplicate
+extractions and disposable work files can be removed without altering study results.
+
+`generate_costed_exports` in `search/costed_exports.py` defaults to seven compact
+audit files, retaining scheduled-exit prices, deadlines, costs and partial R.
+Full JSON/Parquet evidence requires `include_raw_evidence=True` and an output
+outside the checkout. Existing output folders must be empty. The FSM audit and
+timeframe-variant CLIs also reject checkout paths and every directory named
+`reports` for diagnostic output, including symlink aliases; their ordinary
+saved-study readers and caches keep existing paths.
+
+## Funded payout lane (September 22, 2026)
+
+`src/alpha_lab/propsim/funded/` is the event-time lane for funded-only
+comparisons. It is separate from the day-block `AccountWalk`, which remains
+unchanged for historical studies. Two independent firm instances replay the
+same verified strategy executions on one market clock.
+
+- `profiles`: owner-defined TakeProfitTrader and MyFundedFutures terms.
+- `positions`: floor movement is separate from enforcement. Enforcement runs on
+  every ordered observation of open equity, and liquidation fills at the
+  observed print (gap-through).
+- `instance`: credits, vacancies, the secured → day-end request → processing →
+  receipt lifecycle, wallet and growth.
+- `campaign`: a resumable event queue with fixed same-time precedence.
+- `result`: the one immutable result and its money reconciliation.
+- `price_evidence`: MBP-1 trade prints are accepted only when the rebuilt minute
+  candles equal the study's candles.
+- `sources`: verified completed-study packages.
+- `runner`: the worker.
+
+Strategy-Core is read only. All money is integer cents and all prices are
+integer ticks. Presentation: `presentation/funded_results.py`, rendered by
+`scripts/ifvg_funded_results.py`. Export: `funded_review_package.py`, an exact
+allowlist that is staged, verified and then published atomically.
+
+### Funded configuration comparison (September 23, 2026)
+
+The current funded research mode. Each configuration resolved in the study
+configurator, at each selected firm, is a separate *pair* with at most one live
+funded account; failures are replaced at once at the firm's price with no credit
+limit (SPEC.md Part A in `docs/funded-payout-implementation/`). The lane above is
+kept as the deferred budgeted mode and the September 22 pilot.
+
+- `strategy_driver`: each pair's own Strategy-Core `DayOrchestrator` chain. The
+  account's payout refusal is appended to the reducer's execution-time admission
+  check (only a candidate blocked solely by the account is a refusal, and its
+  setup is discarded); an account liquidation clears the reducer's position slot.
+  Core is not modified.
+- `pair_engine` / `pair_ledger`: the candle loop and the one-account ledger.
+- `position_walk` / `print_minutes`: execution model
+  `ordered_prints_stop_market_v2` (stop-market gap fills, target limits, breach
+  before stop) on per-minute prints that must rebuild Core's candle, otherwise a
+  labeled approximation.
+- `comparison_source` / `comparison_run` / `comparison_runner`: verified study
+  configurations resolved through the normal configurator path, the no-account
+  equivalence replay, mid-period resume check, one process per configuration.
+- `comparison_plan` / `comparison_study` / `comparison_result`: plan, owner
+  approval (`funded_comparison_approvals`) and the one verified result.
+
+Screen: `scripts/ifvg_funded_comparison_study.py` (configurator) and
+`scripts/ifvg_funded_comparison_results.py` over
+`presentation/funded_comparison.py`. Export: `funded_comparison_review.py`
+(`reports/funded_comparison/`).
+
+Post-run review additions (September 23, 2026; SPEC.md A11):
+
+- `comparison_result.apply_reporting_corrections` runs when a saved result is loaded, after
+  the hash check. It re-derives summary-only fields from the saved rows (the stop difference
+  counts only the contracts closed at the final stop) and records them under
+  `reporting_corrections`. The saved bytes and money never change.
+- `comparison_evidence` (bindings, calendar, trade-boundary check) and optional analyses
+  feed the export.
+- `funded_comparison_review.verify_published_folder` re-reads each published folder against
+  its manifest.
+- `job republish` publishes the next export version of the same result.
+- Version-2 variation plans can be built in the normal configurator
+  (`comparison_study.variation_variants`).
+- `job start` launches their worker only on the local checkout with the plan's exact Core
+  identity (`research_core_sources.find_core_checkout`).
+- `run_ifsm_research_ui.py --research-core PATH` is the explicit, labeled way to run the
+  application on such a checkout. The default launch and the pin are unchanged.
+
+### IFVG dashboard repairs (September 23, 2026)
+
+Screen-level repairs (task record `docs/ifvg-dashboard-repairs/`); no replay, cost, account or
+identity semantics changed. New modules: `propsim/funded/comparison_draft.py` (saved-draft
+reading, compatibility, exact saved-plan matching, shared plan rebuild used by the screen and
+the launch check), `ifvg/presentation/chicago_time.py`, `ifvg/presentation/funded_trade_review.py`
+with `scripts/ifvg_funded_trade_review.py`, `ifvg/search/charter_day_threshold.py`,
+`ifvg/named_baselines.py`, `ifvg/research_period.py` with `scripts/ifvg_research_dates.py`.
+The permitted research window for new strategy studies begins at the earliest stored market
+data (owner authorization of September 23, 2026): `DatePolicy`, the validation step and
+`DevelopmentReplayPolicy` accept it with the warmup rule "frozen ten days for evidence from
+January 13, 2026; otherwise the ten store days before the first evidence day". Unchanged on
+purpose: `PERMITTED_DEVELOPMENT_DATES` (preparation default dates and audit hash), the
+registered calendar closures, the 2026-only prepared-input allowlist
+(`require_fixed_exploration_allowlist`), MBP-1 evidence scope, and June 11, 2026 protection at
+every layer. The research listing (`bind_research_subject`) accepts an optional per-listing
+`family_cache`; every other caller keeps fresh verified reads.
+
+Repair behavior and limits:
+
+- A saved funded comparison draft the running Strategy-Core cannot represent (for example a
+  half-exit selection under the pinned engine) opens read-only; a half-exit draft needs
+  `run_ifsm_research_ui.py --research-core` for editing, approval and launch (other
+  unrepresentable drafts stay read-only: clone and edit the copy). Opening, refreshing or navigating never
+  saves; the open page resets when the saved file's digest changes. Launch re-reads the
+  draft, rebuilds the plan and requires the identical approved plan; `job start` refuses a
+  historical plan without a stored owner approval before queuing.
+- Trade review → Study executions lists unarchived funded comparisons that have a saved
+  result (Incomplete and review-only are labelled; a comparison that cannot be offered never
+  opens another study). The recorded path is drawn on the strategy's verified original bars: 1-minute, plus the
+  trade's own parent-gap and higher-timeframe charts when the verified study recorded that
+  trade, otherwise the available 1-hour and 4-hour bars. Movement inside a minute is not drawn, and configurations outside the verified strategy study have
+  no gap zones.
+- New Evaluate studies start on S0_D80_W1_P1 (legacy profile plus its ten saved values;
+  section hash `86261cc9…`) when the verified daily-close package is available. It is not a
+  registered profile: registering it would rename its identity (`74b81e47…`). Other study
+  types keep their existing start. Opening a saved draft never rewrites it: an
+  earlier-engine baseline hash stays until **Update the saved baseline to the current
+  engine**, and the inherited gap-invalidation rule is written explicitly only when the owner
+  changes a fixed setting (before this repair it was injected on opening).
+- Start/end date pickers (`scripts/ifvg_research_dates.py`) replace one-date-per-line entry.
+  `SourceDateClass.EXTENDED_HISTORY` covers 2021-12-02 through 2025-12-31; those days have no
+  verification or authorization record and are accepted only because their files exist. A
+  range whose first replayed day (warmup included) is before 2026-01-01 can be saved and
+  checked but not approved or run.
+- The Feature and model study listing still takes about four minutes on first load (every
+  child is verified once), and all 356 saved children list as unavailable under the current
+  pinned engine (a separate compatibility limitation, not caused or hidden by the repair).
+
+Open owner decisions and known limits: `docs/ifvg-dashboard-repairs/OPEN_DECISIONS.md`.
+
+
+### IFVG Lab redesign (September 24, 2026)
+
+Presentation-only rebuild of the IFVG workspace to the owner-approved mocks (task record
+`docs/ifvg-dashboard-redesign/`: TASK.md, CALCULATIONS.md, TASKS.md, `handoff/`). No
+replay, cost, account, payout, calendar or identity semantics changed; every screen reads
+saved records only, and the funded simulator is called only through its public ledger API.
+
+- Shared, Streamlit-free package `ifvg/presentation/lab/`: `format` (money, percentages,
+  prices, "April 12, 2026, 7:07 PM" Chicago times through `chicago_time`), `html` (escaped
+  design-system building blocks), `theme` (tokens, workspace CSS, chart layout),
+  `funded_data` (one verified saved comparison result + its plan's calendar; per-pair ordered
+  trades and daily results; the source package's saved gate thresholds), `funded_measures`
+  (ranking row, Sharpe/Sortino over every study day, drawdown, bootstrap ranges,
+  probabilistic and deflated Sharpe, quality gates on the stored strategy measures,
+  concentration, verdict, findings), `trade_stats`, `resampling` (fixed closed-profit
+  boundary diagnostic, resampled-path fans drawn with replacement — "keep streaks together"
+  10-trade blocks and "draw single trades" — streaks, sampled closed-profit drawdown; seeded,
+  default seed 20260923), `firm_race` (conditional resampling of the recorded trades through
+  `propsim/funded/pair_ledger.PairLedger` with each firm's saved terms; replaying the saved
+  order reproduces, for all 128 pairs, the five summary figures, the number of trades and each
+  trade's net result and account-loss flag (`check_original`), a separate integration check; the
+  results are conditional for both firms — see the analytical corrections below), `market`
+  (one-minute E-mini bars of the verified package, daily closes, beta, buy and hold,
+  retrospective and entry-known rising/falling × volatile/quiet labels, entry measures),
+  `names`, `library`, `funded_setup`, `setup_records` (links a funded trade to its own
+  configuration's saved setup record by trade id, otherwise to another configuration's record
+  by the package's own entry-match key plus the same stop — related context only),
+  `review_chart` and `review_panels`. Reference values of CALCULATIONS.md:
+  `tests/agents/ifvg_lab/test_reference_values.py`.
+- Streamlit shell `scripts/ifvg_lab_ui.py` (tokens, the left rail, a components-v2
+  clickable-HTML renderer, switches drawn from horizontal radios, the cached verified study),
+  `ifvg_lab_nav.py` (screen state, the one firm/configuration/account/tab selection per saved
+  result, both applications' store roots, deep links mirrored in the page address),
+  `ifvg_lab_cache.py`; screens `ifvg_lab_funded.py` (funded results, detail shell),
+  `ifvg_lab_detail_{summary,payouts,risk,trades,market,settings}.py`,
+  `ifvg_lab_trade_review.py`, `ifvg_lab_library.py`, `ifvg_lab_new_funded.py`.
+  `ifvg_workspace.render_workspace` replaces the top My studies / Trade review switch with the
+  rail and routes the new screens; every earlier screen (study page, wizards, context and
+  research-group pages, developer area) is unchanged and reachable. A funded comparison with
+  a saved result opens on the new overview from every route.
+- New funded comparison drafts keep the existing `steps.review.funded_comparison` plan
+  settings; the redesign's extra choices (baseline, gap rules, withdrawal triggers, dates,
+  pass/fail checks) live under `steps.review.funded_comparison_redesign`, which the existing
+  compatibility check ignores. Choices the engine or simulator can't run yet (withdrawal
+  triggers other than $500, a gap rule other than the base configuration's, other dates,
+  changed checks, the legacy baseline) are saved but block approval with a plain message.
+  Approval and launch still go only through `save_plan`, `record_owner_approval`,
+  `_freeze_and_launch` and `dispatch_problem`; repair R1's read-only and save-on-edit rules
+  hold.
+- Trade review saves through the existing visual review ledger with the existing funded keys;
+  `REVIEW_TAGS` gained four tags additively (no format change). `ifvg_search_review` and
+  `ifvg_funded_trade_review` gained keyword options with defaults that keep earlier behavior.
+- Known limits and placeholders: `docs/ifvg-dashboard-redesign/handoff/DATA_GAPS.md`;
+  decisions: `handoff/DECISIONS_LOG.md`; feature placements: `handoff/FEATURE_MAP.csv`.
+- Theme (September 25, 2026): the IFVG Lab follows the application's own theme instead of
+  forcing the light palette. `presentation/lab/theme.py` holds one set of color names with a
+  light (`COLORS`) and a dark (`DARK_COLORS`) value, publishes them as `--lab-*` CSS
+  variables for both themes and gives chart code `palette()` / `rgba()` read at render time;
+  screens never write a color value (`tests/agents/ifvg_lab/test_theme.py` guards it).
+  `ifvg_lab_ui.inject_theme` takes the theme the framework reports with the run
+  (`st.context.theme`), and a small components-v2 probe confirms it from the page's real
+  background, marks `<html data-lab-theme>` so the variables switch at once, and asks for one
+  rerun on a change so the charts follow. Both applications open with the rail expanded, and
+  the header's reopen-rail and menu buttons are styled readable on both themes. Dark values:
+  `docs/ifvg-dashboard-redesign/DESIGN_SYSTEM.md`; decisions FX17–FX19; report
+  `docs/ifvg-redesign-fixes/handoff/THEME_FIX_REPORT.md`.
+
+### IFVG Lab analytical corrections (September 25, 2026)
+
+Presentation and derived-analysis corrections (A1–A11 of
+`docs/ifvg-redesign-fixes/ANALYTICAL_CORRECTIONS_ADDENDUM.md`); definitions in
+`docs/ifvg-redesign-fixes/followup-1/CALCULATION_DEFINITIONS.md` (maintained since follow-up 1;
+the closeout's copy is the delivered version), which supersedes `docs/ifvg-dashboard-redesign/CALCULATIONS.md` where they differ.
+No engine, funded-simulator, account, payout, cost or calendar code changed.
+
+- `presentation/lab/market.py`: `buy_and_hold` v2 (`BENCHMARK_VERSION`, one entry instant);
+  `condition_labels` is the retrospective set (`RETROSPECTIVE_VERSION`), and
+  `entry_known_days` / `entry_known_labels` (`ENTRY_KNOWN_VERSION`) use only stored trading
+  days whose close instant precedes the day's 5:00 PM Chicago open (`trading_day_open_utc`,
+  `trading_day_of`).
+- `presentation/lab/firm_race.py`: `MODEL_ID = "conditional_firm_ledger_resampling_v1"`,
+  `LIMITATIONS`, `PathOutcome` / `path_outcome` (first-account endpoints and clocks from the
+  ledger's `eligibility_secured`, `requested` and `received` events; failed and open accounts;
+  unresolved requests) and `race_from_outcomes`; `terms_digest` feeds the in-process cache key
+  built by `ifvg_lab_cache.firm_race_key`.
+- `presentation/lab/resampling.py`: `share_below_ties_half` (the one percentile rule),
+  `running_fall`; `funded_measures.py`: `held_to_deadline_legs` / `held_legs_from_rows`
+  (legs from quantities and exact per-fill costs), the corrected `findings` and `verdict`;
+  `ifvg_lab_cache.pair_findings` is the one findings builder for the Summary and the overview.
+- `presentation/lab/setup_records.SetupRecord.identity_established` (own record by trade id
+  only); `review_panels` and `review_chart` label related context and keep point-in-time views
+  independent of later records (`review_chart.chart_window` uses the scheduled day).
+  `review_panels.SetupEvent` / `setup_events` (follow-up 1) give each formation event one
+  availability instant: a gap's confirmation, or a tap's or close-through's candle close. The
+  candle's opening minute is only its name. `setup_steps`, `setup_key`, `moments` and
+  `review_chart.setup_figure` read it.
+- New `presentation/lab/minute_companion.py`: links the latest published review folder's
+  hash-checked `approximated_minutes.csv` to a funded trade by exact identity with interval,
+  uniqueness and count checks (`link_from_review_folder`).
+- `presentation/lab/funded_setup.py`: neutral time-under-water message; `ifvg_lab_new_funded`
+  keeps `rebuild_saved_plan`'s left-out combinations and states them before approval.
+- Tests: `tests/agents/ifvg_lab/test_ac_{risk,market,trade_review,approval_paths}.py`;
+  follow-up 1: `tests/agents/ifvg_lab/test_setup_event_timing.py`, and the historical-order
+  wording tests in `test_detail_risk.py` (`ifvg_lab_detail_risk.validation_text` names the
+  fields `firm_race.check_original` compares).

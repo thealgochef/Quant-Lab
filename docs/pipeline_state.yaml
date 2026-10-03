@@ -1,15 +1,29 @@
 current_phase: "STRATEGY_CORE_V3_DASHBOARD_UTILITY"
-last_updated: "2026-09-23"
+last_updated: "2026-10-03"
 repo_role: "ml_training_workbench_with_strategy_core_v3_dashboard_utility_path"
+
+ifsm_menthorq_a1:
+  contract: "docs/IFSM_MENTHORQ_LEVEL_CONTEXT.md; handoff/task_a1"
+  fields: ["menthorq_context_version", "regime_gate_policy", "regime_unknown_policy", "nearest_support_gex1_block"]
+  default_context: null
+  runtime_provider: "ifvg/menthorq_levels.py; existing level callback to pure Core"
+  availability: "06:00 inclusive to 17:00 exclusive America/Chicago; same-date row only"
+  outside_hours: "both gates bypass; block flags null; not_applicable_outside_hours"
+  report_grouping: ["entry_session", "regime", "slot_chicago"]
+  export: "per-run context_export.csv; review only, no labels/outcomes, not manifest-bound"
+  roll_fallback: "selected instrument unreachable; null roll flag, no row exclusions, roll_flag_unavailable note"
+  smoke_funded_cash: "not_produced_in_a1; existing approved funded pipeline required"
+  archival_context_and_ml_allowlisting: "deferred to Task A2"
+  authorization_scope: "direct scratch parity and two smoke configurations only; no charter or activation"
 
 strategy_core_pairing:
   repository: "https://github.com/thealgochef/Strategy-Core"
-  ordinary_dependency_commit: "7c7111e398c083cf8e966e2e0c5aac8a41cc12c0"
-  ifsm_research_commit: "7c7111e398c083cf8e966e2e0c5aac8a41cc12c0"
-  ifsm_research_source_identity: "9247f16e223c9226f9afa17832c8810e31ce8853bfad9a0b5452e31845377bf3"
+  ordinary_dependency_commit: "b062bfcf5a5209440a4b4c9d7c0ca2263f9f4cc2"
+  ifsm_research_commit: "b062bfcf5a5209440a4b4c9d7c0ca2263f9f4cc2"
+  ifsm_research_source_identity: "afa16bed5733f6d41f090bc8b8e09215464cf9a009ec1c1bc7236973b76ead01"
   current_source_manifest: "research/core/current.json"
   history: "a4e3303 and 38825ed retained for historical reproduction; original research manifest.json and bundle unchanged"
-  version_policy: "Owner-authorized September 22 upgrade to one current Quant-Lab Core pin; package versions remain 0.1.0; Trade-Lab unchanged"
+  version_policy: "Task A1 October 3 re-pin of the owner-authorized September 22 pairing; Core feature/menthorq-level-context published; package versions remain 0.1.0; Trade-Lab unchanged"
   source_checkout_policy: "Installed package and IFSM share the same verified external Core source and provenance; no older sibling launcher fallback"
   checkpoint_policy: "Preserve historical identities; rebuild incompatible state from authorized history before a new replay"
   historical_notes: "Dated research isolation notes below describe their original runs, not the current installed-pin policy"
@@ -27,7 +41,7 @@ application_workspaces:
   ifsm_replication:
     launcher: "python scripts/run_ifsm_research_ui.py"
     url: "http://localhost:8502"
-    source: "verified Core 7c7111e398c083cf8e966e2e0c5aac8a41cc12c0; same commit as the ordinary installed package"
+    source: "verified Core b062bfcf5a5209440a4b4c9d7c0ca2263f9f4cc2; same commit as the ordinary installed package"
     source_preflight: "exact Core scoped hash and all 13 recorded effective configurations"
     output_root: "data/ifsm_ui_replication"
     ui_entry: "My studies / New study / Evaluate / Configuration"

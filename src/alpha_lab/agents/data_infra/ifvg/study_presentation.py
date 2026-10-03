@@ -176,7 +176,14 @@ AXIS_GROUP_ASSIGNMENTS: Mapping[str, str] = MappingProxyType(
         "outside_session_policy": "Session Policy",
         "enable_longs": "Session Policy",
         "enable_shorts": "Session Policy",
+        "menthorq_context_version": "Session Policy",
         # Risk Admissibility
+        # Context-dependent entry gates share the existing risk group.
+        **{
+            key: "Risk Admissibility"
+            for key, spec in SEARCH_AXIS_REGISTRY_V1.items()
+            if "menthorq_context_version" in spec.dependencies
+        },
         "sl_buffer_ticks": "Risk Admissibility",
         "tp_r_multiple": "Risk Admissibility",
         "max_executed_trades_per_day": "Risk Admissibility",

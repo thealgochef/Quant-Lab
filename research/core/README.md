@@ -1,20 +1,22 @@
 # Current Strategy-Core setup
 
-## One Core pin for Quant-Lab (2026-09-22)
+## One Core pin for Quant-Lab (2026-10-03)
 
 Ordinary Quant-Lab and the IFSM research screen use the same exact Strategy-Core
-commit: `7c7111e398c083cf8e966e2e0c5aac8a41cc12c0`. The owner authorized this upgrade
-after the main merge. `pyproject.toml` pins the installed dependency and
+commit: `b062bfcf5a5209440a4b4c9d7c0ca2263f9f4cc2`. Task A1 authorizes this re-pin
+from `7c7111e398c083cf8e966e2e0c5aac8a41cc12c0`. `pyproject.toml` pins the installed dependency and
 `current.json` records that same commit and its verified source identity.
 The current identity is
-`9247f16e223c9226f9afa17832c8810e31ce8853bfad9a0b5452e31845377bf3`, using Git's
+`afa16bed5733f6d41f090bc8b8e09215464cf9a009ec1c1bc7236973b76ead01`, using Git's
 canonical LF source bytes consistently on Windows and Linux.
 Package metadata remains `0.1.0`; the exact commit and source bytes establish
 the version pairing.
 
-This commit is published on Strategy-Core main. Its engine code matches the
-September 18 daily-close engine `38825ed`; subsequent commits update compatibility
-documentation. New work in either screen can use its gap invalidation choices,
+This commit is published on Strategy-Core branch `feature/menthorq-level-context`.
+It adds the optional runtime MenthorQ snapshot and entry gates described in
+[Task A1's contract](../../docs/IFSM_MENTHORQ_LEVEL_CONTEXT.md). The default-off
+10-date replay preserves all eight v2 table bytes and the historical profile hash;
+context content matches after the documented source identity exclusions. New work in either screen can use its gap invalidation choices,
 daily-close policy and corrected Chicago schedules. Older configurations retain
 their original missing-policy defaults. Execution corrections and newer state
 schemas can change replay results and prevent reuse of an older checkpoint.
@@ -25,7 +27,7 @@ From Quant-Lab:
 
 ```powershell
 python -m pip install -e ".[dev]"
-python -m pip install --force-reinstall --no-deps "strategy-core @ git+https://github.com/thealgochef/Strategy-Core.git@7c7111e398c083cf8e966e2e0c5aac8a41cc12c0"
+python -m pip install --force-reinstall --no-deps "strategy-core @ git+https://github.com/thealgochef/Strategy-Core.git@b062bfcf5a5209440a4b4c9d7c0ca2263f9f4cc2"
 python scripts/prepare_ifsm_research_core.py
 python scripts/run_ifsm_research_ui.py --check
 python scripts/run_ifsm_research_ui.py
@@ -62,6 +64,10 @@ commit, then exercises the relevant ordinary and research contracts.
 test-session error rather than silently skipping their tests.
 
 ## Preserve historical studies
+
+The September 22 current pin `7c7111e398c083cf8e966e2e0c5aac8a41cc12c0` and its
+source identity `9247f16e223c9226f9afa17832c8810e31ce8853bfad9a0b5452e31845377bf3`
+remain historical identities. Task A1 does not rewrite their saved studies.
 
 `a4e3303179ac6a1088aecaaa3482934cf1aec4d7` was the ordinary installed pin before
 this upgrade. `38825ed86f3e3940515cdc28d9df567ddccc0b70` was the isolated September 18

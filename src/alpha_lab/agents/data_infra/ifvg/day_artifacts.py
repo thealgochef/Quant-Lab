@@ -22,8 +22,10 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 from strategy_core.candles._buckets import HTF_ANCHOR_POLICY
@@ -44,6 +46,9 @@ from .data_access import (
     require_fixed_exploration_allowlist,
 )
 
+if TYPE_CHECKING:
+    from .menthorq_levels import MenthorqLevels
+
 __all__ = [
     "DayArtifacts",
     "DaySeeds",
@@ -52,6 +57,7 @@ __all__ = [
     "write_day_artifacts",
     "load_day_artifacts",
     "levels_for_from_frame",
+    "cash_close_points_from_artifacts",
 ]
 
 _META_KEY = b"ifvg_artifacts_meta"
@@ -506,12 +512,40 @@ def load_day_artifacts(
     )
 
 
-def levels_for_from_frame(timeline: dict[datetime, tuple[Level, ...]]):
+def cash_close_points_from_artifacts(
+    artifacts: DayArtifacts, tick_size: float
+) -> float | None:
+    """Last completed 1m close at/before 15:10 Chicago on this logical day."""
+    day = date.fromisoformat(artifacts.date_str)
+    chicago = ZoneInfo("America/Chicago")
+    eligible = [
+        bar for bar in artifacts.bars
+        if bar.timeframe_ticks == 60
+        and bar.trading_day == day
+        and bar.is_complete
+        and not bar.is_partial
+        and bar.availability_ts_utc.astimezone(chicago).date() == day
+        and bar.availability_ts_utc.astimezone(chicago).time() <= time(15, 10)
+    ]
+    if not eligible:
+        return None
+    return max(eligible, key=lambda bar: bar.availability_ts_utc).close_ticks * tick_size
+
+
+def levels_for_from_frame(
+    timeline: dict[datetime, tuple[Level, ...]], *,
+    menthorq_provider: MenthorqLevels | None = None,
+):
     """The ``run_day`` ``levels_for`` closure over a loaded timeline (exact-match
     on the 1m close instants; both sides use the same batch bars, so the keys
     align by construction — a miss returns the empty tuple)."""
 
-    def _levels_for(ts_utc: datetime) -> tuple[Level, ...]:
-        return timeline.get(ts_utc, ())
+    def _levels_for(ts_utc: datetime):
+        levels = timeline.get(ts_utc, ())
+        if menthorq_provider is None:
+            return levels
+        from strategy_core.strategies.ifvg_smc.replay import IfvgLevelInputs
+
+        return IfvgLevelInputs(levels=levels, menthorq=menthorq_provider.snapshot(ts_utc))
 
     return _levels_for

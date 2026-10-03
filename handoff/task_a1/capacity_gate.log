@@ -1,0 +1,22 @@
+{
+  "builder": "build_context_capacity_report(v3.context_tables, **v3.capacity_metrics)",
+  "limits_changed": false,
+  "phase": "smoke_all_on",
+  "report": {
+    "limits": {
+      "max_members_per_pool": 16,
+      "max_transition_bytes": 26214,
+      "terminal_seed_bytes": 838860,
+      "terminal_state_bytes": 4194304
+    },
+    "observed": {
+      "max_members_per_pool": 5,
+      "max_transition_bytes": 23211,
+      "terminal_seed_bytes": 550119,
+      "terminal_state_bytes": 550119
+    },
+    "passed": true,
+    "schema_version": 4,
+    "violations": {}
+  }
+}

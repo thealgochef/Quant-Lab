@@ -1,6 +1,16 @@
 # Alpha Signal Research Lab - Agent Notes
 
-Updated: 2026-09-23.
+Updated: 2026-10-03.
+
+IFSM Task A1 (October 3): runtime EOD lookup in
+`ifvg/menthorq_levels.py`, pure Core snapshot/entry gates, and
+`ifvg/menthorq_reporting.py`. Contract and limits:
+`docs/IFSM_MENTHORQ_LEVEL_CONTEXT.md`. Keep the four neutral defaults excluded
+from historical profile hashes; use decision 12's outside-hours bypass.
+`context_export.csv` is review-only, never a manifest/ML input. Do not start
+Task A2's context record family or allowlisting. Current Core source/pin is
+always `research/core/current.json`; dated pin references below are historical
+where superseded. Preserve all prior study identities and sources.
 
 ## Start points
 
@@ -12,7 +22,7 @@ Updated: 2026-09-23.
 - Strategy-Core v3 cross-repo matrix: `../Strategy-Core/V3_COMPATIBILITY_MATRIX.md`.
 - Current Core pairing: `research/core/README.md`. The owner authorized upgrading
   ordinary Quant-Lab and IFSM to the same current Core on September 22:
-  `7c7111e398c083cf8e966e2e0c5aac8a41cc12c0`, pinned in `pyproject.toml` and
+  `b062bfcf5a5209440a4b4c9d7c0ca2263f9f4cc2` after Task A1's October 3 re-pin, pinned in `pyproject.toml` and
   `research/core/current.json`. Prepare its verified external source checkout
   for provenance; the installed package must match that exact source. Historical
   `a4e3303`/`38825ed` studies keep their original identities and source archives.

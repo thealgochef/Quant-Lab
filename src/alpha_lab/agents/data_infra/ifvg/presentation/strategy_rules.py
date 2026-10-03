@@ -47,6 +47,8 @@ _RULE_FIELDS = {
     "parent_full_fill_invalidation", "parent_structural_invalidation",
     "max_executed_trades_per_day", "doc_sessions", "session_scheme",
     "htf_registry_max_age_days", "ltf_registry_max_live",
+    "menthorq_context_version", "regime_gate_policy", "regime_unknown_policy",
+    "nearest_support_gex1_block",
 }
 _CAPABILITY_FIELDS = {
     "runnable", "execution_enabled", "non_runnable_reason", "entry_family",
@@ -71,6 +73,10 @@ _LEGACY_OPTIONAL_DEFAULTS = {
     "setup_timeout_1m_bars": None,
     "parent_replacement_policy": "highest_tf_newest",
     "parent_retest_depth_policy": "any_live_touch",
+    "menthorq_context_version": None,
+    "regime_gate_policy": "off",
+    "regime_unknown_policy": "allow",
+    "nearest_support_gex1_block": False,
 }
 _CLASSIFIED_FIELDS = (
     _RULE_FIELDS | _CAPABILITY_FIELDS | _MEASUREMENT_FIELDS | _INERT_FIELDS
@@ -240,6 +246,39 @@ def _sessions(section: IfvgSmcSection) -> str:
     )
 
 
+def _menthorq_rule(section: IfvgSmcSection) -> str:
+    """Explain the A1 controls together; absent neutral settings stay invisible."""
+    if getattr(section, "menthorq_context_version", None) is None:
+        return ""
+    context = (
+        "MenthorQ prior-close EOD levels and dealer-gamma context are available from "
+        "6:00 AM to 5:00 PM America/Chicago, with the end time excluded. "
+        "Outside those hours, both level entry gates are skipped. "
+    )
+    if section.enable_shorts:
+        return context + "Both level entry gates are also skipped while selling is enabled."
+    regime_policy = getattr(section, "regime_gate_policy", "off")
+    support_block = getattr(section, "nearest_support_gex1_block", False)
+    if regime_policy == "off" and not support_block:
+        return context + "The context is recorded; both level entry gates are off."
+    rules = []
+    if regime_policy != "off":
+        required = "positive" if regime_policy == "positive_only" else "negative"
+        rules.append(f"Inside that window, allow a buy only in the {required} dealer-gamma regime.")
+        missing = (
+            "blocks this gate" if getattr(section, "regime_unknown_policy", "allow") == "block"
+            else "passes this gate"
+        )
+        rules.append(f"A missing level row or unknown regime inside the window {missing}.")
+    if support_block:
+        rules.append(
+            "Block a buy when GEX 1 is among the levels tied for the nearest support "
+            "strictly below the entry price. A level equal to entry is excluded; "
+            "no lower level or unavailable context passes this gate."
+        )
+    return context + " ".join(rules)
+
+
 def _rules(section: IfvgSmcSection) -> dict[str, str]:
     both = section.enable_longs and section.enable_shorts
     long = section.enable_longs
@@ -328,6 +367,9 @@ def _rules(section: IfvgSmcSection) -> dict[str, str]:
         f"is at least one tick away.{near} If more than "
         f"{section.post_inversion_expiry_1m_bars_max} candles have passed, abandon the setup."
     )
+    menthorq = _menthorq_rule(section)
+    if menthorq:
+        rules["entry"] += " " + menthorq
     buffer = section.sl_buffer_ticks
     anchor = (
         "below the lowest price since the main-zone retest for a buy, or above the highest "
@@ -525,6 +567,17 @@ def describe_strategy(
         "Set a fixed stop beyond the price extreme since the retest and "
         f"{target_preview}; abandon invalid or expired setups.",
     )
+    if getattr(parsed, "menthorq_context_version", None) is not None:
+        active_gates = (
+            not parsed.enable_shorts
+            and (parsed.regime_gate_policy != "off" or parsed.nearest_support_gex1_block)
+        )
+        level_preview = (
+            "Apply the configured MenthorQ level gates only from 6:00 AM to 5:00 PM Chicago."
+            if active_gates else
+            "MenthorQ context is recorded; its level entry gates do not apply."
+        )
+        previews = (previews[0], previews[1] + " " + level_preview, previews[2])
     return RuleDescription(
         "partial" if issues else "available", previews, _visible_rules(rules, parsed),
         issues=issues,

@@ -11,3 +11,6 @@ docs/ifvg-dashboard-repairs/SOURCE_OBSERVATIONS.md -text
 docs/ifvg-dashboard-repairs/PACKAGE_MANIFEST.json -text
 docs/ifvg-dashboard-repairs/evidence/** -text
 .claude/skills/fix-ifvg-dashboard/SKILL.md -text
+# Task A1 vendor fixtures and copied evidence retain their original bytes.
+tests/agents/data_infra/ifvg/fixtures/menthorq_a1/** -text whitespace=cr-at-eol
+handoff/task_a1/** -text whitespace=cr-at-eol,-blank-at-eol,-blank-at-eof

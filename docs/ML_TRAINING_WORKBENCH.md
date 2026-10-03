@@ -1,9 +1,9 @@
 # Streamlit ML Training Workbench
 
-Updated: 2026-09-23.
+Updated: 2026-10-03.
 
 Ordinary Quant-Lab and the IFSM launcher use the same current Core,
-`7c7111e398c083cf8e966e2e0c5aac8a41cc12c0`, after the owner's September 22 upgrade.
+`b062bfcf5a5209440a4b4c9d7c0ca2263f9f4cc2`, after Task A1's October 3 re-pin of the September 22 pairing.
 Install the pinned dependency and prepare its verified source checkout using
 [the current setup steps](../research/core/README.md). Restart existing study
 screens after upgrading. This supersedes the installed-pin policy in dated
@@ -979,3 +979,19 @@ calendar rule changed and no saved record was written.
   point in time the text, key and chart agree.
 - **Review and approve**: the time-under-water check is a neutral pending decision; left-out
   combinations are explained before approval.
+
+## IFSM Task A1 runtime level context (October 3, 2026)
+
+IFSM's registered fixed settings include optional MenthorQ EOD context,
+independent regime/unknown/support gates, and five atomic Chicago entry-window
+presets. They use the final entry's causal snapshot; blocked candidates remain
+visible. Outside 06:00–17:00 Chicago both context gates are not applicable.
+Direct reports retain unknown session/regime/slot groups and exclude warmup
+using the existing candidate-entry cohort. Context-enabled review folders can
+contain a non-archival `context_export.csv`, with no labels or outcomes. These
+values are not model features or a manifest-bound record family; Task A2 is
+deferred. Registry availability does not replace an exact launch authorization.
+See [IFSM MenthorQ level context](IFSM_MENTHORQ_LEVEL_CONTEXT.md).
+
+The configuration screen places context availability under Session Policy and
+the three gate controls under Risk Admissibility, using its existing groups.

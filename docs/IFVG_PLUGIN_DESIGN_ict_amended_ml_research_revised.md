@@ -391,3 +391,36 @@ Pure reducer: `reduce(state, event, section) → (state′, emissions)` — no I
 
 - **FL-01 — session-blind streaming drops:** the streaming resolver's flatten(16:40)/cutoff(17:00 ET) drops are session-blind — at live they would drop ALL Asia-session iFVG decisions. The batch path is already parameterized (`flatten_time`/`rth_end`/`timezone` kwargs), so offline labeling is unaffected; the streaming extension rides the same F-live touch as the per-decision `register()` override (R8's deferred touch).
 - **FL-02 — TL forward-bar parser:** pins `^(\d+)t$` — a TIME `forward_bar_type` ("1m") ValueErrors at activation; F-live fix.
+
+## Ratified IFSM Task A1 decisions — October 3, 2026
+
+Binding source: `C:\tasks\ifsm_task_a1_level_context\decisions.md`, ratified by
+Luis, decisions 1–13 (also mapped in `handoff/task_a1/decisions_applied.md`).
+This addendum records implementation decisions and supersedes prior proposals
+only within Task A1: EOD context, regime/support gates, explicit Chicago slot
+windows, grouped reports and a review-only per-run export. Intraday HVL, GEX3
+targets, archived context records and ML allowlisting remain deferred.
+
+Availability is 06:00 inclusive to 17:00 exclusive, America/Chicago. Decision 12
+gives outside-hours precedence: neither gate evaluates; block flags null and
+`gate_status = not_applicable_outside_hours`. Inside hours, missing level rows
+or unknown regime follow the named unknown policy. Gates use actual final-entry
+availability and honest entry price; longs-only; blocked evidence is retained.
+Strict nearest-level comparisons retain all ties in source column order.
+Opening-move normalization uses prior completed cash close and positive implied
+move only. Decision 7's source instrument evidence is not reachable in the
+existing seam; the authorized null-roll fallback excludes no comparison rows.
+
+The four new section fields default to neutral historical exclusions. Every
+nondefault value changes profile identity. Existing explicit-window composites
+are reused atomically. Reports declare pooling, retain unknown buckets and
+reconcile counts/points/cents at their supported grains. Fresh funded cash for
+the scratch run follows the authorized `not_produced_in_a1` fallback; saved
+verified results can be grouped separately by their existing cash ledger.
+
+Decision 13 freezes parity: v2 execution/label-source bytes and profile hash
+match exactly; v3 nonidentity content matches after listed, source-proven
+exclusions. Source identities and older approvals are never rewritten. The
+literal first-30 calendar selection ends February 23 (both holiday sessions
+retained); the February 24 wording is recorded as a handoff discrepancy.
+Smoke numbers are mechanical validation only, without interpretation.
