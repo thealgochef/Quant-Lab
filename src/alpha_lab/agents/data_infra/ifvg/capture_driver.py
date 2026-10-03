@@ -44,6 +44,7 @@ from .config import IfvgCaptureConfig
 from .context_contracts import ContextRecordTable, stamp_context_table
 from .contracts import IFVG_CAPTURE_SCHEMA_VERSION
 from .day_artifacts import DayArtifacts, levels_for_from_frame
+from .menthorq_levels import MenthorqLevels, menthorq_provider_for_section
 
 __all__ = [
     "CaptureDayResult",
@@ -144,7 +145,11 @@ def capture_single_date(
     seed: IfvgDaySeed | None,
     dataset_exhausted: bool = False,
     audit_capture_mode: str = "disabled",
+    menthorq_provider: MenthorqLevels | None = None,
 ) -> CaptureDayResult:
+    provider = menthorq_provider_for_section(cfg.section, menthorq_provider)
+    if provider is not None:
+        provider.register_day_artifacts(artifacts, cfg.tick_size)
     bars_by_tf: dict[int, list] = {}
     for bar in artifacts.bars:
         bars_by_tf.setdefault(bar.timeframe_ticks, []).append(bar)
@@ -155,7 +160,9 @@ def capture_single_date(
         seed=seed,
         trading_day=date.fromisoformat(date_str),
         tick_size=cfg.tick_size,
-        levels_for=levels_for_from_frame(artifacts.level_timeline),
+        levels_for=levels_for_from_frame(
+            artifacts.level_timeline, menthorq_provider=provider
+        ),
         dataset_exhausted=dataset_exhausted,
         audit_capture_mode=audit_capture_mode,
     )
@@ -189,9 +196,13 @@ def capture_single_date_with_context(
     strategy_core_source_tree_hash: str,
     context_source_coverage: ContextSourceCoverage = DEFAULT_CONTEXT_SOURCE_COVERAGE,
     dataset_exhausted: bool = False,
+    menthorq_provider: MenthorqLevels | None = None,
 ) -> ContextCaptureDayResult:
     """Run Strategy-Core once, retaining v2 emissions only for parity."""
 
+    provider = menthorq_provider_for_section(cfg.section, menthorq_provider)
+    if provider is not None:
+        provider.register_day_artifacts(artifacts, cfg.tick_size)
     bars_by_tf: dict[int, list] = {}
     for bar in artifacts.bars:
         bars_by_tf.setdefault(bar.timeframe_ticks, []).append(bar)
@@ -205,7 +216,9 @@ def capture_single_date_with_context(
         seed=seed,
         trading_day=date.fromisoformat(date_str),
         tick_size=cfg.tick_size,
-        levels_for=levels_for_from_frame(artifacts.level_timeline),
+        levels_for=levels_for_from_frame(
+            artifacts.level_timeline, menthorq_provider=provider
+        ),
         dataset_exhausted=dataset_exhausted,
         context_config=context_config,
         context_seed=context_seed,

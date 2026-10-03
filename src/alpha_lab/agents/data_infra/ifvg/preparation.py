@@ -40,7 +40,7 @@ from .context_experiment_contracts import (
     profile_capability,
 )
 from .context_schemas import IFVG_CONTEXT_ARROW_REGISTRY_HASH
-from .contracts import count_reconciliation
+from .contracts import RecordTable, count_reconciliation
 from .data_access import hash_allowlisted_source_files
 from .dataset import build_ifvg_v2_capture, build_ifvg_v3_capture
 from .development_access import (
@@ -110,9 +110,12 @@ class PreparationJobState:
 
 @dataclass(frozen=True, slots=True)
 class PreparedIfvgPair:
+    """Verified pair and optional A1 review path, outside the pair's manifests."""
+
     pair: VerifiedIfvgPair
     access_audit: dict[str, Any]
     preparation_state: PreparationJobState
+    context_export_path: Path | None = None
 
 
 def _write_json_atomic(path: Path, payload: Any) -> None:
@@ -322,6 +325,25 @@ def _publish_or_reuse_verified(
         return existing.exploration_dir
 
 
+def _write_preparation_context_export(
+    *, report_root: Path, tables: dict, provider, section, tick_size: float,
+    run_identity: dict, immutable_roots: tuple[Path, ...],
+) -> Path | None:
+    """Review material belongs to the preparation job, outside both datasets."""
+    if section.menthorq_context_version is None or provider is None:
+        return None
+    destination = Path(report_root).resolve() / run_identity["v2_artifact_id"]
+    if any(destination.is_relative_to(Path(root).resolve()) for root in immutable_roots):
+        raise ValueError("preparation review reports must stay outside immutable dataset roots")
+    from .menthorq_reporting import write_context_export  # noqa: PLC0415
+
+    return write_context_export(
+        destination / "context_export.csv", tables[RecordTable.ENTRY_CANDIDATE],
+        tables[RecordTable.ELIGIBLE_DECISION], tables[RecordTable.EXECUTED_TRADE],
+        provider=provider, section=section, tick_size=tick_size, run_identity=run_identity,
+    )
+
+
 def prepare_ifvg_development_pair(
     *,
     repo_root: Path,
@@ -333,6 +355,7 @@ def prepare_ifvg_development_pair(
     progress_fn: Callable[[int, int, str], None] | None = None,
     section_overrides: dict | None = None,
     context_config: ContextFeatureConfig | None = None,
+    report_root: Path | None = None,
 ) -> PreparedIfvgPair:
     """Prepare the full permitted chain; never discover protected date paths.
 
@@ -340,7 +363,12 @@ def prepare_ifvg_development_pair(
     the BASE profile) and ``context_config`` support variant pairs — e.g. a
     reduced timeframe set, whose context observer must declare a timeframe
     subset of the section's. Variants get their own profile hash, artifact
-    identities, and catalog entry; accepted artifacts are untouched."""
+    identities, and catalog entry; accepted artifacts are untouched.
+
+    Enabled A1 context writes review material under ``report_root/<v2_id>``;
+    the default is the profile's preparation-job ``reports`` directory.
+    Neither immutable dataset nor its manifest includes that export.
+    """
 
     capability = profile_capability(profile_name)
     if capability.status is not ProfileCapabilityStatus.RUNNABLE:
@@ -399,6 +427,7 @@ def prepare_ifvg_development_pair(
         data_access_audit=v2_audit,
         tick_size=cfg.tick_size,
         old_artifact_mutations=0,
+        menthorq_provider=getattr(v2_capture, "menthorq_provider", None),
     )
     if not v2_reports["invariant_audit"]["passed"]:
         raise RuntimeError("full-chain v2 invariant audit failed")
@@ -613,6 +642,30 @@ def prepare_ifvg_development_pair(
         v3_root=Path(v3_output_base or (root / V3_DATASET_DIR)),
         v3_artifact_id=v3_id,
     )
+    context_export_path = None
+    provider = getattr(v2_capture, "menthorq_provider", None)
+    if resolved.section.menthorq_context_version is not None and provider is not None:
+        review_root = (
+            Path(report_root) if report_root is not None else
+            root / PREPARATION_JOB_ROOT / resolved.section.profile_name / "reports"
+        )
+        if not review_root.is_absolute():
+            review_root = root / review_root
+        context_export_path = _write_preparation_context_export(
+            report_root=review_root, tables=v2_capture.tables, provider=provider,
+            section=resolved.section, tick_size=cfg.tick_size,
+            run_identity={
+                "v2_artifact_id": v2_id,
+                "v2_manifest_payload_sha256": pair.v2.reference.manifest_payload_sha256,
+                "v3_artifact_id": v3_id,
+                "v3_manifest_payload_sha256": pair.v3.reference.manifest_payload_sha256,
+                "section_config_hash": resolved.section_config_hash,
+                "evaluation_config_hash": resolved.evaluation_config_hash,
+                "strategy_core_commit": strategy_state.head,
+                "strategy_core_source_tree_hash": strategy_state.source_tree_hash,
+            },
+            immutable_roots=(v2_base, v3_base),
+        )
     _catalog_pair(
         # the STAMPED name (variants may override section.profile_name so the
         # verifier dropdown distinguishes them; identical to profile_name for
@@ -632,6 +685,7 @@ def prepare_ifvg_development_pair(
         pair=pair,
         access_audit=discovery.audit.as_dict(),
         preparation_state=state,
+        context_export_path=context_export_path,
     )
 
 
@@ -645,6 +699,7 @@ def prepare_ifvg_development_pair_persisted(
     section_overrides: dict | None = None,
     context_config: ContextFeatureConfig | None = None,
     job_label: str | None = None,
+    report_root: Path | None = None,
 ) -> PreparedIfvgPair:
     """Run production preparation under a profile lock with durable boundaries.
 
@@ -653,7 +708,9 @@ def prepare_ifvg_development_pair_persisted(
     deterministically rebuilds the chain from cached authorized day artifacts and
     refuses any non-identical immutable publication. Variant runs (with
     ``section_overrides``) must pass a distinct ``job_label`` so their lock and
-    state directory never collide with the base profile's.
+    state directory never collide with the base profile's. Enabled A1 exports
+    default to that selected job's ``reports/<v2_id>/context_export.csv``;
+    ``report_root`` overrides only the review-material destination.
     """
 
     root = Path(repo_root).resolve()
@@ -720,6 +777,10 @@ def prepare_ifvg_development_pair_persisted(
                 progress_fn=persisted_progress,
                 section_overrides=section_overrides,
                 context_config=context_config,
+                **({"report_root": report_root} if report_root is not None else
+                   {"report_root": profile_root / "reports"}
+                   if (section_overrides or {}).get("menthorq_context_version") is not None
+                   else {}),
             )
             state = replace(
                 prepared.preparation_state,

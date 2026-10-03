@@ -7,6 +7,7 @@ import json
 from dataclasses import dataclass
 
 from strategy_core.strategies.ifvg_smc.section import (
+    MENTHORQ_NEUTRAL_PROFILE_FIELDS,
     IfvgSmcSection,
     QualificationMode,
     default_ifvg_smc_section,
@@ -130,6 +131,12 @@ def resolve_profile_config(raw_ui_config: dict | None = None) -> ResolvedProfile
             ),
         }
     effective = section.model_dump(mode="json")
+    # Optional A1 defaults preserve the historical effective-section shape.
+    # The typed section still exposes every field to validation and the axes;
+    # an enabled context or gate override remains explicit in this projection.
+    for key, default in MENTHORQ_NEUTRAL_PROFILE_FIELDS.items():
+        if effective.get(key) == default:
+            effective.pop(key, None)
     section_hash = ifvg_profile_hash(section)
     evaluation_hash = _hash(
         {

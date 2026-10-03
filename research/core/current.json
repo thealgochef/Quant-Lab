@@ -2,8 +2,8 @@
   "schema_version": 2,
   "distribution": "published_git",
   "repository_url": "https://github.com/thealgochef/Strategy-Core.git",
-  "target_commit": "7c7111e398c083cf8e966e2e0c5aac8a41cc12c0",
-  "source_identity": "9247f16e223c9226f9afa17832c8810e31ce8853bfad9a0b5452e31845377bf3",
+  "target_commit": "b062bfcf5a5209440a4b4c9d7c0ca2263f9f4cc2",
+  "source_identity": "afa16bed5733f6d41f090bc8b8e09215464cf9a009ec1c1bc7236973b76ead01",
   "source_files": [
     {
       "path": "src/strategy_core/__init__.py",
@@ -270,9 +270,15 @@
       "line_endings": "git"
     },
     {
+      "path": "src/strategy_core/strategies/ifvg_smc/menthorq_levels.py",
+      "sha256": "8f05c3a5afe2e69dfecfd3a5cb5c2307729d6dae9302ad39d3bc4d6baf7f0f68",
+      "bytes": 7970,
+      "line_endings": "git"
+    },
+    {
       "path": "src/strategy_core/strategies/ifvg_smc/plugin.py",
-      "sha256": "c2b6fed65a161c1109d152c74641dfbf99812b2d8e7a92aff452efd13220939c",
-      "bytes": 13316,
+      "sha256": "58e6d6b866fbf25243d7f574ece695808308f5880157500c2b4cac6582ab52c9",
+      "bytes": 13820,
       "line_endings": "git"
     },
     {
@@ -283,20 +289,20 @@
     },
     {
       "path": "src/strategy_core/strategies/ifvg_smc/reducer.py",
-      "sha256": "865d50fbe0e51276258fccabd10d81780e76fb8c6aa1f6e9c975e4d10cd3d618",
-      "bytes": 119161,
+      "sha256": "4211e83b4f89f8d026449cda09a71a764923da8f0a0a2f9a982cf8673d42cff8",
+      "bytes": 120269,
       "line_endings": "git"
     },
     {
       "path": "src/strategy_core/strategies/ifvg_smc/replay.py",
-      "sha256": "83d1ad66d61fd653c45ca069cd68dec9bb608a5a58c05fc707abec1891bfd50e",
-      "bytes": 43102,
+      "sha256": "808070d2293531ea2279fafb7bb1b9953ef02a1679cb076de05de4edc13d064c",
+      "bytes": 43666,
       "line_endings": "git"
     },
     {
       "path": "src/strategy_core/strategies/ifvg_smc/section.py",
-      "sha256": "8ee6a99fb28b4b56b8c39aefb2787a105700a71658441341e637b798c7b42c6f",
-      "bytes": 16742,
+      "sha256": "442db1f1f0d7475e5736f2eaebab862dfb9f96058600c1d3ffe0e3339522c827",
+      "bytes": 18005,
       "line_endings": "git"
     },
     {

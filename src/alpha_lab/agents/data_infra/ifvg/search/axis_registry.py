@@ -762,6 +762,16 @@ if "entry_schedule_policy" in _B:
              "explicit_windows_v1", (("07:00", "15:55"),)),
             ("morning_chicago_0700_1030_v1", "Morning - 7:00 AM to 10:30 AM Chicago time",
              "explicit_windows_v1", (("07:00", "10:30"),)),
+            ("slot_s1_0830_1000", "8:30 AM to 10:00 AM Chicago time",
+             "explicit_windows_v1", (("08:30", "10:00"),)),
+            ("slot_s2_1000_1200", "10:00 AM to noon Chicago time",
+             "explicit_windows_v1", (("10:00", "12:00"),)),
+            ("slot_s3_1200_1330", "Noon to 1:30 PM Chicago time",
+             "explicit_windows_v1", (("12:00", "13:30"),)),
+            ("slot_s4_1330_1510", "1:30 PM to 3:10 PM Chicago time",
+             "explicit_windows_v1", (("13:30", "15:10"),)),
+            ("midsession_1000_1330", "10:00 AM to 1:30 PM Chicago time",
+             "explicit_windows_v1", (("10:00", "13:30"),)),
         )
     )
 if "holding_policy" in _B:
@@ -993,6 +1003,40 @@ _blocked(
     "same open owner policy review as parent_full_fill_invalidation",
     _BOOL,
 )
+
+# Task A1 keeps level-context behavior independently searchable. These are
+# executable capabilities, not permission to launch an unapproved study.
+if "menthorq_context_version" in _B:
+    _register_axis(
+        "menthorq_context_version", label="MenthorQ level context",
+        description="Point-in-time EOD context, separate from archived ML features.",
+        classification=AxisClassification.APPROVED_SEARCH_AXIS,
+        value_spec=_STR, replay=True,
+        extra_values=(RegisteredAxisValue(
+            value_id="menthorq_context_version.eod_v1",
+            axis_technical_key="menthorq_context_version",
+            payload="menthorq_eod_v1", human_label="MenthorQ EOD version 1",
+            capability_status="available", owner_ratification_status="pending",
+            ratification_evidence_ref=None,
+            expected_replay_effect="Makes EOD context available to entry gates and review reports.",
+        ),),
+    )
+    for _key, _label, _spec, _extra in (
+        ("regime_gate_policy", "Dealer-gamma regime gate", _STR,
+         ("positive_only", "negative_only")),
+        ("regime_unknown_policy", "Unknown regime handling", _STR, ("block",)),
+        ("nearest_support_gex1_block", "Block nearest GEX 1 support", _BOOL, (True,)),
+    ):
+        _register_axis(
+            _key, label=_label,
+            description="Uses the final-entry snapshot; retains blocked candidates.",
+            classification=AxisClassification.APPROVED_SEARCH_AXIS,
+            value_spec=_spec, replay=True,
+            dependencies=("menthorq_context_version",),
+            extra_values=_search_values(
+                _key, _extra, effect="Changes actual entries through the final candidate gate.",
+            ),
+        )
 
 SEARCH_AXIS_REGISTRY_V1: Mapping[str, SearchAxisSpec] = MappingProxyType(dict(_AXIS_SPECS))
 AXIS_VALUE_REGISTRY_V1: Mapping[str, RegisteredAxisValue | CompositeAxisValue] = (

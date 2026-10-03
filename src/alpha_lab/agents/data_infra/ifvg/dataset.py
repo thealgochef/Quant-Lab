@@ -76,6 +76,7 @@ from .day_artifacts import (
     write_day_artifacts,
 )
 from .entry_dataset import build_candidate_labels_from_tables
+from .menthorq_levels import MenthorqLevels, menthorq_provider_for_section
 
 if TYPE_CHECKING:
     from .profiles import ResolvedProfileConfig
@@ -290,6 +291,7 @@ class V2CaptureResult:
         audit_frames: dict[str, pd.DataFrame] | None = None,
         end_seed: IfvgDaySeed | None = None,
         trace_audit_rows: pd.DataFrame | None = None,
+        menthorq_provider: MenthorqLevels | None = None,
     ) -> None:
         self.tables = tables
         self.day_funnels = day_funnels
@@ -305,6 +307,8 @@ class V2CaptureResult:
         # without a second heavyweight replay. Never populated for the plain
         # (audit-disabled) capture path.
         self.trace_audit_rows = trace_audit_rows
+        # A1 reports reuse this run's lookup/bar history; never a manifest table.
+        self.menthorq_provider = menthorq_provider
 
     @property
     def candidates(self) -> pd.DataFrame:
@@ -461,6 +465,7 @@ def build_ifvg_v2_capture(
     start_after_artifact: ChainStart | None = None,
     audit_capture_mode: str = "disabled",
     final_day_exhausts_dataset: bool = True,
+    menthorq_provider: MenthorqLevels | None = None,
 ) -> V2CaptureResult:
     """Replay an explicit allowlisted chain into typed v2 tables.
 
@@ -490,6 +495,8 @@ def build_ifvg_v2_capture(
     chain_dates = policy.authorize_dates(dates)
     if not chain_dates:
         raise ValueError("IFVG v2 replay requires at least one allowlisted date")
+
+    provider = menthorq_provider_for_section(cfg.section, menthorq_provider)
 
     cold = DaySeeds(
         prev_day=None,
@@ -546,6 +553,7 @@ def build_ifvg_v2_capture(
                 final_day_exhausts_dataset and chain_index == len(chain_dates) - 1
             ),
             audit_capture_mode=audit_capture_mode,
+            **({"menthorq_provider": provider} if provider is not None else {}),
         )
         seed = day_result.end_seed
         if day_result.audit_rows is not None:
@@ -628,6 +636,7 @@ def build_ifvg_v2_capture(
         cached_artifact_days=cached_days,
         bars_by_day=bars_by_day,
         access_policy=policy,
+        menthorq_provider=provider,
         audit_frames=audit_frames if audit_capture_mode != "disabled" else None,
         end_seed=seed,
         trace_audit_rows=trace_audit_rows,
@@ -955,6 +964,7 @@ def build_ifvg_fsm_audit_v1(
     access_policy: ExplorationDataPolicy | None = None,
     cached_artifacts_only: bool = False,
     progress_fn=None,
+    menthorq_provider: MenthorqLevels | None = None,
 ) -> FsmAuditBuildResult:
     """One audit-enabled replay of the authorized chain.
 
@@ -982,6 +992,8 @@ def build_ifvg_fsm_audit_v1(
     chain_dates = policy.authorize_dates(dates)
     if not chain_dates:
         raise ValueError("IFVG fsm audit replay requires at least one allowlisted date")
+
+    provider = menthorq_provider_for_section(cfg.section, menthorq_provider)
 
     cold = DaySeeds(prev_day=None, prev_full_hl=None, prev_ny_day=None, prev_ny_hl=None)
     seed: IfvgDaySeed | None = None
@@ -1021,6 +1033,7 @@ def build_ifvg_fsm_audit_v1(
             seed=seed,
             dataset_exhausted=chain_index == len(chain_dates) - 1,
             audit_capture_mode="fsm_audit_v1",
+            **({"menthorq_provider": provider} if provider is not None else {}),
         )
         seed = day_result.end_seed
         frame = day_result.rows.copy()
@@ -1148,6 +1161,7 @@ class V3CaptureResult:
         capacity_metrics: dict,
         performance_measurements: dict,
         diagnostic_timings: dict | None = None,
+        menthorq_provider: MenthorqLevels | None = None,
     ) -> None:
         self.context_tables = context_tables
         # Transient control output.  The v3 saver deliberately has no parameter
@@ -1162,6 +1176,7 @@ class V3CaptureResult:
         self.capacity_metrics = capacity_metrics
         self.performance_measurements = performance_measurements
         self.diagnostic_timings = diagnostic_timings or {}
+        self.menthorq_provider = menthorq_provider
 
     @property
     def captures(self) -> pd.DataFrame:
@@ -1310,6 +1325,7 @@ def _timed_preloaded_replay(
     strategy_core_commit: str,
     strategy_core_source_tree_hash: str,
     context_replay_tape: ContextReplayTape | None = None,
+    menthorq_provider: MenthorqLevels | None = None,
 ) -> tuple[float, float, float]:
     core_seed: IfvgDaySeed | None = None
     context_seed = None
@@ -1318,6 +1334,8 @@ def _timed_preloaded_replay(
     started = perf_counter_ns()
     for index, day in enumerate(dates):
         artifacts = artifacts_by_day[day]
+        if menthorq_provider is not None:
+            menthorq_provider.register_day_artifacts(artifacts, cfg.core.tick_size)
         bars_by_tf: dict[int, list] = {}
         for bar in artifacts.bars:
             bars_by_tf.setdefault(bar.timeframe_ticks, []).append(bar)
@@ -1327,7 +1345,9 @@ def _timed_preloaded_replay(
             seed=core_seed,
             trading_day=date.fromisoformat(day),
             tick_size=cfg.core.tick_size,
-            levels_for=levels_for_from_frame(artifacts.level_timeline),
+            levels_for=levels_for_from_frame(
+                artifacts.level_timeline, menthorq_provider=menthorq_provider
+            ),
             dataset_exhausted=index == len(dates) - 1,
             context_config=cfg.context if context_enabled else None,
             context_seed=context_seed if context_enabled else None,
@@ -1368,6 +1388,7 @@ def _performance_benchmark(
     context_source_coverage: ContextSourceCoverage,
     strategy_core_commit: str,
     strategy_core_source_tree_hash: str,
+    menthorq_provider: MenthorqLevels | None = None,
 ) -> dict[str, object]:
     context_replay_tape = ContextReplayTape()
 
@@ -1382,6 +1403,10 @@ def _performance_benchmark(
             strategy_core_source_tree_hash=strategy_core_source_tree_hash,
             context_replay_tape=(
                 context_replay_tape if context_enabled else None
+            ),
+            **(
+                {"menthorq_provider": menthorq_provider}
+                if menthorq_provider is not None else {}
             ),
         )
 
@@ -1457,6 +1482,7 @@ def build_ifvg_v3_capture(
     context_source_coverage: ContextSourceCoverage = DEFAULT_CONTEXT_SOURCE_COVERAGE,
     measure_performance: bool = False,
     progress_fn=None,
+    menthorq_provider: MenthorqLevels | None = None,
 ) -> V3CaptureResult:
     """Replay once into unchanged transient v2 controls plus normalized context."""
 
@@ -1468,6 +1494,8 @@ def build_ifvg_v3_capture(
     chain_dates = policy.authorize_dates(dates)
     if not chain_dates:
         raise ValueError("IFVG v3 replay requires at least one allowlisted date")
+
+    provider = menthorq_provider_for_section(core_cfg.section, menthorq_provider)
 
     cold = DaySeeds(
         prev_day=None,
@@ -1526,6 +1554,7 @@ def build_ifvg_v3_capture(
             strategy_core_source_tree_hash=strategy_core_source_tree_hash,
             context_source_coverage=context_source_coverage,
             dataset_exhausted=chain_index == len(chain_dates) - 1,
+            **({"menthorq_provider": provider} if provider is not None else {}),
         )
         core_seed = day_result.end_seed
         context_seed = day_result.end_context_seed
@@ -1643,6 +1672,7 @@ def build_ifvg_v3_capture(
             context_source_coverage=context_source_coverage,
             strategy_core_commit=strategy_core_commit,
             strategy_core_source_tree_hash=strategy_core_source_tree_hash,
+            **({"menthorq_provider": provider} if provider is not None else {}),
         )
     else:
         performance_measurements = {
@@ -1662,6 +1692,7 @@ def build_ifvg_v3_capture(
         cached_artifact_days=cached_days,
         bars_by_day=bars_by_day,
         access_policy=policy,
+        menthorq_provider=provider,
         capacity_metrics={
             "terminal_state_bytes": terminal_seed_bytes,
             "terminal_seed_bytes": terminal_seed_bytes,

@@ -41,7 +41,10 @@ from pydantic import (
     model_validator,
 )
 from pydantic_core import core_schema
-from strategy_core.strategies.ifvg_smc.section import IfvgSmcSection
+from strategy_core.strategies.ifvg_smc.section import (
+    MENTHORQ_NEUTRAL_PROFILE_FIELDS,
+    IfvgSmcSection,
+)
 
 from ..context_experiment_contracts import (
     PROFILE_CAPABILITY_REGISTRY,
@@ -605,8 +608,8 @@ class ReplayExecutionAccessAudit(FrozenContract):
 def name_free_section_hash(section: IfvgSmcSection) -> str:
     """SHA-256 of the section content with ``profile_name`` removed.
 
-    Mirrors ``ifvg_profile_hash`` serialization exactly (sorted compact JSON of
-    ``model_dump(mode="json")``) so the only difference is the name removal.
+    Uses sorted compact JSON of the resolved section, retaining established
+    neutral optional-field exclusions and omitting the display profile name.
     """
 
     payload = section.model_dump(mode="json")
@@ -615,6 +618,11 @@ def name_free_section_hash(section: IfvgSmcSection) -> str:
     # (the only behavior of earlier Core builds) stays out, as in ifvg_profile_hash
     if payload.get("exit_policy") == "fixed_target_v1":
         payload.pop("exit_policy")
+    # A1's neutral fields must not rename a historical generated profile.
+    # Active values remain load-bearing, using the Core's named default map.
+    for key, default in MENTHORQ_NEUTRAL_PROFILE_FIELDS.items():
+        if payload.get(key) == default:
+            payload.pop(key, None)
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 

@@ -14,6 +14,7 @@ Use this index to avoid treating old reports as current architecture. The curren
 
 | Doc | Status | Use for |
 |---|---|---|
+| [IFSM MenthorQ level context](IFSM_MENTHORQ_LEVEL_CONTEXT.md) | **Task A1 runtime implementation** | EOD availability, entry gates, review-only export, grouped reports and exact-source parity. No archived ML context family. |
 | `../ARCHITECTURE.md` | **Canonical current architecture** | Repo purpose, v3 semantics, current workflows, generated outputs. |
 | `ML_TRAINING_WORKBENCH.md` | **Current workflow guide** | Streamlit ML tab, dashboard-utility build/train/save, exact-source IFVG R5–R6 research and separate authorization. |
 | `pipeline_state.yaml` | **Current machine-readable summary** | Quick state for agents/scripts; v3 fields and known gaps. |

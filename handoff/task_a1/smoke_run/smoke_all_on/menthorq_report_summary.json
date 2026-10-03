@@ -1,0 +1,131 @@
+{
+  "comparison": {
+    "expectancy_points": 19.486,
+    "gross_points": 20.0,
+    "net_points": 19.486,
+    "trades": 1,
+    "win_rate": 1.0,
+    "wins": 1
+  },
+  "comparison_by_regime": [
+    {
+      "expectancy_points": 19.486,
+      "gross_points": 20.0,
+      "net_points": 19.486,
+      "regime": "positive",
+      "trades": 1,
+      "win_rate": 1.0,
+      "wins": 1
+    }
+  ],
+  "comparison_by_slot": [
+    {
+      "expectancy_points": 19.486,
+      "gross_points": 20.0,
+      "net_points": 19.486,
+      "slot_chicago": "s2_1000_1200",
+      "trades": 1,
+      "win_rate": 1.0,
+      "wins": 1
+    }
+  ],
+  "evaluation_scope": {
+    "all_chain_candidate_labels": 366,
+    "all_chain_candidates": 122,
+    "all_chain_decisions": 1,
+    "all_chain_executed_trades": 1,
+    "evidence_candidate_labels": 330,
+    "evidence_candidates": 110,
+    "evidence_decisions": 1,
+    "evidence_executed_trades": 1,
+    "policy": "post_warmup_candidate_entry_v1",
+    "warmup_candidate_labels_excluded": 36,
+    "warmup_candidates_excluded": 12,
+    "warmup_decisions_excluded": 0,
+    "warmup_executed_trades_excluded": 0
+  },
+  "executed_trade_groups": [
+    {
+      "entry_session": "ny",
+      "expectancy_points": 19.486,
+      "gross_points": 20.0,
+      "net_points": 19.486,
+      "regime": "positive",
+      "slot_chicago": "s2_1000_1200",
+      "trades": 1,
+      "win_rate": 1.0,
+      "wins": 1
+    }
+  ],
+  "net_cash_cents": "not_produced_in_a1",
+  "net_cash_note": "A new verified funded result requires the existing gated plan path.",
+  "open_unresolved_trades": 0,
+  "pooling_policy": "All post-warmup executions are pooled for totals; session, regime and Chicago slot are reported jointly. Unknown buckets are retained. Roll-flagged rows remain in grouped totals and have separate rows; comparisons exclude only known roll-flagged days.",
+  "record_counts": {
+    "eligible_decision": [
+      {
+        "count": 1,
+        "entry_session": "ny",
+        "regime": "positive",
+        "slot_chicago": "s2_1000_1200"
+      }
+    ],
+    "entry_candidate": [
+      {
+        "count": 74,
+        "entry_session": "asia",
+        "regime": "unknown",
+        "slot_chicago": "outside_cash"
+      },
+      {
+        "count": 24,
+        "entry_session": "london",
+        "regime": "unknown",
+        "slot_chicago": "outside_cash"
+      },
+      {
+        "count": 2,
+        "entry_session": "none",
+        "regime": "negative",
+        "slot_chicago": "s3_1200_1330"
+      },
+      {
+        "count": 2,
+        "entry_session": "none",
+        "regime": "unknown",
+        "slot_chicago": "outside_cash"
+      },
+      {
+        "count": 6,
+        "entry_session": "ny",
+        "regime": "positive",
+        "slot_chicago": "s1_0830_1000"
+      },
+      {
+        "count": 2,
+        "entry_session": "ny",
+        "regime": "positive",
+        "slot_chicago": "s2_1000_1200"
+      }
+    ],
+    "executed_trade": [
+      {
+        "count": 1,
+        "entry_session": "ny",
+        "regime": "positive",
+        "slot_chicago": "s2_1000_1200"
+      }
+    ]
+  },
+  "roll_days": [],
+  "roll_flag_unavailable": true,
+  "roll_trade_groups": [],
+  "total": {
+    "expectancy_points": 19.486,
+    "gross_points": 20.0,
+    "net_points": 19.486,
+    "trades": 1,
+    "win_rate": 1.0,
+    "wins": 1
+  }
+}

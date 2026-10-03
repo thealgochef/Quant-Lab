@@ -1,0 +1,16 @@
+{
+  "capacity_gate_run": false,
+  "measure_performance": false,
+  "reports_seconds": 0.2061241999908816,
+  "source_copy_seconds": 0.10743630000797566,
+  "stages": {
+    "bars_seconds": 0.0,
+    "labels_seconds": 0.0766874000109965,
+    "replay_seconds": 45.06836019999173,
+    "reports_seconds": 0.2061241999908816,
+    "source_load_seconds": 22.01393500000995
+  },
+  "total_seconds": 74.23354520001158,
+  "v2_capture_with_load_and_labels_seconds": 16.86586510000052,
+  "v3_capture_with_load_and_labels_seconds": 50.2865068000101
+}
