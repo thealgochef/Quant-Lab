@@ -171,6 +171,7 @@ class MenthorqLevels:
             raise ValueError("MenthorQ lookup requires an aware UTC timestamp")
         chicago = ts_utc.astimezone(_CHICAGO)
         day = chicago.date()
+        instrument_day = trading_day_for(ts_utc, RESEARCH_SESSION_SCHEME)
         local_time = chicago.time()
         reason = (
             "before_0600" if local_time < time(6)
@@ -190,8 +191,11 @@ class MenthorqLevels:
             total_net_gex=regime.total_net_gex if regime else None,
             gex_percentile_1y=regime.gex_percentile_1y if regime else None,
             implied_move_points=row.implied_move_points if row else None,
-            selected_instrument_id=self._selected_instruments.get(day),
-            roll_flag=self.roll_flag_for(day),
+            selected_instrument_id=(
+                self._selected_instruments.get(instrument_day)
+                if instrument_day is not None else None
+            ),
+            roll_flag=self.roll_flag_for(instrument_day) if instrument_day is not None else None,
             context_available=reason is None,
             unavailable_reason=reason,
         )

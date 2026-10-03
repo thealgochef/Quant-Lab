@@ -7,6 +7,7 @@ import json
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import pyarrow as pa
@@ -84,6 +85,70 @@ def test_missing_catalog_entry_is_null_and_empty_day_is_not_roll_predecessor(tmp
     assert snapshot.roll_flag is None
     provider.register_day_artifacts(_artifacts("2026-01-16"), .25)
     assert provider.roll_flag_for(date(2026, 1, 16)) is None
+
+
+@pytest.mark.parametrize("civil_day,hhmm,expected_instrument", [
+    ("2026-01-11", "17:00", 202),
+    ("2026-01-11", "23:59", 202),
+    ("2026-01-12", "00:00", 202),
+    ("2026-01-12", "05:59", 202),
+    ("2026-01-12", "06:00", 202),
+    ("2026-01-12", "16:59", 202),
+    ("2026-01-12", "17:00", 303),
+    ("2026-01-13", "10:00", 303),
+])
+def test_instrument_and_roll_use_logical_day_across_sunday_midnight_and_daytime(
+    tmp_path, civil_day, hhmm, expected_instrument,
+):
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text(json.dumps({"days": {
+        "2026-01-09": {"selected_instrument_id": 101},
+        "2026-01-12": {"selected_instrument_id": 202},
+        "2026-01-13": {"selected_instrument_id": 303},
+    }}))
+    provider = _provider(catalog)
+    for day in ("2026-01-09", "2026-01-12", "2026-01-13"):
+        provider.register_day_artifacts(_artifacts(day), .25)
+    stamp = datetime.fromisoformat(f"{civil_day}T{hhmm}").replace(
+        tzinfo=ZoneInfo("America/Chicago")).astimezone(UTC)
+    snapshot = provider.snapshot(stamp)
+    assert snapshot.selected_instrument_id == expected_instrument
+    assert snapshot.roll_flag is True
+    assert snapshot.trading_date == date.fromisoformat(civil_day)
+    # Source date, level/regime values and availability stay on the A1 civil key.
+    assert replace(snapshot, selected_instrument_id=None, roll_flag=None) == (
+        _provider(catalog).snapshot(stamp))
+    if hhmm < "06:00" or hhmm >= "17:00":
+        assert not snapshot.context_available
+        assert snapshot.regime == "unknown" and snapshot.source_eod_date is None
+        assert snapshot.unavailable_reason == ("before_0600" if hhmm < "06:00" else "after_1700")
+    if civil_day == "2026-01-13":
+        assert snapshot.context_available and snapshot.source_eod_date == date(2026, 1, 12)
+
+
+@pytest.mark.parametrize("previous,current,prior_has_bars,expected", [
+    (101, 202, True, True), (101, 101, True, False),
+    (None, 202, True, None), (101, None, True, None), (101, 202, False, None),
+])
+def test_sunday_logical_instrument_preserves_missing_and_empty_predecessor_semantics(
+    tmp_path, previous, current, prior_has_bars, expected,
+):
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text(json.dumps({"days": {
+        "2026-01-09": {"selected_instrument_id": previous},
+        "2026-01-11": {"selected_instrument_id": 999},
+        "2026-01-12": {"selected_instrument_id": current},
+    }}))
+    provider = _provider(catalog)
+    provider.register_day_artifacts(_artifacts("2026-01-09", bars=prior_has_bars), .25)
+    provider.register_day_artifacts(_artifacts("2026-01-11", bars=False), .25)
+    provider.register_day_artifacts(_artifacts("2026-01-12"), .25)
+    sunday_evening = datetime(2026, 1, 11, 18, tzinfo=ZoneInfo("America/Chicago")).astimezone(UTC)
+    snapshot = provider.snapshot(sunday_evening)
+    assert snapshot.trading_date == date(2026, 1, 11)
+    assert snapshot.selected_instrument_id == current
+    assert snapshot.roll_flag is expected
+    assert date(2026, 1, 11) not in provider._selected_instruments
 
 
 def test_front_month_index_backfill_preserves_existing_files_and_entry(tmp_path, monkeypatch):

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from strategy_core.decisions.sessions import trading_day_for
 from strategy_core.strategies.ifvg_smc.section import IfvgSmcSection
 
 from alpha_lab.propsim.funded.clock import CHICAGO, chicago_date, to_ns
@@ -52,6 +53,10 @@ EXECUTION_PARITY_EXCLUSION_PROVENANCE = {
     "candidate_id": "Core make_candidate_id UUID5 includes setup_id",
     "decision_id": "Core make_decision_id UUID5 includes candidate_id and execution_profile_hash",
     "trade_id": "Core make_trade_id UUID5 includes decision_id",
+    "entering_seed_hash": (
+        "QL capture_driver hashes the complete Core IfvgDaySeed; Core state.seed_hash "
+        "includes seed/reducer profile_hash and profile-derived setup IDs"
+    ),
 }
 EXECUTION_PARITY_EXCLUSIONS = frozenset(EXECUTION_PARITY_EXCLUSION_PROVENANCE)
 
@@ -82,6 +87,13 @@ def _day(value: Any) -> str:
 
 def _calendar_month(value: Any) -> str:
     return chicago_date(to_ns(_timestamp(value).isoformat())).strftime("%Y-%m")
+
+
+def _entry_logical_day(value: Any) -> str:
+    day = trading_day_for(_timestamp(value).to_pydatetime())
+    if day is None:
+        raise ValueError("study entry is inside the existing closed session window")
+    return day.isoformat()
 
 
 def _months(days: Sequence[str]) -> tuple[str, ...]:
@@ -200,12 +212,15 @@ def _point_views(config: StudyConfigurationInput) -> tuple[dict, dict, pd.DataFr
         for column in (*GROUP_COLUMNS, "roll_flag", "trading_date"):
             normalized[column] = normalized.candidate_id.map(context[column])
         normalized["entry_calendar_month"] = normalized.entry_ts_utc.map(_calendar_month)
+        normalized["_entry_logical_day"] = normalized.entry_ts_utc.map(_entry_logical_day)
     else:
         normalized = pd.DataFrame(columns=[*GROUP_COLUMNS, "roll_flag", "trading_date",
                                           "entry_calendar_month", "_label", "_realized_pts",
-                                          "_net_points"])
+                                          "_net_points", "_entry_logical_day"])
     for kind, context in contexts.items():
-        if len(context) and not set(context.trading_date.map(_day)) <= set(config.evaluation_days):
+        if len(context) and not set(context.availability_ts_utc.map(_entry_logical_day)) <= set(
+            config.evaluation_days
+        ):
             raise ValueError(f"{kind.value} contains entries outside the evaluation calendar")
     return views, contexts, normalized
 
@@ -270,7 +285,7 @@ def build_study_reports(
             date.fromisoformat(day), time(6), tzinfo=CHICAGO)) for day in days}
         roll_days = {day for day, snapshot in snapshots.items() if snapshot.roll_flag is True}
         roll_points = (
-            points.loc[points.trading_date.map(_day).isin(roll_days)] if len(points) else points
+            points.loc[points._entry_logical_day.isin(roll_days)] if len(points) else points
         )
         comparison = {"configuration": config.configuration, **total,
                       **{f"net_cash_cents.{firm}": cash[firm] for firm in sorted(cash)},
@@ -311,7 +326,7 @@ def build_study_reports(
         roll_rows = []
         for day in sorted(roll_days):
             day_points = (
-                points.loc[points.trading_date.map(_day).eq(day)] if len(points) else points
+                points.loc[points._entry_logical_day.eq(day)] if len(points) else points
             )
             day_events = [event for event in cash_events if event["cash_event_day"] == day]
             roll_rows.append({
@@ -432,6 +447,8 @@ def write_study_reports(
         "monthly_net_points_column": "net_points_by_entry_month",
         "monthly_net_cash_columns": "net_cash_by_cash_event_month_cents.<firm>",
         "roll_points_day": "entry_logical_trading_date",
+        "evaluation_scope_timestamp": "entry_availability_ts_utc_with_Core_trading_day_for",
+        "context_trading_date": "civil_date_in_America_Chicago",
         "roll_cash_day": "cash_event_calendar_date_in_America_Chicago",
         "cash_allocated_to_trades": False, "roll_days_excluded": False,
     }, indent=2) + "\n", encoding="utf-8")

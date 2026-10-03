@@ -9,10 +9,14 @@ from datetime import date, timedelta
 
 import pandas as pd
 import pytest
+from strategy_core.decisions.sessions import trading_day_for
 from strategy_core.strategies.ifvg_smc.menthorq_levels import (
     LEVEL_COLUMN_NAMES,
     MenthorqLevelSnapshot,
 )
+from strategy_core.strategies.ifvg_smc.section import ifvg_profile_hash
+from strategy_core.strategies.ifvg_smc.state import IFVG_SEED_SCHEMA_VERSION, IfvgDaySeed, seed_hash
+from strategy_core.structures.swings import SwingTracker
 
 from alpha_lab.agents.data_infra.ifvg.contracts import RecordTable
 from alpha_lab.agents.data_infra.ifvg.menthorq_study_reporting import (
@@ -38,13 +42,15 @@ class _Provider:
 
     def snapshot(self, stamp):
         local = stamp.astimezone(CHICAGO)
-        day = local.date() + (timedelta(days=1) if local.hour >= 17 else timedelta())
+        day = local.date()
+        logical_day = trading_day_for(stamp)
         available = 6 <= local.hour < 17 and day != date(2025, 6, 30)
         return MenthorqLevelSnapshot(
             trading_date=day, source_eod_date=day - timedelta(days=1) if available else None,
             source_file_sha256="a" * 64, levels=dict.fromkeys(LEVEL_COLUMN_NAMES, None),
             regime="positive" if available else "unknown", selected_instrument_id=11,
-            roll_flag=day.isoformat() in {"2025-06-16", "2025-07-01", "2025-07-02"},
+            roll_flag=logical_day is not None and logical_day.isoformat() in {
+                "2025-06-16", "2025-07-01", "2025-07-02"},
             context_available=available,
         )
 
@@ -255,6 +261,54 @@ def test_sunday_cash_purchase_keeps_event_date_without_monday_roll_attribution()
         assert reports["comparison"][f"net_cash_cents.{firm}"].eq(7_501).all()
 
 
+@pytest.mark.parametrize("stamp, accepted", [
+    ("2025-06-15T23:00:00Z", True),
+    ("2025-06-14T23:00:00Z", False),
+])
+def test_sunday_asia_entry_uses_monday_scope_and_roll_but_preserves_civil_export_date(
+    tmp_path, stamp, accepted,
+):
+    entry = pd.Timestamp(stamp)
+    logical_day = trading_day_for(entry.to_pydatetime())
+    assert logical_day.isoformat() == ("2025-06-16" if accepted else "2025-06-15")
+    inputs = []
+    for config in _inputs():
+        tables = {kind: frame.copy() for kind, frame in config.tables.items()}
+        for kind in (RecordTable.ENTRY_CANDIDATE, RecordTable.ELIGIBLE_DECISION,
+                     RecordTable.EXECUTED_TRADE):
+            tables[kind].loc[0, "trading_day"] = logical_day
+            tables[kind].loc[0, "envelope_trading_day"] = logical_day.isoformat()
+            tables[kind].loc[0, "envelope_ts_utc"] = entry
+        trade = tables[RecordTable.EXECUTED_TRADE]
+        trade.loc[0, "entry_ts_utc"] = entry
+        trade.loc[0, "resolution_ts_utc"] = entry + pd.Timedelta(minutes=2)
+        trade.loc[0, "envelope_ts_utc"] = trade.loc[0, "resolution_ts_utc"]
+        inputs.append(replace(config, tables=tables))
+    if not accepted:
+        with pytest.raises(ValueError, match="outside the evaluation calendar"):
+            build_study_reports(inputs)
+        return
+    reports = build_study_reports(inputs)
+    roll_rows = reports["roll_days"]
+    monday = roll_rows.loc[roll_rows.trading_day.eq("2025-06-16")]
+    assert monday.trades.eq(1).all() and monday.net_points.eq(2).all()
+    assert reports["comparison"].roll_day_trades.eq(2).all()
+    export = reports["baseline/context_export"]
+    sunday = export.loc[export.entry_session.eq("asia") & export.trade_id.notna()].iloc[0]
+    assert sunday.trading_date == date(2025, 6, 15)
+    assert sunday.source_eod_date is None and bool(sunday.roll_flag)
+    months = reports["comparison_by_month"]
+    june = months.loc[months.configuration.eq("baseline") & months.calendar_month.eq("2025-06")]
+    assert june.trades.eq(1).all() and june.net_points_by_entry_month.eq(2).all()
+    paths = write_study_reports(tmp_path / "reports", inputs)
+    context_path = paths["baseline/context_export"]
+    written = pd.read_csv(context_path, comment="#")
+    assert written.loc[written.trade_id.notna() & written.entry_session.eq("asia"),
+                       "trading_date"].tolist() == ["2025-06-15"]
+    validation = json.loads(paths["validation"].read_text(encoding="utf-8"))
+    assert validation["context_trading_date"] == "civil_date_in_America_Chicago"
+
+
 def test_parity_allows_only_proven_profile_ids_and_preserves_qualification_geometry_and_outcomes():
     left = _input_tables()[RecordTable.EXECUTED_TRADE]
     right = left.copy()
@@ -271,6 +325,46 @@ def test_parity_allows_only_proven_profile_ids_and_preserves_qualification_geome
             assert_context_execution_parity(left, changed)
     with pytest.raises(ValueError, match="executed trades differ"):
         assert_context_execution_parity(left, pd.concat([right, right.iloc[[0]]]))
+
+
+def _profile_bound_seed_execution_pair():
+    sections = [resolve_profile_config({
+        "section_overrides": resolve_axis_overrides(dict(row.axis_value_ids)),
+    }).section for row in task_b_configurations()[:2]]
+    seed = IfvgDaySeed(
+        schema_version=IFVG_SEED_SCHEMA_VERSION, profile_hash=ifvg_profile_hash(sections[0]),
+        source_day=date(2025, 6, 30), registries=(), swings=SwingTracker().snapshot(), reducer=None,
+    )
+    context_seed = replace(seed, profile_hash=ifvg_profile_hash(sections[1]))
+    assert seed.profile_hash != context_seed.profile_hash
+    assert seed_hash(seed) != seed_hash(context_seed)
+    baseline = _input_tables()[RecordTable.EXECUTED_TRADE]
+    context = baseline.copy()
+    baseline["entering_seed_hash"] = seed_hash(seed)
+    context["entering_seed_hash"] = seed_hash(context_seed)
+    return baseline, context
+
+
+def test_parity_allows_complete_seed_digest_difference_from_only_the_core_profile_hash():
+    baseline, context = _profile_bound_seed_execution_pair()
+    assert_context_execution_parity(baseline, context)
+
+
+@pytest.mark.parametrize("column", ["entry_ticks", "geometry_entry_bar_open_ticks",
+                                     "entry_ts_utc", "resolution_ts_utc", "envelope_ts_utc",
+                                     "unrecognized_source_hash"])
+def test_seed_provenance_exclusion_keeps_execution_geometry_timing_and_other_hashes_strict(column):
+    baseline, context = _profile_bound_seed_execution_pair()
+    if column == "unrecognized_source_hash":
+        baseline[column] = "a" * 64
+        context[column] = "a" * 64
+        context.loc[0, column] = "b" * 64
+    elif column.endswith("ts_utc"):
+        context.loc[0, column] += pd.Timedelta(nanoseconds=1)
+    else:
+        context.loc[0, column] += 1
+    with pytest.raises(ValueError, match="executed trades differ"):
+        assert_context_execution_parity(baseline, context)
 
 
 @pytest.mark.parametrize("failure", ["unverified", "cash_mismatch", "inexact_cents",
@@ -330,9 +424,12 @@ def test_report_writer_exports_baseline_review_context_and_explicit_parity_exclu
     assert validation["monthly_net_cash_columns"] == "net_cash_by_cash_event_month_cents.<firm>"
     assert validation["monthly_trade_metrics_scope"] == "entry_calendar_month_in_America_Chicago"
     assert "candidate_id" in validation["execution_parity_exclusions"]
+    assert "entering_seed_hash" in validation["execution_parity_exclusions"]
     assert "envelope_qualification_mode" not in validation["execution_parity_exclusions"]
     assert "canonicalize_section" in validation["execution_parity_exclusion_provenance"][
         "envelope_profile_name"]
+    assert "complete Core IfvgDaySeed" in validation["execution_parity_exclusion_provenance"][
+        "entering_seed_hash"]
     assert set(validation["execution_parity_exclusion_provenance"]) == set(
         validation["execution_parity_exclusions"])
     assert all(path.is_file() for path in paths.values())

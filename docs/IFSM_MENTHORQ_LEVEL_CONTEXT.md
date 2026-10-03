@@ -68,6 +68,10 @@ catalog entries are backfilled without bar construction. `register_day_artifacts
 reads the catalog; roll flags compare the preceding registered day with bars:
 different IDs true, equal IDs false, either missing null. Empty days do not
 become predecessors. Receipts never enter immutable day metadata or datasets.
+Snapshot instrument and roll lookups use Core's `trading_day_for` with the
+research session scheme, matching these logical-day catalog keys through Sunday
+evening and midnight. The snapshot's `trading_date`, EOD/level/regime lookup and
+06:00–17:00 availability remain on the Chicago civil date.
 
 ## Review export and reports
 
@@ -168,10 +172,21 @@ By-session/regime/slot and cell tables carry points only; the NY comparison
 block is points only. Monthly points use Chicago entry month; monthly cash uses
 Chicago cash-event month and explicit column labels. All roll-day entries remain
 in both replay paths; separate roll rows report point metrics and cash events.
+Evaluation scope and roll-day points use Core's existing logical trading day
+from honest entry availability, including Sunday Asia entries belonging to
+Monday. Context exports retain Chicago civil/EOD dates; monthly points and cash
+retain their respective Chicago entry and cash-event calendar timestamps.
 The report requires all thirteen configurations, every existing funded firm,
 exact cash-cent reconciliation and baseline/context-on execution parity. The
 report-only provider also supplies the baseline/NY-only review exports, without
 enabling their context gates. These exports do not enter manifests or ML inputs.
+Task B execution parity excludes the profile-bound `entering_seed_hash` alongside
+the named profile/linkage identities. Quant-Lab's `capture_driver.py` stamps the
+complete previous Core day-seed hash; Core's `state.seed_hash` hashes every seed
+field, including the seed/reducer profile hashes and profile-derived setup IDs.
+Enabling EOD context therefore changes this provenance digest even when execution
+is identical. Every other execution, geometry, timing and outcome field remains
+strictly compared. This Task B rule does not change A1's frozen parity exclusions.
 
 The external A1 harness calls the same bounded v2/v3 capture and report builders
 used by normal preparation, with explicit scratch input/output paths. The
