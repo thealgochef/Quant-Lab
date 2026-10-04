@@ -1,0 +1,14 @@
+configuration,evaluation_days,days_with_context_available,candidates,candidates_with_context,candidates_blocked.already_in_trade,candidates_blocked.context_unavailable,candidates_blocked.entry_family_not_profile,candidates_blocked.nearest_support_gex1,candidates_blocked.out_of_session,candidates_blocked.regime_gate,candidates_blocked.retest_trigger_unratified
+baseline,253,253,152,80,81.0,0,34,0,32,0,34
+context_on,253,253,152,80,81.0,0,34,0,32,0,34
+regime_positive,253,253,152,80,80.0,0,34,0,32,5,34
+regime_negative,253,253,183,111,54.0,0,33,0,42,92,33
+gex1_block,253,253,161,89,73.0,0,34,33,35,0,34
+slot_s1,253,253,232,113,7.0,0,35,0,224,0,35
+slot_s2,253,253,216,97,10.0,0,35,0,204,0,35
+slot_s3,253,253,233,113,22.0,0,37,0,210,0,37
+slot_s4,253,253,228,109,18.0,0,35,0,203,0,35
+midsession,253,253,209,89,15.0,0,36,0,185,0,36
+negative_s1,253,253,235,116,0.0,0,35,0,227,93,35
+positive_mid_gex1,253,253,215,95,11.0,0,36,34,185,5,36
+ny_only,253,253,201,81,28.0,0,36,0,161,0,36
