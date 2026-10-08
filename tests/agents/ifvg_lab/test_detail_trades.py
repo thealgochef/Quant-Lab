@@ -363,7 +363,7 @@ def test_detail_screen_renders_the_trades_tab(monkeypatch):
     html = "\n".join(str(getattr(e.proto, "body", "")) for e in at.get("html"))
     assert "Trade results, 114 funded trades" in html
     assert "Performance summary" in html
-    assert "How far each trade went against you, and for you" in html
+    assert "Account equity range during each trade" in html
     assert "36 of 47 losers" in html
     assert len(at.get("plotly_chart")) == 2
     assert at.expander and at.expander[0].label == "More: every column of the earlier trade table"

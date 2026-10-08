@@ -89,14 +89,25 @@ def find_approval(store_root: Path, plan_id: str) -> FundedComparisonApprovalEnv
     return None
 
 
-def load_plan(store_root: Path, plan_id: str
-              ) -> FundedComparisonPlanPayload | FundedComparisonPlanPayloadV2:
+def load_plan(store_root: Path, plan_id: str):
     try:
         return load_verified_envelope(store_root, PLAN_STORE, plan_id,
                                       FundedComparisonPlanEnvelope).payload
     except Exception:
-        return load_verified_envelope(store_root, PLAN_STORE, plan_id,
-                                      FundedComparisonPlanEnvelopeV2).payload
+        try:
+            return load_verified_envelope(store_root, PLAN_STORE, plan_id,
+                                          FundedComparisonPlanEnvelopeV2).payload
+        except Exception:
+            try:
+                from alpha_lab.propsim.funded.full_range_batch import FullRangeBatchPlanEnvelope
+
+                return load_verified_envelope(store_root, PLAN_STORE, plan_id,
+                                              FullRangeBatchPlanEnvelope).payload
+            except Exception:
+                from alpha_lab.propsim.funded.mffu_batch_plan import MffuBatchPlanEnvelope
+
+                return load_verified_envelope(store_root, PLAN_STORE, plan_id,
+                                              MffuBatchPlanEnvelope).payload
 
 
 def is_v2(plan) -> bool:

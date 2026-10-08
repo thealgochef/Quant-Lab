@@ -1,0 +1,12 @@
+{
+  "status": "passed",
+  "scope": "handoff manifest, copied references, matrix, schedule, feature partitions, synthetic costs/labels/events, and authored links only",
+  "model_cells": 24,
+  "funded_controls": 2,
+  "folds": 9,
+  "scored_dates": 171,
+  "input_files_verified": 17,
+  "application_tests_run": false,
+  "models_fitted": 0,
+  "financial_operations_executed": 0
+}

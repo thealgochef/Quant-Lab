@@ -600,4 +600,35 @@ def load_studies(
                     scope=scope,
                 )
             )
+    # Additive reporting pointers preserve all ordinary studies and drafts.
+    from .lab.external_catalog import registered_groups
+
+    try:
+        published, publication_issues = registered_groups(Path(roots["store_root"]))
+        issues.extend(publication_issues)
+    except Exception as error:
+        published = []
+        issues.append(f"Published research catalog could not be verified ({error}).")
+    for group in published:
+        pointer = group["pointer"]
+        state = {"result_id": pointer["result_id"], "plan_id": pointer["plan_id"],
+                 "external_review_only": True, "catalog_binding": pointer,
+                 "versions": group["versions"], "qualification": pointer["qualification"]}
+        result.append(StudySummary(
+            key=group["study_key"], kind="funded_comparison", name=group["display_name"],
+            question="Which configuration earned the most cash after every account cost?",
+            dates=date_scope(pointer["evaluation_dates"]), status="Completed", scope="research",
+            updated=group.get("updated_at_utc", ""),
+            store_root=Path(pointer["external_store_root"]), state=state))
+    from alpha_lab.propsim.funded.ml_phase.catalog import registered_reports
+
+    published_ml, ml_issues = registered_reports(Path(roots["store_root"]))
+    issues.extend(ml_issues)
+    for pointer in published_ml:
+        result.append(StudySummary(
+            key=pointer["report_id"], kind="ml_phase", name=pointer["name"],
+            question="Entry net R and incremental continuation R; 24 cells, 26 operations",
+            dates="2025-10-09 to 2026-06-10", status="Completed", scope="research",
+            updated=pointer["created_utc"], state=pointer,
+            store_root=Path(roots["store_root"])))
     return sorted(result, key=lambda study: study.updated, reverse=True), issues

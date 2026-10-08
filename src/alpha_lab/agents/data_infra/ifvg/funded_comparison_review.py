@@ -111,9 +111,19 @@ SUPPLEMENT_FILES: dict[str, str] = {
     "trading_calendar": "trading_calendar.csv",
     "approximated_minutes": "approximated_minutes.csv",
     "reference_record_reconciliation": "reference_record_reconciliation.csv",
+    "run_context": "run_context.json",
+    "engine_integration": "ENGINE_INTEGRATION.md",
+    "screenshot_completed_comparison": "screenshots/01_completed_comparison.png",
+    "screenshot_effective_plan": "screenshots/02_effective_plan.png",
+    "screenshot_other_firm": "screenshots/03_other_firm.png",
 }
 #: supplements that go into documents and validation_summary.json, not files
-SUPPLEMENT_FACTS = ("trade_boundary_check",)
+SUPPLEMENT_FACTS = (
+    "trade_boundary_check",
+    "validation_evidence",
+    "document_overrides",
+    "mffu_policy_text",
+)
 CHARTS = ("charts/net_cash_by_configuration.png", "charts/cash_over_time.png")
 
 ALLOWLIST: tuple[str, ...] = (
@@ -140,13 +150,22 @@ _BASE_COLUMNS = ("pair_id", "configuration", "firm_key", "firm")
 
 #: Firm-profile fields that only drive the separate budgeted (five-account,
 #: credit and growth) mode. They are not used here and are not exported.
-_BUDGETED_ONLY_FIELDS = ("initial_accounts", "monthly_credits", "capacity_step",
-                         "growth_share_bps", "max_capacity")
+_BUDGETED_ONLY_FIELDS = (
+    "initial_accounts",
+    "monthly_credits",
+    "capacity_step",
+    "growth_share_bps",
+    "max_capacity",
+)
 
-_PATH = re.compile(r"(?:[A-Za-z]:[\\/]|\\\\)\S+|/(?:Users|home|tmp|mnt|var)/\S*"
-                   r"|\b[\w.-]+/[\w./-]*\.(?:py|parquet|zip|jsonl?|csv|dbn|zst)\b")
-_HASH = re.compile(r"\b(?=[0-9a-f]*[a-f])(?=[0-9a-f]*[0-9])[0-9a-f]{16,}\b"
-                   r"|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")
+_PATH = re.compile(
+    r"(?:[A-Za-z]:[\\/]|\\\\)\S+|/(?:Users|home|tmp|mnt|var)/\S*"
+    r"|\b[\w.-]+/[\w./-]*\.(?:py|parquet|zip|jsonl?|csv|dbn|zst)\b"
+)
+_HASH = re.compile(
+    r"\b(?=[0-9a-f]*[a-f])(?=[0-9a-f]*[0-9])[0-9a-f]{16,}\b"
+    r"|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b"
+)
 
 
 class ComparisonReviewExportError(RuntimeError):
@@ -178,6 +197,10 @@ def expected_allowlist(with_review_findings: bool, extra: Iterable[str] = ()
 
 def _extra_files(result: dict[str, Any], supplements: dict[str, Any]) -> tuple[str, ...]:
     extra = [SUPPLEMENT_FILES[k] for k in supplements if k in SUPPLEMENT_FILES]
+    if result.get("full_range_reporting"):
+        from alpha_lab.propsim.funded.full_range_reporting import TABLE_FILES
+
+        extra.extend(TABLE_FILES.values())
     if result.get("reporting_corrections"):
         extra.append(CORRECTIONS)
     return tuple(sorted(extra))
@@ -244,6 +267,10 @@ def publish_comparison_review_folder(
             "result_validation": _compact_validation(result.get("validation")),
             "export_checks": checks,
             "export_checks_passed": passed,
+            **({"execution_and_review_evidence": supplements["validation_evidence"]}
+               if "validation_evidence" in supplements else {}),
+            **({"full_range_reporting": result["full_range_reporting"]}
+               if result.get("full_range_reporting") else {}),
         })
         manifest = _manifest(staging, result, result_id, export_version,
                              review_findings is not None, checks)
@@ -347,22 +374,47 @@ def _not_completed(result: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _configuration_rows(result: dict[str, Any]) -> list[dict[str, Any]]:
+    from alpha_lab.agents.data_infra.ifvg.presentation.lab.mffu_matrix import (
+        canonical_settings,
+        result_variants,
+    )
+
+    variants = result_variants(result)
     rows: list[dict[str, Any]] = []
     for c in (result.get("tables") or {}).get("configurations") or []:
-        row: dict[str, Any] = {"configuration": c.get("configuration"),
-                               "configuration_label": c.get("configuration_label"),
-                               "status": COMPLETED, "reason": None,
-                               "axes": c.get("axes")}
+        row: dict[str, Any] = {
+            "configuration": c.get("configuration"),
+            "configuration_label": c.get("configuration_label"),
+            "status": COMPLETED,
+            "reason": None,
+            "axes": c.get("axes"),
+        }
         for item in c.get("settings") or []:
             row[str(item.get("setting"))] = item.get("value")
         for name, value in execution_sources(result, str(c.get("configuration"))):
             row[name] = value
+        if c.get("configuration") in variants:
+            variant = variants[c["configuration"]]
+            row.update(canonical_settings(variant))
+            row["Description basis"] = (
+                "Saved effective section and bound intent; reporting description only"
+            )
+            row["Historical intent metadata"] = (
+                "axes.planned_state is inherited handoff text; current status is Completed"
+            )
+            row["effective_section_config_hash"] = variant.effective_section_config_hash
+            row["intent_sha256"] = variant.intent_sha256
         rows.append(row)
     for item in _not_completed(result):
-        rows.append({"configuration": item["configuration"],
-                     "configuration_label": item["configuration_label"],
-                     "status": NOT_COMPLETED, "reason": plain_reason(item["reason"]),
-                     "axes": None})
+        rows.append(
+            {
+                "configuration": item["configuration"],
+                "configuration_label": item["configuration_label"],
+                "status": NOT_COMPLETED,
+                "reason": plain_reason(item["reason"]),
+                "axes": None,
+            }
+        )
     return rows
 
 
@@ -406,6 +458,11 @@ def _write_all(staging: Path, result: dict[str, Any], view: ComparisonView,
                allowlist: tuple[str, ...]) -> None:
     for table, filename in CSV_TABLES.items():
         _write_csv(staging / filename, _table_rows(result, table))
+    if result.get("full_range_reporting"):
+        from alpha_lab.propsim.funded.full_range_reporting import TABLE_FILES
+
+        for table, filename in TABLE_FILES.items():
+            _write_csv(staging / filename, _table_rows(result, table))
     if result.get("reporting_corrections"):
         _write_csv(staging / CORRECTIONS, _correction_rows(result))
     for key, filename in SUPPLEMENT_FILES.items():
@@ -413,6 +470,21 @@ def _write_all(staging: Path, result: dict[str, Any], view: ComparisonView,
             continue
         if filename.endswith(".json"):
             _write_json(staging / filename, supplements[key])
+        elif filename.endswith(".md"):
+            _write_text(staging / filename, str(supplements[key]))
+        elif filename.endswith(".png"):
+            from io import BytesIO
+
+            from PIL import Image
+
+            value = supplements[key]
+            data = value if isinstance(value, bytes) else Path(value).read_bytes()
+            if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+                raise ValueError("review screenshots must be actual PNG payloads")
+            with Image.open(BytesIO(data)) as screenshot:
+                screenshot.verify()
+            (staging / filename).parent.mkdir(exist_ok=True)
+            (staging / filename).write_bytes(data)
         else:
             _write_csv(staging / filename, list(supplements[key]))
 
@@ -448,6 +520,14 @@ def _write_all(staging: Path, result: dict[str, Any], view: ComparisonView,
     names = {str(row["configuration"]): plain_configuration_label(row["configuration_label"])
              for row in _configuration_rows(result) if row.get("configuration")}
     _write_text(staging / "RESEARCH_LEDGER.md", _ledger_markdown(ledger_entries, names))
+    overrides = dict(supplements.get("document_overrides") or {})
+    permitted = {"README.md", "QUESTION.md", "DECISIONS.md", "RESEARCH_LEDGER.md"}
+    if set(overrides) - permitted:
+        raise ValueError("review document overrides contain unsupported names")
+    for name, content in overrides.items():
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("review document overrides must contain nonempty prose")
+        _write_text(staging / name, content)
     if review_findings is not None:
         _write_text(staging / REVIEW_FINDINGS, _review_findings(review_findings))
     _write_text(staging / "DATA_DICTIONARY.md", _data_dictionary(staging, allowlist))
@@ -476,7 +556,9 @@ def _allowlist_check(staging: Path, allowlist: Iterable[str]) -> dict[str, Any]:
     extra = sorted(set(files) - set(expected))
     missing = sorted(set(expected) - set(files))
     bad_suffix = sorted(f for f in files if Path(f).suffix.lower() not in _ALLOWED_SUFFIXES)
-    bad_dirs = sorted(d for d in dirs if d != "charts")
+    expected_dirs = {str(Path(name).parent).replace("\\", "/") for name in expected}
+    expected_dirs.discard(".")
+    bad_dirs = sorted(d for d in dirs if d not in expected_dirs)
     return {"passed": not (extra or missing or bad_suffix or bad_dirs), "files": len(files),
             "unexpected": extra, "missing": missing, "forbidden_extensions": bad_suffix,
             "unexpected_folders": bad_dirs}
@@ -536,7 +618,23 @@ def _verify(staging: Path, result: dict[str, Any], allowlist: tuple[str, ...],
     counts: dict[str, Any] = {}
     parsed: dict[str, list[dict[str, str]]] = {}
     parse_errors: list[str] = []
-    for table, filename in CSV_TABLES.items():
+    csv_tables = dict(CSV_TABLES)
+    if result.get("full_range_reporting"):
+        from alpha_lab.propsim.funded.full_range_reporting import (
+            TABLE_FILES,
+            validate_full_range_reports,
+        )
+
+        csv_tables.update(TABLE_FILES)
+        saved_reporting = validate_full_range_reports(result)
+        checks["saved_full_range_reports_reconcile"] = saved_reporting
+        run_context = (supplements or {}).get("run_context")
+        if run_context is not None:
+            wanted = result["full_range_reporting"]
+            checks["run_context_matches_saved_scope"] = {"passed": all(
+                run_context.get(key) == wanted[key] for key in
+                ("evaluation_dates", "warmup_dates", "cutoff_utc"))}
+    for table, filename in csv_tables.items():
         try:
             parsed[filename] = _read_csv(staging / filename)
         except (OSError, csv.Error, UnicodeDecodeError) as error:
@@ -547,9 +645,23 @@ def _verify(staging: Path, result: dict[str, Any], allowlist: tuple[str, ...],
     checks["csv_files_parse"] = {"passed": not parse_errors, "errors": parse_errors}
     checks["csv_row_counts_equal_result_tables"] = {
         "passed": all(c["exported"] == c["result"] for c in counts.values()), "tables": counts}
+    if result.get("full_range_reporting"):
+        mismatched_tables = []
+        for table, filename in csv_tables.items():
+            rows = _table_rows(result, table)
+            columns = _columns(rows)
+            expected = [{column: _cell(column, row.get(column)) for column in columns}
+                        for row in rows]
+            if parsed[filename] != expected:
+                mismatched_tables.append(filename)
+        checks["full_range_csv_cells_equal_saved_tables"] = {
+            "passed": not mismatched_tables, "mismatched": mismatched_tables}
 
     summaries = result.get("summaries_cents") or {}
     cash_rows = parsed["cash_ledger.csv"]
+    all_failed_report = bool(result.get("full_range_reporting") and summaries and not cash_rows
+                             and all(s.get("status") == NOT_COMPLETED
+                                     for s in summaries.values()))
     reconcile: dict[str, Any] = {}
     for pair_key, s in summaries.items():
         if s.get("status") != COMPLETED:
@@ -566,8 +678,11 @@ def _verify(staging: Path, result: dict[str, Any], allowlist: tuple[str, ...],
             and receipts - costs == s["net_cash_earned_cents"] == last,
             "receipts_cents": receipts, "costs_cents": costs}
     checks["cash_ledger_reconciles_to_result_cents"] = {
-        "passed": bool(reconcile) and all(r["passed"] for r in reconcile.values()),
+        "passed": all_failed_report or
+        bool(reconcile) and all(r["passed"] for r in reconcile.values()),
         "pairs_checked": len(reconcile),
+        **({"scope": "All rows failed; absence of figures verified, no economics validated."}
+           if all_failed_report else {}),
         "failed": sorted(k for k, r in reconcile.items() if not r["passed"])}
 
     screen = comparison_headline_figures(result)
@@ -580,12 +695,16 @@ def _verify(staging: Path, result: dict[str, Any], allowlist: tuple[str, ...],
         "mismatched": mismatched}
 
     validation = result.get("validation")
-    checks["result_validation_passed"] = {"passed": bool(validation and validation.get("passed"))}
+    checks["result_validation_passed"] = {
+        "passed": bool(validation and validation.get("passed")) or all_failed_report,
+        **({"scope": "Truthful all-failed reporting only; underlying economic validation is false.",
+            "economic_validation_passed": False} if all_failed_report else {}),
+    }
 
     problems: dict[str, list[str]] = {}
     for name in allowlist:
         path = staging / name
-        if name.endswith(".md") and path.exists():
+        if name.endswith(".md") and path.exists() and name != "ENGINE_INTEGRATION.md":
             text = path.read_text(encoding="utf-8")
             found = []
             if _PATH.search(text):
@@ -804,56 +923,67 @@ def _readme(view: ComparisonView, export_version: int, review_findings: str | No
 
 _FILE_PURPOSE: dict[str, str] = {
     "README.md": "This overview.",
+    "run_context.json": "Exact scope, input/source identities, fees, clocks and column dictionary.",
+    "ENGINE_INTEGRATION.md": "Task-only capability integration, source identity and checks.",
+    "screenshots/01_completed_comparison.png": "Actual completed application comparison capture.",
+    "screenshots/02_effective_plan.png": "Actual application effective-plan capture.",
+    "screenshots/03_other_firm.png": "Actual comparison capture for the other separate firm.",
+    "strategy_trades.csv": "Every unrestricted strategy execution with warmup explicitly flagged.",
+    "daily_activity.csv": "All dates for each ordinary/funded stream; missing evidence is null.",
+    "no_entry_spans.csv": "Maximal actual-entry gaps, tied longest spans and censored edges.",
+    "context_breakdowns.csv": "Entry-known context/session/slot outcomes; no allocated cash.",
+    "roll_days.csv": "Source-selected contract and roll flags on all dates; no roll-day exclusion.",
+    "period_results.csv": "Full-range and year slices of the same chronological continuation.",
     "QUESTION.md": "The frozen question, comparison, period, assumptions and falsification.",
     "RESULTS.md": "Plain-English results for every configuration and firm, including "
-                  "unfavorable, zero-payout and not-completed ones.",
+    "unfavorable, zero-payout and not-completed ones.",
     "DECISIONS.md": "Owner decisions and assumptions used by this comparison.",
     "TRADING_RULES.md": "The simulated single-account, replacement, payout and execution rules.",
     "RESEARCH_LEDGER.md": "Readable cumulative research history.",
     "DATA_DICTIONARY.md": "Every data file and column explained.",
     "REVIEW_FINDINGS.md": "The recorded independent review findings.",
     "settings.json": "The exact comparison settings (period, size, costs, processing clock, "
-                     "execution model, price-evidence summary).",
+    "execution model, price-evidence summary).",
     "firm_rules.json": "The firm terms exactly as simulated.",
     "run_manifest.json": "Checksums and sizes of every other file.",
     "validation_summary.json": "Compact internal result checks and export checks.",
     "ledger.jsonl": "The cumulative append-only research ledger (machine-readable).",
     "configuration_results.csv": "One row per configuration and firm: headline and "
-                                 "secondary figures (not-completed rows have no figures).",
+    "secondary figures (not-completed rows have no figures).",
     "configurations.csv": "One row per configuration with its plain strategy settings.",
     "account_journeys.csv": "One row per funded account: start, payouts, loss and replacement.",
     "cash_ledger.csv": "Every account purchase and received payout with running totals.",
     "payout_events.csv": "Eligibility, requests, processing, receipts and cutoff states.",
     "monthly_results.csv": "Every month (including zero and partial months) per "
-                           "configuration and firm.",
+    "configuration and firm.",
     "trades.csv": "Every funded-account trade, including account-ending trades.",
     "account_events.csv": "Account status changes with reasons and before/after state.",
     "rule_boundary_evidence.csv": "Loss-limit movements, failures and refused entries.",
     "execution_evidence.csv": "Per configuration: no-account replay agreement, resumed-run "
-                              "equality and price-evidence coverage.",
+    "equality and price-evidence coverage.",
     "strategy_metrics.csv": "Per configuration: strategy measures of the replay with no "
-                            "account limits (R after costs, win rate, drawdown, time under "
-                            "water). Empty when the result predates this table.",
+    "account limits (R after costs, win rate, drawdown, time under "
+    "water). Empty when the result predates this table.",
     "charts/net_cash_by_configuration.png": "Net cash earned per configuration, one panel "
-                                            "per firm.",
+    "per firm.",
     "charts/cash_over_time.png": "Cumulative payouts, account costs and net cash for each "
-                                 "firm's top configuration.",
+    "firm's top configuration.",
     "reporting_corrections.csv": "Summary-only reporting corrections applied to the saved "
-                                 "result: saved and corrected values per configuration and "
-                                 "firm.",
+    "result: saved and corrected values per configuration and "
+    "firm.",
     "configuration_bindings.json": "Per configuration: every configurator input, the full "
-                                   "effective strategy settings, size, cost, exit rule, "
-                                   "equivalence population, and the exact strategy-study and "
-                                   "Strategy-Core source binding.",
+    "effective strategy settings, size, cost, exit rule, "
+    "equivalence population, and the exact strategy-study and "
+    "Strategy-Core source binding.",
     "trading_calendar.csv": "The saved trading-day schedule used: each day's opening, "
-                            "mandatory flat deadline, scheduled close and next reopen "
-                            "(Chicago).",
+    "mandatory flat deadline, scheduled close and next reopen "
+    "(Chicago).",
     "approximated_minutes.csv": "Every funded trade row containing a substituted minute: "
-                                "exact minute, cause, position state, the levels inside the "
-                                "minute and whether any price order could change the result.",
+    "exact minute, cause, position state, the levels inside the "
+    "minute and whether any price order could change the result.",
     "reference_record_reconciliation.csv": "Per configuration: no-account replay records, "
-                                           "preparation-period records and evaluated "
-                                           "strategy trades.",
+    "preparation-period records and evaluated "
+    "strategy trades.",
 }
 
 
@@ -946,7 +1076,8 @@ def _results(result: dict[str, Any], view: ComparisonView) -> str:
         heads = list(metrics[0])
         lines += ["## Strategy measures without accounts", "", STRATEGY_METRICS_NOTE, "",
                   "| " + " | ".join(heads) + " |", "|" + "---|" * len(heads)]
-        lines += ["| " + " | ".join(_cell_md(row[h]) for h in heads) + " |" for row in metrics]
+        lines += ["| " + " | ".join(_cell_md(row.get(h, "—")) for h in heads) + " |"
+                  for row in metrics]
         lines.append("")
     lines += ["Month-by-month figures, every account, payout and trade are in the CSV files "
               "(see `DATA_DICTIONARY.md`).", "", "## Material limitations", "",
@@ -1056,8 +1187,8 @@ def _trading_rules(result: dict[str, Any], view: ComparisonView,
         "order: a half exit and a break-even stop can both happen inside one minute; several "
         "trades with the same timestamp keep the exchange file's order (timestamp, then "
         "sequence number, then file row). Each fill posts its own cost ($0.514 per micro, "
-        "$5.14 per mini). After a half exit the remaining contracts alone are marked, and "
-        "TakeProfitTrader's floor keeps following the peak of realized plus open equity. The "
+        "$5.14 per mini). After a half exit the remaining contracts alone are marked. "
+        "The firm's floor follows its updating method listed above. The "
         "loss limit is checked on every trade before the stop or target. A stop or break-even "
         "stop that gaps fills at the first trade through it. Payout eligibility is checked "
         "only when the whole position is flat; a realized half with an open remainder never "
@@ -1070,6 +1201,11 @@ def _trading_rules(result: dict[str, Any], view: ComparisonView,
         "minute is approximated, the losing side is assumed first and the result is labeled "
         "an approximation. None of this is broker execution.",
     ]
+    policy_text = (supplements or {}).get("mffu_policy_text")
+    if policy_text is not None:
+        if not isinstance(policy_text, str) or not policy_text.strip():
+            raise ValueError("MFFU policy supplement must be nonempty text")
+        lines.extend(("", policy_text.strip()))
     return "\n".join(lines)
 
 
@@ -1092,10 +1228,12 @@ def _redact(text: str) -> str:
     return _HASH.sub("(internal identity omitted)", text)
 
 
-_LEDGER_SKIP = re.compile(r"(^|_)(id|ids|sha256|hash|hashes|path|paths|file|files|archive|"
-                          r"receipt|verifier|identity|event)$|^(ledger_origin|imported_from|"
-                          r"event_type|display_time_chicago|timestamp_utc|recorded_at_utc|"
-                          r"title)$")
+_LEDGER_SKIP = re.compile(
+    r"(^|_)(id|ids|sha256|hash|hashes|path|paths|file|files|archive|"
+    r"receipt|verifier|identity|event)$|^(ledger_origin|imported_from|"
+    r"event_type|display_time_chicago|timestamp_utc|recorded_at_utc|"
+    r"title)$"
+)
 
 
 def _ledger_value(value: Any) -> str:
@@ -1176,16 +1314,13 @@ _COLUMN_WORDS: dict[str, str] = {
     "lost_after_payout": "True when the account was lost after receiving a payout.",
     "trade_ref": "Internal reference of the strategy setup the trade followed.",
     "strategy_trade_id": "Internal reference of the strategy setup the trade followed.",
-    "minutes_approximated": "Minutes of the position priced with the one-minute "
-                            "approximation.",
+    "minutes_approximated": "Minutes of the position priced with the one-minute approximation.",
     "minutes_on_prints": "Minutes of the position priced from recorded exchange trades.",
     "strategy_recorded_exit_ticks": "The strategy's own recorded exit in ticks.",
     "no_account_replay_equals_saved_study": "True when the replay without accounts "
-                                            "reproduced the saved study's trades.",
-    "resumed_run_identical": "True when a run resumed from a checkpoint matched the full "
-                             "run.",
-    "trades_not_in_no_account_replay": "Trades taken only because account events changed "
-                                       "the path.",
+    "reproduced the saved study's trades.",
+    "resumed_run_identical": "True when a run resumed from a checkpoint matched the full run.",
+    "trades_not_in_no_account_replay": "Trades taken only because account events changed the path.",
 }
 
 
@@ -1236,10 +1371,13 @@ def _chart_label(row, columns: dict[str, tuple[tuple[str, str], ...]]) -> str:
     import textwrap
 
     own = columns.get(row.configuration)
-    short = {"Exit": {"Half at 1R, rest held": "half exit",
-                      "Whole position": "whole exit"}}
-    text = (" · ".join(short.get(k, {}).get(v, v) for k, v in own if k != "Size")
-            if own else row.label)
+    if own and "Geometry" in dict(own) and "Entry filter" in dict(own):
+        text = " · ".join(v for _, v in own)
+        return "\n".join(textwrap.wrap(f"{row.rank_text}. {row.configuration} · {text}", width=76))
+    short = {"Exit": {"Half at 1R, rest held": "half exit", "Whole position": "whole exit"}}
+    text = (
+        " · ".join(short.get(k, {}).get(v, v) for k, v in own if k != "Size") if own else row.label
+    )
     lines = textwrap.wrap(f"{row.rank_text}. {text}", width=64)
     if len(lines) > 2:
         lines = [lines[0], _short(" ".join(lines[1:]), 64)]
@@ -1252,38 +1390,50 @@ def _charts(folder: Path, result: dict[str, Any], view: ComparisonView) -> None:
     panels = max(1, len(tables))
     columns = configuration_columns(result)
     shown = [[r for r in t.rows if r.completed][:CHART_ROWS] for t in tables]
-    heights = [max(2.0, 0.62 * max(1, len(rows)) + 1.4) for rows in shown] or [2.0]
-    fig = figure_cls(figsize=(13, sum(heights) + 1.2), dpi=110)
+    mffu = bool(result.get("mffu_batch"))
+    heights = [max(2.0, (0.9 if mffu else 0.62) * max(1, len(rows)) + 1.4) for rows in shown] or [
+        2.0
+    ]
+    fig = figure_cls(figsize=(18 if mffu else 13, sum(heights) + 1.2), dpi=110)
     canvas_cls(fig)
-    axes = fig.subplots(panels, 1, squeeze=False,
-                        gridspec_kw={"height_ratios": heights})[:, 0]
+    axes = fig.subplots(panels, 1, squeeze=False, gridspec_kw={"height_ratios": heights})[:, 0]
     for ax, table, rows in zip(axes, tables, shown, strict=False):
         labels = [_chart_label(r, columns) for r in rows]
-        values = [dict(r.figures).get("net_cash_earned_cents", 0) / 100 if r.completed else 0.0
-                  for r in rows]
+        values = [
+            dict(r.figures).get("net_cash_earned_cents", 0) / 100 if r.completed else 0.0
+            for r in rows
+        ]
         ypos = list(range(len(rows), 0, -1))
         colors = [_NET if v >= 0 else "#b71c1c" for v in values]
         for y, r, v, color in zip(ypos, rows, values, colors, strict=True):
             if r.completed:
                 ax.barh(y, v, color=color, height=0.6)
-                ax.annotate(r.net_cash, (v, y), textcoords="offset points",
-                            xytext=(4 if v >= 0 else -4, 0), va="center",
-                            ha="left" if v >= 0 else "right", fontsize=7)
+                ax.annotate(
+                    r.net_cash,
+                    (v, y),
+                    textcoords="offset points",
+                    xytext=(4 if v >= 0 else -4, 0),
+                    va="center",
+                    ha="left" if v >= 0 else "right",
+                    fontsize=7,
+                )
         ax.axvline(0, color="#444444", linewidth=0.8)
         ax.set_ylim(0.4, len(rows) + 0.6)
         ax.set_yticks(ypos, labels, fontsize=8)
         more = len(table.rows) - len(rows)
-        ax.set_title(f"{table.firm}: net cash earned after all account costs (US dollars)"
-                     + (f" — top {len(rows)}; all {len(table.rows)} are in RESULTS.md"
-                        if more else ""), fontsize=10)
+        ax.set_title(
+            f"{table.firm}: net cash earned after all account costs (US dollars)"
+            + (f" — top {len(rows)}; all {len(table.rows)} are in RESULTS.md" if more else ""),
+            fontsize=10,
+        )
         ax.xaxis.set_major_formatter(_dollar_formatter())
         ax.grid(axis="x", alpha=0.3)
         ax.margins(x=0.2)
-    fig.suptitle("Net cash earned by configuration — each firm separately, never added "
-                 "together", fontsize=11)
+    fig.suptitle(
+        "Net cash earned by configuration — each firm separately, never added together", fontsize=11
+    )
     fig.tight_layout(rect=(0, 0, 1, 1 - 0.6 / (sum(heights) + 1.2)))
-    fig.savefig(folder / "net_cash_by_configuration.png", format="png",
-                metadata={"Software": None})
+    fig.savefig(folder / "net_cash_by_configuration.png", format="png", metadata={"Software": None})
 
     fig = figure_cls(figsize=(11, 3.4 * panels + 0.6), dpi=100)
     canvas_cls(fig)
@@ -1291,19 +1441,28 @@ def _charts(folder: Path, result: dict[str, Any], view: ComparisonView) -> None:
     for ax, table in zip(axes, tables, strict=False):
         top = next((r for r in table.rows if r.completed), None)
         if top is None:
-            ax.text(0.5, 0.5, "No configuration completed", transform=ax.transAxes,
-                    ha="center")
+            ax.text(0.5, 0.5, "No configuration completed", transform=ax.transAxes, ha="center")
             ax.set_title(table.firm, fontsize=9)
             continue
         detail = present_pair_detail(result, top.configuration, top.firm_key)
         points = cash_chart_points(detail)
         xs = [p[0] for p in points]
-        for index, (name, color, style) in enumerate((
+        for index, (name, color, style) in enumerate(
+            (
                 ("Payouts received after the split", _RECEIVED, "-"),
                 ("Account costs", _COSTS, "--"),
-                ("Net cash earned", _NET, "-"))):
-            ax.step(xs, [p[index + 1] for p in points], where="post", color=color,
-                    linestyle=style, linewidth=2 if index == 2 else 1.5, label=name)
+                ("Net cash earned", _NET, "-"),
+            )
+        ):
+            ax.step(
+                xs,
+                [p[index + 1] for p in points],
+                where="post",
+                color=color,
+                linestyle=style,
+                linewidth=2 if index == 2 else 1.5,
+                label=name,
+            )
         ax.axhline(0, color="#444444", linewidth=0.8)
         ax.set_title(f"{table.firm} — top configuration: {_short(top.label, 90)}", fontsize=9)
         ax.yaxis.set_major_formatter(_dollar_formatter())
@@ -1311,7 +1470,8 @@ def _charts(folder: Path, result: dict[str, Any], view: ComparisonView) -> None:
         ax.grid(alpha=0.3)
         ax.legend(loc="upper left", fontsize=8)
         ax.set_xlabel("Date (Chicago time)")
-    fig.suptitle("Cumulative cash over time (one configuration per firm, never added "
-                 "together)", fontsize=10)
+    fig.suptitle(
+        "Cumulative cash over time (one configuration per firm, never added together)", fontsize=10
+    )
     fig.tight_layout()
     fig.savefig(folder / "cash_over_time.png", format="png", metadata={"Software": None})

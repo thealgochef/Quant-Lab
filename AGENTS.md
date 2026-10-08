@@ -1,6 +1,46 @@
 # Alpha Signal Research Lab - Agent Notes
 
-Updated: 2026-10-03.
+Updated: 2026-10-08.
+
+Repository cleanup and publication (October 8): the owner explicitly authorized
+organizing local artifacts and publishing the reviewed code to `main`; this
+supersedes the dated no-commit/no-push restrictions for this cleanup. See
+`docs/RESEARCH_STORAGE.md` for the authoritative storage map and retrieval rules.
+Install the versioned commit guard with `python scripts/install_repo_hooks.py`.
+Start new research work with `python scripts/research_workspace.py <task-id>`.
+Keep generated ZIPs, screenshots, copied sources, runtime stores and staging
+outside Git. The recent research workers reject repository-contained work paths.
+Keep immutable existing run/source paths and IDs stable; label them in the index
+instead of renaming them. `reports/` holds final local deliveries only, `models/`
+holds local model bundles, and `data/` retains existing runtime stores and market
+inputs. Ignoring a file does not remove it from the index or reduce disk use.
+
+IFSM MFFU ML phase 01 (October 8): task and actual progress are in
+`docs/ifsm-mffu-ml-phase-v01/`. `propsim/funded/ml_phase/` owns separate
+return-regression plans, market-only shadows, chronological fits and matched
+funded policies. Only exact approved sources execute; ordinary catalog viewers
+read saved reports. Feature bundles F0/F1/F2 are not old admission policies.
+Keep working stores outside the repo, review ZIPs final-only, prior results and
+production pins unchanged. No commit/push.
+
+IFSM MFFU consolidated repair (October 7): current task and progress are in
+`docs/ifsm-mffu-repair-integration-v01/`. This owner request covers the saved
+64-intent MFFU-only operation and necessary selective lifecycle correction,
+additive normal-dashboard discovery and reporting. Earlier six-profile,
+two-firm/passive-only scope is historical for this phase. Preserve original
+results and production pins. Account reporting uses scoped result/config/firm/
+account identities; actual partial remainders and whole deadline positions are
+distinct. Reporting views never change policy or launch a replay. No commit/push.
+
+IFSM six-configuration full-range task (October 4): the owner amendment in
+`docs/ifsm-correct-config-full-range-v01/ENGINE_INTEGRATION_AND_RESUME_v01.md`
+authorizes only the isolated existing partial-exit/passive-context integration
+and the original one batch. `propsim/funded/full_range_batch.py` preserves the
+six full saved sections, 253+10 Task B dates, both independent firms, exact fees,
+source-bound approval and day checkpoints. Its saved reporting extends the
+existing immutable comparison/export path; actual stream context never controls
+admission. Working stores stay outside the repository; reports are final only.
+This does not promote the task Core or change `research/core/current.json`.
 
 IFSM Task A1 (October 3): runtime EOD lookup in
 `ifvg/menthorq_levels.py`, pure Core snapshot/entry gates, and

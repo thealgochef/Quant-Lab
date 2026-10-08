@@ -96,3 +96,63 @@ Thumbs.db
 
 # Captured pipeline job state stays local.
 /data/ifvg_pipeline_jobs/
+
+# Research output boundary (2026-10-08). Code, contracts and curated prose stay
+# here; archives and working stores live in ../Claude-Quant-Lab-Research-Artifacts/.
+# These rules prevent accidental adds, not disk usage; preserve saved evidence.
+*.zip
+*.7z
+*.rar
+*.tar
+*.gz
+*.bz2
+*.xz
+*.tgz
+*.zst
+*.bundle
+*.pack
+*.pkl
+*.pickle
+*.joblib
+*.npz
+*.npy
+*.feather
+*.arrow
+*.sqlite
+*.sqlite3
+*.db
+*.duckdb
+/handoff/
+/dashboard-ui/
+/ifvg_search_trades/
+staging/
+extracted/
+extractions/
+source_review/
+source-review/
+clean_verification/
+clean-verification/
+working_store/
+working-store/
+working_stores/
+working-stores/
+/docs/**/src/
+/docs/**/tests/
+/docs/**/screenshots/
+/docs/**/evidence/**/*.png
+/docs/**/evidence/**/*.jpg
+/docs/**/evidence/**/*.jpeg
+/docs/**/evidence/**/*.gif
+/docs/**/evidence/**/*.webp
+/docs/**/evidence/**/*.bmp
+/docs/**/mocks/images/**/*.png
+/docs/**/mocks/images/**/*.jpg
+/docs/**/mocks/images/**/*.jpeg
+/docs/**/mocks/images/**/*.gif
+/docs/**/mocks/images/**/*.webp
+/docs/**/mocks/images/**/*.bmp
+# Small, reusable fixtures have an explicit source-controlled home. The artifact
+# guard still applies its 5 MiB file limit and rejects reports/dependency caches.
+!/tests/**/fixtures/**
+# Immutable 71 KB historical source evidence, documented in research/core/README.md.
+!/research/core/ifsm-daily-close.bundle

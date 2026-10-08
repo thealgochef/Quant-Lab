@@ -828,6 +828,35 @@ To publish a new review folder of an existing result (the result is never recomp
 `python scripts/ifvg_funded_comparison_job.py republish --plan-id <plan>`, optionally adding
 `--review-findings`, `--approximated-minutes` and `--reference-reconciliation`.
 
+### Bounded IFSM full-range comparison (October 4, 2026)
+
+The separately authorized October 4 IFSM six-configuration batch uses the same
+saved-result Lab views. Its library description names the two half-exit and four
+whole-position configurations. Ordinary strategy measurements and actual funded
+account measurements stay separate. The saved review tables report every declared
+evaluation date, source coverage, actual entry gaps (including leading/trailing
+spans and ties), monthly entries by entry month, cash by event month and descriptive
+2025/2026 slices of one continuation. Missing evidence is labeled unavailable.
+Existing net-R profit factor and quality preferences remain unchanged; dollars
+profit factor is a separate saved field. Context/session/slot breakdowns contain
+trading outcomes only and retain unknown/outside-hours groups; funded payouts are
+never assigned to entry groups.
+
+The Lab includes incomplete saved configurations in its index, keeps completed
+rankings separate, and names FullRange parent charts from each saved effective
+section; optional index/benchmark diagnostics stay unavailable for a plan with no
+bound strategy package.
+Historical and production-resume equality checks that were not performed are
+shown as unperformed, separately from engineering fixture coverage.
+
+The compact export adds fixed run-context/integration evidence and actual app
+captures before its immutable manifest is written, then checks each exported CSV
+cell against the one saved result. Canonical equivalents are
+`configuration_results.csv` (comparison), `strategy_metrics.csv` (ordinary strategy
+results), `trades.csv` (actual funded trades) and `run_manifest.json` (manifest).
+The full specification and run status are maintained under
+`docs/ifsm-correct-config-full-range-v01/`; source tests alone are not real results.
+
 ### IFVG dashboard repairs (September 23, 2026)
 
 Repair-only changes to the existing IFVG Lab screens in both applications; task record in
@@ -1002,3 +1031,103 @@ The nearest-support universe uses that same Risk Admissibility group. Roll
 flags come from preparation catalog contracts, not calendar inference. Task B
 decisions 20–21 retain roll days, separate funded cash from entry-group points,
 and add the baseline `ny_only` configuration to the thirteen-row fixed study.
+
+## IFSM MyFundedFutures 64-intent batch (October 7, 2026)
+
+The bounded MyFundedFutures study has a separate saved plan schema for the 64
+declared matrix intents. Its immutable plan binds the repaired six-configuration
+reference, exact 253 evaluation and 10 warmup dates, the final Strategy-Core and
+Quant-Lab sources, and the supplied MenthorQ v02 archive and context table hashes.
+Saving or reopening the plan keeps every intended axis and its effective
+section/behavior hash. Approval remains a separate action for that exact plan.
+The plan binds `per_fill_total_round_half_up_cent_v1`: multiply $0.514 by
+each actual filled micro quantity, then round that fill's total to cents with
+ROUND_HALF_UP. A six-micro entry followed by two three-micro exits posts $3.08,
+$1.54 and $1.54 ($6.16 total). The ordinary replay and funded ledger both use
+those postings; compatible ten/five/five controls remain $10.28 per three-fill
+trade.
+
+When a saved result opens in **Funded comparisons**, the **Saved 64-intent matrix
+and status** expander shows all seven axes, each child's disposition and the
+frozen hashes. A missing or failed child has no cash figure and remains visible
+in the ranking and detail picker. The result view reads the verified saved
+plan and result; it does not recalculate economic outcomes.
+
+The completed MFFU result review is published by the dedicated batch workflow
+from that verified saved result. It uses an external task-owned staging area,
+includes the standard comparison tables plus the exact frozen matrix and MFFU
+analysis, then extracts and checks the final review ZIP against its manifest.
+The separate source-review ZIP is built from the final scoped source and tests.
+
+The consolidated repair phase adds the MFFU batch to ordinary **My studies**
+under `streamlit run scripts/dashboard.py`. Registration is an additive, verified
+external-result pointer with explicit version lineage; reading it does not
+install the task Core or start a worker. Exact registered one-minute inputs
+support **Market conditions** alongside the legacy package provider. Reporting
+companions and dedicated view preferences live outside immutable economic
+records. The current contract and verification ledger are in
+`docs/ifsm-mffu-repair-integration-v01/`.
+
+Account attribution is scoped by result, configuration, firm and account.
+Remaining halves after an actual partial exit are shown separately from whole
+positions closing at the deadline. The posted fill costs are conserved in both
+views. Comparison filters are viewing preferences and never change a strategy.
+
+The batch comparison offers **Compare by** total net cash, payout speed, building
+the cushion, lower account usage, regular activity and larger payouts. Optional
+**Fit my targets** constraints combine with AND, preserve unknown evidence and
+explain empty or opt-in closest matches. Select two to four configurations for
+side-by-side costs, milestones, activity and settings. **Gamma & expected move**
+has distinct funded/ordinary populations and entry/first-target checkpoints,
+eligible historical context, frozen-distance groups and actual held-leg results.
+Trade review's point-in-time mode hides future accounts, events and outcomes.
+All these views and their exports use the same versioned reporting companion;
+the original operation's dates and execution policies remain bound to its plan.
+
+The B8-01/B8-02 reporting follow-up publishes `ifsm_mffu_reporting_v6` against
+the same economic results. Each checkpoint card and selected gamma population
+uses its own verified origin. Funded target links retain exact nanosecond
+decision/fill times separately from microsecond receipt context; ordinary
+decisions retain their completed-candle timing contract. Unresolved receipts
+cannot supply context or actions, and point-in-time selections hide later trades
+and target metadata. Annotation-only checkpoints remain annotations.
+
+The standard configuration CSV and cash chart now use the same bound policy
+presenter as Settings: MNQ exposure is separate from the NQ price proxy; dynamic
+opposing distance names the half-range fraction, parent-lock freeze and tick
+rounding, with the fixed missing-context fallback stated separately. Chart
+labels retain configuration IDs and every distinguishing policy axis. Earlier
+report versions and exports remain immutable. See
+[the bounded follow-up](ifsm-b8db-reporting-followup-v01/TASK.md).
+# IFSM ML phase 01 (October 8, 2026)
+
+The development-only return-regression implementation is under
+`docs/ifsm-mffu-ml-phase-v01/`; TASKS.md records actual execution and delivery
+status. The verified publication opens in ordinary Quant-Lab > IFVG Lab >
+My studies > Model studies > IFSM ML phase 01. One operation selection controls
+Summary, Predictive evidence, Funded policies and Decision review. The Trade
+review rail opens the selected phase's causal decision view. Report/operation
+are mirrored in the page URL; view, account and decision preferences persist
+through the existing viewer preferences store. Reading cannot launch work.
+
+All 24 cells and nine folds remain visible. The 24 policies and two fresh
+October controls use the same 171 dates. Six repaired lenses and optional
+reporting targets keep their existing definitions. Currency is dollars and
+scores are R, never win probabilities. Before-event review hides predictions
+and features; subsequent fixed-shadow labels are baseline counterfactuals,
+separate from actual policy fills. Review packages provides both archives and
+the receipt. Original studies and production settings are preserved.
+
+## Research file placement (October 8, 2026)
+
+Use [Research storage and run index](RESEARCH_STORAGE.md) to locate completed
+studies and review downloads. New work starts with
+`python scripts/research_workspace.py <task-id>`; its inputs, stores, work,
+source and validation directories live in the sibling artifact library.
+The recent MFFU/full-range/ML worker CLIs reject repository-contained working
+paths. Final reports remain local under `reports/`, and fitted bundles under
+`models/`; neither belongs in Git. Enable the staged-artifact guard with
+`python scripts/install_repo_hooks.py`. Existing frozen plans continue to use
+their original source and stable paths. Saved gamma views verify their original
+producer-source witnesses and report bytes, so a later engine change does not
+hide an otherwise intact historical report.

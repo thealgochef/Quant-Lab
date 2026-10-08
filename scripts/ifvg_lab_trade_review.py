@@ -669,11 +669,17 @@ def configuration_labels(study, configurations: list[str]) -> tuple[dict, dict[s
     settings that tell configurations with the same short line apart.
     """
 
+    from alpha_lab.agents.data_infra.ifvg.presentation.lab.mffu_matrix import is_mffu_plan
     from alpha_lab.agents.data_infra.ifvg.presentation.lab.names import (
         short_picker_name,
         study_names,
     )
 
+    if is_mffu_plan(getattr(study, "plan", None)):
+        from ifvg_lab_funded import study_names_for
+
+        names = study_names_for(study)
+        return names, {key: value.full for key, value in names.items()}
     names = study_names({c: study.settings(c) for c in configurations})
     short = {c: short_picker_name(n) for c, n in names.items()}
     return names, _picker_labels(short, {c: n.line2 for c, n in names.items()})
@@ -829,10 +835,12 @@ def _render_trade(st_module, roots, target, study, configuration, firm_key, row,
         record_sentence = record_problem + "setup zones can't be shown."
     variant = _variant(study, configuration)
     instrument = getattr(variant, "instrument", None) or getattr(study.plan, "instrument", None)
+    gamma_segments = _gamma_review(st_module, target, study, configuration, row, view,
+                                   moment=moment, day=day, scope=scope)
     _whole_trade_card(st_module, day, view, record, record_sentence, moment=moment,
                       size=int(size), zones=zones, stops=stops, times=times,
                       close_clock=_close_clock(study, configuration), instrument=instrument,
-                      key=scope)
+                      key=scope, gamma_segments=gamma_segments)
     link = _minute_link(roots, target, study, configuration, firm_key, view, rows)
     left, right = st_module.columns([1.12, 1], gap="medium")
     with left:
@@ -868,8 +876,21 @@ def _minute_link(roots, target, study, configuration: str, firm_key: str, view, 
         firm_name=dict(study.firms).get(firm_key, firm_key))
 
 
+def _gamma_review(st_module, target, study, configuration, row, view, *, moment, day,
+                  scope):
+    from alpha_lab.agents.data_infra.ifvg.presentation.lab.mffu_matrix import is_mffu_plan
+
+    if not is_mffu_plan(getattr(study, "plan", None)):
+        return []
+    from ifvg_lab_mffu_views import render_trade_gamma
+
+    return render_trade_gamma(st_module, target, study, configuration, row, view,
+                              moment=moment, window=rc.chart_window(day, view, moment=moment),
+                              scope=scope)
+
+
 def _whole_trade_card(st_module, day, view, record, record_sentence, *, moment, size, zones,
-                      stops, times, close_clock, instrument, key) -> None:
+                      stops, times, close_clock, instrument, key, gamma_segments=None) -> None:
     from ifvg_lab_ui import plot, show
 
     with st_module.container(key="ifvg_lab_card_review_whole"):
@@ -892,6 +913,10 @@ def _whole_trade_card(st_module, day, view, record, record_sentence, *, moment, 
             fig = rc.whole_trade_figure(day, view, record, size_minutes=size, moment=moment,
                                         zones=zones, stops=stops, times=times,
                                         close_clock=close_clock)
+            if gamma_segments:
+                from ifvg_lab_mffu_views import add_gamma_overlay
+
+                add_gamma_overlay(fig, gamma_segments)
             plot(fig, key=f"whole_{key}", st_module=st_module)
         swatch = ('<span style="display:inline-block;width:{w}px;height:12px;background:{c};'
                   'vertical-align:-1px;margin-right:6px;{b}"></span>')

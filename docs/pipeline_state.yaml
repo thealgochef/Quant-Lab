@@ -1,6 +1,17 @@
 current_phase: "STRATEGY_CORE_V3_DASHBOARD_UTILITY"
-last_updated: "2026-10-03"
+last_updated: "2026-10-04"
 repo_role: "ml_training_workbench_with_strategy_core_v3_dashboard_utility_path"
+
+ifsm_correct_config_full_range:
+  contract: "docs/ifsm-correct-config-full-range-v01/TASK.md and ENGINE_INTEGRATION_AND_RESUME_v01.md"
+  adapter: "propsim/funded/full_range_batch.py; scripts/ifvg_full_range_batch_job.py"
+  plan_schema: "ifsm_correct_config_full_range_plan_v1"
+  scope: "exactly six saved configurations; six ordinary and twelve independent funded streams; 253 evaluation plus ten warmup dates"
+  runtime: "task-owned current Core plus preserved partial-exit implementation; global/default pin unchanged"
+  launch: "new exact-plan approval; source/worker/input/calendar guards; verified per-day checkpoints"
+  annotation: "passive MenthorQ per actual ordinary/funded entry; no active gates or cash allocation by context"
+  outputs: "existing immutable comparison result and strict review publisher; saved activity/month/context/roll tables"
+  working_root: "../Claude-Quant-Lab-Research-Artifacts/ifsm-correct-config-full-range-v01"
 
 ifsm_menthorq_a1:
   contract: "docs/IFSM_MENTHORQ_LEVEL_CONTEXT.md; handoff/task_a1"
@@ -459,3 +470,41 @@ ifvg_prop_robust_config_search_v1:
 # reuse). No replay, cost, account or identity semantics changed; no study was run.
 # Open owner decisions, known limits, the five pre-existing full-suite failures and a
 # read-only data-search incident: docs/ifvg-dashboard-repairs/OPEN_DECISIONS.md.
+
+# IFSM MFFU 64-intent context batch — October 7, 2026
+# Source: immutable IFSM_MFFU_Context_Batch_v01.zip and the verified repaired
+# 7278632... reference. Task-owned Core/source and v02 EOD lookup are isolated.
+# Historical implementation-stage note: the original 64-row plan, worker and
+# Lab read path were in focused verification. The completed original result and
+# its successor status are now tracked in the consolidated repair ledger below.
+# Exact 10 warmup + 253 evaluation dates; one MFFU account stream per child.
+# Owner selected per-fill-total ROUND_HALF_UP cents after $0.514 times filled
+# quantity. Six/three/three posts 308+154+154=616 cents; ten/five/five is
+# unchanged. The fee policy is plan/worker/result bound before approval.
+# Current task record: docs/ifsm-mffu-context-batch-v01/TASKS.md.
+
+# IFSM MFFU consolidated repair — October 7, 2026
+# The original 64-intent result is preserved; 18 disabled-switch histories
+# have explicit non-impact reuse evidence and 46 histories require correction.
+# Corrections use a new exact source/plan/approval namespace outside the repo.
+# Normal My studies uses additive verified external-result registration and
+# immutable reporting companions, independently of task engine installation.
+# Registered market inputs retain the exact 263-date source and cutoff.
+# Reporting account keys are result/configuration/firm/account scoped; per-leg
+# allocations conserve already-posted per-fill fees. Current phase status:
+# docs/ifsm-mffu-repair-integration-v01/TASKS.md.
+# Shared source-bound reporting v5 supplies both UI and exports: six deterministic
+# lenses, AND targets, distinct funded/ordinary gamma checkpoints, unique frozen
+# geometry locks, operation/account clocks and no-future point-in-time review.
+# These are saved-result views; they never change admission or launch a replay.
+
+ifsm_mffu_ml_phase_v01:
+  contract: "docs/ifsm-mffu-ml-phase-v01/AGENT_START.txt"
+  implementation: "propsim/funded/ml_phase; scripts/ifvg_ml_phase_job.py"
+  scope: "24 regression cells, 216 folds, 26 independent matched MFFU operations"
+  dates: "253 original evaluation plus 10 warmup; 171 scored from 2025-10-09"
+  labels: "exact-print shadows; entry net R and HOLD minus next-print CLOSE R"
+  publication: "ordinary Model studies; verified saved reports; six shared funded lenses"
+  catalog: "catalog/ifsm_ml_phase_results.json"
+  progress: "docs/ifsm-mffu-ml-phase-v01/TASKS.md is authoritative"
+  production_promotion: false

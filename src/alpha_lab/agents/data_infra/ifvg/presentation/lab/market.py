@@ -55,6 +55,7 @@ __all__ = [
     "entry_measure",
     "index_tie",
     "load_index_minutes",
+    "load_study_index_minutes",
     "longest_stretch",
     "stretches",
     "study_package_root",
@@ -74,7 +75,10 @@ LOOKBACK = 10
 def study_package_root(plan: Any) -> Path | None:
     """The plan's bound verified strategy package (run id and manifest hash must match)."""
 
-    if plan is None or getattr(plan, "source", None) is None:
+    if (plan is None or getattr(plan, "source", None) is None
+            or not getattr(plan.source, "package_root_name", None)):
+        # Registered-input batches have no bound strategy package. Do not borrow
+        # historical market bars for optional index/benchmark diagnostics.
         return None
     from alpha_lab.agents.data_infra.ifvg.presentation.funded_trade_review import (
         plan_strategy_package,
@@ -99,6 +103,20 @@ def load_index_minutes(package_root: Path, *, cutoff_utc: Any = None) -> pd.Data
         bars[column] = bars[f"{column}_ticks"].astype(float) * TICK
     bars["trading_day"] = bars["trading_day"].astype(str)
     return bars.sort_values("logical_close_ts_utc").reset_index(drop=True)
+
+
+def load_study_index_minutes(plan: Any, *, cutoff_utc: Any = None) -> pd.DataFrame | None:
+    """Canonical minutes from the exact bound package or registered-input source.
+
+    Registered views retain the original full-size NQ price proxy, contract
+    roll receipts and completion status. They never select only traded minutes.
+    """
+    if getattr(getattr(plan, "source", None), "kind", None) == "verified_task_b_registered_inputs":
+        from .registered_market import load_companion
+
+        return load_companion(plan)
+    root = study_package_root(plan)
+    return None if root is None else load_index_minutes(root, cutoff_utc=cutoff_utc)
 
 
 def daily_closes(minutes: pd.DataFrame) -> pd.Series:

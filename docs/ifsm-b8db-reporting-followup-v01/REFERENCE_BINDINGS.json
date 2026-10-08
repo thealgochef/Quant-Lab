@@ -1,0 +1,198 @@
+{
+  "schema": "ifsm_b8db_reporting_followup_reference_v1",
+  "scope": "B8-01 and B8-02 reporting-only repair; no financial replay or ML",
+  "economic_identity": {
+    "original_result_id": "7a8cb062d3fc31bcf71e7015a60e4ea389988b749435609fbc15cd1beda9d052",
+    "corrected_result_id": "b8db8427cb2260619d7f0483358e5d0da78d718fc395f2374b6a62a1e378c186",
+    "corrected_plan_id": "e28c3a30a07df57a7b07d5d15da450a53ff844640c604a0d8ff1c2af39bfeacd",
+    "corrected_approval_id": "a6df42d82a44c1236c8f3b90f958c1eb74ed40d94651394167c7bae98c5f3d49",
+    "reporting_version": "ifsm_mffu_reporting_v5",
+    "production_pin": "709487bc85ef82a259297c4ad6f3f198f4cabbcd"
+  },
+  "original_corrected_execution_source": {
+    "original_result_id": "7a8cb062d3fc31bcf71e7015a60e4ea389988b749435609fbc15cd1beda9d052",
+    "corrected_core_source": {
+      "base_commit": "709487bc85ef82a259297c4ad6f3f198f4cabbcd",
+      "branch": "HEAD",
+      "patch_sha256": "8ff8b663fe93b90299a33b5f197cbe0b4556dd1cc1d2e5ec3a4f664a031ece04",
+      "description": "Isolated diagnostic lifecycle correction of the original MFFU context batch"
+    }
+  },
+  "source_archives": [
+    {
+      "filename": "IFSM_MFFU_Repair_Result_UI_b8db8427cb226061_v01.zip",
+      "sha256": "be86ceb19e752f1a95cc5c7363580bea6802cd90d7d53a04a5717f6611898efc",
+      "bytes": 21567592,
+      "included_in_handoff": false,
+      "resolution": "Existing agent delivery/store or owner-provided prior archives; inspect supported exact references, no broad raw-data scan."
+    },
+    {
+      "filename": "IFSM_MFFU_Repair_Source_Tests_b8db8427cb226061_v01.zip",
+      "sha256": "6dc31e6c446a52a6df52f2754fa9bd3ecd2d8d996a59049cbb2efde35953fe7d",
+      "bytes": 2117655,
+      "included_in_handoff": false,
+      "resolution": "Existing agent delivery/store or owner-provided prior archives; inspect supported exact references, no broad raw-data scan."
+    }
+  ],
+  "independent_review_archive": {
+    "filename": "IFSM_b8db_Independent_Review_v01.zip",
+    "sha256": "8cf6de22bf61d7c4de7c5fd9ed4fe9eb67c81f2b7f2bc1785a272ea340001cc1",
+    "bytes": 85704,
+    "included_in_handoff": false,
+    "selected_evidence_in": "inputs/"
+  },
+  "original_runtime_source_map_member": {
+    "archive": "IFSM_MFFU_Repair_Source_Tests_b8db8427cb226061_v01.zip",
+    "member": "bindings/actual_runtime_source_map.json",
+    "sha256": "89e8865d007cda8931ca3e5dbbf7892ea86add3eb3ea1854135851b3cdd5b6ac"
+  },
+  "result_members_with_report_defects_or_context": {
+    "integrated/reporting/gamma_checkpoints.csv": {
+      "sha256": "1bab867cb4ba8d1d15369a29bd9739597452e65b197f877c6112a7c7b3ddd807",
+      "bytes": 29994165
+    },
+    "standard/funded_comparison/funded_comparison_b8db8427cb226061_export_v1/charts/net_cash_by_configuration.png": {
+      "sha256": "11d7cf8379e90e2d5e2d71e3e4bb60f08d104b710633d1590789a39389f22f2d",
+      "bytes": 141893
+    },
+    "standard/funded_comparison/funded_comparison_b8db8427cb226061_export_v1/configurations.csv": {
+      "sha256": "8cd4b01df8007239138fdd5f7d808c5f1e86ebe6606b6a1e241eec268ed4413a",
+      "bytes": 108857
+    }
+  },
+  "protected_scope": {
+    "configuration_ids": [
+      "MCB001",
+      "MCB002",
+      "MCB003",
+      "MCB004",
+      "MCB005",
+      "MCB006",
+      "MCB007",
+      "MCB008",
+      "MCB009",
+      "MCB010",
+      "MCB011",
+      "MCB012",
+      "MCB013",
+      "MCB014",
+      "MCB015",
+      "MCB016",
+      "MCB017",
+      "MCB018",
+      "MCB019",
+      "MCB020",
+      "MCB021",
+      "MCB022",
+      "MCB023",
+      "MCB024",
+      "MCB025",
+      "MCB026",
+      "MCB027",
+      "MCB028",
+      "MCB029",
+      "MCB030",
+      "MCB031",
+      "MCB032",
+      "MCB033",
+      "MCB034",
+      "MCB035",
+      "MCB036",
+      "MCB037",
+      "MCB038",
+      "MCB039",
+      "MCB040",
+      "MCB041",
+      "MCB042",
+      "MCB043",
+      "MCB044",
+      "MCB045",
+      "MCB046",
+      "MCB047",
+      "MCB048",
+      "MCB049",
+      "MCB050",
+      "MCB051",
+      "MCB052",
+      "MCB053",
+      "MCB054",
+      "MCB055",
+      "MCB056",
+      "MCB057",
+      "MCB058",
+      "MCB059",
+      "MCB060",
+      "MCB061",
+      "MCB062",
+      "MCB063",
+      "MCB064"
+    ],
+    "evaluation_dates": 253,
+    "warmup_dates": 10,
+    "evaluation_start": "2025-06-16",
+    "evaluation_end": "2026-06-10",
+    "operation_start_utc": "2025-06-15T22:00:00Z",
+    "market_cutoff_utc": "2026-06-10T21:00:00Z",
+    "source_authority": "Exact existing approved plan/date list; no new calendar generated in this handoff"
+  },
+  "historical_audit_counts": {
+    "funded_trades": 12577,
+    "ordinary_records_including_warmup": 15603,
+    "accounts": 424,
+    "cash_events": 1523,
+    "funded_trades_with_conditional_target_decision": 1908,
+    "gamma_entry_checkpoint_rows": 43130,
+    "frozen_geometry_rows": 3754
+  },
+  "dynamic_geometry_policies": {
+    "MCB057": {
+      "schedule": "S0",
+      "fraction": "0.05"
+    },
+    "MCB058": {
+      "schedule": "S0",
+      "fraction": "0.075"
+    },
+    "MCB059": {
+      "schedule": "S0",
+      "fraction": "0.10"
+    },
+    "MCB060": {
+      "schedule": "S1",
+      "fraction": "0.05"
+    },
+    "MCB061": {
+      "schedule": "S1",
+      "fraction": "0.075"
+    },
+    "MCB062": {
+      "schedule": "S1",
+      "fraction": "0.10"
+    }
+  },
+  "execution_fee_policy_unchanged": {
+    "per_micro_per_fill_usd": "0.514",
+    "round_total_fill_fee_once_to_cents": "ROUND_HALF_UP",
+    "six_three_three_total_usd": "6.16"
+  },
+  "invariant_anchor": {
+    "configuration": "MCB062",
+    "net_cash_cents": "4810216",
+    "received_cents": "4972716",
+    "costs_cents": "162500",
+    "accounts": "13",
+    "lost": "12",
+    "payouts": "25",
+    "trades": "302",
+    "entry_dates": "153",
+    "trades_per_date": "1.1936758893280632",
+    "cushion_calendar_days": "12",
+    "first_receipt_calendar_days": "33"
+  },
+  "do_not_enforce_expected_numbers_by_mutation": true,
+  "report_publication_permission": "Add new reporting revision/catalog pointer against unchanged economic result; retain all old versions and existing normal dashboard integration",
+  "archive_mutation_permitted": false,
+  "financial_replay_permitted": false,
+  "ml_permitted": false,
+  "core_execution_changes_permitted": false
+}

@@ -84,20 +84,29 @@ class _UnavailableError(Exception):
 
 
 @st.cache_resource(show_spinner="Reading the stored one-minute E-mini bars…", max_entries=4)
-def _minutes(store_root: str, result_id: str):
+def _minutes(store_root: str, result_id: str, source_signature: tuple = ()):
     study = _study(store_root, result_id)
-    root = market.study_package_root(study.plan)
-    if root is None:
+    minutes = market.load_study_index_minutes(study.plan, cutoff_utc=(
+        study.result.get("period") or {}).get("cutoff_utc"))
+    if minutes is None:
         raise _UnavailableError  # not cached: found on a later open once the package is back
-    return market.load_index_minutes(root, cutoff_utc=(study.result.get("period") or {})
-                                     .get("cutoff_utc"))
+    return minutes
 
 
 def index_minutes(store_root: str, result_id: str):
     """One-minute E-mini bars of the study's verified package, or None (read only)."""
 
     try:
-        return _minutes(store_root, result_id)
+        study = _study(store_root, result_id)
+        signature = ()
+        if (getattr(getattr(study.plan, "source", None), "kind", None)
+                == "verified_task_b_registered_inputs"):
+            from alpha_lab.agents.data_infra.ifvg.presentation.lab.registered_market import (
+                cache_signature,
+            )
+
+            signature = cache_signature(study.plan)
+        return _minutes(store_root, result_id, signature)
     except _UnavailableError:
         return None
 

@@ -1,0 +1,203 @@
+{
+  "schema": "ifsm_correct_config_full_range_request_v1",
+  "status": "Proposed bounded instruction; no study has been launched by creating this package. The owner initiates it by sending TASK.md to the agent.",
+  "study_name": "IFSM — established configurations over the full Task B range",
+  "batch_count": 1,
+  "strategy_configurations": 6,
+  "firms": [
+    "takeprofittrader",
+    "myfundedfutures"
+  ],
+  "funded_result_rows": 12,
+  "configuration_request_not_direct_import": true,
+  "common_expected_effective_values": {
+    "enable_longs": true,
+    "enable_shorts": false,
+    "htf_timeframes": [
+      "1H",
+      "4H"
+    ],
+    "parent_timeframes": [
+      "1m",
+      "3m",
+      "5m",
+      "10m",
+      "15m",
+      "30m"
+    ],
+    "htf_gap_invalidation_policy": "own_timeframe_close_v1",
+    "htf_selection_max_per_timeframe": 2,
+    "htf_direction_selection_policy": "mixed_direction_rank_v1",
+    "htf_registry_max_age_days": 15,
+    "parent_htf_distance_ticks_max": 160,
+    "parent_reaction_window_parent_bars": 40,
+    "parent_retest_timeout_1m_bars": 240,
+    "opposing_timeout_1m_bars": 90,
+    "opposing_min_gap_ticks": 1,
+    "min_gap_ticks_capture": 4,
+    "post_inversion_expiry_1m_bars_max": 80,
+    "parent_replacement_policy": "highest_tf_newest",
+    "parent_retest_depth_policy": "any_live_touch",
+    "parent_full_fill_invalidation": true,
+    "parent_structural_invalidation": true,
+    "entry_family": "fresh_fvg_continuation",
+    "entry_near_parent": false,
+    "causality_parent": "confirmed_after",
+    "causality_opposing": "confirmed_after",
+    "causality_entry": "confirmed_after",
+    "holding_policy": "scheduled_daily_close_v1",
+    "daily_close_time": "15:55",
+    "daily_close_timezone": "America/Chicago",
+    "daily_close_buffer_minutes": 5,
+    "max_executed_trades_per_day": null,
+    "sl_buffer_ticks": 1,
+    "swing_strength_bars": 3,
+    "swing_pool_max": 64,
+    "ltf_registry_max_live": 512,
+    "anchor_policy": "trading_day_18et_elapsed_v1",
+    "resolver_policy": "next_1m_bar_stop_first_v1",
+    "outside_session_policy": "keep_waiting",
+    "inversion_timeout_1m_bars": null,
+    "setup_timeout_1m_bars": null,
+    "break_even_enabled": false
+  },
+  "context_annotation_only": {
+    "menthorq_context_version": "menthorq_eod_v1",
+    "regime_gate_policy": "off",
+    "nearest_support_gex1_block": false,
+    "regime_unknown_policy": "allow",
+    "nearest_support_universe": "all_19"
+  },
+  "context_source": "Task B context_on configuration; only these annotation/gate fields are inherited, NEVER its document-default section.",
+  "configs": [
+    {
+      "batch_id": "C01",
+      "saved_configuration_name": "S1-T1-H14-P1-L-SO",
+      "rationale": "Primary candidate: prior funded-comparison leader.",
+      "entry_schedule_policy": "all_open_market_v1",
+      "opposing_parent_distance_ticks_max": 80,
+      "exit_policy": "scale_out_half_breakeven_hold_to_close_v1",
+      "tp_r_multiple": 1.0,
+      "instrument": "micro",
+      "quantity": 10,
+      "cost_per_contract_per_fill_usd": 0.514,
+      "reference": {
+        "source_kind": "complete_saved_binding",
+        "file": "source_references.json",
+        "reference_configuration": "S1-T1-H14-P1-L-SO",
+        "historical_section_hash": "0d721d4f981ee61f6b7ca9e68f69028922ec0c46029c9970dbf22305aa062631"
+      }
+    },
+    {
+      "batch_id": "C02",
+      "saved_configuration_name": "S0-T1-H14-P1-L-SO",
+      "rationale": "Matched partial-exit comparison using the original entry windows.",
+      "entry_schedule_policy": "legacy_doc_sessions_v1",
+      "opposing_parent_distance_ticks_max": 80,
+      "exit_policy": "scale_out_half_breakeven_hold_to_close_v1",
+      "tp_r_multiple": 1.0,
+      "instrument": "micro",
+      "quantity": 10,
+      "cost_per_contract_per_fill_usd": 0.514,
+      "reference": {
+        "source_kind": "complete_saved_binding",
+        "file": "source_references.json",
+        "reference_configuration": "S0-T1-H14-P1-L-SO",
+        "historical_section_hash": "cc1f02d0907f5f093987034a3b2ee271f7d88ffad445857604caae6f5932f9f4"
+      }
+    },
+    {
+      "batch_id": "C03",
+      "saved_configuration_name": "S0_D80_W1_P1",
+      "rationale": "Prior original-window, whole-position reference.",
+      "entry_schedule_policy": "legacy_doc_sessions_v1",
+      "opposing_parent_distance_ticks_max": 80,
+      "exit_policy": "fixed_target_v1",
+      "tp_r_multiple": 1.0,
+      "instrument": "mini",
+      "quantity": 1,
+      "cost_per_contract_per_fill_usd": 5.14,
+      "reference": {
+        "source_kind": "complete_saved_binding",
+        "file": "source_references.json",
+        "reference_configuration": "S0_D80_W1_P1",
+        "historical_section_hash": "86261cc90c14c16db61f28e5cf77ee9079d1808b79af29160cec012b27e534d4"
+      }
+    },
+    {
+      "batch_id": "C04",
+      "saved_configuration_name": "S1_D80_W1_P1",
+      "rationale": "Whole-position counterpart with all permitted market hours.",
+      "entry_schedule_policy": "all_open_market_v1",
+      "opposing_parent_distance_ticks_max": 80,
+      "exit_policy": "fixed_target_v1",
+      "tp_r_multiple": 1.0,
+      "instrument": "mini",
+      "quantity": 1,
+      "cost_per_contract_per_fill_usd": 5.14,
+      "reference": {
+        "source_kind": "complete_saved_binding",
+        "file": "source_references.json",
+        "reference_configuration": "S1_D80_W1_P1",
+        "historical_section_hash": "2938c6d33039b6064d87e2730f673b66e38db36b62c5aa06f0aa6a05429db653"
+      }
+    },
+    {
+      "batch_id": "C05",
+      "saved_configuration_name": "S0_D160_W1_P1",
+      "rationale": "Previously tested wider-distance, original-window reference.",
+      "entry_schedule_policy": "legacy_doc_sessions_v1",
+      "opposing_parent_distance_ticks_max": 160,
+      "exit_policy": "fixed_target_v1",
+      "tp_r_multiple": 1.0,
+      "instrument": "mini",
+      "quantity": 1,
+      "cost_per_contract_per_fill_usd": 5.14,
+      "reference": {
+        "source_kind": "historical_reference_locator_plus_verified_description",
+        "file": "source_references.json",
+        "reference_configuration": "S0_D160_W1_P1",
+        "historical_section_hash": "f3358a972cc20468b18e10a5403ac2d680632555a9cdaa2612d52bb5b655ebc7",
+        "requirement": "Recover its complete authoritative effective section locally before launch; do not use its display name as the configuration."
+      }
+    },
+    {
+      "batch_id": "C06",
+      "saved_configuration_name": "S1_D160_W1_P1",
+      "rationale": "Previously tested wider-distance, all-hours reference.",
+      "entry_schedule_policy": "all_open_market_v1",
+      "opposing_parent_distance_ticks_max": 160,
+      "exit_policy": "fixed_target_v1",
+      "tp_r_multiple": 1.0,
+      "instrument": "mini",
+      "quantity": 1,
+      "cost_per_contract_per_fill_usd": 5.14,
+      "reference": {
+        "source_kind": "historical_reference_locator_plus_verified_description",
+        "file": "source_references.json",
+        "reference_configuration": "S1_D160_W1_P1",
+        "historical_section_hash": "75c8ce85527c45258e06cdc0c204d061de9cd8d19239dd20f2ad38ca72b8a026",
+        "requirement": "Recover its complete authoritative effective section locally before launch; do not use its display name as the configuration."
+      }
+    }
+  ],
+  "date_scope_file": "date_scope.json",
+  "historical_reference_file": "source_references.json",
+  "result_objective": "Received after-split payouts minus every initial/replacement funded-account purchase; retain trading costs in the trade/account paths and do not charge twice.",
+  "rank_by_trade_count": false,
+  "account_policy": "One account at a time per configuration/firm, fresh paid replacement on failure, no copying across configurations, no five-credit budget, no growth or reinvestment. Use the owner-approved saved firm mechanics and two-business-day payout processing.",
+  "fee_status": "Carry the previously studied sizing and cost assumptions; not a claim of live broker fees or exact micro fills.",
+  "source_resolution_rule": "Load the complete saved configuration, then add annotation-only MenthorQ fields through the supported current schema. Recompute current plan identities and create a new approval; historical hashes are reference identities, not new approvals.",
+  "forbidden_fallback_configuration": "ifvg_v2_doc_default_fresh_static_1r",
+  "forbidden_automatic_actions": [
+    "rerun the old document-default baseline",
+    "add another configuration",
+    "fit models",
+    "add active MenthorQ gates",
+    "change the slot/invalidation/expiry mechanics",
+    "reset strategy at January 1 or January 13 to match a prior result",
+    "change the three-day quality preference",
+    "launch follow-on studies",
+    "commit or push"
+  ]
+}

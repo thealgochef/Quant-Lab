@@ -188,7 +188,7 @@ class FundedComparisonApprovalPayload(FrozenContract):
     funded_comparison_plan_id: str = Field(pattern=SHA256_PATTERN)
     approved_on: str
     approved_by: Literal["owner"] = "owner"
-    channel: Literal["study_screen", "claude_conversation"]
+    channel: Literal["study_screen", "claude_conversation", "codex_conversation"]
     statement: str = Field(min_length=20)
     scope: str = Field(min_length=10)
 

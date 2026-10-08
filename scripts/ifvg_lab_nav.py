@@ -13,6 +13,8 @@ save, approve or launch anything.
 
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -43,13 +45,15 @@ FUNDED_TARGET = "ifvg_lab_v1_funded_target"
 REVIEW_TARGET = "ifvg_lab_v1_review_target"
 _LINK_APPLIED = "ifvg_lab_v1_deep_link_applied"
 CONTEXT_KEY = "funded_comparison_v1_selected_context"  # shared with the repair-R2 screen
+PREFERENCES_VERSION = "funded_result_view_preferences_v1"
 
 DETAIL_TABS = ("Summary", "Payouts and accounts", "Risk and simulation", "Trades",
                "Market conditions", "Settings and evidence")
 _TAB_SLUGS = {"summary": "Summary", "payouts": "Payouts and accounts",
               "risk": "Risk and simulation", "trades": "Trades",
               "market": "Market conditions", "settings": "Settings and evidence"}
-_VIEWS = {"library": ("My studies", "list"), "funded": ("My studies", "funded"),
+_VIEWS = {"library": ("My studies", "list"), "mlphase": ("My studies", "ml_phase"),
+          "funded": ("My studies", "funded"),
           "detail": ("My studies", "funded_detail"), "review": ("Trade review", None),
           "new": ("New study", "new_funded"), "approve": ("New study", "approve_funded"),
           "types": ("New study", "new")}
@@ -119,7 +123,75 @@ def funded_context(result_id: str, st_module=st) -> dict[str, Any]:
     """The ONE firm / configuration / account / tab selection for this saved result."""
 
     contexts = st_module.session_state.setdefault(CONTEXT_KEY, {})
-    return contexts.setdefault(result_id, {})
+    if result_id not in contexts:
+        try:
+            saved = _preferences().get("contexts", {}).get(result_id, {})
+            contexts[result_id] = dict(saved) if isinstance(saved, dict) else {}
+        except Exception:
+            contexts[result_id] = {}
+            st_module.session_state[LINK_NOTE] = "Saved viewing preferences could not be restored."
+    return contexts[result_id]
+
+
+def _preferences_path() -> Path:
+    from alpha_lab.agents.data_infra.ifvg.presentation.lab.external_catalog import catalog_path
+
+    return catalog_path().with_name("funded_view_preferences.json")
+
+
+def _preferences() -> dict[str, Any]:
+    path = _preferences_path()
+    if not path.exists():
+        return {"schema": PREFERENCES_VERSION, "contexts": {}}
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    if saved.get("schema") != PREFERENCES_VERSION:
+        raise ValueError("unsupported view preferences schema")
+    return saved
+
+
+def save_view_preferences(st_module=st) -> None:
+    """Persist viewing choices separately from strategy drafts and economic records."""
+    from alpha_lab.agents.data_infra.ifvg.presentation.lab.external_catalog import _write
+
+    contexts = st_module.session_state.get(CONTEXT_KEY) or {}
+    if not contexts:
+        return
+    saved = _preferences()
+    saved["contexts"].update(contexts)
+    target = funded_target(st_module) or {}
+    saved["selected_result_id"] = target.get("result_id")
+    path = _preferences_path()
+    data = json.dumps(saved, sort_keys=True, indent=2, ensure_ascii=False) + "\n"
+    if not path.exists() or path.read_text(encoding="utf-8") != data:
+        _write(path, saved)
+
+
+def validate_restored_context(study, context: dict[str, Any], st_module=st) -> None:
+    """Clear invalid restored scoped selections with an explicit explanation."""
+    problems = []
+    if context.get("configuration") and context["configuration"] not in study.configurations:
+        context.pop("configuration", None)
+        context.pop("account", None)
+        problems.append("configuration")
+    firms = dict(study.firms)
+    if context.get("firm_key") and context["firm_key"] not in firms:
+        context.pop("firm_key", None)
+        context.pop("account", None)
+        problems.append("firm")
+    account = context.get("account")
+    if isinstance(account, dict):
+        pair = f"{context.get('configuration')}|{context.get('firm_key')}"
+        numbers = {str(row.get("account_number")) for row in (
+            study.result.get("tables") or {}).get("accounts", []) if row.get("pair_id") == pair}
+        if not numbers:
+            numbers = {str(row.get("account_number")) for row in study.trades_by_pair.get(pair, ())}
+        if account.get("pair") != pair or str(account.get("number")) not in numbers:
+            context.pop("account", None)
+            problems.append("account")
+    if problems:
+        st_module.session_state[LINK_NOTE] = (
+            "Saved " + ", ".join(problems)
+            + " selection is unavailable in this result version and was cleared.")
 
 
 def open_funded_results(target: dict[str, Any], st_module=st, *, rerun: bool = True) -> None:
@@ -172,9 +244,17 @@ def _saved_target(result_id: str, app: str, roots: dict[str, Any]) -> dict[str, 
 
     from ifvg_workspace import funded_result_target
 
+    from alpha_lab.agents.data_infra.ifvg.presentation.lab.external_catalog import (
+        resolve_registered_result,
+    )
     from alpha_lab.agents.data_infra.ifvg.presentation.workspace import load_studies
 
     all_roots = app_roots(Path(roots.get("repo_root") or Path.cwd()))
+    # Resolve exact registered versions first; broken bindings propagate to the
+    # visible link failure and must not fall back to another similarly named run.
+    published = resolve_registered_result(result_id, store_root=all_roots["main"]["store_root"])
+    if published is not None:
+        return published
     order = [app] + [key for key in all_roots if key != app]
     for key in order:
         app_root = roots if key == current_app(roots) else all_roots[key]
@@ -187,6 +267,54 @@ def _saved_target(result_id: str, app: str, roots: dict[str, Any]) -> dict[str, 
             if study.kind == "funded_comparison" and saved_result == result_id:
                 return funded_result_target(study, app_root, app=key)
     return None
+
+
+def _external_mffu_review_target(result_id: str, app: str,
+                                 roots: dict[str, Any]) -> dict[str, Any] | None:
+    """Open one explicitly pinned external MFFU result for read-only Lab review.
+
+    This route leaves the normal application stores and study discovery intact.
+    Both environment fields are required, and the selected result is verified
+    before its external store is put into session state.
+    """
+    if app != "ifsm":
+        return None
+    store_text = os.environ.get("IFSM_MFFU_REVIEW_STORE_ROOT")
+    allowed_result_id = os.environ.get("IFSM_MFFU_REVIEW_RESULT_ID")
+    if not store_text and not allowed_result_id:
+        return None
+    if not store_text or not allowed_result_id:
+        raise ValueError("external MFFU review requires both environment fields")
+    if len(allowed_result_id) != 64 or any(
+        char not in "0123456789abcdef" for char in allowed_result_id
+    ):
+        raise ValueError("external MFFU review result ID must be a full SHA-256 key")
+    if allowed_result_id != result_id:
+        return None
+    repo_root = Path(roots.get("repo_root") or Path(__file__).resolve().parents[1]).resolve()
+    store_root = Path(store_text).resolve(strict=True)
+    if not store_root.is_dir() or store_root.is_relative_to(repo_root):
+        raise ValueError("external MFFU review store must be a directory outside the repository")
+
+    from alpha_lab.agents.data_infra.ifvg.presentation.lab.funded_data import (
+        open_funded_study,
+    )
+    from alpha_lab.propsim.funded.mffu_batch_review import _assert_result
+
+    study = open_funded_study(store_root, result_id)
+    if study.plan_id is None or study.plan is None:
+        raise ValueError("external MFFU review has no verified saved plan")
+    _assert_result(study.plan, study.plan_id, study.result)
+    return {
+        "result_id": result_id,
+        "plan_id": study.plan_id,
+        "store_root": str(store_root),
+        "app": "ifsm",
+        "study_key": result_id,
+        "name": "IFSM MFFU context batch",
+        "status": "Completed",
+        "external_review_only": True,
+    }
 
 
 def apply_deep_link(roots: dict[str, Any], st_module=st) -> None:
@@ -223,7 +351,19 @@ def _apply_link(params: dict[str, Any], roots: dict[str, Any], st_module) -> Non
     if not all(c in "0123456789abcdef" for c in result_id) or len(result_id) < 16:
         raise ValueError("not a saved result id")
     app = params.get("app") if params.get("app") in ("main", "ifsm") else current_app(roots)
-    target = _saved_target(result_id, app, roots)
+    if view == "mlphase":
+        from alpha_lab.propsim.funded.ml_phase.catalog import registered_reports
+
+        pointers, _ = registered_reports(app_roots(Path(roots["repo_root"]))[app]["store_root"])
+        pointer = next(p for p in pointers if p["report_id"] == result_id)
+        st_module.session_state["ifvg_ml_phase_pointer"] = pointer
+        st_module.session_state[SELECTED] = result_id
+        if params.get("config"):
+            funded_context(result_id, st_module)["ml_operation"] = str(params["config"])
+        return
+    target = _external_mffu_review_target(result_id, app, roots)
+    if target is None:
+        target = _saved_target(result_id, app, roots)
     if target is None:
         # no saved run names this result: open it read-only, status unconfirmed
         all_roots = app_roots(Path(roots.get("repo_root") or Path.cwd()))
@@ -254,7 +394,13 @@ def sync_url(st_module=st) -> None:
     screen = st_module.session_state.get(SCREEN, "list")
     target = funded_target(st_module) or {}
     params: dict[str, str] = {}
-    if nav == "Trade review":
+    if screen == "ml_phase":
+        pointer = st_module.session_state.get("ifvg_ml_phase_pointer") or {}
+        params = {"view": "mlphase", "result": pointer.get("report_id", "")}
+        selected = funded_context(params["result"], st_module)
+        if selected.get("ml_operation"):
+            params["config"] = selected["ml_operation"]
+    elif nav == "Trade review":
         params["view"] = "review"
     elif nav == "New study":
         params["view"] = {"approve_funded": "approve", "new": "types"}.get(screen, "new")
@@ -292,3 +438,7 @@ def sync_url(st_module=st) -> None:
             st_module.query_params.from_dict(params)
     except Exception:  # headless tests without a browser address
         pass
+    try:
+        save_view_preferences(st_module)
+    except Exception:
+        st_module.session_state[LINK_NOTE] = "Viewing preferences could not be saved."

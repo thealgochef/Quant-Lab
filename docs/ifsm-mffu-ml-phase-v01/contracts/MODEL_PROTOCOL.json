@@ -1,0 +1,80 @@
+{
+  "schema": "ifsm_ml_return_protocol_v1",
+  "decision_targets": "continuous after-cost R values, not probability labels",
+  "ridge": {
+    "estimator": "sklearn.linear_model.Ridge",
+    "parameters": {
+      "alpha": 10.0,
+      "fit_intercept": true,
+      "solver": "svd",
+      "copy_X": true
+    },
+    "numeric_preprocessing": "per-column training median imputation, all-null train column -> 0; append one missing flag per numeric; StandardScaler(ddof=0) on imputed numeric columns only; zero variance scale=1",
+    "categorical_preprocessing": "fixed domain one-hot from FEATURE_DEFINITIONS.json; missing and unseen are distinct reserved categories; no target encoding; no intercept penalty",
+    "target_transform": "none",
+    "sample_weights": "none"
+  },
+  "catboost": {
+    "estimator": "catboost.CatBoostRegressor",
+    "parameters": {
+      "loss_function": "RMSE",
+      "eval_metric": "RMSE",
+      "iterations": 200,
+      "depth": 3,
+      "learning_rate": 0.03,
+      "l2_leaf_reg": 10.0,
+      "random_seed": 7,
+      "random_strength": 0.0,
+      "bootstrap_type": "No",
+      "boosting_type": "Plain",
+      "grow_policy": "SymmetricTree",
+      "rsm": 1.0,
+      "border_count": 32,
+      "one_hot_max_size": 32,
+      "nan_mode": "Min",
+      "task_type": "CPU",
+      "thread_count": 1,
+      "use_best_model": false,
+      "allow_writing_files": false,
+      "verbose": false
+    },
+    "fit_policy": "No outer eval_set, early stopping, calibration or pruning; numeric NaN stays native; same numeric missing flags; fixed categorical missing/unseen tokens; train-only quantization.",
+    "target_transform": "none",
+    "sample_weights": "none"
+  },
+  "constant_predictor": {
+    "value": "arithmetic mean of same fit's eligible resolved training labels",
+    "policy_replay": false
+  },
+  "validity": {
+    "ENTRY": {
+      "minimum_training_rows": 30,
+      "minimum_distinct_training_dates": 15
+    },
+    "CONTINUATION": {
+      "minimum_training_rows": 20,
+      "minimum_distinct_training_dates": 10
+    },
+    "minimum_target_population_variance": 1e-12,
+    "no_two_class_requirement_for_regression": true,
+    "performance_is_not_a_validity_gate": true,
+    "all_invalid_fold_action": "unmodified baseline and explicit unavailable model, never fabricate zero-score predictions"
+  },
+  "predictions": {
+    "dtype": "float64",
+    "action_rule": "finite prediction strictly < 0 changes action; zero/nonfinite/unavailable falls back",
+    "round_before_action": false,
+    "clip_predictions": false,
+    "label_outlier_removal": false
+  },
+  "selection_prohibited": [
+    "hyperparameter search",
+    "threshold search",
+    "seed search",
+    "feature selection from outcomes",
+    "fitting pooled-OOS calibrator",
+    "automatic deployment"
+  ],
+  "environment": "Resolve working installed package/Python/BLAS versions and hash them before fitting; no forced upgrade. Necessary dependencies may be installed in the task-only environment, without touching production.",
+  "defaults_status": "Explicit study-design choices for this first phase; not claimed statistically optimal or proven by prior runs."
+}

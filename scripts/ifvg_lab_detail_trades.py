@@ -4,8 +4,8 @@ For ONE configuration at ONE firm of one saved funded result:
 
 - "Trade results": the funded trades' net results in the eleven result bins;
 - "Performance summary": All, Long and Short columns;
-- "How far each trade went against you, and for you": worst and best point
-  during each trade against its final result, with the counts sentence;
+- "Account equity range during each trade": lowest and highest account
+  equity relative to its starting balance against the final result;
 - "Trades": the trade list with both fills of a half exit; the row where an
   account's loss limit ended a winning trade is tinted, and every row opens that
   exact trade in Trade review;
@@ -347,12 +347,13 @@ def excursion_figure(pairs: Sequence[tuple[ts.Excursion, dict[str, Any]]], which
                          fmt.money(e.worst if worst else e.best),
                          fmt.money(e.result, signed=True)] for e, t in chosen],
             hovertemplate=("Account %{customdata[0]}, entered %{customdata[1]}<br>"
-                           + ("Went against you: " if worst else "Went in your favor: ")
+                           + ("Account equity below start: " if worst else
+                              "Account equity above start: ")
                            + "%{customdata[2]}<br>Final result: %{customdata[3]}"
                            f"<extra>{name}</extra>")))
     style_chart(fig, height=300, money_axis=None,
-                x_title="Went against you during the trade" if worst
-                else "Went in your favor during the trade",
+                x_title="Account equity below starting balance" if worst
+                else "Account equity above starting balance",
                 y_title="Final result after costs")
     xs = [e.worst if worst else e.best for e, _ in pairs] or [0.0]
     ys = [e.result for e, _ in pairs] or [0.0]
@@ -374,7 +375,7 @@ def _excursion_header() -> h.Markup:
     return h.Markup(
         '<div class="lab" style="display:flex;justify-content:space-between;'
         'align-items:baseline;gap:16px;flex-wrap:wrap">'
-        '<div class="lab-card-title">How far each trade went against you, and for you</div>'
+        '<div class="lab-card-title">Account equity range during each trade</div>'
         f"{legend}</div>")
 
 
@@ -558,10 +559,10 @@ def render(st_module, ctx) -> None:
         if pairs:
             left, right = st_module.columns(2, gap="large")
             with left:
-                show(_subtitle("Worst point during the trade vs final result"), st_module)
+                show(_subtitle("Lowest account equity vs final result"), st_module)
                 plot(excursion_figure(pairs, "worst"), key="trades_worst", st_module=st_module)
             with right:
-                show(_subtitle("Best point during the trade vs final result"), st_module)
+                show(_subtitle("Highest account equity vs final result"), st_module)
                 plot(excursion_figure(pairs, "best"), key="trades_best", st_module=st_module)
         sentence = excursion_sentence(pairs)
         how = ("Measured on the account's recorded lowest and highest equity during each "

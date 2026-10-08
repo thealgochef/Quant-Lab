@@ -8,6 +8,7 @@ days plus the first evaluation days. Skipped when that local archive is absent.
 from __future__ import annotations
 
 from datetime import date
+from types import SimpleNamespace
 
 import pytest
 
@@ -24,6 +25,48 @@ from alpha_lab.propsim.funded.strategy_driver import CoreStrategyDriver
 
 CONTROL = "S0_D160_W1_P0"
 EVAL_DAYS = 6
+
+
+def test_target_override_forwarding_preserves_the_old_default():
+    driver = CoreStrategyDriver.__new__(CoreStrategyDriver)
+    calls = []
+
+    def emit(bar, **kwargs):
+        calls.append((bar, kwargs))
+        return ()
+
+    driver._orch = SimpleNamespace(
+        _reducer=SimpleNamespace(_setup=None), on_decision_bar=emit,
+    )
+    bar, override = object(), object()
+    driver.step(bar, None)
+    driver.step(bar, None, target_decision_override=override)
+    assert calls == [(bar, {}), (bar, {"target_decision_override": override})]
+    assert driver._gate is None
+
+
+def test_entry_signal_carries_causal_htf_zone_id_without_changing_entry():
+    availability = object()
+    geometry = SimpleNamespace(
+        htf=SimpleNamespace(fvg_id="htf-zone-7", timeframe_seconds=3600),
+        parent=SimpleNamespace(timeframe_seconds=300), entry_fvg=None,
+    )
+    setup = SimpleNamespace(
+        phase="S5", entry_ts_utc=availability, geometry=geometry,
+        stop_ticks=90, entry_ticks=100, tp_ticks=110,
+        direction="long", trade_id="trade-7",
+    )
+    driver = CoreStrategyDriver.__new__(CoreStrategyDriver)
+    driver._orch = SimpleNamespace(
+        _reducer=SimpleNamespace(_setup=setup),
+        on_decision_bar=lambda _bar: (SimpleNamespace(kind="eligible_decision"),),
+    )
+    driver._gate = None
+    outcome = driver.step(SimpleNamespace(availability_ts_utc=availability), None)
+    assert outcome.entry is not None
+    assert outcome.entry.htf_zone_id == "htf-zone-7"
+    assert (outcome.entry.entry_ticks, outcome.entry.stop_ticks,
+            outcome.entry.target_ticks) == (100, 90, 110)
 
 
 @pytest.fixture(scope="module")
@@ -87,6 +130,7 @@ def test_no_account_driver_reproduces_the_saved_study_on_these_days(control):
     assert _keys(trades) == expected[: len(trades)]
     assert len(trades) == len(expected) and len(trades) >= 2
     assert all(e[2].direction == "long" for e in entries)
+    assert all(e[2].htf_zone_id for e in entries)
 
 
 def test_payout_refusal_blocks_every_evaluation_entry_and_discards_the_setup(control):

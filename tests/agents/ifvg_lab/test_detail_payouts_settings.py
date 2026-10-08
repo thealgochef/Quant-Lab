@@ -67,6 +67,22 @@ def test_month_labels_and_ticks():
     assert all(not label.startswith("$-") for _, label in ticks)
 
 
+def test_full_range_settings_reads_saved_effective_gap_rule_before_review_publication():
+    from types import SimpleNamespace
+
+    study = SimpleNamespace(plan=SimpleNamespace(
+        plan_schema="ifsm_correct_config_full_range_plan_v1",
+        configurations=[SimpleNamespace(
+            name="C01", effective_section_json=json.dumps({
+                "htf_gap_invalidation_policy": "own_timeframe_close_v1",
+            }),
+        )],
+    ))
+    # No exported bindings are needed to display the frozen worker's setting.
+    assert settings.gap_rule_text(study, "C01") == "A candle on its own chart closes through it"
+    assert settings.gap_rule_text(study, "missing") is None
+
+
 def test_month_ticks_start_at_the_first_point_then_each_month():
     import pandas as pd
 
@@ -286,6 +302,43 @@ def test_fixture_verification_without_approval_or_folder(fixture_study):
     kind, text = settings.verification_items(result, "S0_D160", TPT, "TakeProfitTrader",
                                              None)[-1]
     assert (kind, text) == ("check", "Approved by you September 23, 2026.")
+
+
+def test_unperformed_equality_checks_remain_distinct_from_failed_checks():
+    evidence = {"no_account_replay_equals_saved_study": None,
+                "resumed_run_identical": None, "resume_check_requested": False}
+    result = {"tables": {"execution_evidence": [evidence]}}
+    items = settings.verification_items(result, "synthetic", TPT, "TakeProfitTrader", None)
+    texts = " ".join(text for _, text in items)
+    assert "Historical no-account equality was not checked" in texts
+    assert "Production resume equality was not checked" in texts
+    assert "0 of 1" not in texts
+    evidence.update(no_account_replay_equals_saved_study=False,
+                    resumed_run_identical=False, resume_check_requested=True)
+    texts = " ".join(text for _, text in settings.verification_items(
+        result, "synthetic", TPT, "TakeProfitTrader", None))
+    assert texts.count("0 of 1") == 2
+    assert "was not checked" not in texts
+
+
+def test_full_range_ordinary_table_uses_exact_saved_parent_charts():
+    from types import SimpleNamespace
+
+    parents = ["1m", "3m", "5m", "10m", "15m", "30m"]
+    plan = SimpleNamespace(
+        plan_schema="ifsm_correct_config_full_range_plan_v1",
+        configurations=[SimpleNamespace(
+            name="C03", effective_section_json=json.dumps({"parent_timeframes": parents}))],
+    )
+    study = SimpleNamespace(
+        configurations=["C03"],
+        settings=lambda key: [("Supporting (parent) charts", "one-minute, three-minute")],
+        plan=plan,
+        result={"tables": {"strategy_metrics": [_metric("C03", 1.0)]}},
+    )
+    html = str(settings.strategy_table(study, "C03"))
+    assert "1, 3, 5, 10, 15, 30-minute parents" in html
+    assert "1- and 3-minute parents" not in html
 
 
 # ── published review folder (tmp_path only) ───────────────────────────────

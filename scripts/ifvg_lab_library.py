@@ -121,9 +121,9 @@ def _leaders(store_root: str, result_id: str, kind: str) -> tuple[lib.FirmLeader
         from alpha_lab.propsim.funded.runner import load_result
 
         return lib.earlier_leaders(load_result(Path(store_root), result_id))
-    from alpha_lab.propsim.funded.comparison_runner import load_comparison_result
+    from alpha_lab.agents.data_infra.ifvg.presentation.lab.funded_data import open_funded_study
 
-    return lib.funded_leaders(load_comparison_result(Path(store_root), result_id))
+    return lib.funded_leaders(open_funded_study(Path(store_root), result_id).result)
 
 
 @st.cache_data(show_spinner=False, max_entries=64)
@@ -261,7 +261,7 @@ def _complete(row: lib.LibraryRow, by_app: dict[str, dict[str, Any]], here: str
     if row.kind == "research_group" or study is None:
         return row
     roots = by_app.get(row.app) or {}
-    store = str(roots.get("store_root") or "")
+    store = str(study.store_root or roots.get("store_root") or "")
     if row.kind in ("funded_comparison", "funded"):
         line = None
         leaders: tuple[lib.FirmLeader, ...] = ()
@@ -435,7 +435,10 @@ def _open(st_module, row: lib.LibraryRow, by_app: dict[str, dict[str, Any]], *,
     from ifvg_lab_nav import go, open_funded_results
 
     route = row.details_route if details else row.route
-    if route == "funded_results":
+    if route == "ml_phase":
+        st_module.session_state["ifvg_ml_phase_pointer"] = dict(row.study.state)
+        go(st_module, nav="My studies", screen="ml_phase", selected=row.key)
+    elif route == "funded_results":
         from ifvg_workspace import funded_result_target
 
         target = funded_result_target(row.study, by_app[row.app], app=row.app)

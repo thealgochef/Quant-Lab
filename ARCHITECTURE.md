@@ -1858,6 +1858,31 @@ Post-run review additions (September 23, 2026; SPEC.md A11):
 - `run_ifsm_research_ui.py --research-core PATH` is the explicit, labeled way to run the
   application on such a checkout. The default launch and the pin are unchanged.
 
+### Bounded IFSM full-range reporting (October 4, 2026)
+
+The October 4, 2026 bounded IFSM comparison adds
+`propsim/funded/full_range_reporting.py`. It consumes the six workers' saved
+ordinary executions and twelve separate funded ledgers before immutable result
+hashing. Its reconciled tables retain all declared dates, actual entry chronology,
+maximal no-entry spans and censored ties, entry-month outcomes, cash-event-month
+movements, year slices of the same continuation, entry-known passive context and
+source-selected roll flags. Warmup stays explicitly flagged and outside activity
+totals. Unavailable input or observational evidence is null/labeled, never zero
+signal. Quantity-weighted partial-exit points and exact filled-quantity costs
+reconcile to saved prices; canonical net-R profit factor stays unchanged, with
+aggregate dollars profit factor separately named.
+
+`funded_comparison_review.py` exports those saved tables through its fixed
+allowlist, checks every CSV cell against the saved result and verifies payload
+hashes after atomic publication. Fixed supplements support the exact run context,
+configuration bindings, integration report, validation evidence, actual application
+captures and scoped document overrides. Failed rows retain reasons without money;
+an all-failed review explicitly validates the absence of economic figures rather
+than claiming successful economic validation. Historical results and default
+export payloads are unchanged. The bounded task is
+`docs/ifsm-correct-config-full-range-v01/TASK.md`; implementation checks do not
+establish that its historical batch completed.
+
 ### IFVG dashboard repairs (September 23, 2026)
 
 Screen-level repairs (task record `docs/ifvg-dashboard-repairs/`); no replay, cost, account or
@@ -2015,3 +2040,113 @@ No engine, funded-simulator, account, payout, cost or calendar code changed.
   follow-up 1: `tests/agents/ifvg_lab/test_setup_event_timing.py`, and the historical-order
   wording tests in `test_detail_risk.py` (`ifvg_lab_detail_risk.validation_text` names the
   fields `firm_race.check_original` compares).
+
+### Consolidated MFFU reporting repair (October 7, 2026)
+
+The current repair phase is recorded in
+`docs/ifsm-mffu-repair-integration-v01/IMPLEMENTATION.md`. Shared
+`propsim/funded/reporting_accounts.py` resolves legacy/current account fields
+with result/configuration/firm scope. `reporting_legs.py` reconciles saved
+execution fills using the frozen per-fill rounding policy and conserving
+integer-cent entry-fee allocation. Actual remaining halves and whole positions
+closing at the deadline remain distinct. Reporting-only analysis is versioned;
+historical financial bytes and v1 projections remain inspectable.
+
+`presentation/lab/external_catalog.py` adds verified external funded-result
+versions to ordinary My studies without replacing existing stores. Compact
+read companions retain all financial/trade rows and omit repeated decision
+traces. `registered_market.py` reads this result's exact registered Task B
+one-minute inputs for the existing retrospective and prior-session price
+condition calculations. It refuses foreign-study fallback and honors the
+bound cutoff. `mffu_reporting.py`, `mffu_gamma.py` and `mffu_lenses.py` share
+source-bound schema-v5 reporting between the dashboard and review exports.
+Actual funded entries and ordinary candle replay remain separate populations;
+first-target checkpoints retain actual execution times. Historical EOD maps
+are segmented by nominal availability and point-in-time review hides future
+accounts, fills and outcomes. Unique frozen parent locks define geometry counts.
+
+Six comparison lenses use deterministic metric tuples rather than a weighted
+score. Optional targets combine with AND; closest matches display all failed
+requirements. Activity retains zero-entry dates, milestone clocks distinguish
+the original operation from individual accounts, and conditional reach-time
+medians retain accompanying all-account status counts. Two to four alternatives
+can be compared without combining their cash. Dedicated persisted preferences
+and version-aware caches change only the saved-result presentation. Full
+definitions and phase evidence are maintained in the repair integration docs.
+
+### Bounded IFSM MFFU context comparison (October 7, 2026)
+
+`propsim/funded/mffu_batch_plan.py` resolves all 64 handoff intents against the
+verified repaired six-row reference. The saved plan binds exact Task B input
+registrations and 10+253 dates, the MyFundedFutures account profile, a separate
+task Core checkout, Quant-Lab registered-input loaders, replay and account
+dependencies, result builders, and the MenthorQ v02 EOD archive and behavior-table
+hashes. The source binding includes `prepared_store.py` and `day_artifacts.py`:
+changing either after approval invalidates the plan before worker dispatch.
+`menthorq_asof.py` exposes a cutoff-bounded
+point-in-time lookup using the declared nominal 10:00 PM Chicago release; it
+does not infer measured vendor publication timestamps. The old daytime
+MenthorQ lookup and installed Core pin are unchanged. Supplied EOD levels use
+vendor `NQ1!` continuous-front-month coordinates, while Task B selects NQ
+contracts from its source catalog; exact roll parity is not independently
+established and the study applies no futures-basis adjustment.
+
+The task Core's own reducer applies the daily executed-entry cap, FE/FL
+rejections, eight-name overhead rule, parent-lock opposing distance and first
+target XG/XE action. Its policy decision records retain the selected as-of
+source, reasons, quota and geometry fallback. `MffuCoreDriver` supplies that
+context to two independent streams per configuration: ordinary completed-bar
+replay and an MFFU account stream walked on ordered prints. The funded first
+target can pass its actual observation-time decision back to Core; the ordinary
+stream selects from the logical minute open. The existing stop, account floor,
+mandatory-close and payout engines remain the economic authority. The fee
+engine now multiplies the actual quantity on each execution fill by $0.514
+per micro, then posts that fill's total rounded to cents with ROUND_HALF_UP.
+A six/three/three sequence costs 308 + 154 + 154 = 616 cents; historical
+ten/five/five fills retain their exact 514 + 257 + 257 = 1028 cents.
+
+`mffu_batch_run.py` verifies the final source and registered inputs, then runs
+each approved intent with a source-matched end-of-day checkpoint. Compatible
+C01/C02 partial controls may be reused only through `mffu_batch_reuse.py`'s
+immutable financial/source proof; fresh v02 context on those controls is a
+separately labeled posthoc annotation. Saved result analysis uses exact-cent
+funded cash, 188 declared matched comparisons, interactions and causal
+decision coverage. The Lab's funded view reopens all 64 plan rows, including
+failed rows without a zero-cash substitution. The result exporter stages
+outside the repository and publishes only a verified final ZIP under reports.
+The task state and owner-selected fee convention are recorded in
+`docs/ifsm-mffu-context-batch-v01/TASKS.md`.
+# Development-only IFSM return-regression phase (October 8, 2026; in progress)
+
+`propsim/funded/ml_phase/` implements a separate fixed 24-cell return-regression
+protocol specified in `docs/ifsm-mffu-ml-phase-v01/`. It does not change the old
+classifier protocols or production Core pin. The task-only Core copy adds an
+optional per-instance callback after existing entry guards; shared position
+walking adds an optional first-partial continuation callback with a strictly
+later ordered-print fill and preserved protective priority. Disabled callbacks
+retain baseline execution. Market-only labels explicitly disable account-floor
+enforcement; funded positions keep it enabled by default. Source/plan freeze,
+completed shadow datasets and 216 fitted folds are bound to exact approved plans.
+The matched 26 policy operations checkpoint each of 171 scored dates. The
+ordinary Lab discovers immutable phase reports through a separate additive
+`catalog/ifsm_ml_phase_results.json`; readers verify report hashes and never
+fit or replay. Shared funded projections and all six repaired lenses supply
+the UI and CSV exports. See the task ledger for current execution/delivery status.
+
+## Research storage boundary (October 8, 2026)
+
+`docs/RESEARCH_STORAGE.md` is the maintained map between versioned code/contracts,
+local runtime stores and the sibling research evidence library. The
+`research_workspace.py` scaffolder creates task work outside the repository;
+MFFU, full-range and ML worker CLIs reject repository-contained working paths
+before source import/execution. New MFFU plans bind the helper source, and ML
+source freezing copies and hashes it alongside its worker. Historical exact
+sources and approvals remain unchanged. Final report downloads and local model
+bundles remain available at their existing paths but are not versioned.
+The pre-commit and CI artifact guard checks Git index paths and blob sizes.
+
+Saved MFFU reporting companions retain content-addressed producer-source
+witnesses under each external report's `producer_sources/` directory. Readers
+verify original source hashes, report bytes and economic-result binding without
+executing archived code. Missing or altered required witnesses are rejected;
+legacy reports remain readable when their current source hashes still match.

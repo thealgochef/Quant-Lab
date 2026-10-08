@@ -1,8 +1,0 @@
-{
-  "actual_last_evaluation_date": "2026-02-23",
-  "bar_stage": "prepared cache reused; no raw market files opened and no bars rebuilt",
-  "cost_points_round_turn": 0.514,
-  "date_selection": "existing logical_trading_days Jan13-Feb24 first30; final evaluation day Feb23",
-  "requested_descriptive_endpoint": "2026-02-24",
-  "source": "search/charter.py::CostPolicy.model_fields[cost_points_round_turn].default"
-}

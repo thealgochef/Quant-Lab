@@ -1,0 +1,297 @@
+[
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\correction_receipt.json",
+    "packaged_path": "source/economic_quant_lab/correction_receipt.json",
+    "sha256": "00e2ae56b4cbde2db33b22a22c0e6684a60c6995456e7d30b80143f16203d016"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\scripts\\ifvg_mffu_batch_job.py",
+    "packaged_path": "source/economic_quant_lab/scripts/ifvg_mffu_batch_job.py",
+    "sha256": "6ad3ef99b5bbacbb270c5e8c230f7e117806d66bc1a7aeff3592b580f5c00132"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\agents\\data_infra\\ifvg\\config.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/agents/data_infra/ifvg/config.py",
+    "sha256": "fb99dcb67131c16e1523af685ca28b8a852f747252b56b28bdd7f264c37beb79"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\agents\\data_infra\\ifvg\\context_contracts.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/agents/data_infra/ifvg/context_contracts.py",
+    "sha256": "b1bed41c96809102203a8916c4233073f13442e47f7dcccd1d4d9a9ad5556ae6"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\agents\\data_infra\\ifvg\\context_experiment_contracts.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/agents/data_infra/ifvg/context_experiment_contracts.py",
+    "sha256": "933a7224bcf5176410498524b4f7238afba8487a8adea7931529ec7a45e69419"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\agents\\data_infra\\ifvg\\context_schemas.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/agents/data_infra/ifvg/context_schemas.py",
+    "sha256": "ce6779a0da750143fa862cb87dd05c8556616053c83c5316472e2cdd0f569b13"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\agents\\data_infra\\ifvg\\contracts.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/agents/data_infra/ifvg/contracts.py",
+    "sha256": "2ccbc99749b0a84f798fbd6d47d91fea11bedbc66fe70d913fa8976ee4ec55d9"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\agents\\data_infra\\ifvg\\data_access.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/agents/data_infra/ifvg/data_access.py",
+    "sha256": "235f12fa739a6a80415afb554533b4fa8f8f7ecd654d406f1abdc3863d8d3151"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\agents\\data_infra\\ifvg\\day_artifacts.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/agents/data_infra/ifvg/day_artifacts.py",
+    "sha256": "a085a7e0bcb9a4cc2b68adcabcda638798b745c8722b2b497c7d8ee97c762365"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\agents\\data_infra\\ifvg\\development_access.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/agents/data_infra/ifvg/development_access.py",
+    "sha256": "1e4a8c71190a0538466186cfd2e3b863f6a4917559217b2cdcd3c9d722a3af6f"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\agents\\data_infra\\ifvg\\funded_comparison_review.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/agents/data_infra/ifvg/funded_comparison_review.py",
+    "sha256": "06fd6140ba460e5a6f9ead2f0e5c253a324339b460e6a521a515a6b234c24224"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\agents\\data_infra\\ifvg\\manifest.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/agents/data_infra/ifvg/manifest.py",
+    "sha256": "e55d718903747c1b1f7c94ba3d73af56c7a68f464f383fdafe88f875e360a26c"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\agents\\data_infra\\ifvg\\menthorq_asof.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/agents/data_infra/ifvg/menthorq_asof.py",
+    "sha256": "39c86e0cac2775c51443e57f62de5351d4222ce790fab6af453f7a0f4fbe4bf6"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\agents\\data_infra\\ifvg\\menthorq_levels.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/agents/data_infra/ifvg/menthorq_levels.py",
+    "sha256": "0e62f55ce266d7f84a06097a7e1fef32d73add3dae180f0089d905b7868d56dc"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\agents\\data_infra\\ifvg\\prepared_store.py",
+    "packaged_path": "source/economic_quant_lab/src/alpha_lab/agents/data_infra/ifvg/prepared_store.py",
+    "sha256": "037be84f32f326f199df58fe48d17a30cc98ae140171f5730ff2474a13476718"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\agents\\data_infra\\ifvg\\search\\authorization.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/agents/data_infra/ifvg/search/authorization.py",
+    "sha256": "277bef5e08fa8eb73e7c0218715f027d36e861e2485b4c1371424757a2156198"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\agents\\data_infra\\ifvg\\search\\axis_registry.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/agents/data_infra/ifvg/search/axis_registry.py",
+    "sha256": "c43d59a33ee47f80aa26d86edb79922bca700bf228ad93c7f38792b8a2854e3a"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\agents\\data_infra\\ifvg\\search\\charter.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/agents/data_infra/ifvg/search/charter.py",
+    "sha256": "bd04d51ca16a5c4cac9f6e3dd85c94c3d6ac98cc829f27ca622bb8cdcde0172a"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\agents\\data_infra\\ifvg\\search\\entry_activity.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/agents/data_infra/ifvg/search/entry_activity.py",
+    "sha256": "76e2f9e2b41198601ef4625e92c8dadb719c6e5f1a87be399afea4eda4fa69df"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\agents\\data_infra\\ifvg\\search\\file_mutex.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/agents/data_infra/ifvg/search/file_mutex.py",
+    "sha256": "bf412e672a8f34853f54b257f6b202655fe706a5776149545b3302504fe93b9e"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\agents\\data_infra\\ifvg\\search\\identities.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/agents/data_infra/ifvg/search/identities.py",
+    "sha256": "bbfd543d1d37f5bdeb880ab5d067e2fd00e0655c4521fa92437d81175cf6c97e"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\agents\\data_infra\\ifvg\\search\\store.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/agents/data_infra/ifvg/search/store.py",
+    "sha256": "f172125d12e46a456cb492212cd259e4d4bad6309a2b0f65f6a0457f93820db8"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\agents\\data_infra\\ifvg\\search\\store_namespace.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/agents/data_infra/ifvg/search/store_namespace.py",
+    "sha256": "c0f164d276030a9f2ed968e5c233906bbec524b5035b1fd1818be09292274ccc"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\agents\\data_infra\\ifvg\\search\\task_b.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/agents/data_infra/ifvg/search/task_b.py",
+    "sha256": "9e09b83eaa929991ace45a5c7049c3794aa1e51003da606adb0b7339a3ee5cf6"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\agents\\data_infra\\ifvg\\search\\task_b_execution.py",
+    "packaged_path": "source/economic_quant_lab/src/alpha_lab/agents/data_infra/ifvg/search/task_b_execution.py",
+    "sha256": "69b10138d8ad9dc5d81f9f0513f8d964bc2b60c8bd72bc227639d95d6c39ac38"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\propsim\\funded\\campaign.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/propsim/funded/campaign.py",
+    "sha256": "2dc1fc5c1260e6784213db230afb563a56fbd556640fc91c711ffac51297a871"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\propsim\\funded\\clock.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/propsim/funded/clock.py",
+    "sha256": "cf9038da1231ad20e8a02df063e2bd6e55cef1981390b13b755309b48e07d4b7"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\propsim\\funded\\comparison_describe.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/propsim/funded/comparison_describe.py",
+    "sha256": "8add3b4d4135da1e31a3ea5dd62f3372efbfcb0d2c6557279f29474a0b28fd4d"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\propsim\\funded\\comparison_plan.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/propsim/funded/comparison_plan.py",
+    "sha256": "0238002b35a1176d66955274b814a9e11bf2dd3934eaeb3464c45d2bcb1da6ab"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\propsim\\funded\\comparison_result.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/propsim/funded/comparison_result.py",
+    "sha256": "2c51d5ec2a05d9ba2878df018e2980d3ccaa1fec81b18811740909cafb50d653"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\propsim\\funded\\comparison_run.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/propsim/funded/comparison_run.py",
+    "sha256": "def2a825f522b2e9467794096646b66519648340daa2ce29fe44c55a29b16c43"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\propsim\\funded\\comparison_runner.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/propsim/funded/comparison_runner.py",
+    "sha256": "d8e25c8716aa06285f3e1f27e8722713eafe3fcdae2ff2ad5561e65f5fb6c072"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\propsim\\funded\\comparison_source.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/propsim/funded/comparison_source.py",
+    "sha256": "11ee760b774b8cfd26e687964679fb83ae36f3fcfc649eb00285c5687e35095d"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\propsim\\funded\\comparison_study.py",
+    "packaged_path": "source/economic_quant_lab/src/alpha_lab/propsim/funded/comparison_study.py",
+    "sha256": "d7f19a6972a176fef359cad56cdf89bef248d288711a2807d086315cfe10b1d8"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\propsim\\funded\\core_identity.py",
+    "packaged_path": "source/economic_quant_lab/src/alpha_lab/propsim/funded/core_identity.py",
+    "sha256": "9a24f969565762a6e2340f29cf4ccd5d1372b13a1a266d8d0a3de09c8c42db6a"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\propsim\\funded\\full_range_batch.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/propsim/funded/full_range_batch.py",
+    "sha256": "5aa7187e86bb2c68dd2b2d9862d9342dc1bb775d9e6453c7d8f94c484bbed1a1"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\propsim\\funded\\full_range_reporting.py",
+    "packaged_path": "source/economic_quant_lab/src/alpha_lab/propsim/funded/full_range_reporting.py",
+    "sha256": "a2d330aeaeba8895d5ed40c1597c4ee763c15aa31125982f608c337125b32349"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\propsim\\funded\\instance.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/propsim/funded/instance.py",
+    "sha256": "17ab20b91cacb85aeead7b1b7c69d77c27d9367307327a146a4a88d4583b2989"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\propsim\\funded\\mffu_batch_analysis.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/propsim/funded/mffu_batch_analysis.py",
+    "sha256": "77536d145067930754db993e9dc8348a53544933ee6151d4c3da8ccc17581d1c"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\propsim\\funded\\mffu_batch_correction_reuse.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/propsim/funded/mffu_batch_correction_reuse.py",
+    "sha256": "9fc7cc1041d53395816b8acf3c5ca8bb701eba34479fc328c8ce9ac0b75d4a01"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\propsim\\funded\\mffu_batch_driver.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/propsim/funded/mffu_batch_driver.py",
+    "sha256": "c17d18dbc964745d67a452d60256924fa001363eee84903b3cf2bc8152169292"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\propsim\\funded\\mffu_batch_plan.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/propsim/funded/mffu_batch_plan.py",
+    "sha256": "0d2210fafd30bf9c4ae8504caaa8cfeb54f3303ffb42dc34bae9410d7060f100"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\propsim\\funded\\mffu_batch_reuse.py",
+    "packaged_path": "source/economic_quant_lab/src/alpha_lab/propsim/funded/mffu_batch_reuse.py",
+    "sha256": "b17b53dfd00a7953d6a8a9aa83cb1fb5bd572ca50275339ba3549b80f50a814b"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\propsim\\funded\\mffu_batch_review.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/propsim/funded/mffu_batch_review.py",
+    "sha256": "85ce8762a661745cd3966f6d575320ab22b971d88967917f2d32ff28725631fd"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\propsim\\funded\\mffu_batch_run.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/propsim/funded/mffu_batch_run.py",
+    "sha256": "373c7656d59e728b7873832d91d382a5fc61b8ffcc866121573c1a816800c495"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\propsim\\funded\\pair_engine.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/propsim/funded/pair_engine.py",
+    "sha256": "87aa5c1478e5f66bc6a4623266a33d22825fcf6e2627f5abfb2d86a0a8ac0cc7"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\propsim\\funded\\pair_ledger.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/propsim/funded/pair_ledger.py",
+    "sha256": "48734415a7d2774062baee4be2774cc878a242ff7d22e597864b3075faea2fb8"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\propsim\\funded\\paths.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/propsim/funded/paths.py",
+    "sha256": "1c3c96b9734d4455580a70c49512ac7a73e46c887d59f2838351a16e660ada07"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\propsim\\funded\\plan.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/propsim/funded/plan.py",
+    "sha256": "2e63228ff945723b4a9227389a7235c9756ce04082c9f27c34c6dfc88a0b46ad"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\propsim\\funded\\position_walk.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/propsim/funded/position_walk.py",
+    "sha256": "079eb37fe6bd85298d27359ae57680c07937d0855fe8aba51d971765c29d3e31"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\propsim\\funded\\positions.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/propsim/funded/positions.py",
+    "sha256": "53470124bdd0021100e92f25f38f9217731f0b3827f3188b670351f3ca918399"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\propsim\\funded\\price_evidence.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/propsim/funded/price_evidence.py",
+    "sha256": "f6c3e62d56aa2c6bb10d1fa60f4d448129a99c37916ced39ca32688962ec46be"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\propsim\\funded\\print_minutes.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/propsim/funded/print_minutes.py",
+    "sha256": "9849b889c186201093f53315a77da98fd2c754f8d69b309ada4f5da03e18b86a"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\propsim\\funded\\profiles.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/propsim/funded/profiles.py",
+    "sha256": "31c11a8ab90e6a8c49c455d955f59244cf972a0ec6e8fa806ad50b3f69d37e44"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\propsim\\funded\\reporting_accounts.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/propsim/funded/reporting_accounts.py",
+    "sha256": "018b77d90ea344a78f572a9effe10d3f77321c8972d44d49f3b12c1c49f25d19"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\propsim\\funded\\result.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/propsim/funded/result.py",
+    "sha256": "42c17e408e4b6e9c22769ee192041f620aec38d2a8d26ce6fcfe5356773d0416"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\propsim\\funded\\runner.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/propsim/funded/runner.py",
+    "sha256": "0ac769db18f7eadb14462de59aea97c12ff380fda106f605142201c5bc4e5ac3"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\propsim\\funded\\sources.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/propsim/funded/sources.py",
+    "sha256": "4da162819fbdb14c366dc798dbbf2ee386aa6a0e41f814a81e73c30ffe1723a1"
+  },
+  {
+    "actual_loaded_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\runtime-v03\\src\\alpha_lab\\propsim\\funded\\strategy_driver.py",
+    "packaged_path": "source/quant_lab/src/alpha_lab/propsim/funded/strategy_driver.py",
+    "sha256": "da6cf66d3d6eda247e3ad4ce8f93795c98ac43f835352444318d3cd94481a800"
+  }
+]

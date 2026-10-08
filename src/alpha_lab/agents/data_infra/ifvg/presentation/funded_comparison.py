@@ -304,9 +304,21 @@ def configuration_columns(result: dict[str, Any]) -> dict[str, tuple[tuple[str, 
     Empty when fewer than two configurations were saved (the full label is used).
     """
 
+    from alpha_lab.agents.data_infra.ifvg.presentation.lab.mffu_matrix import (
+        concise_policy_columns,
+        result_variants,
+    )
+
+    variants = result_variants(result)
+    if variants:
+        return {key: concise_policy_columns(v) for key, v in variants.items()}
     rows = (result.get("tables") or {}).get("configurations") or []
-    settings = {c["configuration"]: {str(i.get("setting")): str(i.get("value"))
-                                     for i in c.get("settings") or []} for c in rows}
+    settings = {
+        c["configuration"]: {
+            str(i.get("setting")): str(i.get("value")) for i in c.get("settings") or []
+        }
+        for c in rows
+    }
     if len(settings) < 2:
         return {}
     names: list[str] = []
@@ -317,19 +329,39 @@ def configuration_columns(result: dict[str, Any]) -> dict[str, tuple[tuple[str, 
     varying = [n for n in names if len({v.get(n) for v in settings.values()}) > 1]
     if not varying:
         return {}
-    return {key: tuple((_SHORT_SETTING.get(n, n), _short_value(n, values.get(n, "—")))
-                       for n in varying)
-            for key, values in settings.items()}
+    return {
+        key: tuple((_SHORT_SETTING.get(n, n), _short_value(n, values.get(n, "—"))) for n in varying)
+        for key, values in settings.items()
+    }
 
 
 def execution_sources(result: dict[str, Any], configuration: str) -> tuple[tuple[str, str], ...]:
     """Traded product, signal source, mark source and execution price source."""
 
+    from alpha_lab.agents.data_infra.ifvg.presentation.lab.mffu_matrix import (
+        canonical_settings,
+        result_variants,
+    )
+
+    variant = result_variants(result).get(configuration)
+    if variant:
+        return tuple(
+            (k, v)
+            for k, v in canonical_settings(variant)
+            if k
+            in {
+                "Traded product",
+                "Signal source",
+                "Open-position marks and loss-limit checks",
+                "Execution prices",
+            }
+        )
     settings = result.get("settings") or {}
     sizing = (settings.get("sizing_by_configuration") or {}).get(configuration) or {
         "instrument": settings.get("instrument"),
         "instrument_label": settings.get("instrument_label"),
-        "quantity": settings.get("quantity")}
+        "quantity": settings.get("quantity"),
+    }
     nq = "E-mini Nasdaq-100 (NQ)"
     micro = sizing.get("instrument") == "micro"
     traded = str(sizing.get("instrument_label") or nq)
@@ -338,10 +370,15 @@ def execution_sources(result: dict[str, Any], configuration: str) -> tuple[tuple
         ("Traded product", traded + (f", {quantity} contracts" if quantity else "")),
         ("Signal source", f"{nq} one-minute candles (the strategy study's own data)"),
         ("Open-position marks and loss-limit checks", f"{nq} recorded exchange trades"),
-        ("Execution prices", (
-            f"{nq} recorded exchange trades used as a proxy for micro fills; no micro "
-            "trade data was used (disclosed limitation)") if micro
-         else f"{nq} recorded exchange trades (same product)"),
+        (
+            "Execution prices",
+            (
+                f"{nq} recorded exchange trades used as a proxy for micro fills; no micro "
+                "trade data was used (disclosed limitation)"
+            )
+            if micro
+            else f"{nq} recorded exchange trades (same product)",
+        ),
     )
 
 
@@ -1030,7 +1067,8 @@ STRATEGY_METRICS_NOTE = (
     "these measures follow Strategy-Core's candle rules (stop checked first; after a half "
     "exit the break-even stop is checked from the next candle), while the funded accounts "
     "follow the recorded exchange trades in order, so a half exit and a break-even stop can "
-    "both happen inside one minute. R and cash are not two views of one execution path.")
+    "both happen inside one minute. R and cash are not two views of one execution path."
+)
 
 
 def present_strategy_metrics(result: dict[str, Any]) -> list[dict[str, str]]:
@@ -1043,19 +1081,39 @@ def present_strategy_metrics(result: dict[str, Any]) -> list[dict[str, str]]:
     for r in rows:
         pf = r.get("profit_factor")
         own = columns.get(r["configuration"])
-        out.append({
+        row = {
             **(dict(own) if own else {
-                "Configuration": plain_configuration_label(r.get("configuration_label"))}),
-            "Trades": f"{r['trades']:,}",
-            "Long / short": f"{r.get('long_trades', 0)} / {r.get('short_trades', 0)}",
+                "Configuration": plain_configuration_label(
+                    r.get("configuration_label") or r["configuration"])}),
+            "Trades": "—" if r.get("trades") is None else f"{r['trades']:,}",
+            "Long / short": ("—" if r.get("trades") is None else
+                             f"{r.get('long_trades', 0)} / {r.get('short_trades', 0)}"),
             "Win rate": "—" if r.get("win_rate_pct") is None else f"{r['win_rate_pct']:.1f}%",
-            "Net R after costs": f"{r['net_r_after_costs']:+.2f} R",
+            "Net R after costs": ("—" if r.get("net_r_after_costs") is None
+                                  else f"{r['net_r_after_costs']:+.2f} R"),
             "Average R per trade": ("—" if r.get("expectancy_r_per_trade") is None
                                     else f"{r['expectancy_r_per_trade']:+.3f} R"),
             "Profit factor": "—" if pf is None else f"{pf:.2f}",
-            "Largest drawdown": f"{r['max_drawdown_r']:.2f} R",
-            "Longest time under water": f"{r['longest_trading_days_under_water']} trading days",
-        })
+            "Largest drawdown": ("—" if r.get("max_drawdown_r") is None
+                                 else f"{r['max_drawdown_r']:.2f} R"),
+            "Longest time under water": ("—" if r.get("longest_trading_days_under_water") is None
+                                         else str(r["longest_trading_days_under_water"])
+                                         + " trading days"),
+        }
+        if result.get("full_range_reporting"):
+            row.update({
+                "Status": r.get("status", NOT_COMPLETED),
+                "Active entry dates": ("—" if r.get("active_entry_dates") is None
+                                       else str(r["active_entry_dates"])),
+                "Longest no-entry span": ("—" if r.get("longest_zero_entry_dates") is None
+                                          else f"{r['longest_zero_entry_dates']} evaluated dates"),
+                "Profit after costs": ("—" if r.get("profit_after_costs_usd") is None
+                                       else _usd_text(r["profit_after_costs_usd"])),
+                "Profit factor (dollars)": ("—" if r.get("profit_factor_dollars") is None
+                                            else f"{r['profit_factor_dollars']:.2f}"),
+                "Failure reason": plain_reason(r.get("reason")) if r.get("reason") else "",
+            })
+        out.append(row)
     return out
 
 

@@ -366,8 +366,8 @@ def test_f5_point_in_time_lists_only_what_existed_at_the_moment():
               3: at("2026-04-12T23:30:00Z"), 4: at("2026-05-01T14:00:00Z")}
     moment = at("2026-04-13T00:10:00Z")  # Apr 12, 7:10 PM Chicago
     assert rp.known_accounts([1, 2, 3, 4], opened, moment, current=3) == [1, 2, 3]
-    # the reviewed trade's own account is always kept; an unsaved opening time is left out
-    assert rp.known_accounts([1, 2, 5], opened, at("2026-01-13T00:00:00Z"), current=2) == [1, 2]
+    # C24: even the reviewed account cannot be listed before its saved creation.
+    assert rp.known_accounts([1, 2, 5], opened, at("2026-01-13T00:00:00Z"), current=2) == [1]
     views = [SimpleNamespace(seq=n, entry_utc=at(t)) for n, t in (
         (1, "2026-04-12T20:00:00Z"), (2, "2026-04-13T00:07:00Z"), (3, "2026-04-14T15:00:00Z"))]
     assert [v.seq for v in rp.known_trades(views, moment, current=2)] == [1, 2]

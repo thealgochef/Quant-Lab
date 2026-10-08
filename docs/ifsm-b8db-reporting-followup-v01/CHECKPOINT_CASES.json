@@ -1,0 +1,73 @@
+{
+  "schema": "ifsm_b8db_reporting_case_recipes_v1",
+  "note": "Actual case copied from independent review; remaining cases are synthetic test recipes, not new historical findings or executable application fixtures.",
+  "actual_case": {
+    "id": "P01",
+    "configuration": "MCB003",
+    "trade_id": "e2189e7d-1151-541d-a60e-0f1e992b587a",
+    "stream": "funded",
+    "actual_event_ns": 1750068615558271393,
+    "actual_checkpoint_utc": "2025-06-16T10:10:15.558271393Z",
+    "receipt_context_utc": "2025-06-16T10:10:15.558271+00:00",
+    "reported_encoding_difference_ns": 393,
+    "observed_old_role": "reporting_annotation_at_actual_funded_fill",
+    "expected_outcome": "Recorded checkpoint provenance only after unique saved event/decision and source-context verification; preserve each original timestamp."
+  },
+  "synthetic_case_recipes": [
+    {
+      "id": "same_microsecond_wrong_trade",
+      "change": "Keep a near receipt timestamp, change trade identity",
+      "expected": "Not executed provenance for the requested trade"
+    },
+    {
+      "id": "same_timestamp_conflicting_source",
+      "change": "Keep event timestamp, change bound gamma source identity/value",
+      "expected": "Explicit inconsistency; never silently accept or use a future/latest snapshot"
+    },
+    {
+      "id": "duplicate_conflicting_receipts",
+      "change": "Provide two otherwise plausible receipts with conflicting actions",
+      "expected": "Ambiguity rejected/explicitly unavailable, not arbitrary first-row selection"
+    },
+    {
+      "id": "conditional_partial",
+      "change": "Use a verified actual decision with a partial action",
+      "expected": "Checkpoint has its own recorded provenance/action"
+    },
+    {
+      "id": "annotation_only_partial",
+      "change": "Keep actual first partial but no saved target-context decision",
+      "expected": "Annotation remains annotation; no manufactured receipt"
+    },
+    {
+      "id": "legacy_control",
+      "change": "A reused control lacks execution-time target context",
+      "expected": "Posthoc enrichment, independent from the entry label"
+    },
+    {
+      "id": "cursor_before",
+      "cursor_ns": 1750068615558271392,
+      "expected": "First-target event and later context/action hidden"
+    },
+    {
+      "id": "cursor_at",
+      "cursor_ns": 1750068615558271393,
+      "expected": "First-target facts visible only as permitted by exact canonical event ordering"
+    },
+    {
+      "id": "report_boundary",
+      "change": "Construct a decision beside the saved availability boundary, including different timestamp encodings",
+      "expected": "No altered decision time, future source substitution, or cross-event tolerant join"
+    },
+    {
+      "id": "no_checkpoint",
+      "change": "A completed position never reached first target",
+      "expected": "No first-target record fabricated; status not reached"
+    },
+    {
+      "id": "separate_stream",
+      "change": "Use an ordinary candle-time receipt and funded print event as different stream records",
+      "expected": "No cross-stream provenance borrowing"
+    }
+  ]
+}

@@ -89,6 +89,18 @@ class FundedStudy:
         return None
 
     def configuration_row(self, configuration: str) -> dict[str, Any] | None:
+        from alpha_lab.agents.data_infra.ifvg.presentation.lab.mffu_matrix import (
+            is_mffu_plan,
+            variant_settings,
+        )
+
+        if is_mffu_plan(self.plan):
+            variant = next((row for row in self.plan.configurations
+                            if row.name == configuration), None)
+            if variant is not None:
+                return {"configuration": configuration,
+                        "settings": [{"setting": key, "value": value}
+                                     for key, value in variant_settings(variant)]}
         for row in (self.result.get("tables") or {}).get("configurations") or []:
             if row.get("configuration") == configuration:
                 return row
@@ -100,8 +112,11 @@ class FundedStudy:
                 for i in row.get("settings") or []]
 
     def rows(self, table: str, configuration: str, firm_key: str) -> list[dict[str, Any]]:
+        from alpha_lab.propsim.funded.reporting_accounts import account_row
+
         key = pair_key(configuration, firm_key)
-        return [r for r in (self.result.get("tables") or {}).get(table) or []
+        return [account_row(r, result_id=self.result_id)
+                for r in (self.result.get("tables") or {}).get(table) or []
                 if r.get("pair_id") == key]
 
 
@@ -130,14 +145,74 @@ def study_from_result(result: dict[str, Any], *, result_id: str, plan: Any = Non
     """Index a loaded result (and optionally its plan payload) for the screens."""
 
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    from alpha_lab.propsim.funded.reporting_accounts import account_row
+
     for row in (result.get("tables") or {}).get("trades") or []:
-        grouped[str(row.get("pair_id"))].append(row)
+        grouped[str(row.get("pair_id"))].append(account_row(row, result_id=result_id))
     trades = {key: tuple(sorted(rows, key=lambda t: (_instant_ns(t.get("entry_utc")),
                                                      t.get("seq") or 0)))
               for key, rows in grouped.items()}
     source = getattr(plan, "source", None)
     calendar = tuple(getattr(source, "evaluation_dates", None) or ())
     warmup = tuple(getattr(source, "warmup_dates", None) or ())
+    from alpha_lab.agents.data_infra.ifvg.presentation.lab.mffu_matrix import is_mffu_plan
+
+    planned = ([row.name for row in plan.configurations] if is_mffu_plan(plan) else [])
+    observed = list(dict.fromkeys(
+        str(row["configuration"])
+        for rows in ((result.get("tables") or {}).get("configurations") or [],
+                     (result.get("summaries_cents") or {}).values())
+        for row in rows if row.get("configuration")
+    ))
+    if is_mffu_plan(plan):
+        extra = set(observed) - set(planned)
+        if extra:
+            raise ValueError(f"MFFU result has configurations outside the frozen plan: {extra}")
+        firms_in_result = {str(row.get("firm_key")) for row in
+                           (result.get("summaries_cents") or {}).values()
+                           if row.get("firm_key")}
+        if firms_in_result - {"myfundedfutures"}:
+            raise ValueError("MFFU result contains another firm's financial rows")
+        if any(row.get("status") == COMPLETED and "net_cash_earned_cents" not in row
+               for row in (result.get("summaries_cents") or {}).values()):
+            raise ValueError("completed MFFU result has no reconciled net-cash amount")
+        mffu = result.get("mffu_batch") or {}
+        if mffu.get("schema") == "ifsm_mffu_context_64_batch_result_v1":
+            if hasattr(plan, "model_dump") and mffu.get("plan") != plan.model_dump(
+                mode="json"
+            ):
+                raise ValueError("MFFU result embeds a different frozen plan")
+            dispositions = mffu.get("dispositions") or []
+            if ([row.get("variant_id") for row in dispositions] != planned
+                    or len(dispositions) != 64):
+                raise ValueError("MFFU result dropped or reordered a frozen matrix intent")
+            summaries = result.get("summaries_cents") or {}
+            for row in dispositions:
+                status = row.get("status")
+                reused_statuses = {"compatible_reused", "reused_nonimpact",
+                                   "reused_equivalent_after_verification"}
+                if status not in {"newly_completed", "replayed_equal", "replayed_changed",
+                                   "failed", *reused_statuses}:
+                    raise ValueError("MFFU result has an unknown child disposition")
+                if status not in reused_statuses and row.get("reused_from") is not None:
+                    raise ValueError("MFFU reuse attribution is attached to another status")
+                if status in reused_statuses and not row.get("reused_from"):
+                    raise ValueError("reused MFFU intent lacks its verified source")
+                if status == "failed" and not row.get("reason"):
+                    raise ValueError("failed MFFU intent lacks a reason")
+                summary = summaries.get(pair_key(row["variant_id"], "myfundedfutures")) or {}
+                if status in {
+                    "newly_completed", "replayed_equal", "replayed_changed", *reused_statuses
+                }:
+                    if summary.get("status") != COMPLETED:
+                        raise ValueError("completed MFFU intent has no completed financial row")
+                elif summary.get("status") == COMPLETED:
+                    raise ValueError("failed MFFU intent has a completed financial row")
+    configurations = dict.fromkeys([*planned, *observed])
+    firms = _firm_order(result)
+    if not firms and is_mffu_plan(plan):
+        firms = tuple((profile.firm_key, profile.firm_name)
+                      for profile in plan.firm_profiles)
     return FundedStudy(
         result_id=result_id,
         plan_id=result.get("funded_comparison_plan_id"),
@@ -145,9 +220,8 @@ def study_from_result(result: dict[str, Any], *, result_id: str, plan: Any = Non
         result=result,
         calendar=calendar,
         warmup=warmup,
-        firms=_firm_order(result),
-        configurations=tuple(str(c.get("configuration"))
-                             for c in (result.get("tables") or {}).get("configurations") or []),
+        firms=firms,
+        configurations=tuple(configurations),
         trades_by_pair=trades,
         plan=plan,
     )
@@ -156,16 +230,34 @@ def study_from_result(result: dict[str, Any], *, result_id: str, plan: Any = Non
 def open_funded_study(store_root: Path, result_id: str) -> FundedStudy:
     """Load the verified result and its verified plan (read only)."""
 
+    from alpha_lab.agents.data_infra.ifvg.presentation.lab.external_catalog import (
+        load_registered_view,
+        resolve_registered_result,
+    )
     from alpha_lab.propsim.funded.comparison_runner import load_comparison_result, load_plan
 
-    result = load_comparison_result(Path(store_root), result_id)
+    published = resolve_registered_result(result_id, external_store_root=Path(store_root))
+    result = (load_registered_view(published["catalog_binding"]) if published is not None
+              else load_comparison_result(Path(store_root), result_id))
+    mffu_result = (result.get("mffu_batch") or {}).get("schema") == (
+        "ifsm_mffu_context_64_batch_result_v1"
+    )
     plan = None
     plan_id = result.get("funded_comparison_plan_id")
     if plan_id:
         try:
             plan = load_plan(Path(store_root), str(plan_id))
-        except Exception:  # the result stays readable; the calendar is then unavailable
+        except Exception as error:  # historical results remain readable without a plan
+            if mffu_result:
+                raise ValueError(
+                    "the 64-intent result's frozen plan is unavailable or invalid"
+                ) from error
             plan = None
+    if mffu_result:
+        from alpha_lab.agents.data_infra.ifvg.presentation.lab.mffu_matrix import is_mffu_plan
+
+        if not is_mffu_plan(plan):
+            raise ValueError("the 64-intent result does not load its verified MFFU plan")
     return study_from_result(result, result_id=result_id, plan=plan, store_root=Path(store_root))
 
 

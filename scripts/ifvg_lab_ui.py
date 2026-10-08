@@ -334,7 +334,7 @@ def plot(fig: Any, *, key: str, st_module=st) -> None:
 
 
 @st.cache_resource(show_spinner="Opening the saved study…", max_entries=8)
-def _open_study(store_root: str, result_id: str):
+def _open_study(store_root: str, result_id: str, source_signature: tuple = ()):
     from alpha_lab.agents.data_infra.ifvg.presentation.lab.funded_data import open_funded_study
 
     return open_funded_study(Path(store_root), result_id)
@@ -343,4 +343,15 @@ def _open_study(store_root: str, result_id: str):
 def funded_study(store_root: Path | str, result_id: str):
     """The verified saved result and its plan, opened once per process (read only)."""
 
-    return _open_study(str(Path(store_root).resolve()), result_id)
+    from alpha_lab.agents.data_infra.ifvg.presentation.lab.external_catalog import (
+        resolve_registered_result,
+    )
+
+    root = Path(store_root).resolve()
+    published = resolve_registered_result(result_id, external_store_root=root)
+    signature = ()
+    if published is not None:
+        pointer = published["catalog_binding"]
+        signature = (pointer["binding_id"], pointer["reporting_definition_version"],
+                     pointer["view_sha256"])
+    return _open_study(str(root), result_id, signature)

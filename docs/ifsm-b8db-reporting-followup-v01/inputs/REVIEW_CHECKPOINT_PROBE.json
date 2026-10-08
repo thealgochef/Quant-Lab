@@ -1,0 +1,30 @@
+{
+  "scope": "Exact supplied reporting bodies on one actual saved trade with the matching first-target receipt shape; not full application or economic replay",
+  "trade_id": "e2189e7d-1151-541d-a60e-0f1e992b587a",
+  "actual_fill_ns": 1750068615558271393,
+  "receipt_timestamp": "2025-06-16T10:10:15.558271+00:00",
+  "checkpoint_timestamp": "2025-06-16T10:10:15.558271393Z",
+  "difference_ns": 393,
+  "matching_receipt_retained": true,
+  "computed_checkpoint_role": "reporting_annotation_at_actual_funded_fill",
+  "selected_row_context_role": "executed_saved_context",
+  "coverage": {
+    "actual_trades": 1,
+    "executed": 1,
+    "posthoc": 0,
+    "unknown_reasons": {},
+    "report_dates": [
+      "2025-06-13"
+    ]
+  },
+  "entry_context_role": "executed_saved_context",
+  "checkpoint_gamma_matches_saved_target_gamma": true,
+  "synthetic_microsecond_exact_role": "executed_saved_decision_receipt",
+  "funded_trades_with_saved_target_decision": 1908,
+  "their_exported_checkpoint_roles": {
+    "reporting_annotation_at_actual_funded_fill": 1908
+  },
+  "exact_target_observation_and_checkpoint_ns_difference_counts": {
+    "0": 1908
+  }
+}

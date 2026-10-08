@@ -127,6 +127,13 @@ def gap_rule_text(study, configuration: str,
     """When a big gap stops counting, from the plan's saved variant or the review folder."""
 
     value = _variant_axes(study.plan, configuration).get("htf_gap_invalidation_policy")
+    if getattr(study.plan, "plan_schema", None) in {
+        "ifsm_correct_config_full_range_plan_v1", "ifsm_mffu_context_64_batch_plan_v1"
+    }:
+        for row in study.plan.configurations:
+            if row.name == configuration:
+                value = json.loads(row.effective_section_json)["htf_gap_invalidation_policy"]
+                break
     if value:
         value = value.split(".", 1)[1] if "." in value else value
     if not value and bindings:
@@ -165,13 +172,17 @@ def _size_rows(result: dict[str, Any], configuration: str,
                stored: dict[str, str]) -> list[tuple[str, Any]]:
     sizing = _sizing(result, configuration)
     quantity, cost = sizing.get("quantity"), sizing.get("cost_per_contract_per_fill_usd")
-    label = _plain_product(str(sizing.get("instrument_label") or ""))
+    label = _plain_product(str(sizing.get("instrument_label") or {
+        "micro": "Micro E-mini Nasdaq-100", "mini": "E-mini Nasdaq-100"
+    }.get(sizing.get("instrument"), "")))
     if quantity is None or cost is None or not label:
         return [("Position size and cost", stored.get("Position size")
                  or h.placeholder(NOT_IN_EXPORT))]
     unit = "micro" if sizing.get("instrument") == "micro" else "E-mini"
-    size = (f"{int(quantity):,} {unit}{'s' if int(quantity) != 1 else ''} per trade · "
-            f"{_cost_text(cost)} per {unit} per fill")
+    quantities = sizing.get("possible_quantities") or [quantity]
+    position = (stored.get("Position size") if len(quantities) > 1 else None) or (
+        f"{int(quantity):,} {unit}{'s' if int(quantity) != 1 else ''} per trade")
+    size = f"{position} · {_cost_text(cost)} per {unit} per fill"
     return [("Position size and cost", size), ("Traded product", label)]
 
 
@@ -197,9 +208,15 @@ _KNOWN = ("Entry hours", "Direction", "Higher-timeframe gap charts", "Supporting
           "Largest distance from the parent gap to the opposing gap", "Smallest opposing gap",
           "Profit target", "Stop", "Exit rule", "Trades per day", "Daily close", "Position size")
 
+_TECHNICAL_SETTINGS = frozenset({
+    "Context version", "Entry gate", "Overhead rule", "Opposing distance rule",
+    "Effective exit policy", "Effective section hash", "Effective behavior hash",
+})
+
 
 def settings_rows(study, configuration: str,
-                  bindings: dict[str, Any] | None = None) -> list[tuple[str, Any]]:
+                  bindings: dict[str, Any] | None = None, *,
+                  include_technical: bool = False) -> list[tuple[str, Any]]:
     """The "Configuration settings" rows, in the mock's order, in plain words."""
 
     from alpha_lab.agents.data_infra.ifvg.presentation.funded_comparison import (
@@ -238,7 +255,8 @@ def settings_rows(study, configuration: str,
         ("Fill prices", sources.get("Execution prices") or missing),
         ("Strategy engine", engine or missing),
     ]
-    rows += [(name, _cap(text)) for name, text in stored.items() if name not in _KNOWN]
+    rows += [(name, _cap(text)) for name, text in stored.items() if name not in _KNOWN
+             and (include_technical or name not in _TECHNICAL_SETTINGS)]
     return rows
 
 
@@ -431,17 +449,37 @@ def verification_items(result: dict[str, Any], configuration: str, firm_key: str
 
     rows = tables.get("execution_evidence") or []
     if rows:
-        same = sum(1 for r in rows if r.get("no_account_replay_equals_saved_study"))
-        items.append(("check" if same == len(rows) else "warn",
-                      "With accounts switched off, every configuration's trades match the saved "
-                      f"study or the engine's standard replay: {same:,} of {len(rows):,}."
-                      if same == len(rows) else
-                      f"With accounts switched off, {same:,} of {len(rows):,} configurations' "
-                      "trades match the saved study or the engine's standard replay."))
-        resumed = sum(1 for r in rows if r.get("resumed_run_identical"))
-        items.append(("check" if resumed == len(rows) else "warn",
-                      "Stopping halfway and resuming gave identical results: "
-                      f"{resumed:,} of {len(rows):,}."))
+        references = [r for r in rows if r.get("no_account_replay_equals_saved_study") is not None]
+        if references:
+            same = sum(1 for r in references if r["no_account_replay_equals_saved_study"])
+            if len(references) == len(rows):
+                text = ("With accounts switched off, every configuration's trades match the "
+                        "saved study or the engine's standard replay: "
+                        f"{same:,} of {len(rows):,}." if same == len(rows) else
+                        f"With accounts switched off, {same:,} of {len(rows):,} configurations' "
+                        "trades match the saved study or the engine's standard replay.")
+            else:
+                text = ("With accounts switched off, trades match the saved study or the "
+                        "engine's standard replay for "
+                        f"{same:,} of {len(references):,} configurations checked.")
+            items.append(("check" if same == len(references) else "warn",
+                          text))
+        else:
+            items.append(("warn", "Historical no-account equality was not checked for this "
+                                  "continuation. Engineering fixture checks are separate."))
+        resumes = [r for r in rows if r.get("resume_check_requested") is not False
+                   and r.get("resumed_run_identical") is not None]
+        if resumes:
+            resumed = sum(1 for r in resumes if r["resumed_run_identical"])
+            text = ("Stopping halfway and resuming gave identical results: "
+                    f"{resumed:,} of {len(rows):,}." if len(resumes) == len(rows) else
+                    "Stopping halfway and resuming gave identical results for "
+                    f"{resumed:,} of {len(resumes):,} configurations checked.")
+            items.append(("check" if resumed == len(resumes) else "warn",
+                          text))
+        else:
+            items.append(("warn", "Production resume equality was not checked for this "
+                                  "continuation. Fixture resume checks are separate."))
     else:
         items.append(("warn", "The no-account replay and resume checks are not in this study's "
                               "export."))
@@ -550,6 +588,7 @@ class SettingsView:
     limitations: tuple[str, ...]
     decisions: tuple[tuple[str, str, str, str, bool], ...]
     review: ReviewFolder | None
+    technical_settings: tuple[tuple[str, Any], ...] = ()
 
 
 def build_settings_view(study, configuration: str, firm_key: str, firm: str,
@@ -569,7 +608,9 @@ def build_settings_view(study, configuration: str, firm_key: str, firm: str,
                                       list(ordered_trades(study, configuration, firm_key)))),
         limitations=tuple(fmt.display_words(x) for x in result.get("limitations") or []),
         decisions=tuple(decision_rows(result)),
-        review=review)
+        review=review,
+        technical_settings=tuple((name, text) for name, text in study.settings(configuration)
+                                 if name in _TECHNICAL_SETTINGS))
 
 
 # ── HTML ──────────────────────────────────────────────────────────────────
@@ -689,7 +730,13 @@ def strategy_table(study, configuration: str) -> h.Markup:
     # one name per configuration of the whole study, never two rows alike
     keys = dict.fromkeys([*map(str, study.configurations),
                           *(str(r.get("configuration")) for r in order)])
-    names = study_names({key: study.settings(key) for key in keys})
+    parents = None
+    plan = getattr(study, "plan", None)
+    if getattr(plan, "plan_schema", None) == "ifsm_correct_config_full_range_plan_v1":
+        parents = {row.name: json.loads(row.effective_section_json)["parent_timeframes"]
+                   for row in plan.configurations}
+    names = study_names({key: study.settings(key) for key in keys},
+                        parent_timeframes_by_configuration=parents)
     columns = [h.Column("config", "Configuration", width="34%")] + [
         h.Column(f"m{i}", name, "right") for i, name in enumerate(_METRIC_COLUMNS)]
     rows = []
@@ -776,6 +823,9 @@ def publish_again_route(target: dict[str, Any], study, roots: dict[str, Any] | N
     it is offered only when the state names this exact result, has no review folder
     and records a ``review_error`` (the earlier page's condition). Read only.
     """
+
+    if target.get("external_review_only"):
+        return None
 
     from ifvg_funded_comparison_study import comparison_state_root
 
@@ -883,6 +933,9 @@ def render(st_module, ctx) -> None:
                         ctx.firm, _repo_root(ctx))
     publish_again(st_module, ctx)
     show(top_cards(view), st_module)
+    if view.technical_settings:
+        with st_module.expander("Saved source and policy identities"):
+            show(h.kv_table(list(view.technical_settings)), st_module)
     show(limitations_card(view), st_module)
     show(decisions_card(view), st_module)
     show(h.section_title("More", right="Earlier features kept here"), st_module)

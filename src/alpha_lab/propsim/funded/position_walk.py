@@ -32,8 +32,10 @@ treated as continuous). Everything is exact integer cents and ticks.
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from typing import Literal
+from decimal import ROUND_HALF_UP, Decimal
+from typing import Any, Literal
 
 import numpy as np
 
@@ -44,6 +46,7 @@ __all__ = [
     "EXECUTION_MODEL_ID",
     "EXECUTION_MODEL_TEXT",
     "MinuteObservations",
+    "TargetDecision",
     "OpenPosition",
     "PositionExit",
     "open_position",
@@ -52,6 +55,7 @@ __all__ = [
 ]
 
 EXECUTION_MODEL_ID = "ordered_prints_stop_market_v2"
+FEE_ROUNDING_POLICY_ID = "per_fill_total_round_half_up_cent_v1"
 EXECUTION_MODEL_TEXT = (
     "Entry at the confirming one-minute candle's close. Stops are stop-market orders "
     "filled at the first recorded trade at or through the stop; targets are limit "
@@ -75,6 +79,18 @@ class MinuteObservations:
     price_ticks: np.ndarray  # int64
     continuous: np.ndarray  # bool: leg FROM the previous point is continuous
     fidelity: Fidelity
+    # Optional stable source ordinals used by the task-only ML continuation path.
+    # None means the original index within this minute; repeated synthetic points
+    # retain the triggering ordinal when a partial fill splits the minute.
+    event_ordinals: np.ndarray | None = None
+
+
+@dataclass(frozen=True)
+class TargetDecision:
+    """One causal decision at the first executable target observation."""
+
+    action: Literal["partial", "whole"]
+    context: dict[str, Any]
 
 
 def minute_approximation(open_ns: int, close_ns: int, o: int, h: int, low: int, c: int,
@@ -133,6 +149,25 @@ class OpenPosition:
     scale_out_ticks: int | None = None
     partial_gross_cents: int = 0
     partial_cost_cents: int = 0
+    target_decision_needed: bool = False
+    target_decision: dict[str, Any] | None = None
+    # Price-path extrema are independent of the cent-denominated account equity
+    # extrema above. Approximate minute legs retain their declared fidelity.
+    price_excursion_status: str = "available"
+    price_min_ticks: int | None = None
+    price_min_ns: int | None = None
+    price_max_ticks: int | None = None
+    price_max_ns: int | None = None
+    pre_target_price_min_ticks: int | None = None
+    pre_target_price_min_ns: int | None = None
+    pre_target_price_max_ticks: int | None = None
+    pre_target_price_max_ns: int | None = None
+    post_target_price_min_ticks: int | None = None
+    post_target_price_min_ns: int | None = None
+    post_target_price_max_ticks: int | None = None
+    post_target_price_max_ns: int | None = None
+    continuation_decision: dict[str, Any] | None = None
+    enforce_account_floor: bool = True
 
     @property
     def sign(self) -> int:
@@ -157,19 +192,26 @@ class OpenPosition:
     @classmethod
     def from_json(cls, data: dict) -> OpenPosition:
         data = dict(data)
+        if "price_excursion_status" not in data:
+            # A checkpoint from before price-path capture has no earlier path.
+            data["price_excursion_status"] = "unavailable_checkpoint_history"
         transitions = [tuple(t) for t in data.pop("floor_transitions")]
         recent = deque((tuple(t) for t in data.pop("recent")), maxlen=EVIDENCE_POINTS)
         return cls(**data, floor_transitions=transitions, recent=recent)
 
 
 def fill_cost_cents(quantity: int, mills: int) -> int:
-    """Exact cost of one fill: quantity x cost per contract (tenths of a cent)."""
+    """Post one fill's total fee to cents, using ROUND_HALF_UP after multiplication.
 
-    total = quantity * mills
-    if total % 10:
-        raise ValueError(f"a fill of {quantity} contracts at {mills / 1000:.3f} dollars per "
-                         "contract is not a whole number of cents")
-    return total // 10
+    ``mills`` is tenths of a cent per contract.  Historical ten/five-micro
+    fills are already exact cents; six/three-micro fills use the new explicit
+    MFFU per-fill convention.  Each actual entry or exit calls this once.
+    """
+
+    if quantity < 0 or mills < 0:
+        raise ValueError("fill quantity and per-contract fee must be nonnegative")
+    total_cents = Decimal(quantity) * Decimal(mills) / Decimal(10)
+    return int(total_cents.quantize(Decimal(1), rounding=ROUND_HALF_UP))
 
 
 @dataclass(frozen=True)
@@ -199,7 +241,9 @@ def open_position(*, profile: FundedFirmProfile, trade_ref: str, direction: str,
                   entry_ns: int, entry_ticks: int, stop_ticks: int, target_ticks: int,
                   quantity: int, tick_value_cents: int, cost_per_side_cents: int,
                   balance_cents: int, floor_cents: int, peak_cents: int,
-                  cost_per_contract_mills: int | None = None, scale_out: bool = False
+                  cost_per_contract_mills: int | None = None, scale_out: bool = False,
+                  target_decision_needed: bool = False,
+                  enforce_account_floor: bool = True,
                   ) -> tuple[OpenPosition, PositionExit | None]:
     """Open at the entry fill; the entry cost can itself fail the account.
 
@@ -210,8 +254,10 @@ def open_position(*, profile: FundedFirmProfile, trade_ref: str, direction: str,
 
     mills = (cost_per_contract_mills if cost_per_contract_mills is not None
              else cost_per_side_cents * 10)
-    if scale_out and (quantity < 2 or quantity % 2):
+    if (scale_out or target_decision_needed) and (quantity < 2 or quantity % 2):
         raise ValueError("the scale-out exit needs an even number of contracts")
+    if scale_out and target_decision_needed:
+        raise ValueError("fixed and conditional target branches are mutually exclusive")
     cost = fill_cost_cents(quantity, mills)
     balance = balance_cents - cost
     position = OpenPosition(
@@ -226,9 +272,15 @@ def open_position(*, profile: FundedFirmProfile, trade_ref: str, direction: str,
         cost_per_contract_mills=mills, tick_value_cents=tick_value_cents,
         scale_out=scale_out, scale_quantity=quantity // 2 if scale_out else 0,
         remaining_quantity=quantity,
+        target_decision_needed=target_decision_needed,
+        price_min_ticks=entry_ticks, price_min_ns=entry_ns,
+        price_max_ticks=entry_ticks, price_max_ns=entry_ns,
+        pre_target_price_min_ticks=entry_ticks, pre_target_price_min_ns=entry_ns,
+        pre_target_price_max_ticks=entry_ticks, pre_target_price_max_ns=entry_ns,
+        enforce_account_floor=enforce_account_floor,
     )
     comparator = profile.comparator_for(floor_cents)
-    if breaches(balance, floor_cents, comparator):
+    if enforce_account_floor and breaches(balance, floor_cents, comparator):
         after = balance - cost
         return position, PositionExit(
             kind="account_failure", ts_ns=entry_ns, fill_ticks=entry_ticks,
@@ -278,9 +330,17 @@ def _record_floor_moves(pos: OpenPosition, ts: np.ndarray, peaks: np.ndarray,
 
 
 def walk_minute(*, profile: FundedFirmProfile, pos: OpenPosition, obs: MinuteObservations,
-                deadline_minute: bool, _count_minute: bool = True) -> PositionExit | None:
+                deadline_minute: bool, _count_minute: bool = True,
+                target_selector: Callable[[int], TargetDecision] | None = None,
+                continuation_selector: Callable | None = None,
+                ) -> PositionExit | None:
     """Advance the open position through one minute; return its exit, if any."""
 
+    intent = pos.continuation_decision
+    if intent is not None and intent.get("state") == "pending":
+        return _walk_pending_continuation(
+            profile, pos, obs, deadline_minute=deadline_minute, count_minute=_count_minute,
+        )
     sign = pos.sign
     px = obs.price_ticks
     n = len(px)
@@ -295,7 +355,8 @@ def walk_minute(*, profile: FundedFirmProfile, pos: OpenPosition, obs: MinuteObs
         return None
     equity = pos.balance_cents + (px - pos.entry_ticks) * sign * pos.value_cents
     peaks, floors = _floor_path(profile, pos, equity)
-    breach = _breach_mask(profile, equity, floors)
+    breach = (_breach_mask(profile, equity, floors) if pos.enforce_account_floor
+              else np.zeros(n, dtype=bool))
     stop_hit = px * sign <= pos.stop_ticks * sign
     # after the scale-out there is no target: the rest is held to break-even or the close
     target_hit = (px * sign >= pos.target_ticks * sign) if not pos.scaled else np.zeros(
@@ -310,8 +371,28 @@ def walk_minute(*, profile: FundedFirmProfile, pos: OpenPosition, obs: MinuteObs
     i = int(np.argmax(any_hit))
     kind, fill, basis = _resolve_hit(profile, pos, obs, equity, floors, breach, stop_hit,
                                      target_hit, i)
+    if kind == "target" and pos.target_decision_needed:
+        if target_selector is None:
+            raise ValueError("conditional target requires an as-of decision selector")
+        # Approximate OHLC legs have no observed touch instant. Their synthetic
+        # points cannot make a report released inside the minute available.
+        decision_ns = (
+            int(obs.ts_ns[i]) if obs.fidelity == "ordered_trade_prints" else obs.open_ns
+        )
+        decision = target_selector(decision_ns)
+        if decision.action not in {"partial", "whole"}:
+            raise ValueError("unsupported conditional target action")
+        pos.target_decision = {"action": decision.action, "context": decision.context,
+                               "decision_ns": decision_ns,
+                               "target_observation_ns": int(obs.ts_ns[i]),
+                               "source_fidelity": obs.fidelity}
+        pos.target_decision_needed = False
+        if decision.action == "partial":
+            pos.scale_out = True
+            pos.scale_quantity = pos.quantity // 2
     if kind == "target" and pos.scale_out and not pos.scaled:
-        return _scale_out_then_continue(profile, pos, obs, i, fill, deadline_minute)
+        return _scale_out_then_continue(profile, pos, obs, i, fill, deadline_minute,
+                                        continuation_selector=continuation_selector)
     if kind == "stop" and pos.scaled:
         kind = "breakeven_stop"
         basis = basis.replace("the stop", "the break-even stop (the entry price)")
@@ -321,7 +402,8 @@ def walk_minute(*, profile: FundedFirmProfile, pos: OpenPosition, obs: MinuteObs
     equity = pos.balance_cents + (eff - pos.entry_ticks) * sign * pos.value_cents
     peaks, floors = _floor_path(profile, pos, equity)
     evidence = _evidence(pos, obs, eff, equity, floors, i)
-    _absorb(pos, obs, equity, peaks, floors, i, profile.floor_lock_cents)
+    _absorb(pos, obs, equity, peaks, floors, i, profile.floor_lock_cents,
+            excursion_px=eff)
     fill_equity = int(equity[i])
     floor_at = int(floors[i])
     comparator = profile.comparator_for(floor_at)
@@ -385,10 +467,28 @@ def _evidence(pos, obs, eff, equity, floors, i):
     return tuple([*earlier, *tail])
 
 
+def _record_price_excursion(pos: OpenPosition, ts, px) -> None:
+    if not len(px):
+        return
+    segment = "post_target_" if pos.scaled else "pre_target_"
+    extrema = (("min", int(np.argmin(px))), ("max", int(np.argmax(px))))
+    for prefix in ("", segment):
+        for direction, index in extrema:
+            price_field = f"{prefix}price_{direction}_ticks"
+            time_field = f"{prefix}price_{direction}_ns"
+            value = int(px[index])
+            prior = getattr(pos, price_field)
+            if prior is None or (value < prior if direction == "min" else value > prior):
+                setattr(pos, price_field, value)
+                setattr(pos, time_field, int(ts[index]))
+
+
 def _absorb(pos: OpenPosition, obs: MinuteObservations, equity, peaks, floors, upto: int,
-            lock: int) -> None:
+            lock: int, *, excursion_px=None) -> None:
     seg = equity[: upto + 1]
     if len(seg):
+        path = obs.price_ticks if excursion_px is None else excursion_px
+        _record_price_excursion(pos, obs.ts_ns[: upto + 1], path[: upto + 1])
         imin, imax = int(np.argmin(seg)), int(np.argmax(seg))
         if int(seg[imin]) < pos.min_equity_cents:
             pos.min_equity_cents, pos.min_equity_ns = int(seg[imin]), int(obs.ts_ns[imin])
@@ -405,6 +505,7 @@ def _absorb(pos: OpenPosition, obs: MinuteObservations, equity, peaks, floors, u
 
 
 def _close_at(profile, pos, kind, ts_ns, fill, basis, obs) -> PositionExit:
+    _record_price_excursion(pos, (ts_ns,), (fill,))
     sign = pos.sign
     fill_equity = pos.balance_cents + (fill - pos.entry_ticks) * sign * pos.value_cents
     peak, floor = pos.peak_cents, pos.floor_cents
@@ -423,8 +524,8 @@ def _finish(profile, pos, kind, ts_ns, fill, fill_equity, floor, peak, basis, ap
     sign = pos.sign
     after = fill_equity - pos.exit_cost_cents
     comparator = profile.comparator_for(floor)
-    at_fill = breaches(fill_equity, floor, comparator)
-    after_cost = breaches(after, floor, comparator)
+    at_fill = pos.enforce_account_floor and breaches(fill_equity, floor, comparator)
+    after_cost = pos.enforce_account_floor and breaches(after, floor, comparator)
     failed = at_fill or after_cost
     return PositionExit(
         kind=kind, ts_ns=ts_ns, fill_ticks=fill,
@@ -449,7 +550,8 @@ def _scale_fields(pos: OpenPosition) -> dict:
 
 def _scale_out_then_continue(profile: FundedFirmProfile, pos: OpenPosition,
                              obs: MinuteObservations, i: int, fill: int,
-                             deadline_minute: bool) -> PositionExit | None:
+                             deadline_minute: bool, *, continuation_selector=None,
+                             ) -> PositionExit | None:
     """Half exits at the target (limit price); the rest continues this minute."""
 
     sign = pos.sign
@@ -457,7 +559,8 @@ def _scale_out_then_continue(profile: FundedFirmProfile, pos: OpenPosition,
     eff[i] = fill
     equity = pos.balance_cents + (eff - pos.entry_ticks) * sign * pos.value_cents
     peaks, floors = _floor_path(profile, pos, equity)
-    _absorb(pos, obs, equity, peaks, floors, i, profile.floor_lock_cents)
+    _absorb(pos, obs, equity, peaks, floors, i, profile.floor_lock_cents,
+            excursion_px=eff)
     quantity = pos.scale_quantity
     gross = (fill - pos.entry_ticks) * sign * pos.tick_value_cents * quantity
     cost = pos.fill_cost_cents(quantity)
@@ -472,6 +575,26 @@ def _scale_out_then_continue(profile: FundedFirmProfile, pos: OpenPosition,
     pos.stop_ticks = pos.entry_ticks
     pos.scale_out_ns = int(obs.ts_ns[i])
     pos.scale_out_ticks = fill
+    _record_price_excursion(pos, (pos.scale_out_ns,), (fill,))
+    if continuation_selector is not None:
+        if pos.continuation_decision is not None:
+            raise ValueError("first checkpoint was already scored")
+        visible = replace(
+            obs, close_ticks=int(obs.price_ticks[i]), ts_ns=obs.ts_ns[:i+1],
+            price_ticks=obs.price_ticks[:i+1], continuous=obs.continuous[:i+1],
+            event_ordinals=None if obs.event_ordinals is None else obs.event_ordinals[:i+1],
+        )
+        decision = dict(continuation_selector(pos, visible, i))
+        if decision.get("action") not in {"change", "baseline", "baseline_unavailable"}:
+            raise ValueError("invalid continuation action")
+        if decision["action"] == "change" and obs.fidelity != "ordered_trade_prints":
+            raise ValueError("an approximated checkpoint cannot elect a learned close")
+        decision.update(
+            state="pending" if decision["action"] == "change" else "retained",
+            decision_ns=int(obs.ts_ns[i]), decision_minute_ns=obs.open_ns,
+            decision_ordinal=int(obs.event_ordinals[i]) if obs.event_ordinals is not None else i,
+        )
+        pos.continuation_decision = decision
     # the rest of this minute starts at the fill point, where the loss limit is
     # checked again after the partial exit cost
     # the observation that crossed the target (a print beyond it, or the candle's
@@ -481,7 +604,49 @@ def _scale_out_then_continue(profile: FundedFirmProfile, pos: OpenPosition,
         ts_ns=np.concatenate(([obs.ts_ns[i]], obs.ts_ns[i:])).astype(np.int64),
         price_ticks=np.concatenate(([fill], obs.price_ticks[i:])).astype(np.int64),
         continuous=np.concatenate(([False], obs.continuous[i:])).astype(bool),
-        fidelity=obs.fidelity)
+        fidelity=obs.fidelity,
+        event_ordinals=(None if continuation_selector is None else np.concatenate((
+            [i if obs.event_ordinals is None else obs.event_ordinals[i]],
+            np.arange(i, len(obs.ts_ns)) if obs.event_ordinals is None else obs.event_ordinals[i:],
+        )).astype(np.int64)))
     result = walk_minute(profile=profile, pos=pos, obs=rest, deadline_minute=deadline_minute,
                          _count_minute=False)
     return None if result is None else replace(result, scaled_in_exit_minute=True)
+
+
+def _walk_pending_continuation(profile, pos, obs, *, deadline_minute, count_minute):
+    """Protect through the first strictly later event, then close once.
+
+    State is serializable in OpenPosition. At equal nanoseconds the source
+    ordinal, not timestamp rounding, establishes strict order.
+    """
+    intent = pos.continuation_decision
+    ordinals = (np.arange(len(obs.ts_ns)) if obs.event_ordinals is None
+                else obs.event_ordinals)
+    later = (obs.ts_ns > intent["decision_ns"]) | (
+        (obs.ts_ns == intent["decision_ns"])
+        & (obs.open_ns == intent["decision_minute_ns"])
+        & (ordinals > intent["decision_ordinal"]))
+    intent["state"] = "checking_protection"
+    if obs.fidelity != "ordered_trade_prints":
+        # A future approximation cannot retroactively alter the original score.
+        # Protection/deadline continues; voluntary execution waits for a print.
+        later[:] = False
+    if not later.any():
+        result = walk_minute(profile=profile, pos=pos, obs=obs,
+                             deadline_minute=deadline_minute, _count_minute=count_minute)
+        intent["state"] = "cancelled_by_protection" if result else "pending"
+        return result
+    index = int(np.argmax(later))
+    prefix = replace(obs, ts_ns=obs.ts_ns[:index+1], price_ticks=obs.price_ticks[:index+1],
+                     continuous=obs.continuous[:index+1], event_ordinals=ordinals[:index+1])
+    result = walk_minute(profile=profile, pos=pos, obs=prefix,
+                         deadline_minute=False, _count_minute=count_minute)
+    if result is not None:
+        intent["state"] = "cancelled_by_protection"
+        return result
+    intent.update(state="executed", fill_ns=int(obs.ts_ns[index]),
+                  fill_ordinal=int(ordinals[index]), fill_minute_ns=obs.open_ns)
+    return _close_at(profile, pos, "ml_continuation_close", int(obs.ts_ns[index]),
+                     int(obs.price_ticks[index]),
+                     "first strictly later recorded print after the ML checkpoint decision", prefix)

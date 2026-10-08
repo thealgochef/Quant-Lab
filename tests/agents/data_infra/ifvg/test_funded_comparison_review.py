@@ -273,6 +273,7 @@ def test_supplements_are_written_under_fixed_names_only(tmp_path, result):
         "trade_boundary_check": {"passed": True, "trades_checked": 3,
                                  "trades_open_past_midnight_inside_one_trading_day": 1,
                                  "trades_outside_their_trading_day_count": 0},
+        "mffu_policy_text": "## Frozen MFFU test policies\n\nSaved plan governs D1.",
     }
     folder = _publish(result, tmp_path, supplements=supplements).path
     assert _files(folder) == sorted((*ALLOWLIST, "approximated_minutes.csv",
@@ -281,6 +282,8 @@ def test_supplements_are_written_under_fixed_names_only(tmp_path, result):
     assert "nothing is held overnight" not in rules
     assert "1 were open past midnight inside one trading day" in rules
     assert "## Funded execution versus the strategy-only view" in rules
+    assert "## Frozen MFFU test policies" in rules
+    assert "The firm's floor follows its updating method listed above" in rules
     readme = (folder / "README.md").read_text(encoding="utf-8")
     assert "only its fill time within that minute can differ" in readme
     dictionary = (folder / "DATA_DICTIONARY.md").read_text(encoding="utf-8")

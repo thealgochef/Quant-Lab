@@ -19,6 +19,7 @@ from typing import Any
 from alpha_lab.propsim.funded.campaign import TradingDay, display_time, machine_time, month_keys
 from alpha_lab.propsim.funded.clock import chicago_date
 from alpha_lab.propsim.funded.instance import STATUS_LABELS
+from alpha_lab.propsim.funded.position_walk import fill_cost_cents
 from alpha_lab.propsim.funded.profiles import FundedFirmProfile
 
 __all__ = [
@@ -46,6 +47,12 @@ EXIT_RULE_TEXT = {
     "scale_out_half_breakeven_hold_to_close_v1": (
         "Half exits at the target (1R); the stop of the rest moves to the entry price and it "
         "is held to that stop or the daily close"),
+    "gamma_conditional_1r_v1": (
+        "At the first 1R target, positive gamma exits the whole position; negative, neutral "
+        "or unknown gamma exits half and holds the rest to its entry stop or daily close"),
+    "early_positive_whole_1r_v1": (
+        "At the first 1R target, early positive gamma exits the whole position; every other "
+        "state exits half and holds the rest to its entry stop or daily close"),
 }
 
 
@@ -217,8 +224,15 @@ def build_comparison_result(*, context: dict[str, Any], outputs: list[dict[str, 
         if exit_rule and not any(r["setting"] == "Exit rule" for r in settings_rows):
             settings_rows.append({"setting": "Exit rule", "value": exit_rule})
         if sizing:
+            if sizing.get("quantity_policy") == "QG":
+                quantity_text = (
+                    "10 micros under negative, neutral or unknown gamma; "
+                    "6 micros under positive gamma"
+                )
+            else:
+                quantity_text = f"{sizing['quantity']} x {sizing['instrument_label']} per trade"
             settings_rows.append({"setting": "Position size", "value": (
-                f"{sizing['quantity']} x {sizing['instrument_label']} per trade, "
+                f"{quantity_text}, "
                 f"${sizing['cost_per_contract_mills'] / 1000:.3f} per contract per fill")})
         tables["configurations"].append({
             "configuration": output["configuration"],
@@ -538,6 +552,7 @@ def _dollars(summary: dict[str, Any]) -> dict[str, Any]:
 def validate_comparison(result: dict[str, Any], outputs: list[dict[str, Any]],
                         profiles: tuple[FundedFirmProfile, ...], cutoff_ns: int,
                         require_resume_check: bool = True,
+                        require_reference_check: bool = True,
                         ) -> dict[str, Any]:
     """Independent reconciliation and single-account rule checks (compact)."""
 
@@ -547,7 +562,8 @@ def validate_comparison(result: dict[str, Any], outputs: list[dict[str, Any]],
     seen_pairs: set[str] = set()
     for output in outputs:
         config_checks = {
-            "no_account_replay_equals_saved_study": output["reference"]["equivalent"],
+            **({"no_account_replay_equals_saved_study": output["reference"]["equivalent"]}
+               if require_reference_check else {}),
             **({"resumed_run_identical": bool(output["resumed"]) and all(
                 v["identical"] for v in output["resumed"].values()
             )} if require_resume_check else {}),
@@ -635,7 +651,8 @@ def validate_comparison(result: dict[str, Any], outputs: list[dict[str, Any]],
             config_checks[firm_key] = pair_checks
             ok = ok and all(pair_checks.values())
         checks[output["configuration"]] = config_checks
-        ok = ok and config_checks["no_account_replay_equals_saved_study"] and (
+        ok = ok and (config_checks["no_account_replay_equals_saved_study"]
+                     if require_reference_check else True) and (
             config_checks["resumed_run_identical"] if require_resume_check else True
         )
     expected = {f"{o['configuration']}|{p.firm_key}" for o in outputs for p in profiles}
@@ -648,27 +665,44 @@ def strategy_metrics(output: dict[str, Any]) -> dict[str, Any]:
     """Strategy measures of the configuration's no-account replay (evaluation days).
 
     Same definitions as the study metrics (``search/strategy_metrics.py``): per trade
-    net R = (realized points - round-trip cost points) / risk points, with realized
-    points = Strategy-Core's realized R x risk (the scale-out blends its two halves);
-    a win is a positive result before costs; drawdown is the running peak (floored at
-    zero) minus cumulative net R in exit order; time under water is the longest run of
-    distinct trading days below that peak. The round-trip cost per contract is
-    ``2 x cost per contract per fill / tick value`` ticks = 0.514 points for both the
-    mini and the micro.
+    net R = (realized points - actual fill costs in points) / risk points, with
+    realized points = Strategy-Core's realized R x risk (the scale-out blends its
+    two halves); a win is a positive result before costs; drawdown is the running
+    peak (floored at zero) minus cumulative net R in exit order; time under water
+    is the longest run of distinct trading days below that peak. Each entry,
+    partial exit and final exit fee is rounded to cents before summation.
     """
 
     sizing = output.get("sizing") or {}
-    mills = sizing.get("cost_per_contract_mills", 5140)
-    tick_value = sizing.get("tick_value_cents", 500)
-    cost_points = 2 * mills / 10 / tick_value * 0.25
+    mills = int(sizing.get("cost_per_contract_mills", 5140))
+    tick_value = int(sizing.get("tick_value_cents", 500))
+    nominal_cost_points = 2 * mills / 10 / tick_value * 0.25
     trades = sorted((x for x in output["strategy_trades_no_account"]
                      if not x["is_warmup"] and x.get("realized_r") is not None
                      and x.get("risk_ticks")),
                     key=lambda x: (x["resolution_ts_utc"] or "", x["trade_id"]))
-    net, gross = [], []
+    net, gross, observed_cost_points = [], [], []
     for x in trades:
         risk_points = x["risk_ticks"] * 0.25
         realized_points = x["realized_r"] * risk_points
+        quantity = x.get("quantity", sizing.get("quantity"))
+        if quantity is None:
+            # Old fixed-size outputs without a saved quantity retain their
+            # historical nominal per-contract comparison measure.
+            cost_points = nominal_cost_points
+        else:
+            quantity = int(quantity)
+            if quantity <= 0:
+                raise ValueError("strategy trade quantity must be positive")
+            partial = quantity // 2 if x.get("scale_out_ticks") is not None else 0
+            if partial and quantity % 2:
+                raise ValueError("half-exit strategy metrics require an even quantity")
+            final = quantity - partial
+            cost_cents = fill_cost_cents(quantity, mills) + fill_cost_cents(final, mills)
+            if partial:
+                cost_cents += fill_cost_cents(partial, mills)
+            cost_points = cost_cents / (quantity * tick_value) * 0.25
+        observed_cost_points.append(cost_points)
         net.append((realized_points - cost_points) / risk_points)
         gross.append(x["realized_r"])
     equity = peak = drawdown = 0.0
@@ -704,5 +738,10 @@ def strategy_metrics(output: dict[str, Any]) -> dict[str, Any]:
         "profit_factor": round(gross_win / gross_loss, 2) if gross_loss else None,
         "max_drawdown_r": round(drawdown, 2),
         "longest_trading_days_under_water": longest,
-        "round_trip_cost_points_per_contract": round(cost_points, 3),
+        "round_trip_cost_points_per_contract": (
+            round(observed_cost_points[0], 3)
+            if observed_cost_points and all(abs(value - observed_cost_points[0]) < 1e-12
+                                            for value in observed_cost_points)
+            else round(nominal_cost_points, 3) if not observed_cost_points else None
+        ),
     }

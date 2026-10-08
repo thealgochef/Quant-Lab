@@ -26,6 +26,7 @@ Position exits and entries are driven minute by minute by the pair engine.
 from __future__ import annotations
 
 import heapq
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -36,6 +37,7 @@ from alpha_lab.propsim.funded.position_walk import (
     MinuteObservations,
     OpenPosition,
     PositionExit,
+    TargetDecision,
     open_position,
     walk_minute,
 )
@@ -316,19 +318,24 @@ class PairLedger:
 
     def open(self, *, ts_ns: int, trade_ref: str, direction: str, entry_ticks: int,
              stop_ticks: int, target_ticks: int, trading_day: str,
-             strategy: dict[str, Any]) -> None:
+             strategy: dict[str, Any], quantity: int | None = None,
+             target_decision_needed: bool = False) -> None:
         account = self.current
         if self.position is not None or account.status != "ready":
             raise AssertionError(f"entry while the account is {account.status}")
         if ts_ns >= self.cutoff_ns:
             raise AssertionError("entry at or after the cutoff")
+        selected_quantity = self.quantity if quantity is None else quantity
+        if selected_quantity <= 0:
+            raise ValueError("entry quantity must be positive")
         position, failure = open_position(
             profile=self.profile, trade_ref=trade_ref, direction=direction, entry_ns=ts_ns,
             entry_ticks=entry_ticks, stop_ticks=stop_ticks, target_ticks=target_ticks,
-            quantity=self.quantity, tick_value_cents=self.tick_value_cents,
+            quantity=selected_quantity, tick_value_cents=self.tick_value_cents,
             cost_per_side_cents=self.cost_per_side_cents, balance_cents=account.balance,
             floor_cents=account.floor, peak_cents=account.peak,
-            cost_per_contract_mills=self.cost_per_contract_mills, scale_out=self.scale_out)
+            cost_per_contract_mills=self.cost_per_contract_mills, scale_out=self.scale_out,
+            target_decision_needed=target_decision_needed)
         account.trades += 1
         self.position = position
         self._open_strategy = dict(strategy, trading_day=trading_day)
@@ -338,11 +345,16 @@ class PairLedger:
             self._close(failure, trading_day, fidelity="entry_fill")
 
     def on_minute(self, obs: MinuteObservations, *, deadline_minute: bool,
-                  trading_day: str) -> PositionExit | None:
+                  trading_day: str,
+                  target_selector: Callable[[int], TargetDecision] | None = None,
+                  continuation_selector: Callable | None = None,
+                  ) -> PositionExit | None:
         if self.position is None:
             return None
         outcome = walk_minute(profile=self.profile, pos=self.position, obs=obs,
-                              deadline_minute=deadline_minute)
+                              deadline_minute=deadline_minute,
+                              target_selector=target_selector,
+                              continuation_selector=continuation_selector)
         if outcome is not None:
             self._close(outcome, trading_day, fidelity=obs.fidelity)
         return outcome
@@ -356,6 +368,15 @@ class PairLedger:
         account.floor = exit_.floor_cents
         account.peak = max(account.peak, exit_.peak_cents)
         net = exit_.balance_after_cents - pos.balance_before_cents
+        risk = pos.initial_risk_cents
+        gross_r = round(exit_.gross_pnl_cents / risk, 8) if risk > 0 else None
+        net_r = round(net / risk, 8) if risk > 0 else None
+        price_status = pos.price_excursion_status
+        if price_status == "available" and not pos.observations:
+            price_status = ("available_entry_fill_only" if exit_.ts_ns == pos.entry_ns
+                            else "available_fills_only")
+        price_fidelity = ("includes_minute_adverse_first" if pos.minutes_approximated else
+                          "ordered_trade_prints" if pos.minutes_on_prints else "entry_fill_only")
         self._row(
             self.trades, exit_.ts_ns, account_id=account.account_id,
             trade_ref=pos.trade_ref, trading_day=strategy["trading_day"],
@@ -371,19 +392,47 @@ class PairLedger:
             gross_pnl_cents=exit_.gross_pnl_cents,
             costs_cents=pos.entry_cost_cents + pos.partial_cost_cents + pos.exit_cost_cents,
             net_pnl_cents=net,
-            initial_risk_cents=pos.initial_risk_cents,
+            initial_risk_cents=risk, gross_r=gross_r, net_r=net_r,
+            r_basis="gross_or_net_trade_pnl_cents_divided_by_original_stop_risk_cents",
             balance_before_cents=pos.balance_before_cents,
             balance_after_cents=exit_.balance_after_cents,
             floor_before_cents=pos.floor_before_cents, floor_after_cents=exit_.floor_cents,
             min_equity_cents=min(pos.min_equity_cents, exit_.balance_after_cents
                                  + pos.exit_cost_cents),
             min_equity_ns=pos.min_equity_ns, max_equity_cents=pos.max_equity_cents,
+            max_equity_ns=pos.max_equity_ns,
+            price_excursion_status=price_status, price_excursion_fidelity=price_fidelity,
+            price_min_ticks=pos.price_min_ticks, price_min_ns=pos.price_min_ns,
+            price_max_ticks=pos.price_max_ticks, price_max_ns=pos.price_max_ns,
+            pre_target_price_min_ticks=pos.pre_target_price_min_ticks,
+            pre_target_price_min_ns=pos.pre_target_price_min_ns,
+            pre_target_price_max_ticks=pos.pre_target_price_max_ticks,
+            pre_target_price_max_ns=pos.pre_target_price_max_ns,
+            post_target_price_min_ticks=pos.post_target_price_min_ticks,
+            post_target_price_min_ns=pos.post_target_price_min_ns,
+            post_target_price_max_ticks=pos.post_target_price_max_ticks,
+            post_target_price_max_ns=pos.post_target_price_max_ns,
+            favorable_excursion_ticks=(
+                (pos.price_max_ticks - pos.entry_ticks) if pos.direction == "long"
+                and pos.price_max_ticks is not None else
+                (pos.entry_ticks - pos.price_min_ticks) if pos.direction == "short"
+                and pos.price_min_ticks is not None else None),
+            adverse_excursion_ticks=(
+                (pos.entry_ticks - pos.price_min_ticks) if pos.direction == "long"
+                and pos.price_min_ticks is not None else
+                (pos.price_max_ticks - pos.entry_ticks) if pos.direction == "short"
+                and pos.price_max_ticks is not None else None),
             observations_checked=pos.observations,
             minutes_on_prints=pos.minutes_on_prints,
             minutes_approximated=pos.minutes_approximated,
             approximate_exit=exit_.approximate, account_failed=exit_.account_failed,
             entry_chart=strategy.get("entry_chart"),
+            htf_zone_id=strategy.get("htf_zone_id"),
             strategy_trade_id=strategy.get("trade_id"),
+            **({"target_decision": pos.target_decision}
+               if pos.target_decision is not None else {}),
+            **({"continuation_decision": pos.continuation_decision}
+               if pos.continuation_decision is not None else {}),
         )
         for ts, prior, new, peak in pos.floor_transitions:
             self._row(self.boundary_evidence, ts, account_id=account.account_id,

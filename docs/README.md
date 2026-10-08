@@ -1,6 +1,12 @@
 # Quant-Lab documentation index
 
-Updated: 2026-09-23.
+Updated: 2026-10-08.
+
+Start with [Research storage and run index](RESEARCH_STORAGE.md) to find completed
+runs, current deliveries, historical evidence, and the October 8 relocation log.
+Large input/review ZIPs and UI screenshots now live in the corresponding sibling
+artifact task folder. Historical package manifests describe original delivered
+bytes, not the current Git checkout; use the storage map to retrieve those bytes.
 
 The [current Core setup](../research/core/README.md) records one exact Core pin
 for ordinary Quant-Lab and IFSM, with installation and source verification steps.
@@ -14,7 +20,11 @@ Use this index to avoid treating old reports as current architecture. The curren
 
 | Doc | Status | Use for |
 |---|---|---|
+| [IFSM ML phase 01](ifsm-mffu-ml-phase-v01/TASKS.md) | **Development-only integrated ML phase** | Exact-plan return-regression benchmark, matched funded operations, normal dashboard and both review deliveries; ledger states actual completion. |
+| [b8db reporting follow-up](ifsm-b8db-reporting-followup-v01/TASKS.md) | **B8-01/B8-02 reporting-only follow-up** | Checkpoint provenance, shared UI/export descriptions, immutable reporting revision and focused delivery evidence; no economic replay or ML. |
 | [IFSM MenthorQ level context](IFSM_MENTHORQ_LEVEL_CONTEXT.md) | **Task A1 and Task B runtime implementation** | EOD availability, entry gates, support universes, preparation roll catalogs, review-only export and exact-source parity. No archived ML context family. |
+| [IFSM six-configuration full-range task](ifsm-correct-config-full-range-v01/TASK.md) | **Bounded October 4 task specification** | Six established configurations over the exact Task B scope, passive annotation, twelve independent funded outcomes and compact verified review export. Implementation checks do not establish run completion. |
+| [IFSM MFFU context batch task record](ifsm-mffu-context-batch-v01/TASKS.md) | **Historical October 7 implementation record** | Original 64-intent batch specification and implementation-stage notes. The completed original result and its current repair phase are identified in the [consolidated repair ledger](ifsm-mffu-repair-integration-v01/TASKS.md). |
 | `../ARCHITECTURE.md` | **Canonical current architecture** | Repo purpose, v3 semantics, current workflows, generated outputs. |
 | `ML_TRAINING_WORKBENCH.md` | **Current workflow guide** | Streamlit ML tab, dashboard-utility build/train/save, exact-source IFVG R5–R6 research and separate authorization. |
 | `pipeline_state.yaml` | **Current machine-readable summary** | Quick state for agents/scripts; v3 fields and known gaps. |
@@ -239,6 +249,13 @@ commit `reports/`); engineering evidence stays in
 `../Claude-Quant-Lab-Research-Artifacts/ifvg-dashboard-repairs-20260923/`. Rules for the funded
 screens remain in [SPEC.md](funded-payout-implementation/SPEC.md) and the owner's decisions in
 [OWNER_DECISIONS.md](funded-payout-implementation/OWNER_DECISIONS.md).
+
+## IFSM MFFU consolidated repair (October 7, 2026)
+
+Current implementation and scope: [repair integration](ifsm-mffu-repair-integration-v01/IMPLEMENTATION.md).
+Progress and captured evidence: [task ledger](ifsm-mffu-repair-integration-v01/TASKS.md).
+Original results are preserved; generated working stores and final review ZIPs
+remain outside Git.
 
 ## IFVG Lab redesign (September 24, 2026)
 

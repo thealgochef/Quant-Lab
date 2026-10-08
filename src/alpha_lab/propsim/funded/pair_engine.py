@@ -58,6 +58,8 @@ class PairRun:
     warmup_trades: int = 0
     also_blocked: int = 0
     open_rows: dict[str, dict] = field(default_factory=dict)
+    entry_selector: Callable[[Any, int], dict[str, Any]] | None = None
+    target_selector: Callable[[int], Any] | None = None
 
     def to_state(self) -> dict[str, Any]:
         return {"pair_id": self.pair_id, "driver": self.driver.checkpoint(),
@@ -93,20 +95,31 @@ def run_one_day(run: PairRun, day: DayInput, prints) -> None:
     for bar in bars:
         open_ns, close_ns = bar_window_ns(bar)
         exited = None
+        target_decision_override = None
         gate = None
         if ledger is not None:
             if bar.trading_day.isoformat() != day.trading_day:
                 raise EngineConsistencyError("candle trading day differs from the schedule")
             ledger.run_until(open_ns)
             if ledger.position is not None:
+                opening_position = ledger.position
+                previous_target_decision = opening_position.target_decision
                 exited = ledger.on_minute(prints().minute(bar, ledger.position.sign),
                                           deadline_minute=close_ns == deadline,
-                                          trading_day=day.trading_day)
+                                          trading_day=day.trading_day,
+                                          target_selector=run.target_selector)
+                selected_target = opening_position.target_decision
+                if (selected_target is not None and
+                        selected_target is not previous_target_decision):
+                    target_decision_override = driver.target_override_from(selected_target)
                 if exited is not None:
                     row = ledger.trades[-1]
                     run.open_rows[row["strategy_trade_id"]] = row
             gate = ledger.gate()
-        out = driver.step(bar, gate)
+        if target_decision_override is None:
+            out = driver.step(bar, gate)
+        else:
+            out = driver.step(bar, gate, target_decision_override=target_decision_override)
         if ledger is None:
             for record in out.core_exits:
                 run.strategy_trades.append(_core_trade(record, warmup=not day.is_evaluation))
@@ -156,11 +169,16 @@ def run_one_day(run: PairRun, day: DayInput, prints) -> None:
             if gate is not None:
                 raise EngineConsistencyError("Strategy-Core entered despite an account refusal")
             signal = out.entry
+            entry_options = (
+                {} if run.entry_selector is None else run.entry_selector(signal, close_ns)
+            )
             ledger.open(ts_ns=close_ns, trade_ref=signal.trade_id, direction=signal.direction,
                         entry_ticks=signal.entry_ticks, stop_ticks=signal.stop_ticks,
                         target_ticks=signal.target_ticks, trading_day=day.trading_day,
                         strategy={"trade_id": signal.trade_id,
-                                  "entry_chart": signal.entry_chart})
+                                  "entry_chart": signal.entry_chart,
+                                  "htf_zone_id": getattr(signal, "htf_zone_id", None)},
+                        **entry_options)
             if ledger.position is None:
                 # the entry cost itself lost the account: the trade ends here
                 ledger.trades[-1]["strategy_recorded_exit_kind"] = "ended_by_account_liquidation"

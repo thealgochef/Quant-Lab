@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import base64
 import pickle
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
@@ -60,6 +61,7 @@ class EntrySignal:
     stop_ticks: int
     target_ticks: int
     entry_chart: str
+    htf_zone_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -69,10 +71,13 @@ class StepOutcome:
     refused: tuple[str, ...]  # entries Core would have filled but the account refused
     #: candidates Core blocked for its own reasons as well (never counted as refusals)
     also_blocked_by_strategy: int = 0
+    #: transient Core evidence for policy-aware study adapters; never checkpointed
+    emissions: tuple[Any, ...] = ()
 
 
 class CoreStrategyDriver:
-    def __init__(self, section: Any, *, tick_size: float, menthorq_provider: Any = None) -> None:
+    def __init__(self, section: Any, *, tick_size: float, menthorq_provider: Any = None,
+                 decision_context_for: Callable[[Any], Any] | None = None) -> None:
         self.section = section
         self.tick_size = tick_size
         self.seed = None
@@ -81,6 +86,7 @@ class CoreStrategyDriver:
         self.forced_flat = 0
         self.discarded_setups = 0
         self.menthorq_provider = menthorq_provider
+        self.decision_context_for = decision_context_for
 
     # ── day lifecycle ─────────────────────────────────────────────────────
     def begin_day(self, bars_by_tf: dict[int, list], levels_for) -> list:
@@ -98,8 +104,11 @@ class CoreStrategyDriver:
                     levels=levels, menthorq=self.menthorq_provider.snapshot(ts_utc)
                 )
 
+        context_arg = ({"decision_context_for": self.decision_context_for}
+                       if self.decision_context_for is not None else {})
         orch = DayOrchestrator(section=self.section, seed=self.seed,
-                               tick_size=self.tick_size, levels_for=levels_for)
+                               tick_size=self.tick_size, levels_for=levels_for,
+                               **context_arg)
         orch.reset_funnel()
         for tf, bars in bars_by_tf.items():
             if tf == 60:
@@ -135,10 +144,15 @@ class CoreStrategyDriver:
     def in_position(self) -> bool:
         return bool(self._orch._reducer.active_trade_count)
 
-    def step(self, bar, gate: str | None) -> StepOutcome:
+    def step(self, bar, gate: str | None, *, target_decision_override=None) -> StepOutcome:
         self._gate = gate
         try:
-            emitted = self._orch.on_decision_bar(bar)
+            if target_decision_override is None:
+                emitted = self._orch.on_decision_bar(bar)
+            else:
+                emitted = self._orch.on_decision_bar(
+                    bar, target_decision_override=target_decision_override,
+                )
         finally:
             self._gate = None
         exits = tuple(e.record for e in emitted if e.kind == "executed_trade")
@@ -175,9 +189,11 @@ class CoreStrategyDriver:
                 entry_ticks=int(setup.entry_ticks), stop_ticks=int(setup.stop_ticks),
                 target_ticks=int(setup.tp_ticks),
                 entry_chart=_entry_chart(geometry, entry_tf),
+                htf_zone_id=(str(geometry.htf.fvg_id) if geometry is not None else None),
             )
         return StepOutcome(entry=entry, core_exits=exits, refused=tuple(refused),
-                           also_blocked_by_strategy=also_blocked)
+                           also_blocked_by_strategy=also_blocked,
+                           emissions=tuple(emitted))
 
     def force_flat(self, *, counted: bool = True) -> None:
         """The account closed the position: Core must not continue that trade.

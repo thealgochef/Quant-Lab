@@ -1,0 +1,295 @@
+{
+  "result_id": "b8db8427cb2260619d7f0483358e5d0da78d718fc395f2374b6a62a1e378c186",
+  "reporting_version": "ifsm_mffu_reporting_v6",
+  "predecessor": "ifsm_mffu_reporting_v5",
+  "standard_export_version": 2,
+  "files": [
+    {
+      "path": "CHECKPOINT_ORIGIN_AUDIT.csv",
+      "bytes": 1087287,
+      "sha256": "0a6380d90cc433adda5308ca8582ce756c8bf0dbd1214ed24638926a889021f9"
+    },
+    {
+      "path": "configurations.csv",
+      "bytes": 112005,
+      "sha256": "ebb3d26c033f890c6f82d0d2f4f52ef72778eab5e7e3e84af5de3788820e5d5d"
+    },
+    {
+      "path": "ECONOMIC_PRESERVATION.csv",
+      "bytes": 63513,
+      "sha256": "8603724d9adb1771b85f04d026fbfac3a43083548d03123fa2fa13c4c55d77e0"
+    },
+    {
+      "path": "ECONOMIC_PRESERVATION.json",
+      "bytes": 251251,
+      "sha256": "a2e8247a14438cf04ef8af485f079650afa886c5524b5cb02cc7c8089102ebec"
+    },
+    {
+      "path": "FIX_REPORT.md",
+      "bytes": 4972,
+      "sha256": "cf06ba8ca59322629056269b4eee34dc06a4de10bbbac34ee87d6d30246ccc43"
+    },
+    {
+      "path": "LABEL_CONSISTENCY.json",
+      "bytes": 39993,
+      "sha256": "fa7f6b4e9ab1acee23c5717d69b0b7c7dbc73855d11820297db6d5b1b2637d72"
+    },
+    {
+      "path": "net_cash_by_configuration.png",
+      "bytes": 216931,
+      "sha256": "b02ea83dd707935d49e1654c136137894d6e20e38a859865b961400daac8359b"
+    },
+    {
+      "path": "PROVENANCE_COVERAGE.json",
+      "bytes": 1585472,
+      "sha256": "6fe2e03a80488b428813b37c1240c449cacd797e2913cca1c0e3716d73b65e4f"
+    },
+    {
+      "path": "PUBLICATION.json",
+      "bytes": 5054,
+      "sha256": "81dece60cfc4b40d9c09eef2174c095db9ff67735823cfa9f4550b80483d50a8"
+    },
+    {
+      "path": "screenshots/01-normal-route.jpg",
+      "bytes": 42802,
+      "sha256": "7a52037703b332d547b9802047e8d856c10e22c57cccca04dd9d133bdbfd70ed"
+    },
+    {
+      "path": "screenshots/02-geometry-settings.jpg",
+      "bytes": 36024,
+      "sha256": "925c8b3ee224f68e795716bcebdf7371a05eaeb75026a72a318adfc77ee66a5b"
+    },
+    {
+      "path": "screenshots/03-recorded-target.jpg",
+      "bytes": 47407,
+      "sha256": "0b8ea687ed0a92989bb9f57e051ad684b2dfe932f85f284b667716a915ae8fe7"
+    },
+    {
+      "path": "screenshots/04-before-target.jpg",
+      "bytes": 52433,
+      "sha256": "38bc5baaaec4319e8528a0466e296f30f645519f37cea467803290d0199b66e8"
+    },
+    {
+      "path": "screenshots/05-annotation-target.jpg",
+      "bytes": 44723,
+      "sha256": "a62ff6698f04b7b9df96566391ac956e66d4104b20b80ff31a533efc6083dc6b"
+    },
+    {
+      "path": "screenshots/06-original-version.jpg",
+      "bytes": 45991,
+      "sha256": "47507bbc5f7b5303ed1d09084432a69c6339d425ce2f7e34e756e80586fa7ae2"
+    },
+    {
+      "path": "screenshots/INDEX.json",
+      "bytes": 11876,
+      "sha256": "774f9497a7607fe9c3c4d25069a92f5092b776fe35d928141796d3f6c442f495"
+    }
+  ],
+  "paired_archive": {
+    "filename": "IFSM_b8db_Reporting_Followup_Source_Tests_v01.zip",
+    "members": [
+      {
+        "path": "portable_review.py",
+        "bytes": 3550,
+        "sha256": "b892b57a3ec075971815024323381606a6764a90a9e40cb829d7843bbe34261b"
+      },
+      {
+        "path": "README.md",
+        "bytes": 2235,
+        "sha256": "bd9b9d3980e987e85d1fe43da7329bb389e6adc6e38b20e9b3c5fe6ef45c6167"
+      },
+      {
+        "path": "REVIEW_FINDINGS.md",
+        "bytes": 942,
+        "sha256": "c37a3ce2a9a14f19dc376ddfe566cc1c0f3b0376be407e9e0e8aeba84b91ac21"
+      },
+      {
+        "path": "source/quant_lab/docs/ifsm-b8db-reporting-followup-v01/IMPLEMENTATION.md",
+        "bytes": 2271,
+        "sha256": "07b6e70cd16c85e1ee39ab9073414828d85cf4c4d237c0b351ca37ea41c9674b"
+      },
+      {
+        "path": "source/quant_lab/docs/ifsm-b8db-reporting-followup-v01/TASKS.md",
+        "bytes": 2626,
+        "sha256": "273d2762968cc032c374f9c9658c2b43ebc839576837a08733e3ba7ebf728409"
+      },
+      {
+        "path": "source/quant_lab/docs/ML_TRAINING_WORKBENCH.md",
+        "bytes": 72629,
+        "sha256": "ccb6a5f6b91afd0811bb19de3be55f29b63eca22bd96cb728fb69a0cb6499db4"
+      },
+      {
+        "path": "source/quant_lab/docs/README.md",
+        "bytes": 20656,
+        "sha256": "a7143caf2dbc424639c25a36dfd84608e254700f2c210c49591d0100075fcfa1"
+      },
+      {
+        "path": "source/quant_lab/scripts/ifvg_lab_mffu_views.py",
+        "bytes": 40519,
+        "sha256": "9573fa690a2b3d4a9733314e035516df13d723d98822e1dc993aaca4adc53f87"
+      },
+      {
+        "path": "source/quant_lab/src/alpha_lab/agents/data_infra/ifvg/funded_comparison_review.py",
+        "bytes": 74560,
+        "sha256": "51b6a3486befd7f78a1699a31c2ebab4aae4a7ba42dce7bd1b50017c514a7a29"
+      },
+      {
+        "path": "source/quant_lab/src/alpha_lab/agents/data_infra/ifvg/presentation/funded_comparison.py",
+        "bytes": 49913,
+        "sha256": "21838fa52ae50d048be588fcd1da14ee750529e337d75f8c345094d2adb76b95"
+      },
+      {
+        "path": "source/quant_lab/src/alpha_lab/agents/data_infra/ifvg/presentation/lab/mffu_gamma.py",
+        "bytes": 31621,
+        "sha256": "15aec17cfddda1b9529d33d04f03b8accba1ce4e7dbf00d40b11348f9d1c6d8d"
+      },
+      {
+        "path": "source/quant_lab/src/alpha_lab/agents/data_infra/ifvg/presentation/lab/mffu_lenses.py",
+        "bytes": 28226,
+        "sha256": "2fb5b271652806de6099d8a156a4218f6cba6ebf5e5e309f269a20ce9a6a21f4"
+      },
+      {
+        "path": "source/quant_lab/src/alpha_lab/agents/data_infra/ifvg/presentation/lab/mffu_matrix.py",
+        "bytes": 20127,
+        "sha256": "ef1ac504729e31e58fa4ecce8d7a26e1570c6b75fd2ddb6d46cd54a10989dad3"
+      },
+      {
+        "path": "source/quant_lab/src/alpha_lab/agents/data_infra/ifvg/presentation/lab/mffu_provenance.py",
+        "bytes": 8412,
+        "sha256": "182fa0b231b538c68b2c3c215e3d159865088c62ed93b2fc8ae94b6a3f5fa7d4"
+      },
+      {
+        "path": "source/quant_lab/src/alpha_lab/agents/data_infra/ifvg/presentation/lab/mffu_reporting.py",
+        "bytes": 13781,
+        "sha256": "6e6dc545b8dba66a230b6ee385ea71a549efdfce79f1048700efdc1f7479047f"
+      },
+      {
+        "path": "source/quant_lab/tests/agents/ifvg_lab/fixtures/b8db_reporting.json",
+        "bytes": 673583,
+        "sha256": "e2fd623db6f70d28594d36e507197859ab98341ab737c6f1c3aada470a0989fe"
+      },
+      {
+        "path": "source/quant_lab/tests/agents/ifvg_lab/test_b8db_reporting_followup.py",
+        "bytes": 12035,
+        "sha256": "89564f1354bca2cae23b6a252add06e7248ce51f84bc6aa4507ce5a30e0f05c6"
+      },
+      {
+        "path": "SOURCE_MAP.json",
+        "bytes": 4861,
+        "sha256": "fc106681266bb6d648be7cfdb46b9ce382215bae76d8cf0345815eb29ab00d68"
+      },
+      {
+        "path": "task-only.patch",
+        "bytes": 522129,
+        "sha256": "c40f4081a8fcb3073d075c82580819d9cd4f99af5ef57380fa851e12958fe302"
+      },
+      {
+        "path": "verification/baseline-environment.json",
+        "bytes": 5310,
+        "sha256": "0cc787e0e5fab33a456b031ab2f35f9b9d79ab978dab60db6e88be3bef634e86"
+      },
+      {
+        "path": "verification/baseline-failing-before.txt",
+        "bytes": 4348,
+        "sha256": "7ee604440159f9bf95c375d1c96b08abd11ef540267be2ecf21f9b357bd1117e"
+      },
+      {
+        "path": "verification/browser-download.json",
+        "bytes": 442,
+        "sha256": "3ac39058a24094b14e74b5cdd9d110c1f0e24fc00496bb906f237a4326d54482"
+      },
+      {
+        "path": "verification/dashboard-restart.json",
+        "bytes": 277,
+        "sha256": "86aa723217e5bec7439c2da4804e688e82fd05bc33ef7109ad905726feb063fe"
+      },
+      {
+        "path": "verification/dashboard-stderr.txt",
+        "bytes": 5499,
+        "sha256": "98de16030134846ff33390bc28c6b7e9cee480c999b8888f7c81c6bff7af65ff"
+      },
+      {
+        "path": "verification/dashboard-stdout.txt",
+        "bytes": 184,
+        "sha256": "09ad724308b239d2445701dc928d5f526e270090c41927177c6990937992b49a"
+      },
+      {
+        "path": "verification/ECONOMIC_PRESERVATION.json",
+        "bytes": 251251,
+        "sha256": "a2e8247a14438cf04ef8af485f079650afa886c5524b5cb02cc7c8089102ebec"
+      },
+      {
+        "path": "verification/EXTRACTED_PACKAGE_CHECKS.json",
+        "bytes": 287,
+        "sha256": "747e83e27f890948a90c9f49573584efffa81191d59761c222893387c368df62"
+      },
+      {
+        "path": "verification/final-checks.json",
+        "bytes": 4484,
+        "sha256": "4cd1d8c8bd87a7b7756b61b49e7c67904ae03cbaf6299dadd6bec91343fef288"
+      },
+      {
+        "path": "verification/final-preservation.json",
+        "bytes": 142,
+        "sha256": "31ee2a0624cedb27c3e5b451af6284a83e1a8f35bb7a7779704a0a693f6d687a"
+      },
+      {
+        "path": "verification/focused-pytest.txt",
+        "bytes": 1772,
+        "sha256": "f66d25ad5f1db4ededaaa09eba61845fe94deadb0cfd0a16b5d573a171a9389e"
+      },
+      {
+        "path": "verification/portable-preseal.json",
+        "bytes": 36368,
+        "sha256": "4e3453c5c7affb3d70edc4c150ada87e728854138a4a176d18ddd88ff03b0d75"
+      },
+      {
+        "path": "verification/portable-preseal.txt",
+        "bytes": 225,
+        "sha256": "09c66c44ca0af87fef782fc928c225dd87440523fc0bcb7050ceb2e69194ccbe"
+      },
+      {
+        "path": "verification/PROVENANCE_COVERAGE.json",
+        "bytes": 1585472,
+        "sha256": "6fe2e03a80488b428813b37c1240c449cacd797e2913cca1c0e3716d73b65e4f"
+      },
+      {
+        "path": "verification/publication.json",
+        "bytes": 5054,
+        "sha256": "81dece60cfc4b40d9c09eef2174c095db9ff67735823cfa9f4550b80483d50a8"
+      },
+      {
+        "path": "verification/published-original-check.txt",
+        "bytes": 578,
+        "sha256": "886c6042d6ae78f9502227331bcd3409895240434615de9a4cc07e7bc61753a7"
+      },
+      {
+        "path": "verification/recorded-target-state.txt",
+        "bytes": 15753,
+        "sha256": "ea2842bc966bda68266f6dde883457bb836bcb53a173ba7c2ecf862d5413a744"
+      },
+      {
+        "path": "verification/ruff.txt",
+        "bytes": 19,
+        "sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+      },
+      {
+        "path": "verification/screenshots-index.json",
+        "bytes": 11876,
+        "sha256": "774f9497a7607fe9c3c4d25069a92f5092b776fe35d928141796d3f6c442f495"
+      }
+    ]
+  },
+  "external_references": [
+    {
+      "filename": "IFSM_MFFU_Repair_Source_Tests_b8db8427cb226061_v01.zip",
+      "sha256": "6dc31e6c446a52a6df52f2754fa9bd3ecd2d8d996a59049cbb2efde35953fe7d",
+      "purpose": "required precise unchanged dependency for portable source reconstruction"
+    },
+    {
+      "path": "PUBLICATION.json",
+      "purpose": "absolute immutable saved result/report references"
+    }
+  ],
+  "manifest_excludes_itself": true
+}

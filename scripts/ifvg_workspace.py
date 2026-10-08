@@ -109,6 +109,16 @@ def render_workspace(st_module=st, *, roots=None):
     if clicked:
         rail_destination(st_module, clicked)
     if destination == "Trade review":
+        if screen == "ml_phase" and st_module.session_state.get("ifvg_ml_phase_pointer"):
+            from ifvg_lab_ml_phase import render_ml_phase
+            from ifvg_lab_nav import funded_context
+
+            pointer = st_module.session_state["ifvg_ml_phase_pointer"]
+            funded_context(pointer["report_id"], st_module)["ml_view"] = "Decision review"
+            st_module.session_state["mlphase_ml_view"] = "Decision review"
+            render_ml_phase(st_module, roots)
+            sync_url(st_module)
+            return
         from ifvg_lab_trade_review import render_trade_review_page
 
         render_trade_review_page(st_module, roots)
@@ -119,7 +129,11 @@ def render_workspace(st_module=st, *, roots=None):
             help="Return to the list of every study."):
         st_module.session_state[_NAV] = "My studies"
         _go(st_module, "list")
-    if screen == "funded":
+    if screen == "ml_phase":
+        from ifvg_lab_ml_phase import render_ml_phase
+
+        render_ml_phase(st_module, roots)
+    elif screen == "funded":
         from ifvg_lab_funded import render_funded_results
 
         render_funded_results(st_module, roots)
@@ -277,11 +291,15 @@ def funded_result_target(study: StudySummary, roots, *, app: str | None = None):
     if study.kind != "funded_comparison" or not result_id \
             or study.status not in _FUNDED_RESULT_STATUSES:
         return None
-    return {"study_key": study.key, "result_id": str(result_id),
+    target = {"study_key": study.key, "result_id": str(result_id),
             "plan_id": str(state.get("plan_id") or study.key),
-            "store_root": str(roots["store_root"]), "name": study.name,
+            "store_root": str(study.store_root or roots["store_root"]), "name": study.name,
             "status": study.status, "dates": study.dates,
             "app": app or current_app(roots)}
+    for key in ("external_review_only", "catalog_binding", "versions", "qualification"):
+        if key in state:
+            target[key] = state[key]
+    return target
 
 
 def render_study(st_module, study: StudySummary, roots):

@@ -1,0 +1,484 @@
+{
+  "schema": "ifsm_ml_features_v1",
+  "status": "predeclared research definitions; existence must be mapped and verified in the implementation",
+  "feature_groups": {
+    "F0": [
+      "F0"
+    ],
+    "F1": [
+      "F0",
+      "F1"
+    ],
+    "F2": [
+      "F0",
+      "F1",
+      "F2"
+    ]
+  },
+  "rows": [
+    {
+      "name": "initial_risk_points",
+      "group": "F0",
+      "kind": "numeric",
+      "formula": "r = abs(reference intended entry price - original structural stop); r>0. Remains frozen at entry.",
+      "jobs": [
+        "ENTRY",
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": true,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution"
+    },
+    {
+      "name": "htf_timeframe",
+      "group": "F0",
+      "kind": "categorical",
+      "formula": "Timeframe of the actual selected larger gap.",
+      "jobs": [
+        "ENTRY",
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": false,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution",
+      "domain": [
+        "3600",
+        "14400",
+        "__MISSING__",
+        "__UNSEEN__"
+      ]
+    },
+    {
+      "name": "parent_timeframe",
+      "group": "F0",
+      "kind": "categorical",
+      "formula": "Timeframe of the actual locked supporting gap.",
+      "jobs": [
+        "ENTRY",
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": false,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution",
+      "domain": [
+        "60",
+        "180",
+        "300",
+        "600",
+        "900",
+        "1800",
+        "__MISSING__",
+        "__UNSEEN__"
+      ]
+    },
+    {
+      "name": "parent_width_r",
+      "group": "F0",
+      "kind": "numeric",
+      "formula": "Actual locked parent width in points / r.",
+      "jobs": [
+        "ENTRY",
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": false,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution"
+    },
+    {
+      "name": "opposing_width_r",
+      "group": "F0",
+      "kind": "numeric",
+      "formula": "Actual selected opposing gap width in points / r.",
+      "jobs": [
+        "ENTRY",
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": false,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution"
+    },
+    {
+      "name": "entry_gap_width_r",
+      "group": "F0",
+      "kind": "numeric",
+      "formula": "Width in points of the actually eligible fresh-continuation entry gap / r.",
+      "jobs": [
+        "ENTRY",
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": false,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution"
+    },
+    {
+      "name": "opposing_parent_separation_r",
+      "group": "F0",
+      "kind": "numeric",
+      "formula": "Nonnegative edge-to-edge separation used by the effective engine distance test / r; zero for overlapping intervals. Use the same implemented formula, not distance to midpoint.",
+      "jobs": [
+        "ENTRY",
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": false,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution"
+    },
+    {
+      "name": "entry_parent_midpoint_r",
+      "group": "F0",
+      "kind": "numeric",
+      "formula": "(Intended entry - actual locked parent midpoint) / r. Frozen structural entry feature.",
+      "jobs": [
+        "ENTRY",
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": false,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution"
+    },
+    {
+      "name": "lock_to_entry_minutes",
+      "group": "F0",
+      "kind": "numeric",
+      "formula": "Elapsed UTC minutes from actual supporting-parent lock to entry-decision time.",
+      "jobs": [
+        "ENTRY",
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": false,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution"
+    },
+    {
+      "name": "inversion_to_entry_minutes",
+      "group": "F0",
+      "kind": "numeric",
+      "formula": "Elapsed UTC minutes from inversion known-at time to entry-decision time.",
+      "jobs": [
+        "ENTRY",
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": false,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution"
+    },
+    {
+      "name": "clock_sin",
+      "group": "F0",
+      "kind": "numeric",
+      "formula": "sin(2*pi*m/1440), m=local Chicago seconds since midnight /60 at THIS job decision.",
+      "jobs": [
+        "ENTRY",
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": false,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution"
+    },
+    {
+      "name": "clock_cos",
+      "group": "F0",
+      "kind": "numeric",
+      "formula": "cos(2*pi*m/1440), same m; timezone/DST is explicit.",
+      "jobs": [
+        "ENTRY",
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": false,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution"
+    },
+    {
+      "name": "minutes_to_mandatory_close",
+      "group": "F0",
+      "kind": "numeric",
+      "formula": "Nonnegative real elapsed UTC minutes to this session frozen mandatory flatten deadline; earlier shortened-session deadline used.",
+      "jobs": [
+        "ENTRY",
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": true,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution"
+    },
+    {
+      "name": "trading_weekday",
+      "group": "F0",
+      "kind": "categorical",
+      "formula": "Weekday of the frozen session trading-date label, not calendar entry-date weekday.",
+      "jobs": [
+        "ENTRY",
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": false,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution",
+      "domain": [
+        "Mon",
+        "Tue",
+        "Wed",
+        "Thu",
+        "Fri",
+        "Sat",
+        "Sun",
+        "__MISSING__",
+        "__UNSEEN__"
+      ]
+    },
+    {
+      "name": "close_change_5_r",
+      "group": "F0",
+      "kind": "numeric",
+      "formula": "(C0-C5)/r from six contiguous finalized 1m closes within this session, all availability<=decision; C0 is latest known close.",
+      "jobs": [
+        "ENTRY",
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": false,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution"
+    },
+    {
+      "name": "range_15_r",
+      "group": "F0",
+      "kind": "numeric",
+      "formula": "(max(H_i)-min(L_i))/r across latest 15 contiguous finalized 1m bars in this session, all availability<=decision.",
+      "jobs": [
+        "ENTRY",
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": false,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution"
+    },
+    {
+      "name": "signed_efficiency_15",
+      "group": "F0",
+      "kind": "numeric",
+      "formula": "(C0-C15)/sum_{i=0..14}|C_i-C_{i+1}| from 16 contiguous finalized same-session closes. Zero if all changes zero.",
+      "jobs": [
+        "ENTRY",
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": false,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution"
+    },
+    {
+      "name": "minutes_entry_to_target",
+      "group": "F0",
+      "kind": "numeric",
+      "formula": "Elapsed UTC minutes from actual entry fill to first qualifying 1R checkpoint.",
+      "jobs": [
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": true,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution"
+    },
+    {
+      "name": "mae_so_far_r",
+      "group": "F0",
+      "kind": "numeric",
+      "formula": "max(0, entry - min(observed trade prices from entry event through checkpoint))/r for long; exact prints only through decision, not eventual trade MAE.",
+      "jobs": [
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": false,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution"
+    },
+    {
+      "name": "checkpoint_overshoot_r",
+      "group": "F0",
+      "kind": "numeric",
+      "formula": "(Current observed triggering print - original 1R limit price)/r. Does not change the first five limit fills.",
+      "jobs": [
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": false,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution"
+    },
+    {
+      "name": "implied_move_points",
+      "group": "F1",
+      "kind": "numeric",
+      "formula": "M=(eligible 1D Max-eligible 1D Min)/2 at THIS decision; endpoints finite and ordered, M>0.",
+      "jobs": [
+        "ENTRY",
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": false,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution"
+    },
+    {
+      "name": "risk_to_implied_move",
+      "group": "F1",
+      "kind": "numeric",
+      "formula": "r / M; null if current M invalid.",
+      "jobs": [
+        "ENTRY",
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": false,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution"
+    },
+    {
+      "name": "separation_to_implied_move",
+      "group": "F1",
+      "kind": "numeric",
+      "formula": "Actual selected opposing-parent separation in points / M; null if current M invalid.",
+      "jobs": [
+        "ENTRY",
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": false,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution"
+    },
+    {
+      "name": "price_in_implied_range",
+      "group": "F1",
+      "kind": "numeric",
+      "formula": "(Current reference decision price-eligible 1D Min)/(2*M); not clipped. At entry use intended entry; target use current observed print.",
+      "jobs": [
+        "ENTRY",
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": false,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution"
+    },
+    {
+      "name": "frozen_max_distance_points",
+      "group": "F1",
+      "kind": "numeric",
+      "formula": "ACTUAL maximum opposing-parent separation frozen at parent lock. Fixed 20 for MCB025; recorded rounded dynamic value for MCB062. Excluded from F0 deliberately.",
+      "jobs": [
+        "ENTRY",
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": false,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution"
+    },
+    {
+      "name": "total_net_gamma",
+      "group": "F2",
+      "kind": "numeric",
+      "formula": "Exact signed aggregate vendor gex from latest eligible daily report at THIS decision. No recomputation by summing levels.",
+      "jobs": [
+        "ENTRY",
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": false,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution"
+    },
+    {
+      "name": "positive_report_age",
+      "group": "F2",
+      "kind": "numeric",
+      "formula": "Count of DISTINCT eligible consecutive positive reports from the saved as-of policy; zero on known nonpositive report; unknown stays null. Do not count carried calendar rows.",
+      "jobs": [
+        "ENTRY",
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": false,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution"
+    },
+    {
+      "name": "gamma_state",
+      "group": "F2",
+      "kind": "categorical",
+      "formula": "negative if gex<0; zero if =0; early_positive if >0 and report age 1..5; established_positive if age>=6; unknown if unavailable.",
+      "jobs": [
+        "ENTRY",
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": false,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution",
+      "domain": [
+        "negative",
+        "zero",
+        "early_positive",
+        "established_positive",
+        "unknown",
+        "__MISSING__",
+        "__UNSEEN__"
+      ]
+    },
+    {
+      "name": "hvl_distance_r",
+      "group": "F2",
+      "kind": "numeric",
+      "formula": "(Current decision price - eligible HVL price)/r.",
+      "jobs": [
+        "ENTRY",
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": false,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution"
+    },
+    {
+      "name": "nearest_upper_distance_r",
+      "group": "F2",
+      "kind": "numeric",
+      "formula": "(Nearest gamma-bearing eligible EOD level price >= current price - current price)/r; only finite prices and nonnull gex; all saved named levels eligible.",
+      "jobs": [
+        "ENTRY",
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": false,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution"
+    },
+    {
+      "name": "nearest_upper_gex",
+      "group": "F2",
+      "kind": "numeric",
+      "formula": "Signed gex at the above selected level. Equal-price ties use lexical name, frozen; no largest-gex tie selection.",
+      "jobs": [
+        "ENTRY",
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": false,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution"
+    },
+    {
+      "name": "nearest_lower_distance_r",
+      "group": "F2",
+      "kind": "numeric",
+      "formula": "(Current price - nearest gamma-bearing eligible EOD level price <= current price)/r; same universe and lexical tie-break.",
+      "jobs": [
+        "ENTRY",
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": false,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution"
+    },
+    {
+      "name": "nearest_lower_gex",
+      "group": "F2",
+      "kind": "numeric",
+      "formula": "Signed gex at the below selected level, not a claim about actual dealer orders.",
+      "jobs": [
+        "ENTRY",
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": false,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution"
+    },
+    {
+      "name": "gamma_report_age_hours",
+      "group": "F2",
+      "kind": "numeric",
+      "formula": "Elapsed UTC hours since selected daily gamma nominal eligibility time. Null if none eligible.",
+      "jobs": [
+        "ENTRY",
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": false,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution"
+    },
+    {
+      "name": "level_set_age_hours",
+      "group": "F2",
+      "kind": "numeric",
+      "formula": "Elapsed UTC hours since selected level set nominal eligibility time. Null if none eligible.",
+      "jobs": [
+        "ENTRY",
+        "CONTINUATION"
+      ],
+      "required_for_valid_decision": false,
+      "missing_policy": "null plus explicit reason; never outcome-informed substitution"
+    }
+  ],
+  "scope_notes": [
+    "Entry geometry stays frozen; clock/current market/vendor features are sampled at the job's own decision.",
+    "Every source carries actual known-at time and value provenance. Only availability<=decision is usable.",
+    "F0 excludes frozen dynamic allowance, vendor range, vendor status/age, raw study/account/event IDs, and expected-move-normalized proxies.",
+    "MCB062's opportunity population already depends on expected movement; F0 is no additional vendor model inputs, not a vendor-free trading strategy.",
+    "All features must be mapped or reproducibly derived from the EXACT owning strategy event; missing zones cannot be borrowed from a related configuration.",
+    "A wholly unavailable feature remains declared and flagged; no silent substitute or outcome-based feature search. Genuine data absence need not block other cells.",
+    "Source validity and availability booleans may be used only through explicit numeric missing flags and the declared fields. Raw IDs/dates/path strings are audit-only.",
+    "1D Min/Max null gex is legitimate and never replaced with zero.",
+    "No qscore, intraday snapshot expansion, news, MBP1 order-flow feature build, or inferred touch-history feature in this first study."
+  ]
+}

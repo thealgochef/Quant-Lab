@@ -1,5 +1,6 @@
 # Preserve the original bytes of retained design/evidence packages. Several
 # carry SHA256 manifests; automatic CRLF conversion would change those inputs.
+.githooks/* text eol=lf
 QL-FSM-PROP-SEARCH-DASHBOARD/** -text whitespace=cr-at-eol
 # Archived Markdown also retains its original hard breaks and final blank lines.
 QL-FSM-PROP-SEARCH-DASHBOARD/**/*.md whitespace=cr-at-eol,-blank-at-eol,-blank-at-eof
@@ -13,6 +14,9 @@ docs/ifvg-dashboard-repairs/evidence/** -text
 .claude/skills/fix-ifvg-dashboard/SKILL.md -text
 # Task A1 vendor fixtures and copied evidence retain their original bytes.
 tests/agents/data_infra/ifvg/fixtures/menthorq_a1/** -text whitespace=cr-at-eol
-handoff/task_a1/** -text whitespace=cr-at-eol,-blank-at-eol,-blank-at-eof
-# Task B copied test receipts and tables preserve their recorded bytes.
-handoff/task_b/** -text whitespace=cr-at-eol,-blank-at-eol,-blank-at-eof
+# Copied research contracts retain exact bytes; local delivery archives live outside Git.
+docs/ifsm-mffu-ml-phase-v01/contracts/** -text whitespace=cr-at-eol
+docs/ifsm-mffu-ml-phase-v01/references/*.json -text whitespace=cr-at-eol
+docs/ifsm-mffu-ml-phase-v01/references/HISTORICAL_*.md -text whitespace=cr-at-eol
+docs/ifsm-b8db-reporting-followup-v01/inputs/** -text whitespace=cr-at-eol,-blank-at-eol
+tests/agents/ifvg_lab/fixtures/** -text whitespace=cr-at-eol

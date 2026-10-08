@@ -236,6 +236,7 @@ class TradeView:
     minutes_approximated: int | None
     approximate_exit: bool
     account_failed: bool
+    audit: Mapping[str, Any] | None = None
 
     @property
     def long(self) -> bool:
@@ -267,6 +268,15 @@ class TradeView:
             minutes_approximated=_int(row.get("minutes_approximated")),
             approximate_exit=bool(row.get("approximate_exit")),
             account_failed=bool(row.get("account_failed")),
+            audit=({key: row.get(key) for key in (
+                "gross_r", "net_r", "r_status", "price_excursion_status",
+                "price_excursion_fidelity", "htf_zone_id", "min_equity_usd",
+                "max_equity_usd", "favorable_excursion_ticks", "adverse_excursion_ticks",
+                *(f"{stem}_{suffix}" for stem in (
+                    "price_min", "price_max", "pre_target_price_min",
+                    "pre_target_price_max", "post_target_price_min",
+                    "post_target_price_max") for suffix in ("ticks", "utc", "ns")),
+            )} if row.get("price_excursion_status") is not None else None),
         )
 
     def r_multiple(self, ticks: int | None) -> float | None:
@@ -365,6 +375,69 @@ def _moved_stop_words(view: TradeView) -> str:
     return f"stop on the rest moved to {_price(view.final_stop_ticks)}"
 
 
+def _audit_extreme(audit: Mapping[str, Any], stem: str, entry: pd.Timestamp) -> str | None:
+    ticks = _int(audit.get(stem + "_ticks"))
+    if ticks is None:
+        return None
+    value = audit.get(stem + "_utc")
+    at = utc_instant(value if value is not None else audit.get(stem + "_ns"))
+    return f"{_price(ticks)} at {when(at, entry)}"
+
+
+def _trade_audit_lines(view: TradeView) -> list[RecordedLine]:
+    audit = view.audit
+    if audit is None:
+        return []
+    lines: list[RecordedLine] = []
+    gross_r, net_r = _float(audit.get("gross_r")), _float(audit.get("net_r"))
+    if gross_r is not None and net_r is not None:
+        lines.append(RecordedLine(
+            "Original-stop R",
+            h.esc(f"Gross {gross_r:+.4f}R · net {net_r:+.4f}R after actual fill costs"),
+        ))
+    status = str(audit.get("price_excursion_status") or "unavailable_source_record")
+    if status.startswith("available"):
+        low = _audit_extreme(audit, "price_min", view.entry_utc)
+        high = _audit_extreme(audit, "price_max", view.entry_utc)
+        if low and high:
+            fidelity = str(audit.get("price_excursion_fidelity") or "unknown")
+            source = ("includes modeled minute candles; those event times are approximate"
+                      if fidelity == "includes_minute_adverse_first" else
+                      "ordered exchange prints" if fidelity == "ordered_trade_prints" else
+                      "recorded fills only")
+            favorable = audit.get("favorable_excursion_ticks")
+            adverse = audit.get("adverse_excursion_ticks")
+            magnitudes = (f" · favorable {favorable} ticks, adverse {adverse} ticks"
+                          if favorable is not None and adverse is not None else "")
+            lines.append(RecordedLine(
+                "Held price path", h.esc(f"Low {low}; high {high}{magnitudes} · {source}"),
+            ))
+        if view.half_ticks is not None:
+            for label, low_stem, high_stem in (
+                ("Before first target", "pre_target_price_min", "pre_target_price_max"),
+                ("After first target", "post_target_price_min", "post_target_price_max"),
+            ):
+                low = _audit_extreme(audit, low_stem, view.entry_utc)
+                high = _audit_extreme(audit, high_stem, view.entry_utc)
+                if low and high:
+                    lines.append(RecordedLine(label, h.esc(f"Low {low}; high {high}")))
+    else:
+        explanation = ("legacy reused record; no historical price replay was made"
+                       if status == "unavailable_legacy_reuse" else
+                       "the saved record lacks a complete held price path")
+        lines.append(RecordedLine("Held price path", h.esc(f"Unavailable: {explanation}")))
+    zone = audit.get("htf_zone_id")
+    lines.append(RecordedLine("HTF gap ID", h.esc(str(zone) if zone else
+                                                "Unknown in this saved trade")))
+    low_eq, high_eq = audit.get("min_equity_usd"), audit.get("max_equity_usd")
+    if low_eq is not None and high_eq is not None:
+        lines.append(RecordedLine(
+            "Account equity range", h.esc(
+                f"Low {fmt.money(low_eq)}; high {fmt.money(high_eq)} (account cents, not price)"),
+        ))
+    return lines
+
+
 @dataclass(frozen=True)
 class RecordedLine:
     label: str
@@ -411,6 +484,7 @@ def recorded_lines(view: TradeView, *, instrument: str | None = None,
         lines.append(RecordedLine(
             f"Account {view.account} balance" if view.account is not None else "Balance",
             _mono(f"{fmt.money(view.balance_before)} → {fmt.money(view.balance_after)}")))
+    lines.extend(_trade_audit_lines(view))
     for label, text in extra:
         lines.append(RecordedLine(label, h.esc(text)))
     return lines
@@ -870,7 +944,7 @@ def known_accounts(accounts: list[int], opened: dict[int, pd.Timestamp], moment:
     """Point in time: only the accounts opened at or before ``moment``.
 
     A later account's number would show that an earlier one was lost. The
-    reviewed trade's own account is always kept: the trade happened in it.
+    reviewed trade's own account is kept only once its creation is known.
     An account whose opening time isn't saved is left out. With ``trades``
     (what the Account picker uses), an account is listed only when one of its
     trades had been entered by the moment, so every listed account has a trade
@@ -881,8 +955,8 @@ def known_accounts(accounts: list[int], opened: dict[int, pd.Timestamp], moment:
     traded = None if trades is None else {
         v.account for v in trades if v.account is not None and v.entry_utc <= moment}
     return [a for a in accounts
-            if a == current or (a in opened and opened[a] <= moment
-                                and (traded is None or a in traded))]
+            if a in opened and opened[a] <= moment
+            and (a == current or traded is None or a in traded)]
 
 
 def known_trades(views: list[TradeView], moment: pd.Timestamp, current: int | None

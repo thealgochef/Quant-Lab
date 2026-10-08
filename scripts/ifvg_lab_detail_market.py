@@ -90,10 +90,12 @@ _MODE_KEY = "market_labels"
 #: shown in place of the "Label trades by" switch when labels are known at entry:
 #: labeling by the exit's day would use information from after the entry
 ENTRY_DAY_NOTE = "Known at entry labels each trade by its entry's trading day."
-_MODE_HELP = ("Retrospective labels describe each trading day with hindsight, from its own "
-              "close and the whole study's typical volatility; they were not known when a "
-              "trade was entered. Known at entry labels use only closes completed before the "
-              "trading day's 5:00 PM Chicago open.")
+_MODE_HELP = (
+    "Retrospective labels describe each trading day with hindsight, from its own "
+    "close and the whole study's typical volatility; they were not known when a "
+    "trade was entered. Known at entry labels use only closes completed before the "
+    "trading day's 5:00 PM Chicago open."
+)
 
 #: the definition line of each label set (correction A1), naming its version
 _RETROSPECTIVE_DEFINITION = (
@@ -101,7 +103,8 @@ _RETROSPECTIVE_DEFINITION = (
     "from its own last close (4:00 PM, earlier on a shortened day) against the close "
     f"{market.LOOKBACK} trading days earlier, and its volatility against the median of the "
     "whole study. They describe the day with hindsight; they were not known when a trade "
-    "was entered.")
+    "was entered."
+)
 _ENTRY_KNOWN_DEFINITION = (
     f"Labels known at entry ({market.ENTRY_KNOWN_VERSION}): each trading day is labeled "
     "only from closes completed before its 5:00 PM open — the last completed close against "
@@ -109,7 +112,8 @@ _ENTRY_KNOWN_DEFINITION = (
     "changes against the median of that day's and earlier days' measures. An evening entry "
     f"belongs to the next day's trading day. Days with fewer than {market.LOOKBACK + 1} "
     f"earlier closes or {market.MIN_HISTORY} volatility measures up to that day show "
-    f"\"{market.NOT_ENOUGH}\", which is not a zero.")
+    f'"{market.NOT_ENOUGH}", which is not a zero.'
+)
 
 #: each condition's palette color NAME (blue-light shades rising, orange-light falling);
 #: the light values are the mock source's, the dark theme gives the same names dark values
@@ -143,6 +147,7 @@ def _condition_var(label: str) -> str:
 
     return css_var(_CONDITION_KEYS.get(label, "header_row"))
 
+
 #: link-strength badge thresholds (decision log, rule 8): "No clear link" when the
 #: correlation's size is under 0.1 or it is not significant at the 5% level;
 #: otherwise "Weak" under 0.3 and "Clear" from 0.3, with its direction.
@@ -157,18 +162,26 @@ NAMED_STRETCH_DAYS = 5
 #: the time measure has clock ticks, so its ends are not named in words
 MEASURE_WORDS = {
     "volatility": ("Calm", "Busy", "Busier markets at entry", "Volatility at entry vs result"),
-    "trend": ("Falling", "Rising", "A stronger rise in the hour before entry",
-              "Trend at entry vs result"),
+    "trend": (
+        "Falling",
+        "Rising",
+        "A stronger rise in the hour before entry",
+        "Trend at entry vs result",
+    ),
     "volume": ("Light", "Heavy", "Heavier trading before entry", "Volume at entry vs result"),
     "time": ("", "", "Later entries in the trading day", "Time of day at entry vs result"),
 }
 #: x-axis title when the measure's own axis words don't fit the ticks shown
 _AXIS_TITLES = {"time": "Entry time, Chicago (the trading day opens at 5:00 PM)"}
 
-_NOT_AVAILABLE = ("The stored one-minute E-mini bars for this study aren't available, so its "
-                  "days can't be labeled by market condition.")
-_NO_CALENDAR = ("This study's trading calendar isn't available, so its days can't be labeled "
-                "by market condition.")
+_NOT_AVAILABLE = (
+    "The stored one-minute E-mini bars for this study aren't available, so its "
+    "days can't be labeled by market condition."
+)
+_NO_CALENDAR = (
+    "This study's trading calendar isn't available, so its days can't be labeled "
+    "by market condition."
+)
 
 
 # ── pure helpers ──────────────────────────────────────────────────────────
@@ -648,9 +661,32 @@ def _minutes(store_root: str, result_id: str):
     return minutes
 
 
+def _source_signature(store_root: str, result_id: str) -> tuple:
+    from pathlib import Path
+
+    from ifvg_lab_ui import funded_study
+
+    from alpha_lab.agents.data_infra.ifvg.presentation.lab.external_catalog import (
+        resolve_registered_result,
+    )
+    from alpha_lab.agents.data_infra.ifvg.presentation.lab.registered_market import (
+        cache_signature,
+    )
+
+    # Historical package views retain their established process-cache behavior.
+    if resolve_registered_result(result_id, external_store_root=Path(store_root)) is None:
+        return ()
+    plan = getattr(funded_study(store_root, result_id), "plan", None)
+    if getattr(getattr(plan, "source", None), "kind", None) == "verified_task_b_registered_inputs":
+        return cache_signature(plan)
+    return ()
+
+
 @st.cache_data(show_spinner="Labeling each trading day by market condition…", max_entries=8)
-def _cached_labels(store_root: str, result_id: str,
-                   mode: str = market.RETROSPECTIVE) -> market.ConditionLabels | None:
+def _cached_labels(
+    store_root: str, result_id: str, mode: str = market.RETROSPECTIVE,
+    source_signature: tuple = (),
+) -> market.ConditionLabels | None:
     """One label set per mode (retrospective or known at entry), cached separately."""
 
     from ifvg_lab_ui import funded_study
@@ -660,59 +696,79 @@ def _cached_labels(store_root: str, result_id: str,
     if not study.calendar:  # a fact of the saved result: kept
         return None
     if mode == market.ENTRY_KNOWN:
-        return market.entry_known_labels(market.daily_closes(minutes),
-                                         market.daily_close_times(minutes), study.calendar)
+        return market.entry_known_labels(
+            market.daily_closes(minutes), market.daily_close_times(minutes), study.calendar
+        )
     return market.condition_labels(market.daily_closes(minutes), study.calendar)
 
 
-def _labels(store_root: str, result_id: str,
-            mode: str = market.RETROSPECTIVE) -> market.ConditionLabels | None:
+def _labels(
+    store_root: str, result_id: str, mode: str = market.RETROSPECTIVE
+) -> market.ConditionLabels | None:
     try:
-        return _cached_labels(store_root, result_id, mode)
+        return _cached_labels(store_root, result_id, mode, _source_signature(store_root, result_id))
     except _BarsUnavailableError:
         return None
 
 
 @st.cache_data(show_spinner=False, max_entries=64)
-def _cached_view(store_root: str, result_id: str, configuration: str, firm_key: str,
-                 by: str, mode: str = market.RETROSPECTIVE) -> MarketView | None:
+def _cached_view(
+    store_root: str,
+    result_id: str,
+    configuration: str,
+    firm_key: str,
+    by: str,
+    mode: str = market.RETROSPECTIVE,
+    source_signature: tuple = (),
+) -> MarketView | None:
     from ifvg_lab_ui import funded_study
 
     from alpha_lab.agents.data_infra.ifvg.presentation.lab.funded_data import ordered_trades
 
-    labels = _cached_labels(store_root, result_id, mode)  # _BarsUnavailableError passes on
+    labels = _cached_labels(store_root, result_id, mode, source_signature)
     if labels is None:
         return None
     study = funded_study(store_root, result_id)
-    return build_view(labels, ordered_trades(study, configuration, firm_key), study.calendar,
-                      by=by)
+    return build_view(labels, ordered_trades(study, configuration, firm_key), study.calendar, by=by)
 
 
-def _view(store_root: str, result_id: str, configuration: str, firm_key: str,
-          by: str, mode: str = market.RETROSPECTIVE) -> MarketView | None:
+def _view(
+    store_root: str,
+    result_id: str,
+    configuration: str,
+    firm_key: str,
+    by: str,
+    mode: str = market.RETROSPECTIVE,
+) -> MarketView | None:
     try:
-        return _cached_view(store_root, result_id, configuration, firm_key, by, mode)
+        return _cached_view(store_root, result_id, configuration, firm_key, by, mode,
+                            _source_signature(store_root, result_id))
     except _BarsUnavailableError:
         return None
 
 
 @st.cache_data(show_spinner="Measuring the market at each entry…", max_entries=64)
-def _cached_entry(store_root: str, result_id: str, configuration: str, firm_key: str,
-                  measure: str) -> market.EntryMeasure:
+def _cached_entry(
+    store_root: str, result_id: str, configuration: str, firm_key: str, measure: str,
+    source_signature: tuple = (),
+) -> market.EntryMeasure:
     from ifvg_lab_ui import funded_study
 
     from alpha_lab.agents.data_infra.ifvg.presentation.lab.funded_data import ordered_trades
 
     minutes = _minutes(store_root, result_id)
     study = funded_study(store_root, result_id)
-    return market.entry_measure(minutes, ordered_trades(study, configuration, firm_key),
-                                measure=measure)
+    return market.entry_measure(
+        minutes, ordered_trades(study, configuration, firm_key), measure=measure
+    )
 
 
-def _entry(store_root: str, result_id: str, configuration: str, firm_key: str,
-           measure: str) -> market.EntryMeasure | None:
+def _entry(
+    store_root: str, result_id: str, configuration: str, firm_key: str, measure: str
+) -> market.EntryMeasure | None:
     try:
-        return _cached_entry(store_root, result_id, configuration, firm_key, measure)
+        return _cached_entry(store_root, result_id, configuration, firm_key, measure,
+                             _source_signature(store_root, result_id))
     except _BarsUnavailableError:
         return None
 
@@ -797,7 +853,7 @@ def _entry_panel(st_module, ctx, total_trades: int) -> None:
             f"{LINK_CLEAR} and above is clear.</div></div>"), st_module)
 
 
-def render(st_module, ctx) -> None:
+def _render_price(st_module, ctx) -> None:
     from ifvg_lab_ui import plot, show
 
     mode = _mode(ctx)
@@ -806,40 +862,91 @@ def render(st_module, ctx) -> None:
     if not ctx.study.calendar:
         show(h.placeholder(_NO_CALENDAR), st_module)
         return
-    view = _view(ctx.store_root, ctx.result_id, ctx.configuration, ctx.firm_key, by,
-                 mode=mode)
+    from alpha_lab.agents.data_infra.ifvg.presentation.lab.registered_market import (
+        MarketSourceError,
+    )
+
+    try:
+        view = _view(ctx.store_root, ctx.result_id, ctx.configuration, ctx.firm_key, by, mode=mode)
+    except MarketSourceError as error:
+        show(h.alert("This study's market inputs could not be verified.", str(error)), st_module)
+        return
     if view is None:
         show(h.placeholder(_NOT_AVAILABLE), st_module)
         return
-    show(h.Markup('<div class="lab" style="font-size:14px;line-height:1.5;'
-                  f'color:{css_var("body_2")};margin-top:-8px">'
-                  f"{h.esc(definition_sentence(view.labels))}</div>"),
-         st_module)
+    show(
+        h.Markup(
+            '<div class="lab" style="font-size:14px;line-height:1.5;'
+            f'color:{css_var("body_2")};margin-top:-8px">'
+            f"{h.esc(definition_sentence(view.labels))}</div>"
+        ),
+        st_module,
+    )
     show(_cards(view), st_module)
     lines = [history_line(view.cards, view.labels, view.total_trades)]
     if mode == market.RETROSPECTIVE:  # the entry/exit switch is shown only here
         lines.append(same_day_sentence(view.moved, view.total_trades))
     if view.outside:
-        lines.append(f"{fmt.count(view.outside, 'trade')} fell outside the study's trading "
-                     "days on this labeling and "
-                     f"{'is' if view.outside == 1 else 'are'} left out of the daily profit "
-                     "below.")
-    show(h.Markup(f'<div class="lab" style="font-size:13px;color:{css_var("muted")};'
-                  'margin-top:-10px;line-height:1.5">'
-                  + "<br>".join(h.esc(x) for x in lines) + "</div>"),
-         st_module)
+        lines.append(
+            f"{fmt.count(view.outside, 'trade')} fell outside the study's trading "
+            "days on this labeling and "
+            f"{'is' if view.outside == 1 else 'are'} left out of the daily profit "
+            "below."
+        )
+    show(
+        h.Markup(
+            f'<div class="lab" style="font-size:13px;color:{css_var("muted")};'
+            'margin-top:-10px;line-height:1.5">' + "<br>".join(h.esc(x) for x in lines) + "</div>"
+        ),
+        st_module,
+    )
     with st_module.container(key="ifvg_lab_card_market_profit"):
-        show(h.Markup('<div class="lab" style="display:flex;justify-content:space-between;'
-                      'align-items:baseline;gap:16px;flex-wrap:wrap"><div class="lab-h3">'
-                      "Trading profit, shaded by market condition</div>"
-                      f"{_legend(view)}</div>"), st_module)
-        plot(profit_figure(view.daily, view.labels), key=f"market_profit_{mode}_{view.by}",
-             st_module=st_module)
-        show(h.Markup('<div class="lab" style="font-size:14px;line-height:1.5;'
-                      f'color:{css_var("body")}">'
-                      f"{h.esc(stretch_caption(view.stretches))}</div>"), st_module)
+        show(
+            h.Markup(
+                '<div class="lab" style="display:flex;justify-content:space-between;'
+                'align-items:baseline;gap:16px;flex-wrap:wrap"><div class="lab-h3">'
+                "Trading profit, shaded by market condition</div>"
+                f"{_legend(view)}</div>"
+            ),
+            st_module,
+        )
+        plot(
+            profit_figure(view.daily, view.labels),
+            key=f"market_profit_{mode}_{view.by}",
+            st_module=st_module,
+        )
+        show(
+            h.Markup(
+                '<div class="lab" style="font-size:14px;line-height:1.5;'
+                f'color:{css_var("body")}">'
+                f"{h.esc(stretch_caption(view.stretches))}</div>"
+            ),
+            st_module,
+        )
     left, right = st_module.columns(2, gap="medium")
     with left:
         show(_transition_card(view), st_module)
     with right:
         _entry_panel(st_module, ctx, view.total_trades)
+
+
+def render(st_module, ctx) -> None:
+    from alpha_lab.agents.data_infra.ifvg.presentation.lab.mffu_matrix import is_mffu_plan
+
+    if is_mffu_plan(getattr(ctx.study, "plan", None)):
+        selected = ctx.context.get("market_surface", "Price behavior")
+        options = ["Price behavior", "Gamma & expected move"]
+        selected = st_module.radio(
+            "Market conditions view",
+            options,
+            index=options.index(selected) if selected in options else 0,
+            horizontal=True,
+            key=f"market_surface_{ctx.result_id[:16]}",
+        )
+        ctx.context["market_surface"] = selected
+        if selected == "Gamma & expected move":
+            from ifvg_lab_mffu_views import render_gamma
+
+            render_gamma(st_module, ctx)
+            return
+    _render_price(st_module, ctx)

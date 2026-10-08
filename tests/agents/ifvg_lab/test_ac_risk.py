@@ -649,7 +649,7 @@ def test_a9_frozen_reference_on_the_saved_leader():
                              held=legs)
     assert finding.title == "Held halves carry the profit"
     assert finding.text == (
-        "The held halves of 13 trades kept to the 3:55 PM deadline made $40,278, more than the "
+        "The held halves of 13 trades kept to the daily deadline made $40,278, more than the "
         "configuration's total trading profit ($37,731). Their first halves, closed at the "
         "target, made $4,491 (whole trades $44,769).")
     assert finding.next_step == "test a capped hold on the second half."
@@ -882,7 +882,7 @@ def test_saved_summary_and_overview_show_the_corrected_wording(monkeypatch):
     assert ("Worst closed-profit drawdown of the trade path across accounts $3,661 (each "
             "account's loss allowance: $2,000).") in page
     assert "Early losses in the fixed-boundary diagnostic" in page
-    assert "The held halves of 13 trades kept to the 3:55 PM deadline made $40,278" in page
+    assert "The held halves of 13 trades kept to the daily deadline made $40,278" in page
     count = int(page.split("Findings · ", 1)[1][0])
     overview = _saved_app("overview").run()
     assert not overview.exception, overview.exception

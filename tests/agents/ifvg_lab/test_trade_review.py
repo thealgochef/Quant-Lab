@@ -107,6 +107,42 @@ def test_recorded_lines_match_the_mock_wording():
     ]
 
 
+def test_saved_mffu_trade_audit_shows_price_path_r_zone_and_account_equity_separately():
+    row = {
+        **ROW, "gross_r": 1.51, "net_r": 1.4712,
+        "price_excursion_status": "available",
+        "price_excursion_fidelity": "includes_minute_adverse_first",
+        "price_min_ticks": 99810, "price_min_utc": "2026-04-13T00:08:00Z",
+        "price_max_ticks": 102305, "price_max_utc": ROW["exit_utc"],
+        "pre_target_price_min_ticks": 99810,
+        "pre_target_price_min_utc": "2026-04-13T00:08:00Z",
+        "pre_target_price_max_ticks": 99969,
+        "pre_target_price_max_utc": "2026-04-13T00:10:27Z",
+        "post_target_price_min_ticks": 99884,
+        "post_target_price_min_utc": "2026-04-13T00:10:27Z",
+        "post_target_price_max_ticks": 102305,
+        "post_target_price_max_utc": ROW["exit_utc"],
+        "favorable_excursion_ticks": 2421, "adverse_excursion_ticks": 74,
+        "htf_zone_id": "NQ-gap-123", "min_equity_usd": 1760.00,
+        "max_equity_usd": 8086.10,
+    }
+    view = rp.TradeView.from_row(row)
+    text = _text(rp.recorded_lines(view, instrument="micro"))
+    assert "Original-stop R | Gross +1.5100R · net +1.4712R" in text
+    assert "Held price path | Low 24,952.50 at 7:08 PM; high 25,576.25" in text
+    assert "modeled minute candles; those event times are approximate" in text
+    assert "Before first target |" in text and "After first target |" in text
+    assert "HTF gap ID | NQ-gap-123" in text
+    assert "Account equity range | Low $1,760.00; high $8,086.10" in text
+    early = _text(rp.recorded_lines(view, moment=view.entry_utc))
+    assert "Original-stop R" not in early and "Held price path" not in early
+    old = rp.TradeView.from_row({**row, "price_excursion_status":
+                                  "unavailable_legacy_reuse", "htf_zone_id": None})
+    unavailable = _text(rp.recorded_lines(old))
+    assert "legacy reused record; no historical price replay was made" in unavailable
+    assert "HTF gap ID | Unknown in this saved trade" in unavailable
+
+
 def test_point_in_time_hides_the_exit_result_and_balance():
     view = rp.TradeView.from_row(ROW)
     moment = rp.default_moment(view)

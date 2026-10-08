@@ -1,0 +1,3 @@
+#!/bin/sh
+# Run from the worktree root, as Git specifies for non-bare pre-commit hooks.
+exec python scripts/check_tracked_artifacts.py --staged

@@ -1,0 +1,19 @@
+Read docs/ifsm-b8db-reporting-followup-v01/TASK.md, ACCEPTANCE.md,
+RETURN_REQUIREMENTS.md, REFERENCE_BINDINGS.json, and the linked review evidence.
+
+Proceed with the isolated reporting follow-up for B8-01 and B8-02 only.
+Reconcile current progress first. Fix checkpoint-specific gamma provenance
+and finish the shared standard-export/CSV/chart policy labels. Reproduce the
+reported cases, test the actual changed paths, and verify the normal dashboard.
+
+Preserve the corrected b8db and original 7a8c financial records, approvals,
+executed source identities, and all delivered archives. Do not rerun financial
+histories, change Core or trading rules, start ML, expand dates, create a
+special viewer, or commit/push.
+
+Publish a new reporting/export revision against the same b8db economic result.
+Return both compact review ZIPs specified in RETURN_REQUIREMENTS.md, with
+focused captured tests, before/after evidence, all-64 financial preservation,
+checkpoint-provenance reconciliation, final source bindings, and extracted
+archive checks. Continue through verification and publication; do not stop at
+a diagnosis or a code-only response.

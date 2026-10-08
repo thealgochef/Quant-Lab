@@ -28,6 +28,19 @@ from alpha_lab.agents.data_infra.ifvg.study_drafts import new_draft, save_draft 
 TPT, MFF = "takeprofittrader", "myfundedfutures"
 
 
+def test_full_range_plan_names_partial_and_whole_position_families():
+    plan = SimpleNamespace(
+        plan_schema="ifsm_correct_config_full_range_plan_v1",
+        configurations=tuple(SimpleNamespace(exit_policy=(
+            "scale_out_half_breakeven_hold_to_close_v1" if index < 2 else "fixed_target_v1"))
+            for index in range(6)),
+    )
+    text = lib.plan_tested_line(plan)
+    assert "6 configurations" in text
+    assert "2 half-exit and 4 whole-position exits" in text
+    assert "ten micros" in text and "one mini" in text
+
+
 def _summary(configuration, firm_key, firm, net, rank, status="Completed"):
     return {"configuration": configuration, "firm_key": firm_key, "firm": firm,
             "status": status, "net_cash_earned_cents": net, "rank_within_firm": rank,

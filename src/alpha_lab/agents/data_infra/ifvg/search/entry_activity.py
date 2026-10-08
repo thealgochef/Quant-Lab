@@ -60,7 +60,10 @@ def entry_activity(
         # Reject naive values before pandas can silently assume UTC.
         if any(pd.Timestamp(value).tzinfo is None for value in frame[column].dropna()):
             raise ValueError(f"{column} must be timezone aware")
-        frame[column] = pd.to_datetime(frame[column], utc=True)
+        # Saved workers can emit ISO-8601 timestamps at either whole-second or
+        # fractional-second precision. Parse the declared wire format explicitly
+        # so a mixed but valid column does not fail on its first whole-second row.
+        frame[column] = pd.to_datetime(frame[column], utc=True, format="ISO8601")
     if frame.entry_ts_utc.isna().any() or (frame.entry_ts_utc > cutoff).any():
         raise ValueError("missing entry or entry beyond cutoff")
     if (frame.resolution_ts_utc < frame.entry_ts_utc).any():

@@ -218,6 +218,9 @@ def plan_tested_line(plan: Any) -> str | None:
 
     if plan is None:
         return None
+    if getattr(plan, "plan_schema", None) == "ifsm_mffu_context_64_batch_plan_v1":
+        return ("64 configurations · MyFundedFutures · 48 fully crossed and 16 targeted "
+                "policies · six or ten micros")
     variants = getattr(plan, "variants", None)
     if variants is not None:  # version-2 variation plan
         base = getattr(plan, "base_configuration", None)
@@ -230,6 +233,12 @@ def plan_tested_line(plan: Any) -> str | None:
     if configurations is None:
         return None
     parts = [fmt.count(len(configurations), "configuration")]
+    if getattr(plan, "plan_schema", None) == "ifsm_correct_config_full_range_plan_v1":
+        halves = sum(getattr(row, "exit_policy", "") ==
+                     "scale_out_half_breakeven_hold_to_close_v1" for row in configurations)
+        parts.append(f"{halves} half-exit and {len(configurations) - halves} whole-position exits")
+        parts.append("ten micros for half exits; one mini for whole-position exits")
+        return " · ".join(parts)
     quantity, instrument = getattr(plan, "quantity", None), getattr(plan, "instrument", None)
     if quantity and instrument:
         parts.append(_quantity_words(int(quantity), str(instrument)))
@@ -423,6 +432,11 @@ def study_row(study: Any, app: str, *, current: str, plan: Any = None,
     base = {"key": str(study.key), "app": app, "kind": kind, "archived": bool(study.archived),
             "updated": str(study.updated or ""), "study": study,
             "status": str(study.status)}
+    if kind == "ml_phase":
+        return LibraryRow(**base, tab="model", name=study.name, tested=study.question,
+            dates=readable_dates(study.dates), status_date=status_date,
+            kind_label="Development return regression", action=OPEN_RESULTS,
+            route="ml_phase", details_route="ml_phase").with_search_text()
     if kind in _FUNDED_KINDS:
         earlier = kind == "funded"
         result_id = state.get("result_id")
@@ -441,6 +455,8 @@ def study_row(study: Any, app: str, *, current: str, plan: Any = None,
             action=OPEN_RESULTS, route=route, details_route=route,
             result_id=str(result_id) if result_id else None,
             plan_id=str(state.get("plan_id") or study.key),
+            note=str(state.get("qualification") or ""),
+            note_tone="orange" if state.get("qualification") else "",
             leaders=tuple(leaders), leaders_problem=leaders_problem,
             elsewhere="" if route else other_app_note(app)).with_search_text()
     if kind == "draft":

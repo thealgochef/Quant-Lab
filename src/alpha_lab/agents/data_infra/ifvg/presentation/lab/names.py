@@ -84,19 +84,31 @@ def _daily_close(value: str) -> str:
     return f"flat by {found.group(1)}" if found else "no daily close"
 
 
+def _saved_parents(timeframes: Iterable[str]) -> str:
+    labels = tuple(timeframes)
+    if labels and all(label.endswith("m") for label in labels):
+        return ", ".join(label[:-1] for label in labels) + "-minute parents"
+    return ", ".join(labels) + " parent charts" if labels else "no parent charts"
+
+
 def configuration_name(settings: Iterable[tuple[str, str]],
-                       fallback: str = "Unnamed configuration") -> ConfigurationName:
+                       fallback: str = "Unnamed configuration", *,
+                       parent_timeframes: Iterable[str] | None = None) -> ConfigurationName:
     """Two readable lines and a summary from the saved (setting, value) pairs."""
 
     values = {name: value for name, value in settings}
     if not values:
+        if parent_timeframes is not None:
+            parents = _saved_parents(parent_timeframes)
+            return ConfigurationName(fallback, parents, f"{fallback} · {parents}")
         return ConfigurationName(fallback, "", fallback)
     target = _target(values.get("Profit target", ""))
     hours = _entry_hours(values.get("Entry hours", ""))
     direction = values.get("Direction", "")
     exit_rule = _exit(values.get("Exit rule", ""), target)
     gaps = _gaps(values.get("Higher-timeframe gap charts", ""))
-    parents = _parents(values.get("Supporting (parent) charts", ""))
+    parents = (_parents(values.get("Supporting (parent) charts", ""))
+               if parent_timeframes is None else _saved_parents(parent_timeframes))
     line1 = " · ".join(p for p in (hours, direction, exit_rule) if p)
     line2 = " · ".join(p for p in (target, gaps, parents) if p)
     parts = [f"{target} target" if target else "", gaps, parents]
@@ -126,7 +138,8 @@ _EXTRA = (
 )
 
 
-def study_names(settings_by_configuration: dict[str, Iterable[tuple[str, str]]]
+def study_names(settings_by_configuration: dict[str, Iterable[tuple[str, str]]], *,
+                parent_timeframes_by_configuration: dict[str, Iterable[str]] | None = None,
                 ) -> dict[str, ConfigurationName]:
     """Readable names for every configuration of one study, never two alike.
 
@@ -136,7 +149,9 @@ def study_names(settings_by_configuration: dict[str, Iterable[tuple[str, str]]]
     """
 
     settings = {key: dict(value) for key, value in settings_by_configuration.items()}
-    names = {key: configuration_name(values.items(), key) for key, values in settings.items()}
+    parents = parent_timeframes_by_configuration or {}
+    names = {key: configuration_name(values.items(), key, parent_timeframes=parents.get(key))
+             for key, values in settings.items()}
     varying = [(setting, words) for setting, words in _EXTRA
                if len({values.get(setting) for values in settings.values()}) > 1]
     if varying:

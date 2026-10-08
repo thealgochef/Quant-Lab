@@ -1,0 +1,111 @@
+{
+  "schema": "ifsm_ml_input_manifest_v1",
+  "files": [
+    {
+      "path": "inputs/MenthorQ_Research_Data_v02.zip",
+      "bytes": 9666502,
+      "sha256": "66e2e8a73a029e08808b735a8d99957993408b39046053b7ea5e522a67c4a740"
+    },
+    {
+      "path": "inputs/MenthorQ_Research_Data_v02_source.zip",
+      "bytes": 32429,
+      "sha256": "72122adc652c72757fc89f7ac5e5d545f35d6f03c2ab3666d5bf4a888e8ed4b9"
+    },
+    {
+      "path": "references/B8DB_IDENTITIES.json",
+      "bytes": 493,
+      "sha256": "8bb860e0a12aebc68d4cf5fae14a6bbfb4c0f69883f4a04df6c71931177f02bc"
+    },
+    {
+      "path": "references/B8DB_PLAN_ENVELOPE.json",
+      "bytes": 349527,
+      "sha256": "b66995102c23968455ce4ff6c2fe1e0de636c060cd3f4a1fe2894ae2d7a8b1da"
+    },
+    {
+      "path": "references/B8DB_RUNTIME_SOURCE_MAP.json",
+      "bytes": 22621,
+      "sha256": "89e8865d007cda8931ca3e5dbbf7892ea86add3eb3ea1854135851b3cdd5b6ac"
+    },
+    {
+      "path": "references/HISTORICAL_IFVG_CONTEXT_EXPERIMENT_V1_CONTRACT.md",
+      "bytes": 8128,
+      "sha256": "101155fe0dca7fba0bacb090c1ef70d3bde1955c3f827c0edfc93a3b7ae62674"
+    },
+    {
+      "path": "references/HISTORICAL_OWNER_PLANNING_DECISIONS_2026-08-28.md",
+      "bytes": 10696,
+      "sha256": "a79ae41452705604a5929cab699512c55e60fd2e925349300719bccd4fabfe5b"
+    },
+    {
+      "path": "references/IFSM_B8_Reporting_Followup_Independent_Review_v01.zip",
+      "bytes": 21367,
+      "sha256": "4f53e3a8a613ee98b3cc146bceed30a87fa1ebfbaa5c5d5ecd6a7706e6b10caa"
+    },
+    {
+      "path": "references/IFSM_b8db_Independent_Review_v01.zip",
+      "bytes": 85704,
+      "sha256": "8cf6de22bf61d7c4de7c5fd9ed4fe9eb67c81f2b7f2bc1785a272ea340001cc1"
+    },
+    {
+      "path": "references/INHERITED_DATE_SCOPE.json",
+      "bytes": 10797,
+      "sha256": "8fda6e0145b80df037441bea81c8d987bf3771b78d978a377f6d7af82e161d4f"
+    },
+    {
+      "path": "references/MCB025_EFFECTIVE_SECTION.json",
+      "bytes": 2861,
+      "sha256": "d925e92181d706a9ccf1e02620e150e3268c8b8d2bb8467232aae5e80588c422"
+    },
+    {
+      "path": "references/MCB025_SAVED_VARIANT.json",
+      "bytes": 4514,
+      "sha256": "8f868c8ac379348be1edc17a20af5d131141a2a840365ff23f5e7117f60fa745"
+    },
+    {
+      "path": "references/MCB062_EFFECTIVE_SECTION.json",
+      "bytes": 2872,
+      "sha256": "c352b030daa73c10c03e96b9a2f471562d8f6685f56a9adba2a13a099e72156a"
+    },
+    {
+      "path": "references/MCB062_SAVED_VARIANT.json",
+      "bytes": 4539,
+      "sha256": "13b75153aec96319377c50caa429dc801f54b012b4f31c2d7a333aa2ed68772a"
+    },
+    {
+      "path": "references/REPORTING_V6_FIX_REPORT.md",
+      "bytes": 4972,
+      "sha256": "cf06ba8ca59322629056269b4eee34dc06a4de10bbbac34ee87d6d30246ccc43"
+    },
+    {
+      "path": "references/REPORTING_V6_MANIFEST.json",
+      "bytes": 10944,
+      "sha256": "624e57307a4c1fd5efe1b3743930939c306f64cadfb40ea17f8bd8732c5c7c89"
+    },
+    {
+      "path": "references/REPORTING_V6_PUBLICATION.json",
+      "bytes": 5054,
+      "sha256": "81dece60cfc4b40d9c09eef2174c095db9ff67735823cfa9f4550b80483d50a8"
+    }
+  ],
+  "origin_archives": [
+    {
+      "name": "IFSM_MFFU_Repair_Source_Tests_b8db8427cb226061_v01.zip",
+      "sha256": "6dc31e6c446a52a6df52f2754fa9bd3ecd2d8d996a59049cbb2efde35953fe7d",
+      "bytes": 2117655,
+      "bundled_in_full": false
+    },
+    {
+      "name": "IFSM_MFFU_Repair_Result_UI_b8db8427cb226061_v01.zip",
+      "sha256": "be86ceb19e752f1a95cc5c7363580bea6802cd90d7d53a04a5717f6611898efc",
+      "bytes": 21567592,
+      "bundled_in_full": false
+    },
+    {
+      "name": "IFSM_b8db_Reporting_Followup_Result_UI_v01.zip",
+      "sha256": "f239e93ddb85254aa81b7e815dd5e9d0561eb05fe542753a4b125b2bb6b44cc1",
+      "bytes": 665339,
+      "bundled_in_full": false
+    }
+  ],
+  "notes": "Selected source members are copied unchanged; selected variant projection JSON is authored serialization with its original effective JSON string intact. Nested input/review ZIPs are unchanged. See INDEX.md and REFERENCE_BINDINGS.json."
+}

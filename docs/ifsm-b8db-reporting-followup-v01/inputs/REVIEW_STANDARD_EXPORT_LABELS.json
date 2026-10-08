@@ -1,0 +1,34 @@
+{
+  "micro_product_labels": 64,
+  "dynamic_fixed_label_rows": [
+    "MCB057",
+    "MCB058",
+    "MCB059",
+    "MCB060",
+    "MCB061",
+    "MCB062"
+  ],
+  "example": {
+    "configuration": "MCB062",
+    "configuration_label": "MCB062",
+    "status": "Completed",
+    "reason": "",
+    "axes": "{\"base_reference\": \"S1-T1-H14-P1-L-SO\", \"daily_cap\": \"U\", \"entry_context\": \"F0\", \"exit\": \"XP\", \"family\": \"geometry\", \"firm\": \"myfundedfutures\", \"geometry\": \"G10\", \"matched_fixed_partial_reference\": \"MCB025\", \"overhead\": \"O0\", \"planned_state\": \"not_implemented_or_run_by_this_handoff\", \"purpose\": \"Only opposing distance scales with 5%, 7.5%, or 10% of eligible implied move at parent lock\", \"same_cap_fixed_partial_reference\": \"MCB025\", \"schedule\": \"S1\", \"sizing\": \"Q10\", \"variant_id\": \"MCB062\"}",
+    "Entry hours": "All open-market hours",
+    "Direction": "Long only",
+    "Higher-timeframe gap charts": "one-hour and four-hour",
+    "Supporting (parent) charts": "one-minute, three-minute, five-minute, ten-minute, fifteen-minute and thirty-minute",
+    "Largest distance from the parent gap to the opposing gap": "80 ticks (20 points)",
+    "Smallest opposing gap": "1 tick (0.25 points)",
+    "Profit target": "equal to the initial risk (1 to 1)",
+    "Stop": "Beyond the setup's swing extreme plus 1 tick",
+    "Trades per day": "one position at a time, no daily limit",
+    "Daily close": "All positions closed by 3:55 PM Chicago on every trading day (earlier on shortened days). A trading day runs from the 5:00 PM Chicago reopen, so a position may stay open past midnight inside one trading day; none is held through the daily close, a closed market or a weekend",
+    "Exit rule": "Half exits at the target (1R); the stop of the rest moves to the entry price and it is held to that stop or the daily close",
+    "Position size": "10 x Micro E-mini Nasdaq-100 (MNQ) per trade, $0.514 per contract per fill",
+    "Traded product": "E-mini Nasdaq-100 (NQ), 10 contracts",
+    "Signal source": "E-mini Nasdaq-100 (NQ) one-minute candles (the strategy study's own data)",
+    "Open-position marks and loss-limit checks": "E-mini Nasdaq-100 (NQ) recorded exchange trades",
+    "Execution prices": "E-mini Nasdaq-100 (NQ) recorded exchange trades used as a proxy for micro fills; no micro trade data was used (disclosed limitation)"
+  }
+}

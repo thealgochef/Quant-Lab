@@ -44,10 +44,15 @@ def _open(*, balance=0, floor=-200_000, stop=BASE - 100, target=BASE + 100):
         cost_per_contract_mills=MILLS, scale_out=True)
 
 
-def test_exact_micro_costs():
+def test_per_fill_micro_costs_round_after_quantity_with_half_up():
     assert fill_cost_cents(10, MILLS) == 514 and fill_cost_cents(5, MILLS) == 257
-    with pytest.raises(ValueError):
-        fill_cost_cents(3, MILLS)  # $1.542 is not a whole number of cents
+    assert fill_cost_cents(6, MILLS) == 308
+    assert fill_cost_cents(3, MILLS) == 154
+    assert fill_cost_cents(6, MILLS) + 2 * fill_cost_cents(3, MILLS) == 616
+    assert fill_cost_cents(1, 5) == 1  # exact half-cent rounds upward
+    assert fill_cost_cents(3, 5) == 2  # quantity multiplication precedes rounding
+    with pytest.raises(ValueError, match="nonnegative"):
+        fill_cost_cents(-1, MILLS)
 
 
 def test_half_at_target_then_breakeven_on_a_later_minute():

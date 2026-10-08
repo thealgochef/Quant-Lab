@@ -1,0 +1,113 @@
+{
+  "schema": "ifsm_ml_synthetic_contract_examples_v1",
+  "kind": "synthetic_arithmetic_and_timing_only",
+  "fee_cases": [
+    {
+      "quantity": 10,
+      "expected_posted_usd": "5.14",
+      "expected_exact_fee_usd": "5.140"
+    },
+    {
+      "quantity": 5,
+      "expected_posted_usd": "2.57",
+      "expected_exact_fee_usd": "2.570"
+    },
+    {
+      "quantity": 6,
+      "expected_posted_usd": "3.08",
+      "expected_exact_fee_usd": "3.084"
+    },
+    {
+      "quantity": 3,
+      "expected_posted_usd": "1.54",
+      "expected_exact_fee_usd": "1.542"
+    }
+  ],
+  "entry_case": {
+    "entry": "100",
+    "stop": "90",
+    "quantity": 10,
+    "micro_point_value": "2",
+    "first_exit_quantity": 5,
+    "first_exit_price": "110",
+    "final_exit_quantity": 5,
+    "final_exit_price": "130",
+    "expected_initial_risk_usd": "200",
+    "expected_gross_usd": "400",
+    "expected_fees_usd": "10.28",
+    "expected_net_usd": "389.72",
+    "expected_net_r": "1.9486"
+  },
+  "continuation_case": {
+    "entry": "100",
+    "stop": "90",
+    "original_quantity": 10,
+    "remaining_quantity": 5,
+    "micro_point_value": "2",
+    "first_target_trigger": "110",
+    "close_on_strictly_next_print": "109.75",
+    "hold_terminal_prices": [
+      "130",
+      "100"
+    ],
+    "expected_delta_usd": [
+      "202.50",
+      "-97.50"
+    ],
+    "expected_delta_r": [
+      "1.0125",
+      "-0.4875"
+    ]
+  },
+  "action_cases": [
+    {
+      "value": "-0.000000001",
+      "action": "change"
+    },
+    {
+      "value": "0",
+      "action": "baseline"
+    },
+    {
+      "value": "0.000000001",
+      "action": "baseline"
+    },
+    {
+      "value": null,
+      "action": "baseline_unavailable"
+    }
+  ],
+  "precision_case": {
+    "event_ns": 1750068615558271393,
+    "receipt_us": 1750068615558271,
+    "representation_remainder_ns": 393,
+    "event_time_must_not_change": true
+  },
+  "event_order_case": [
+    {
+      "event_ordinal": 100,
+      "ns": 1000000,
+      "price": "110",
+      "role": "first_target_and_decision"
+    },
+    {
+      "event_ordinal": 101,
+      "ns": 1000000,
+      "price": "109.75",
+      "role": "first_later_print_same_ns"
+    },
+    {
+      "event_ordinal": 102,
+      "ns": 1000001,
+      "price": "109.50",
+      "role": "later_print"
+    }
+  ],
+  "expected_close_event_ordinal": 101,
+  "no_model_account_start": {
+    "initial_purchase_cost_usd": "125",
+    "cash_before_any_receipt_usd": "-125",
+    "earned_account_balance_usd": "0",
+    "number_of_accounts": 1
+  }
+}

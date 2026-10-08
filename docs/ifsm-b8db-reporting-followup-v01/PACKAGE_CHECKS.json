@@ -1,0 +1,95 @@
+{
+  "scope": "Handoff-package checks only; not application implementation, application tests, financial replay, or re-review of full source archives.",
+  "status": "passed",
+  "readable_text_files_before_check_manifest": 15,
+  "json_files_parsed_before_check_manifest": [
+    "CHECKPOINT_CASES.json",
+    "REFERENCE_BINDINGS.json",
+    "inputs/REVIEW_FINDINGS.json",
+    "inputs/REVIEW_CHECKPOINT_PROBE.json",
+    "inputs/REVIEW_STANDARD_EXPORT_LABELS.json"
+  ],
+  "relative_links_checked": [
+    {
+      "from": "TASK.md",
+      "to": "ACCEPTANCE.md"
+    },
+    {
+      "from": "TASK.md",
+      "to": "RETURN_REQUIREMENTS.md"
+    },
+    {
+      "from": "TASK.md",
+      "to": "inputs/REVIEW_CHECKPOINT_PROBE.json"
+    },
+    {
+      "from": "TASK.md",
+      "to": "inputs/REVIEW_STANDARD_EXPORT_LABELS.json"
+    },
+    {
+      "from": "TASK.md",
+      "to": "TASKS.md"
+    },
+    {
+      "from": "TASK.md",
+      "to": "RETURN_REQUIREMENTS.md"
+    },
+    {
+      "from": "START_HERE.md",
+      "to": "AGENT_START.txt"
+    },
+    {
+      "from": "START_HERE.md",
+      "to": "TASK.md"
+    },
+    {
+      "from": "START_HERE.md",
+      "to": "ACCEPTANCE.md"
+    },
+    {
+      "from": "START_HERE.md",
+      "to": "RETURN_REQUIREMENTS.md"
+    },
+    {
+      "from": "START_HERE.md",
+      "to": "REFERENCE_BINDINGS.json"
+    },
+    {
+      "from": "START_HERE.md",
+      "to": "inputs/REVIEW_FEEDBACK.md"
+    },
+    {
+      "from": "START_HERE.md",
+      "to": "inputs/REVIEW_SOURCE_EXCERPTS.md"
+    },
+    {
+      "from": "START_HERE.md",
+      "to": "inputs/REVIEW_CHECKPOINT_PROBE.json"
+    },
+    {
+      "from": "START_HERE.md",
+      "to": "CHECKPOINT_CASES.json"
+    },
+    {
+      "from": "START_HERE.md",
+      "to": "TASKS.md"
+    }
+  ],
+  "byte_identical_review_evidence_files": 7,
+  "referenced_input_archive_hashes_verified": 2,
+  "financial_reference_rows": 64,
+  "timestamp_case_exact_ns_checked": 1750068615558271393,
+  "representation_difference_ns": 393,
+  "leader_reference_net_cents": 4810216,
+  "scope_guards_checked": {
+    "no_financial_replay": true,
+    "no_core_changes": true,
+    "no_ml": true,
+    "no_root_instructions_replaced": true,
+    "no_launcher_scripts": true
+  },
+  "application_changes_performed": false,
+  "application_tests_run": false,
+  "full_financial_review_repeated": false,
+  "check_note": "Archive extraction/integrity results are in the external handoff delivery receipt after sealing."
+}

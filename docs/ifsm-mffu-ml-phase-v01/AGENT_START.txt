@@ -1,0 +1,21 @@
+Read docs/ifsm-mffu-ml-phase-v01/TASK.md and its linked scope, contracts,
+reference index, validation and delivery requirements.
+
+Proceed with the integrated development-only MyFundedFutures ML phase:
+MCB062 and MCB025, entry-return and continuation-value regression,
+F0/F1/F2 features, Ridge and constrained CatBoost — all 24 declared cells,
+plus the predictive controls and matched no-ML funded controls.
+
+Resolve current completed work and source bindings first. Both unchanged
+MenthorQ v02 ZIPs and exact reference/date/fee evidence are included.
+Use the supported exact-plan approval/freeze path; do not reuse an old
+approval or ask me to reconstruct existing data/code.
+
+Build and verify the shared datasets, fit the chronological benchmark,
+execute every valid predeclared policy with honest fallback statuses,
+and publish the predictive and financial comparison through ordinary
+Quant-Lab My studies. Complete BOTH required review ZIPs and delivery receipt.
+
+Preserve previous results, the production Core pin and old ML protocols.
+No live trading, new model/threshold search, date expansion, TPT work,
+commit or push. Do not stop at a plan, dataset audit or trained model files.

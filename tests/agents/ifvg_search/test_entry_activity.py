@@ -75,6 +75,28 @@ def test_explicit_calendar_ties_censoring_and_position_time():
     assert str(result["gaps"].cohort_start_utc.iloc[0]) == "2026-02-10 23:00:00+00:00"
 
 
+def test_mixed_iso8601_timestamp_precision_is_parsed():
+    trades = pd.DataFrame(
+        [
+            {
+                "trade_id": "a",
+                "entry_ts_utc": "2025-06-16T20:55:00.000000Z",
+                "resolution_ts_utc": "2025-06-16T21:00:00.000000Z",
+            },
+            {
+                "trade_id": "b",
+                "entry_ts_utc": "2025-06-16T21:05:00Z",
+                "resolution_ts_utc": "2025-06-16T21:10:00Z",
+            },
+        ]
+    )
+    result = entry_activity(
+        trades, ["2025-06-16"], cutoff_utc="2025-06-16T21:30:00Z"
+    )
+    assert result["daily"].actual_entries.tolist() == [2]
+    assert result["elapsed"].flat_seconds.tolist() == [300.0]
+
+
 def test_empty_trajectory_retains_every_date():
     trades = pd.DataFrame(columns=["trade_id", "entry_ts_utc", "resolution_ts_utc"])
     result = entry_activity(trades, ["2026-02-11", "2026-02-12"], cutoff_utc="2026-02-12T21:00:00Z")

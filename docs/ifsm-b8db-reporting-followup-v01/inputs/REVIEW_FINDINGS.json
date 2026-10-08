@@ -1,0 +1,24 @@
+[
+  {
+    "id": "B8-01",
+    "severity": "medium",
+    "kind": "reporting provenance, not demonstrated financial defect",
+    "status": "reproduced",
+    "finding": "First-target context provenance is inconsistent and depends on timestamp precision.",
+    "source": "source/quant_lab/src/alpha_lab/agents/data_infra/ifvg/presentation/lab/mffu_gamma.py:339-358; scripts/ifvg_lab_mffu_views.py:898-905",
+    "evidence": "1,908 funded trades retain an actual target_decision with exact decision_ns. Every corresponding checkpoint CSV row is labeled reporting_annotation_at_actual_funded_fill. Receipt datetimes are 3\u2013999 ns less precise than actual fills. Exact supplied reporting function probe with a matching saved receipt reproduces annotation for a 393ns difference, and executed_saved_decision_receipt for an otherwise identical microsecond-exact synthetic timestamp. The card renderer prints the entry context_role for all checkpoints; original screenshot14 visibly combines a reporting-annotation branch with executed-saved-context origin.",
+    "impact": "The selected gamma amounts/dates and trade/cash results reconciled. The unresolved problem is whether a checkpoint is described as recorded decision evidence versus subsequently added analysis. Do not train an ML feature pipeline from that provenance flag without correcting or bypassing it using canonical saved decisions.",
+    "remedy": "Link each checkpoint to its exact decision/fill identity; retain nanosecond observation time and receipt context time separately; validate causal ordering/context without requiring two timestamp encodings to be identical. Choose provenance per checkpoint in cards, basis-specific exports and coverage. No time rounding backward, fabricated receipt or financial replay."
+  },
+  {
+    "id": "B8-02",
+    "severity": "medium",
+    "kind": "unfinished standard-export repair",
+    "status": "confirmed in delivered bytes",
+    "finding": "The current corrected standard export still contains old product/geometry/exit labels although integrated UI labels are improved.",
+    "source": "standard/funded_comparison/funded_comparison_b8db8427cb226061_export_v1/configurations.csv and charts/net_cash_by_configuration.png",
+    "evidence": "All 64 Traded product fields still call micro positions E-mini Nasdaq-100 (NQ) with the micro quantity. All six dynamic-distance rows still display 80 ticks (20 points) as the largest distance. MCB062 is one of those rows. The newly generated corrected-money top20 chart still gives nearly identical labels to distinct geometry variants and calls the conditional exit generic whole exit.",
+    "impact": "Actual tick values, positions and fees reconcile as micros; this is not a 10x exposure error. But the exported description of the winning strategy remains wrong and the repair spec explicitly covered exports.",
+    "remedy": "Reuse the central current policy-label model in the standard exporter and plot labels; state micro exposure separately from the NQ price proxy and dynamic formula separately from fallback. Publish a new reporting/export version from unchanged economic records. No replay or overwrite of originals."
+  }
+]

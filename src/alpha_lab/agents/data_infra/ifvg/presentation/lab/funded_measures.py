@@ -262,9 +262,16 @@ def funded_row(study: FundedStudy, configuration: str, firm_key: str) -> FundedR
     summary = study.summary(configuration, firm_key) or {}
     name = firm_name(study, firm_key)
     if summary.get("status") != COMPLETED:
+        failure = next((row for row in (study.result.get("full_range_batch") or {}).get(
+            "failed_configurations", [])
+            if (row.get("configuration") or row.get("batch_id")) == configuration), {})
+        disposition = next((row for row in (study.result.get("mffu_batch") or {}).get(
+            "dispositions", []) if row.get("variant_id") == configuration), {})
         return FundedRow(configuration=configuration, firm_key=firm_key, firm=name,
                          completed=False, rank=None,
-                         reason=str(summary.get("reason") or "No result was saved."))
+                         reason=str(disposition.get("reason") or summary.get("reason")
+                                    or failure.get("reason")
+                                    or "No result was saved."))
     costs = int(summary["account_costs_cents"])
     net = int(summary["net_cash_earned_cents"])
     measures = study.strategy_measures(configuration) or {}
@@ -296,8 +303,11 @@ def funded_row(study: FundedStudy, configuration: str, firm_key: str) -> FundedR
 def ranking(study: FundedStudy, firm_key: str) -> list[FundedRow]:
     """Every configuration at one firm: completed by saved rank, then not completed."""
 
+    from alpha_lab.agents.data_infra.ifvg.presentation.lab.mffu_matrix import is_mffu_plan
+
     summaries = (study.result.get("summaries_cents") or {}).values()
-    keys = [str(s.get("configuration")) for s in summaries if s.get("firm_key") == firm_key]
+    keys = ([*study.configurations] if is_mffu_plan(study.plan) else
+            [str(s.get("configuration")) for s in summaries if s.get("firm_key") == firm_key])
     rows = [funded_row(study, key, firm_key) for key in dict.fromkeys(keys)]
     rows.sort(key=lambda r: (not r.completed, r.rank if r.rank is not None else 10 ** 9,
                              r.configuration))
@@ -510,6 +520,7 @@ class HeldLeg:
     first_cents: int  # the half closed at the target (0 without a half exit)
     rest_cents: int  # the contracts held to the deadline
     recorded_net_cents: int
+    had_partial: bool = False
 
 
 @dataclass(frozen=True)
@@ -531,18 +542,34 @@ class HeldLegs:
     half_exit: bool
     per_trade: tuple[HeldLeg, ...] = ()
 
+    @property
+    def partial_count(self) -> int:
+        return sum(leg.had_partial for leg in self.per_trade)
+
+    @property
+    def partial_remainders_cents(self) -> int:
+        return sum(leg.rest_cents for leg in self.per_trade if leg.had_partial)
+
+    @property
+    def whole_deadline_count(self) -> int:
+        return sum(not leg.had_partial for leg in self.per_trade)
+
+    @property
+    def whole_deadline_cents(self) -> int:
+        return sum(leg.recorded_net_cents for leg in self.per_trade if not leg.had_partial)
+
 
 def split_entry_cost(quantity: int, half: int, mills: int) -> tuple[int, int]:
     """The entry fill's cost (cents) allocated to (the half, the rest) by quantity.
 
-    Exact tenths of a cent: the half gets ``floor(half × mills / 10)`` cents and the
-    rest gets the entry cost minus that, so the two always sum to the entry cost
-    (``quantity × mills / 10``, whole cents for any recorded fill).
+    Allocate the posted per-fill rounded total proportionally in integer cents;
+    the final leg receives the residual. No extra fee is charged.
     """
 
-    entry = (int(quantity) * int(mills)) // 10
-    to_half = (int(half) * int(mills)) // 10
-    return to_half, entry - to_half
+    from alpha_lab.propsim.funded.position_walk import fill_cost_cents
+    from alpha_lab.propsim.funded.reporting_legs import allocate_entry_fee
+
+    return allocate_entry_fee(fill_cost_cents(quantity, mills), quantity, half)
 
 
 def held_legs_from_rows(rows: Sequence[dict[str, Any]], *, tick_value_cents: int | None,
@@ -555,36 +582,28 @@ def held_legs_from_rows(rows: Sequence[dict[str, Any]], *, tick_value_cents: int
     the entry cost allocated to the rest − the final fill cost. Without a half
     fill: first = 0 and rest = the whole trade. Missing sizing, a fill that is not
     a whole number of cents or any difference from the recorded net or costs
-    leaves the legs unreconciled.
+    leaves the legs unreconciled. Fractional-cent unit products are allowed by
+    the bound per-fill half-up convention. Whole deadline positions remain a
+    separate population through ``whole_deadline_*`` / ``partial_*``.
     """
+
+    from alpha_lab.propsim.funded.reporting_legs import money_cents, trade_legs
 
     legs: list[HeldLeg] = []
     reconciled = tick_value_cents is not None and mills is not None
     for row in rows:
-        net = int(round(float(row.get("net_pnl_usd") or 0) * 100))
+        net = money_cents(row, "net_pnl")
+        scaled = int(row.get("scale_out_quantity") or 0) > 0
         if tick_value_cents is None or mills is None:
-            legs.append(HeldLeg(row.get("seq"), 0, net, net))
+            legs.append(HeldLeg(row.get("seq"), 0, net, net, scaled))
             continue
-        sign = 1 if str(row.get("direction")) == "long" else -1
-        quantity = int(row.get("quantity") or 0)
-        entry = int(row["entry_ticks"])
-        half = int(row.get("scale_out_quantity") or 0)
-        scaled = half > 0 and row.get("scale_out_ticks") is not None
-        if not scaled:
-            half = 0
-        final = int(row.get("final_exit_quantity") or (quantity - half))
-        to_half, to_rest = split_entry_cost(quantity, half, mills)
-        whole_cents = all(q * mills % 10 == 0 for q in (quantity, half, final))
-        half_fill, final_fill = half * mills // 10, final * mills // 10
-        first = ((int(row["scale_out_ticks"]) - entry) * sign * tick_value_cents * half
-                 - to_half - half_fill) if scaled else 0
-        rest = ((int(row["exit_ticks"]) - entry) * sign * tick_value_cents * final
-                - to_rest - final_fill)
-        costs = int(round(float(row.get("costs_usd") or 0) * 100))
-        if not (whole_cents and first + rest == net
-                and to_half + to_rest + half_fill + final_fill == costs):
+        try:
+            value = trade_legs(row, tick_value_cents=tick_value_cents, mills=mills)
+            first, rest = value.first_cents, value.remaining_cents
+        except (KeyError, TypeError, ValueError):
             reconciled = False
-        legs.append(HeldLeg(row.get("seq"), first, rest, net))
+            first, rest = 0, net
+        legs.append(HeldLeg(row.get("seq"), first, rest, net, scaled))
     return HeldLegs(
         count=len(legs), first_halves_cents=sum(leg.first_cents for leg in legs),
         remainders_cents=sum(leg.rest_cents for leg in legs),
@@ -718,16 +737,19 @@ def _held_finding(*, held: HeldLegs | None, held_count: int, held_net: float,
         return None
     total = _whole(total_profit)
     if held is not None and held.half_exit and held.reconciled:
-        rest = held.remainders_cents / 100
+        rest = held.partial_remainders_cents / 100
         if rest < total_profit:
             return None  # the held halves alone don't carry the profit
         return Finding(
             "Medium", "Held halves carry the profit",
-            f"The held halves of {held.count} trades kept to the 3:55 PM deadline made "
+            f"The held halves of {held.partial_count} trades kept to the daily deadline made "
             f"{_whole(rest)}, more than the configuration's total trading profit ({total}). "
             f"Their first halves, closed at the target, made "
             f"{_whole(held.first_halves_cents / 100)} (whole trades "
-            f"{_whole(held.whole_cents / 100)}).",
+            f"{_whole((held.whole_cents - held.whole_deadline_cents) / 100)})."
+            + (f" Another {held.whole_deadline_count} whole positions closed at the deadline "
+               f"without a partial, making {_whole(held.whole_deadline_cents / 100)}."
+               if held.whole_deadline_count else ""),
             "test a capped hold on the second half.")
     if held is not None:
         held_count, held_net, half_exit = held.count, held.whole_cents / 100, held.half_exit

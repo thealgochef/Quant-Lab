@@ -1,0 +1,26 @@
+{
+  "schema": "task_package_manifest_v1",
+  "status": "Instruction package only; no financial study executed here.",
+  "files": {
+    "README.md": {
+      "bytes": 1739,
+      "sha256": "cbae47a5e29c66096fb2b89bdf19928d81ab01c997d706f6be01ca1743af1b7a"
+    },
+    "RUN_REQUEST.json": {
+      "bytes": 8765,
+      "sha256": "047c49e3bac6d62328d6d307621d58bf8e5bbf607d23ea426dcfd804650cf4cf"
+    },
+    "TASK.md": {
+      "bytes": 20048,
+      "sha256": "bb3a521bfe35a0aefcec184423514bcf6f3bdb1634b9e64ff73f85564795d3d4"
+    },
+    "date_scope.json": {
+      "bytes": 10797,
+      "sha256": "8fda6e0145b80df037441bea81c8d987bf3771b78d978a377f6d7af82e161d4f"
+    },
+    "source_references.json": {
+      "bytes": 29362,
+      "sha256": "53b41fc17d4c8a6c437227e73602063cc6b401638450a1a8532422a3a220018b"
+    }
+  }
+}

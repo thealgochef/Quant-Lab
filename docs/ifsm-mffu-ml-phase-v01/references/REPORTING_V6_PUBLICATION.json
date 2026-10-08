@@ -1,0 +1,71 @@
+{
+  "normal_route": "Quant-Lab → IFVG Lab → My studies → IFSM MFFU context batch → Corrected lifecycle",
+  "launcher": "streamlit run scripts/dashboard.py",
+  "special_environment_required": false,
+  "catalog_unchanged": true,
+  "publications": [
+    {
+      "result_id": "7a8cb062d3fc31bcf71e7015a60e4ea389988b749435609fbc15cd1beda9d052",
+      "plan_id": "9ef09a18f4f6854b68d472583956b40687772e291fd03e97dc96f52ec437bbca",
+      "approval_id": "e054d31f6c6048223a4cab8b79980cb161ff607412e194774b3cfe32ddfd0ca5",
+      "predecessor_reporting_version": "ifsm_mffu_reporting_v5",
+      "reporting_version": "ifsm_mffu_reporting_v6",
+      "report_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-context-batch-20261007\\study_store\\mffu_reporting\\7a8cb062d3fc31bcf71e7015a60e4ea389988b749435609fbc15cd1beda9d052\\ifsm_mffu_reporting_v6\\report.json",
+      "report_sha256": "efd7f892d4cde2810f42feffd17def573d1cd4d54ea901445e4b1349ea7c79d5",
+      "envelope_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-context-batch-20261007\\study_store\\mffu_reporting\\7a8cb062d3fc31bcf71e7015a60e4ea389988b749435609fbc15cd1beda9d052\\ifsm_mffu_reporting_v6\\envelope.json",
+      "envelope_sha256": "521cc29e38cf2b5a19219669fd45faadd7250239d4ce80d8f54af79e8d559f80",
+      "allowed_differences": {
+        "reporting_version": 31389,
+        "added_provenance_metadata": 247900,
+        "basis_origin_coverage": 176,
+        "checkpoint_role": 16327
+      },
+      "old_report_unchanged": true
+    },
+    {
+      "result_id": "b8db8427cb2260619d7f0483358e5d0da78d718fc395f2374b6a62a1e378c186",
+      "plan_id": "e28c3a30a07df57a7b07d5d15da450a53ff844640c604a0d8ff1c2af39bfeacd",
+      "approval_id": "a6df42d82a44c1236c8f3b90f958c1eb74ed40d94651394167c7bae98c5f3d49",
+      "predecessor_reporting_version": "ifsm_mffu_reporting_v5",
+      "reporting_version": "ifsm_mffu_reporting_v6",
+      "report_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\study_store\\mffu_reporting\\b8db8427cb2260619d7f0483358e5d0da78d718fc395f2374b6a62a1e378c186\\ifsm_mffu_reporting_v6\\report.json",
+      "report_sha256": "cdc4e2d41e8439adca39fb11b45ce5dd8395836bfe50d44ab8e375761eba7318",
+      "envelope_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab-Research-Artifacts\\ifsm-mffu-repair-integration-v01\\study_store\\mffu_reporting\\b8db8427cb2260619d7f0483358e5d0da78d718fc395f2374b6a62a1e378c186\\ifsm_mffu_reporting_v6\\envelope.json",
+      "envelope_sha256": "a113fac8b32530edbc50178aea778191d357a1dd51ced0e13482d0c4a02f0c91",
+      "allowed_differences": {
+        "reporting_version": 31454,
+        "added_provenance_metadata": 248468,
+        "basis_origin_coverage": 176,
+        "checkpoint_role": 16336
+      },
+      "old_report_unchanged": true,
+      "standard_export_path": "C:\\Users\\gonza\\Documents\\Claude-Quant-Lab\\reports\\funded_comparison\\funded_comparison_b8db8427cb226061_export_v2",
+      "standard_export_version": 2,
+      "standard_manifest_sha256": "e32f3831feb8c955c108d9de2ff1e84e1190c52d0998855abaaeca7af4a0a84a",
+      "standard_checks": {
+        "passed": true,
+        "folder": "funded_comparison_b8db8427cb226061_export_v2",
+        "payload_files_listed": 30,
+        "files_present_including_manifest": 31,
+        "payloads_verified": 30,
+        "mismatched": [],
+        "unlisted": [],
+        "manifest_sha256": "e32f3831feb8c955c108d9de2ff1e84e1190c52d0998855abaaeca7af4a0a84a",
+        "export_version": 2,
+        "verified_at_utc": "2026-10-08T05:14:28Z"
+      }
+    }
+  ],
+  "reporting_source_hashes": {
+    "alpha_lab.agents.data_infra.ifvg.presentation.lab.mffu_gamma": "15aec17cfddda1b9529d33d04f03b8accba1ce4e7dbf00d40b11348f9d1c6d8d",
+    "alpha_lab.agents.data_infra.ifvg.presentation.lab.mffu_lenses": "2fb5b271652806de6099d8a156a4218f6cba6ebf5e5e309f269a20ce9a6a21f4",
+    "alpha_lab.propsim.funded.reporting_legs": "ea7f1840266e8f4e6155a49693dc58d6f070987193dd75c9ce8ba3822b14722d",
+    "alpha_lab.propsim.funded.reporting_accounts": "018b77d90ea344a78f572a9effe10d3f77321c8972d44d49f3b12c1c49f25d19",
+    "alpha_lab.propsim.funded.position_walk": "079eb37fe6bd85298d27359ae57680c07937d0855fe8aba51d971765c29d3e31",
+    "alpha_lab.agents.data_infra.ifvg.menthorq_asof": "39c86e0cac2775c51443e57f62de5351d4222ce790fab6af453f7a0f4fbe4bf6",
+    "alpha_lab.agents.data_infra.ifvg.presentation.lab.funded_data": "3f6307eaa562881e5d1f0fe404308dd70485e1a16a4271331245d85c3f61fe0d",
+    "alpha_lab.agents.data_infra.ifvg.presentation.lab.mffu_matrix": "ef1ac504729e31e58fa4ecce8d7a26e1570c6b75fd2ddb6d46cd54a10989dad3",
+    "alpha_lab.agents.data_infra.ifvg.presentation.lab.mffu_provenance": "182fa0b231b538c68b2c3c215e3d159865088c62ed93b2fc8ae94b6a3f5fa7d4",
+    "alpha_lab.agents.data_infra.ifvg.presentation.lab.mffu_reporting": "6e6dc545b8dba66a230b6ee385ea71a549efdfce79f1048700efdc1f7479047f"
+  }
+}

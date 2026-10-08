@@ -10,6 +10,7 @@ together.
 from __future__ import annotations
 
 import importlib
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -91,10 +92,18 @@ def _open(st_module) -> tuple[dict[str, Any], FundedStudy] | None:
     try:
         study = funded_study(target["store_root"], target["result_id"])
     except Exception as error:  # verification failure or a missing record: never shown
-        show(h.alert("This saved result could not be opened.",
-                     "It failed its verification or is missing, so nothing from it is shown. "
-                     f"({type(error).__name__})"), st_module)
+        show(
+            h.alert(
+                "This saved result could not be opened.",
+                "It failed its verification or is missing, so nothing from it is shown. "
+                f"({type(error).__name__})",
+            ),
+            st_module,
+        )
         return None
+    from ifvg_lab_nav import funded_context, validate_restored_context
+
+    validate_restored_context(study, funded_context(target["result_id"], st_module), st_module)
     return target, study
 
 
@@ -220,6 +229,24 @@ def _window_cards(study: FundedStudy, leader: FundedRow | None, firm: str) -> h.
 def study_names_for(study: FundedStudy) -> dict[str, ConfigurationName]:
     """Unique readable names for every configuration of this saved result."""
 
+    from alpha_lab.agents.data_infra.ifvg.presentation.lab.mffu_matrix import (
+        is_mffu_plan,
+        variant_name,
+    )
+
+    if is_mffu_plan(study.plan):
+        names = {}
+        for variant in study.plan.configurations:
+            first, second = variant_name(variant)
+            names[variant.name] = ConfigurationName(first, second, first + " · " + second)
+        return names
+    if getattr(study.plan, "plan_schema", None) == "ifsm_correct_config_full_range_plan_v1":
+        from alpha_lab.agents.data_infra.ifvg.presentation.lab.names import study_names
+
+        parents = {row.name: json.loads(row.effective_section_json)["parent_timeframes"]
+                   for row in study.plan.configurations}
+        return study_names({key: study.settings(key) for key in study.configurations},
+                           parent_timeframes_by_configuration=parents)
     from ifvg_lab_cache import configuration_names
 
     return configuration_names(str(study.store_root or ""), study.result_id)
@@ -265,7 +292,7 @@ def _ranking_table(study: FundedStudy, rows: list[FundedRow], *, show_all: bool,
         else:
             cells = {"rank": "—", "config": h.cell_two_lines(name.line1, name.line2),
                      "net": h.placeholder("Not completed"),
-                     "payouts": h.placeholder(row.reason[:60])}
+                     "payouts": h.placeholder("Unavailable")}
         body.append(h.Row(cells, tint="leader" if row.rank == 1 else None,
                           action=f"detail:{row.configuration}|{firm_key}",
                           label=f"Open {name.line1} ({name.line2})"))
@@ -385,25 +412,86 @@ def render_funded_results(st_module, roots) -> None:
         return
     target, study = opened
     context = funded_context(target["result_id"], st_module)
+    _result_versions(st_module, target, detail=False)
     firms = dict(study.firms)
     if context.get("firm_key") not in firms and firms:
         context["firm_key"] = next(iter(firms))
-    action = clickable(h.page_header(
-        study_title(target), crumbs=[("My studies", "library"), ("Funded comparisons", None)],
-        subtitle=QUESTION, meta=_meta(study)), key="funded_header", st_module=st_module)
+    action = clickable(
+        h.page_header(
+            study_title(target),
+            crumbs=[("My studies", "library"), ("Funded comparisons", None)],
+            subtitle=QUESTION,
+            meta=_meta(study),
+        ),
+        key="funded_header",
+        st_module=st_module,
+    )
     _handle(action, target, st_module)
     status, passed = _status_text(study)
     if target.get("status") is None:
-        show(h.note("This result's saved run record wasn't found, so its run status couldn't "
-                    "be confirmed. The figures below are read from the verified saved result.",
-                    "orange"), st_module)
+        show(
+            h.note(
+                "This result's saved run record wasn't found, so its run status couldn't "
+                "be confirmed. The figures below are read from the verified saved result.",
+                "orange",
+            ),
+            st_module,
+        )
     elif target.get("status") != "Completed":
-        show(h.alert(f"This comparison is {str(target['status']).lower()}.",
-                     "Configurations that did not complete are listed as not completed, never "
-                     "as zero. Read the details before relying on any figure."), st_module)
+        show(
+            h.alert(
+                f"This comparison is {str(target['status']).lower()}.",
+                "Configurations that did not complete are listed as not completed, never "
+                "as zero. Read the details before relying on any figure.",
+            ),
+            st_module,
+        )
     show(h.status_line(status, kind="check" if passed else "warn"), st_module)
     with st_module.expander("Details", expanded=False):
         _status_details(st_module, study)
+    from alpha_lab.agents.data_infra.ifvg.presentation.lab.mffu_matrix import (
+        matrix_rows,
+        saved_analysis_tables,
+    )
+
+    saved_matrix = matrix_rows(study)
+    if saved_matrix:
+        from ifvg_lab_mffu_views import render_comparison
+
+        render_comparison(st_module, target, study, context)
+        with st_module.expander("Saved 64-intent matrix and status", expanded=False):
+            st_module.caption(
+                "Each row is one frozen MyFundedFutures intent. Unfinished rows have no "
+                "cash value; source hashes and every axis are shown from the saved plan."
+            )
+            st_module.dataframe(saved_matrix, use_container_width=True, hide_index=True, height=600)
+        saved_analysis = saved_analysis_tables(study)
+        if saved_analysis:
+            with st_module.expander("MFFU matched cash effects and receipt waits", expanded=False):
+                st_module.caption(
+                    "All effects use received payouts less account purchases. Matching "
+                    "configurations share the inspected sample; unavailable cells stay blank. "
+                    "Receipt waits show calendar and evaluated trading days separately."
+                )
+                st_module.markdown("**Matched policy comparisons**")
+                st_module.dataframe(
+                    saved_analysis["matched_pairs"],
+                    use_container_width=True,
+                    hide_index=True,
+                    height=310,
+                )
+                st_module.markdown("**Factor interactions**")
+                st_module.dataframe(
+                    saved_analysis["interactions"],
+                    use_container_width=True,
+                    hide_index=True,
+                    height=310,
+                )
+                st_module.markdown("**Receipt waiting intervals**")
+                st_module.dataframe(
+                    saved_analysis["waiting"], use_container_width=True, hide_index=True, height=310
+                )
+        return
     from ifvg_lab_cache import ranking
     from ifvg_lab_ui import pending_switch
 
@@ -417,11 +505,20 @@ def render_funded_results(st_module, roots) -> None:
         show(h.section_title("All configurations, ranked by net cash"), st_module)
     with right:
         firm_key = firm_switch(st_module, study, context, key=switch_key)
-    show(h.Markup('<div class="lab-line">The firm switch drives this table and every detail '
-                  "view. Firms are never added together.</div>"), st_module)
-    action = clickable(_ranking_table(study, rows, firm_key=firm_key,
-                                      show_all=st_module.session_state.get(_SHOW_ALL, False)),
-                       key=f"ranking_{firm_key}", st_module=st_module)
+    show(
+        h.Markup(
+            '<div class="lab-line">The firm switch drives this table and every detail '
+            "view. Firms are never added together.</div>"
+        ),
+        st_module,
+    )
+    action = clickable(
+        _ranking_table(
+            study, rows, firm_key=firm_key, show_all=st_module.session_state.get(_SHOW_ALL, False)
+        ),
+        key=f"ranking_{firm_key}",
+        st_module=st_module,
+    )
     _handle(action, target, st_module)
     for row in rows:
         if not row.completed:
@@ -430,17 +527,30 @@ def render_funded_results(st_module, roots) -> None:
         return
     show(h.section_title("Checks on the leader"), st_module)
     _checks(st_module, target, study, leader, firm_key)
-    bundle = summary_bundle(target["store_root"], target["result_id"], leader.configuration,
-                            firm_key)
-    count = len(_findings(bundle, target, leader.configuration, firm_key,
-                          dict(study.firms).get(firm_key, firm_key)))
-    action = clickable(h.Markup(
-        f'<a href="#" data-action="detail:{h.esc(leader.configuration)}|{h.esc(firm_key)}" '
-        'class="lab" style="display:inline-flex;align-items:center;gap:10px;'
-        'background:var(--lab-panel);border:1px solid var(--lab-rule);border-radius:10px;'
-        'padding:10px 16px;text-decoration:none;color:var(--lab-ink);font-size:15px">'
-        f'{h.badge(fmt.count(count, "finding"), "orange")}'
-        "Open the leader's full detail</a>"), key="findings_link", st_module=st_module)
+    bundle = summary_bundle(
+        target["store_root"], target["result_id"], leader.configuration, firm_key
+    )
+    count = len(
+        _findings(
+            bundle,
+            target,
+            leader.configuration,
+            firm_key,
+            dict(study.firms).get(firm_key, firm_key),
+        )
+    )
+    action = clickable(
+        h.Markup(
+            f'<a href="#" data-action="detail:{h.esc(leader.configuration)}|{h.esc(firm_key)}" '
+            'class="lab" style="display:inline-flex;align-items:center;gap:10px;'
+            "background:var(--lab-panel);border:1px solid var(--lab-rule);border-radius:10px;"
+            'padding:10px 16px;text-decoration:none;color:var(--lab-ink);font-size:15px">'
+            f"{h.badge(fmt.count(count, 'finding'), 'orange')}"
+            "Open the leader's full detail</a>"
+        ),
+        key="findings_link",
+        st_module=st_module,
+    )
     _handle(action, target, st_module)
 
 
@@ -475,6 +585,50 @@ def _findings(bundle, target: dict[str, Any], configuration: str, firm_key: str,
 # ── configuration detail shell (mocks 03–08) ──────────────────────────────
 
 
+def _result_versions(st_module, target, *, detail: bool) -> None:
+    versions = target.get("versions") or {}
+    if not versions:
+        return
+    from ifvg_lab_nav import funded_context, open_funded_detail, open_funded_results
+
+    from alpha_lab.agents.data_infra.ifvg.presentation.lab.external_catalog import (
+        resolve_registered_result,
+    )
+
+    keys = list(versions)
+    current = target["result_id"]
+    selected = st_module.selectbox(
+        "Result version",
+        keys,
+        index=keys.index(current),
+        format_func=lambda key: (
+            (versions[key].get("version_label") or key[:16])
+            if isinstance(versions[key], dict)
+            else str(versions[key])
+        ),
+        key=f"mffu_result_version_{'detail' if detail else 'results'}_{current[:16]}",
+    )
+    qualification = (target.get("catalog_binding") or {}).get("qualification")
+    if qualification:
+        st_module.caption(qualification)
+    if selected != current:
+        resolved = resolve_registered_result(selected)
+        if resolved is None:
+            st_module.error("This version's registered verified result is unavailable.")
+            return
+        if detail:
+            context = funded_context(current, st_module)
+            open_funded_detail(
+                resolved,
+                context.get("configuration"),
+                context.get("firm_key"),
+                context.get("tab", "Summary"),
+                st_module,
+            )
+        else:
+            open_funded_results(resolved, st_module)
+
+
 def render_funded_detail(st_module, roots) -> None:
     from ifvg_lab_cache import ranking
     from ifvg_lab_nav import DETAIL_TABS, funded_context
@@ -485,29 +639,41 @@ def render_funded_detail(st_module, roots) -> None:
         return
     target, study = opened
     context = funded_context(target["result_id"], st_module)
+    _result_versions(st_module, target, detail=True)
     firms = dict(study.firms)
     if context.get("firm_key") not in firms and firms:
         context["firm_key"] = next(iter(firms))
     switch_key = f"firm_{target['result_id'][:16]}"
-    firm_key = context["firm_key"] = pending_switch(switch_key, list(firms),
-                                                    context["firm_key"], st_module)
+    firm_key = context["firm_key"] = pending_switch(
+        switch_key, list(firms), context["firm_key"], st_module
+    )
     rows = ranking(target["store_root"], target["result_id"], firm_key)
     configuration = context.get("configuration")
     known = set(study.configurations) | {r.configuration for r in rows}
     if configuration not in known:
         leader = next((r for r in rows if r.completed), None)
-        configuration = context["configuration"] = (leader.configuration if leader
-                                                    else study.configurations[0])
+        configuration = context["configuration"] = (
+            leader.configuration if leader else study.configurations[0]
+        )
     row = next((r for r in rows if r.configuration == configuration), None)
     name = study_names_for(study).get(configuration) or configuration_name(
-        study.settings(configuration), configuration)
-    rank = (f"Rank {row.rank} at {firms.get(firm_key, firm_key)}"
-            if row is not None and row.rank is not None
-            else f"Not completed at {firms.get(firm_key, firm_key)}")
-    action = clickable(h.page_header(
-        name.line1, detail=True,
-        crumbs=[("My studies", "library"), (study_title(target), "results"), (rank, None)],
-        subtitle=name.summary), key="detail_header", st_module=st_module)
+        study.settings(configuration), configuration
+    )
+    rank = (
+        f"Rank {row.rank} at {firms.get(firm_key, firm_key)}"
+        if row is not None and row.rank is not None
+        else f"Not completed at {firms.get(firm_key, firm_key)}"
+    )
+    action = clickable(
+        h.page_header(
+            name.line1,
+            detail=True,
+            crumbs=[("My studies", "library"), (study_title(target), "results"), (rank, None)],
+            subtitle=name.summary,
+        ),
+        key="detail_header",
+        st_module=st_module,
+    )
     _handle(action, target, st_module)
     tab = context.get("tab") if context.get("tab") in DETAIL_TABS else "Summary"
     tab = context["tab"] = pending_switch("tabs_detail", DETAIL_TABS, tab, st_module)
@@ -524,18 +690,32 @@ def render_funded_detail(st_module, roots) -> None:
 
         show(h.note("This configuration was not tested with this firm."), st_module)
         return
-    ctx = DetailContext(target=target, study=study, store_root=target["store_root"],
-                        result_id=target["result_id"], configuration=configuration,
-                        firm_key=firm_key, firm=firms.get(firm_key, firm_key), name=name,
-                        row=row, roots=roots, context=context)
+    ctx = DetailContext(
+        target=target,
+        study=study,
+        store_root=target["store_root"],
+        result_id=target["result_id"],
+        configuration=configuration,
+        firm_key=firm_key,
+        firm=firms.get(firm_key, firm_key),
+        name=name,
+        row=row,
+        roots=roots,
+        context=context,
+    )
     if header_right is not None:
         with right:
             header_right(st_module, ctx)
     if not row.completed:
         from ifvg_lab_ui import show
 
-        show(h.alert("This configuration did not complete at this firm.",
-                     f"{row.reason} It has no figures; it is not a zero result."), st_module)
+        show(
+            h.alert(
+                "This configuration did not complete at this firm.",
+                f"{row.reason} It has no figures; it is not a zero result.",
+            ),
+            st_module,
+        )
         if tab not in ("Settings and evidence",):
             return
     module.render(st_module, ctx)
