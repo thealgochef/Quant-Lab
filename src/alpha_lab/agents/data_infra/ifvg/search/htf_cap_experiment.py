@@ -58,6 +58,30 @@ FIXED = {
     },
 }
 
+# Fields introduced after the saved September 12 control. Their explicitly
+# recorded neutral defaults reproduce that control; active values and unknown
+# future fields must still fail the full effective-configuration comparison.
+_HISTORICAL_SECTION_DEFAULTS = {
+    "holding_policy": "legacy_unrestricted_v1",
+    "daily_close_timezone": "America/Chicago",
+    "daily_close_time": "15:55",
+    "daily_close_buffer_minutes": 5,
+    "entry_schedule_policy": "legacy_doc_sessions_v1",
+    "entry_schedule_timezone": "America/Chicago",
+    "entry_schedule_windows": [],
+    "menthorq_context_version": None,
+    "regime_gate_policy": "off",
+    "regime_unknown_policy": "allow",
+    "nearest_support_gex1_block": False,
+    "nearest_support_universe": "all_19",
+    "opposing_min_gap_ticks": None,
+    "setup_timeout_1m_bars": None,
+    "parent_replacement_policy": "highest_tf_newest",
+    "parent_retest_depth_policy": "any_live_touch",
+    "htf_direction_selection_policy": "mixed_direction_rank_v1",
+    "htf_gap_invalidation_policy": "execution_wick_full_fill_v1",
+}
+
 
 def assert_control(control):
     section = control["section"]
@@ -168,12 +192,9 @@ def assert_effective_matrix(configurations, control):
         for field, value in FIXED.items():
             if section.get(field, "__missing__") != value:
                 raise ValueError(f"{name}: fixed {field} differs")
-        for field, normal in (
-            ("parent_replacement_policy", "highest_tf_newest"),
-            ("parent_retest_depth_policy", "any_live_touch"),
-        ):
+        for field, normal in _HISTORICAL_SECTION_DEFAULTS.items():
             if field in section:
-                expected["section"][field] = normal
+                expected["section"].setdefault(field, normal)
         for field, value in zip(AXES, (cap, distance), strict=True):
             expected["section"][field] = value
         config["section"].pop("profile_name")

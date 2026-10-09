@@ -108,6 +108,44 @@ def test_effective_preflight_rejects_hidden_drift(tmp_path, mutation):
         assert_effective_matrix(configs, fixture["control"])
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("holding_policy", "scheduled_daily_close_v1"),
+        ("daily_close_timezone", "UTC"),
+        ("daily_close_time", "16:00"),
+        ("daily_close_buffer_minutes", 0),
+        ("entry_schedule_policy", "named_chicago_windows_v1"),
+        ("entry_schedule_timezone", "UTC"),
+        ("entry_schedule_windows", ["morning"]),
+        ("menthorq_context_version", "eod_v1"),
+        ("regime_gate_policy", "on"),
+        ("regime_unknown_policy", "block"),
+        ("nearest_support_gex1_block", True),
+        ("nearest_support_universe", "studied_8"),
+        ("opposing_min_gap_ticks", 4),
+        ("setup_timeout_1m_bars", 90),
+        ("parent_replacement_policy", "keep_original"),
+        ("parent_retest_depth_policy", "midpoint"),
+        ("htf_direction_selection_policy", "enabled_before_rank_v1"),
+        ("htf_gap_invalidation_policy", "own_timeframe_close_v1"),
+        ("future_unregistered_policy", "default"),
+    ],
+)
+def test_historical_control_expansion_rejects_active_or_unknown_fields(tmp_path, field, value):
+    fixture, configs, _ = matrix(tmp_path)
+    configs[MEMBERS[1][0]]["section"][field] = value
+    with pytest.raises(ValueError, match="full effective configuration differs"):
+        assert_effective_matrix(configs, fixture["control"])
+
+
+def test_historical_control_expansion_keeps_explicit_saved_values(tmp_path):
+    fixture, configs, _ = matrix(tmp_path)
+    fixture["control"]["section"]["setup_timeout_1m_bars"] = 90
+    with pytest.raises(ValueError, match="full effective configuration differs"):
+        assert_effective_matrix(configs, fixture["control"])
+
+
 @pytest.mark.parametrize("value", ["0", "-1", "3", "2.5", "true"])
 def test_unregistered_cap_values_refused(value):
     with pytest.raises(PermissionError):

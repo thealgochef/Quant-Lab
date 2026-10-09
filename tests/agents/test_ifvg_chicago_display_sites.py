@@ -148,9 +148,10 @@ def _evidence(start: pd.Timestamp, *, mode: str = "full_audit", stage=None):
     )
 
 
-def _candidate_figure(start: pd.Timestamp):
+def _candidate_figure(start: pd.Timestamp, *, close_unit: str = "ns"):
     evidence = _evidence(start)
     bars = {60: _bars_1m(start), 300: _bars_tf(start, 300), 3600: _bars_tf(start, 3600)}
+    bars[60]["close_ts_utc"] = bars[60]["close_ts_utc"].dt.as_unit(close_unit)
     fig, _report = charts.build_verifier_figure(
         evidence=evidence,
         bars_by_pane=bars,
@@ -164,6 +165,7 @@ def _candidate_figure(start: pd.Timestamp):
 # ── verifier chart: instants converted, anchoring kept ───────────────────────
 
 
+@pytest.mark.parametrize("close_unit", ["ns", "us"])
 @pytest.mark.parametrize(
     ("start_text", "entry_wall", "range_start_wall", "entry_label"),
     [
@@ -176,10 +178,10 @@ def _candidate_figure(start: pd.Timestamp):
     ],
 )
 def test_verifier_chart_shows_chicago_wall_time_and_marker_stays_on_its_candle(
-    start_text: str, entry_wall: str, range_start_wall: str, entry_label: str
+    start_text: str, entry_wall: str, range_start_wall: str, entry_label: str, close_unit: str
 ) -> None:
     start = _utc(start_text)
-    evidence, bars, fig = _candidate_figure(start)
+    evidence, bars, fig = _candidate_figure(start, close_unit=close_unit)
     entry_ts = evidence.stage_gates["entry"].ts_utc
 
     candle = next(t for t in fig.data if t.type == "candlestick" and t.name == "60s")

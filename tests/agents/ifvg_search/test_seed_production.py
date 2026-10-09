@@ -352,6 +352,26 @@ def _run(lane, **overrides):
     return run_seed_production_chain(**kwargs)
 
 
+def test_seed_production_discovers_the_runtime_core_checkout(seed_lane, monkeypatch, tmp_path):
+    prepared = tmp_path / "prepared_exact_core"
+    repo = tmp_path / "quant_lab"
+    looked_up = []
+
+    def matching_checkout(repository):
+        assert repository == repo
+        return prepared
+
+    def source_identity(*, repository_root):
+        looked_up.append(repository_root)
+        return _SC_COMMIT, _SC_IDENTITY
+
+    monkeypatch.setattr(module, "strategy_core_repository_root", matching_checkout)
+    monkeypatch.setattr(module, "strategy_core_source_identity", source_identity)
+    result = _run(seed_lane, strategy_core_identity=None, repo_root=repo)
+    assert result.snapshot.payload.strategy_core_commit == _SC_COMMIT
+    assert looked_up == [prepared]
+
+
 def test_seed_production_chain_produces_only_the_permitted_outputs(
     seed_lane, synthetic_chain, synthetic_artifacts
 ) -> None:

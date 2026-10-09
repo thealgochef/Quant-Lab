@@ -184,8 +184,10 @@ def _bar_high_price(bars: pd.DataFrame, ts: pd.Timestamp, tick_size: float) -> f
     if bars is None or not len(bars):
         return None
     column = "close_ts_utc" if "close_ts_utc" in bars.columns else "logical_close_ts_utc"
-    closes = pd.to_datetime(bars[column], utc=True).astype("int64").to_numpy()
-    index = int(np.searchsorted(closes, pd.Timestamp(ts).value, side="right")) - 1
+    closes = pd.DatetimeIndex(pd.to_datetime(bars[column], utc=True))
+    # Compare timestamps directly: stored closes may use microseconds while
+    # Timestamp.value uses nanoseconds, so raw integers need not share a unit.
+    index = int(closes.searchsorted(pd.Timestamp(ts), side="right")) - 1
     index = min(max(index, 0), len(bars) - 1)
     return float(bars["high_ticks"].iloc[index]) * tick_size
 

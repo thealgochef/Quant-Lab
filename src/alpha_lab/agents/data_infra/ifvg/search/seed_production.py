@@ -83,6 +83,7 @@ from .identities import (
     register_identity_pair,
     strategy_core_source_identity,
 )
+from .runtime_source import strategy_core_repository_root
 from .store import SearchStoreError, has_envelope, load_verified_envelope, save_or_reuse_envelope
 from .store_namespace import (
     StoreNamespaceEnvelope,
@@ -785,16 +786,18 @@ def run_seed_production_chain(
     receipt → reload-verify the snapshot. Nothing else is written."""
 
     root = Path(root)
+    # Missing authorization must refuse before source-checkout discovery. A
+    # read-only CLI refusal cannot depend on a local sibling Core checkout.
+    authorization = _load_authorization(root, authorization_id)
     repo = Path(repo_root) if repo_root is not None else Path(__file__).resolve().parents[6]
     ql_identity = quant_lab_source_identity or quant_lab_replay_source_identity(
         repository_root=repo
     )
     sc_identity = strategy_core_identity or strategy_core_source_identity(
-        repository_root=strategy_core_root or repo.parent / "Strategy-Core"
+        repository_root=strategy_core_root or strategy_core_repository_root(repo)
     )
     # the authorization is the source of truth for the chain; the CURRENT
     # inventory must hash to the authorized inventory over that chain
-    authorization = _load_authorization(root, authorization_id)
     chain = authorization.payload.ordered_seed_chain_replay_days
     try:
         inventory_hash = seed_chain_source_inventory_hash(chain, source_inventory)

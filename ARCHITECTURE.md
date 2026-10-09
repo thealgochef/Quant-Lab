@@ -2145,6 +2145,12 @@ sources and approvals remain unchanged. Final report downloads and local model
 bundles remain available at their existing paths but are not versioned.
 The pre-commit and CI artifact guard checks Git index paths and blob sizes.
 
+Cold CI installs the explicit validated scientific/UI set in
+`.github/constraints-ci.txt` within the supported package bounds. Dependency
+upgrades require the full suite and both GitHub jobs; installed versions are
+recorded in each job. `docs/CI_REPAIR_20261008.md` explains the timestamp,
+component-lifecycle and historical-schema compatibility corrections.
+
 Saved MFFU reporting companions retain content-addressed producer-source
 witnesses under each external report's `producer_sources/` directory. Readers
 verify original source hashes, report bytes and economic-result binding without

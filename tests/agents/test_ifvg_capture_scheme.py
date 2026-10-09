@@ -1,12 +1,14 @@
 """Part C tests: session-scheme tag identity + custom-scheme plumbing + job files.
 
-The load-bearing lock: the DEFAULT config's artifacts_tag/capture_tag are hard
-literals — the 624 warmed Phase-A files and every canonical capture live under
-those names. No test here launches a job or touches ``data/databento``.
+The current pinned Core and the historical Phase-A capture have separate hard
+identity locks. The historical files keep their original identity; the current
+Core's expanded profile schema cannot silently resume their capture chain.
+No test here launches a job or touches ``data/databento``.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from datetime import UTC, datetime, time
@@ -28,11 +30,25 @@ if str(_SCRIPTS) not in sys.path:
 
 import ifvg_recapture_job as recapture  # noqa: E402
 
-#: Canonical tags — MUST NEVER CHANGE (regression lock).
+#: Current exact-Core tags; the historical capture identity remains separate.
 DEFAULT_ATAG = "a9016426641071c3"
-DEFAULT_CTAG = "035d9e14ff3276ed"
+DEFAULT_CTAG = "92b4ab1709c2e164"
+HISTORICAL_DEFAULT_CTAG = "035d9e14ff3276ed"
+CURRENT_DEFAULT_PROFILE_HASH = "e0f318732cb59d844ac14b5e3839862146e7da1f612f9884f767247f66dd39dd"
+HISTORICAL_DEFAULT_PROFILE_HASH = "f3bce50c078a45235c7c77207e259ed98f2c13bb49a453a2f03e55fae3f0f685"
 LEGACY_ATAG = "466b5fe8e7952ecd"
 LEGACY_CTAG = "2a40b18e0b273ee0"
+
+# The original Core 1e540f0 section schema predates exactly these fields. This
+# projection only proves the old literal's origin; it is never a runtime hash.
+_POST_PHASE_A_FIELDS = (
+    "holding_policy", "daily_close_timezone", "daily_close_time", "daily_close_buffer_minutes",
+    "entry_schedule_policy", "entry_schedule_timezone", "entry_schedule_windows",
+    "menthorq_context_version", "regime_gate_policy", "regime_unknown_policy",
+    "nearest_support_gex1_block", "nearest_support_universe", "opposing_min_gap_ticks",
+    "setup_timeout_1m_bars", "parent_replacement_policy", "parent_retest_depth_policy",
+    "htf_direction_selection_policy", "htf_gap_invalidation_policy",
+)
 
 #: The canonical windows as time pairs (asia crosses midnight).
 _DEFAULT_WINDOWS = {
@@ -52,8 +68,26 @@ _CUSTOM_WINDOWS = {
 
 def test_default_tags_regression_locked() -> None:
     cfg = IfvgCaptureConfig()
+    assert cfg.profile_hash == CURRENT_DEFAULT_PROFILE_HASH
     assert cfg.artifacts_tag() == DEFAULT_ATAG
     assert cfg.capture_tag() == DEFAULT_CTAG
+
+
+def test_historical_phase_a_capture_identity_remains_distinct() -> None:
+    cfg = IfvgCaptureConfig()
+    historical = cfg.section.model_dump(mode="json")
+    for field in _POST_PHASE_A_FIELDS:
+        historical.pop(field)
+    profile_hash = hashlib.sha256(
+        json.dumps(historical, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    assert profile_hash == HISTORICAL_DEFAULT_PROFILE_HASH
+    payload = "|".join((
+        "ifvg_capture_pipeline_v2", "strategy_core_platform_v1", "ifvg_smc", "2", "2", "2",
+        profile_hash, DEFAULT_ATAG,
+    ))
+    assert hashlib.sha256(payload.encode()).hexdigest()[:16] == HISTORICAL_DEFAULT_CTAG
+    assert cfg.capture_tag() != HISTORICAL_DEFAULT_CTAG
 
 
 def test_legacy_tags_remain_read_only_and_stable() -> None:

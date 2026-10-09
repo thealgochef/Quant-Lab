@@ -413,7 +413,10 @@ def test_frozen_m0_m3_catboost_lane_is_byte_and_identity_unchanged(fixture, fold
     import alpha_lab.agents.data_infra.ifvg.context_model as frozen_lane
 
     source = Path(frozen_lane.__file__).resolve()
-    assert hashlib.sha256(source.read_bytes()).hexdigest() == _CONTEXT_MODEL_SOURCE_SHA256
+    # Git stores this text as LF; Windows checkout conversion must not masquerade
+    # as a numerical source change. Every byte other than CRLF remains locked.
+    canonical_source = source.read_bytes().replace(b"\r\n", b"\n")
+    assert hashlib.sha256(canonical_source).hexdigest() == _CONTEXT_MODEL_SOURCE_SHA256
     protocol = resolve_context_model_protocol(
         ordered_features=features_for_tier(ContextFeatureTier.M0),
         feature_registry_hash="0" * 64,

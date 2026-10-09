@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 import streamlit as st
+from streamlit.errors import StreamlitAPIException
 
 from alpha_lab.agents.data_infra.ifvg.presentation.lab import theme as _theme
 from alpha_lab.agents.data_infra.ifvg.presentation.lab.html import Markup
@@ -139,6 +140,19 @@ _theme_probe = st.components.v2.component("ifvg_lab_theme", js=_THEME_JS,
                                           isolate_styles=False)
 
 
+def _mount_component(renderer, *, name: str, js: str, **kwargs):
+    """Restore registration when a cached module meets a new Streamlit runtime."""
+    try:
+        return renderer(**kwargs)
+    except StreamlitAPIException as error:
+        if str(error) != f"Component '{name}' is not registered.":
+            raise
+        # AppTest creates a fresh component registry for each app run, while
+        # imported Python modules survive. Normal runtimes reuse registration.
+        renderer = st.components.v2.component(name, js=js, isolate_styles=False)
+        return renderer(**kwargs)
+
+
 def _script_theme() -> str | None:
     """The theme of the running page: what its probe confirmed, else what it reported."""
 
@@ -182,8 +196,11 @@ def _probe_theme(theme: str, st_module) -> str | None:
 
     try:
         with st_module.container(key="ifvg_lab_theme_probe"):
-            result = _theme_probe(data={"theme": theme}, key=f"{PREFIX}theme_probe",
-                                  on_theme_change=lambda: None)
+            result = _mount_component(
+                _theme_probe, name="ifvg_lab_theme", js=_THEME_JS,
+                data={"theme": theme}, key=f"{PREFIX}theme_probe",
+                on_theme_change=lambda: None,
+            )
     except Exception:  # headless test runner (no component registry), or a stand-in
         return None
     try:
@@ -225,8 +242,10 @@ def clickable(markup: Markup | str, *, key: str, st_module=st) -> str | None:
     """Render HTML; returns the ``data-action`` of the element clicked this run, if any."""
 
     try:
-        result = _clickable(data=str(markup), key=f"{PREFIX}click_{key}",
-                            on_action_change=lambda: None)
+        result = _mount_component(
+            _clickable, name="ifvg_lab_clickable", js=_CLICK_JS,
+            data=str(markup), key=f"{PREFIX}click_{key}", on_action_change=lambda: None,
+        )
     except TypeError:
         # headless test runner (no component registry): show the same markup, static
         st_module.html(str(markup))

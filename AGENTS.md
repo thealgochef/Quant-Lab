@@ -2,6 +2,15 @@
 
 Updated: 2026-10-08.
 
+CI publication acceptance (October 8): inspect recent failed workflow runs
+before publishing and follow the new commit's GitHub CI to terminal success.
+Do not declare a publication verified while CI is queued/running or failed.
+The supported scientific stack and cold-install constraints are recorded in
+`docs/CI_REPAIR_20261008.md` and `.github/constraints-ci.txt`. Preserve warnings
+as errors and existing frozen numerical/source protocols. The dated five-failure
+list below is historical; current acceptance comes from the repair's actual
+complete local/remote results, not that old baseline.
+
 Repository cleanup and publication (October 8): the owner explicitly authorized
 organizing local artifacts and publishing the reviewed code to `main`; this
 supersedes the dated no-commit/no-push restrictions for this cleanup. See

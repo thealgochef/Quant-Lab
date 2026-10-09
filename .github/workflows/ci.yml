@@ -42,7 +42,10 @@ jobs:
       # token) and installs all runtime + dev dependencies — the pin goes from
       # DECLARED to ENFORCED here (decision 9.6).
       - name: Install (cold)
-        run: pip install -e ".[dev]"
+        run: pip install -c .github/constraints-ci.txt -e ".[dev]"
+
+      - name: Record resolved dependencies
+        run: python -m pip freeze
 
       - name: Prepare the matching current Core source
         run: python scripts/prepare_ifsm_research_core.py
@@ -86,7 +89,9 @@ jobs:
               output.write(f"IFSM_RESEARCH_CORE={core}\nPYTHONPATH={paths}\n")
           PY
       - name: Install ordinary dependencies
-        run: pip install -e ".[dev]"
+        run: pip install -c .github/constraints-ci.txt -e ".[dev]"
+      - name: Record resolved dependencies
+        run: python -m pip freeze
       - name: Prepare the same current Core outside the repository
         run: python scripts/prepare_ifsm_research_core.py --destination "$IFSM_RESEARCH_CORE"
       - name: Verify the actual launcher and all research choices

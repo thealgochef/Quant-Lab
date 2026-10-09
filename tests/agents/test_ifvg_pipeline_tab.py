@@ -46,6 +46,9 @@ def _app() -> None:
     import streamlit as st
 
     pipeline_tab.render_pipeline_run(st, roots=study_tab.workspace_roots(st))
+    # Snapshot through the public app API; AppTest's state wrapper changed in
+    # Streamlit 1.65 and no longer exposes SafeSessionState.filtered_state.
+    st.session_state["test_pipeline_session_keys"] = list(st.session_state)
 
 
 def _caption_text(at) -> str:
@@ -96,6 +99,7 @@ def completed_pipeline(tmp_path_factory):
         wiring=fixture["wiring"],
         worker_policy=fixture["worker_policy"],
     )
+    assert result.result_envelope is not None, result.stage_statuses
     return {**fixture, "result": result, "tmp_root": tmp_root}
 
 
@@ -519,7 +523,7 @@ def test_publish_runs_gates_and_refuses_verification_activation(
     pipeline_id = completed_pipeline["result"].pipeline_semantic_id
     cache_keys = [
         key
-        for key in at.session_state.filtered_state
+        for key in at.session_state["test_pipeline_session_keys"]
         if str(key).startswith(f"{_PIPE}gate_results_")
     ]
     assert len(cache_keys) == 1

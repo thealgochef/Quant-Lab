@@ -8,6 +8,9 @@ Large input/review ZIPs and UI screenshots now live in the corresponding sibling
 artifact task folder. Historical package manifests describe original delivered
 bytes, not the current Git checkout; use the storage map to retrieve those bytes.
 
+[CI repair and publication acceptance](CI_REPAIR_20261008.md) records the failed
+cold-install runs, supported dependency set and required terminal CI verification.
+
 The [current Core setup](../research/core/README.md) records one exact Core pin
 for ordinary Quant-Lab and IFSM, with installation and source verification steps.
 The September 22 upgrade supersedes the installed-pin policy in dated research

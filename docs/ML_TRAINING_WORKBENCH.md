@@ -886,6 +886,8 @@ Repair-only changes to the existing IFVG Lab screens in both applications; task 
 - **Chicago time** (`presentation/chicago_time.py`): selectors, chart axes and hovers, event
   tables, review times and funded fills show America/Chicago with a 12-hour clock and CST/CDT.
   Stored instants, trading-day labels, session rules, ledgers and exports are unchanged.
+  Verifier stage markers compare full timestamps when selecting their candle, including
+  bars stored at microsecond resolution; their prices stay anchored to that candle's high.
 - **Independent-day threshold**: a minimum above the study's evaluated trading days (warmup
   excluded) is refused at review, approval, charter validation and the worker entry, with a
   plain message; the saved value is never changed.

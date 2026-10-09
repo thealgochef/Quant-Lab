@@ -171,6 +171,43 @@ def test_the_probe_reads_the_framework_background_and_reruns_once_per_change():
     assert "ifvg_lab_theme_probe" in theme.WORKSPACE_CSS  # hidden, takes no room
 
 
+def test_components_restore_a_new_runtime_registry_without_hiding_api_errors(monkeypatch):
+    import ifvg_lab_ui as ui
+    from streamlit.errors import StreamlitAPIException
+
+    registrations = []
+    mounts = []
+
+    def register(name, **definition):
+        registrations.append((name, definition))
+
+        def mount(**kwargs):
+            mounts.append(kwargs)
+            return SimpleNamespace(action="next")
+
+        return mount
+
+    def absent(**kwargs):
+        raise StreamlitAPIException("Component 'ifvg_lab_clickable' is not registered.")
+
+    monkeypatch.setattr(ui.st.components.v2, "component", register)
+    monkeypatch.setattr(ui, "_clickable", absent)
+    assert ui.clickable("<button>Next</button>", key="header") == "next"
+    assert registrations == [("ifvg_lab_clickable", {
+        "js": ui._CLICK_JS, "isolate_styles": False,
+    })]
+    assert mounts[0]["key"] == f"{ui.PREFIX}click_header"
+    assert mounts[0]["data"] == "<button>Next</button>"
+
+    def invalid(**kwargs):
+        raise StreamlitAPIException("invalid callback")
+
+    monkeypatch.setattr(ui, "_clickable", invalid)
+    with pytest.raises(StreamlitAPIException, match="invalid callback"):
+        ui.clickable("<button>Next</button>", key="header")
+    assert len(registrations) == 1
+
+
 #: the semantic chart colors the Developer replay charts keep on both themes
 _KEPT_CHART_LITERALS = {"#4C78A8", "#9467BD", "#E45756", "#2CA02C", "#8C8C8C", "#2E9990",
                         "#B8860B", "#D62728"}

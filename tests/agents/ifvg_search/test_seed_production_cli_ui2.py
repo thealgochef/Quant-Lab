@@ -131,7 +131,18 @@ def test_register_authorization_persists_a_completed_packet_and_writes_the_recei
     assert code == 2 and printed["reason"] == "store_namespace_mismatch"
 
 
-def test_run_refuses_before_any_path_and_writes_no_receipt(tmp_path, capsys) -> None:
+def test_run_refuses_before_any_path_and_writes_no_receipt(tmp_path, capsys, monkeypatch) -> None:
+    from alpha_lab.agents.data_infra.ifvg.search import seed_production
+
+    def source_lookup_is_forbidden(**_kwargs):
+        raise AssertionError("missing authorization must refuse before source-checkout discovery")
+
+    monkeypatch.setattr(
+        seed_production, "quant_lab_replay_source_identity", source_lookup_is_forbidden
+    )
+    monkeypatch.setattr(
+        seed_production, "strategy_core_source_identity", source_lookup_is_forbidden
+    )
     script = importlib.import_module("scripts.ifvg_seed_production")
     root = tmp_path / "store"
     initialize_test_namespace(root)

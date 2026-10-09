@@ -1,0 +1,12 @@
+# Validated scientific/UI dependency set. Update deliberately with a clean full
+# suite and both CI jobs; never change existing saved research environments.
+pandas==2.3.1
+numpy==2.3.1
+scipy==1.16.0
+scikit-learn==1.7.0
+duckdb==1.4.4
+pyarrow==20.0.0
+catboost==1.2.10
+plotly==6.5.2
+streamlit==1.54.0
+protobuf==6.33.6
