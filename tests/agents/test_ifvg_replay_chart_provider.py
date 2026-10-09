@@ -111,15 +111,18 @@ class TestGateOrderingContract:
 @pytestmark_real
 class TestProviderGolden:
     @pytest.fixture(scope="class")
-    def ctx(self):
+    @classmethod
+    def ctx(cls):
         return open_replay_context(_REPO, _PAIR)
 
     @pytest.fixture(scope="class")
-    def candidates(self, ctx) -> pd.DataFrame:
+    @classmethod
+    def candidates(cls, ctx) -> pd.DataFrame:
         return list_candidates(ctx)
 
     @pytest.fixture(scope="class")
-    def raw(self) -> dict[str, pd.DataFrame]:
+    @classmethod
+    def raw(cls) -> dict[str, pd.DataFrame]:
         return {
             name: pd.read_parquet(_V2_DIR / f"{name}.parquet")
             for name in (
@@ -269,15 +272,18 @@ class TestProviderGolden:
 @pytestmark_real
 class TestProviderContracts:
     @pytest.fixture(scope="class")
-    def ctx(self):
+    @classmethod
+    def ctx(cls):
         return open_replay_context(_REPO, _PAIR)
 
     @pytest.fixture(scope="class")
-    def candidates(self, ctx) -> pd.DataFrame:
+    @classmethod
+    def candidates(cls, ctx) -> pd.DataFrame:
         return list_candidates(ctx)
 
     @pytest.fixture(scope="class")
-    def executed_id(self, candidates) -> str:
+    @classmethod
+    def executed_id(cls, candidates) -> str:
         return candidates[candidates["executed"] & ~candidates["is_warmup"]].iloc[0][
             "candidate_id"
         ]

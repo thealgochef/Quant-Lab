@@ -142,7 +142,8 @@ class TestResamplerOracleEquality:
     DAYS = ("2026-01-07", "2026-04-03", "2026-06-10")
 
     @pytest.fixture(scope="class")
-    def label_bars(self) -> pd.DataFrame:
+    @classmethod
+    def label_bars(cls) -> pd.DataFrame:
         return pd.read_parquet(_LABEL_BARS)
 
     @pytest.mark.parametrize("day", DAYS)
